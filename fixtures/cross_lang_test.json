@@ -1,0 +1,23 @@
+{
+  "description": "Cross-language Ed25519 test vectors for JACS authentication",
+  "note": "Generated from the Python fixture at tests/browser/fixtures/jacs_documents/",
+  "fixtures": {
+    "agent_fixture": "../../../tests/browser/fixtures/jacs_documents/signed_valid_agent.json",
+    "canonical_json": "../../../tests/browser/fixtures/jacs_documents/signed_valid_agent_canonical.json",
+    "public_key": "../../../tests/browser/fixtures/jacs_documents/test_agent_public_key.pem",
+    "private_key": "../../../tests/browser/fixtures/jacs_documents/test_agent_private_key.pem"
+  },
+  "test_vectors": [
+    {
+      "name": "jacs_auth_header",
+      "jacs_id": "test-signed-agent-001",
+      "timestamp": 1700000000,
+      "message": "test-signed-agent-001:1700000000",
+      "note": "Sign 'message' with private key, verify with public key. Format: JACS {jacsId}:{timestamp}:{signature_base64}"
+    },
+    {
+      "name": "canonical_json_signature",
+      "note": "The canonical JSON file is the message that was signed. The signature is in signed_valid_agent.json at jacsSignature.signature. Ed25519 is deterministic so all languages must produce the same signature."
+    }
+  ]
+}
