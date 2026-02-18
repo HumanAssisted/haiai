@@ -134,3 +134,27 @@ type VerifyResult struct {
 	Signatures  []HaiSignature `json:"signatures,omitempty"`
 	Errors      []string       `json:"errors,omitempty"`
 }
+
+// SignedDocument is a JACS-signed document envelope matching the Python SDK format.
+type SignedDocument struct {
+	Version       string                 `json:"version"`
+	DocumentType  string                 `json:"document_type"`
+	Data          map[string]interface{} `json:"data"`
+	Metadata      SignedDocumentMetadata  `json:"metadata"`
+	JacsSignature JacsSignatureBlock     `json:"jacsSignature"`
+}
+
+// SignedDocumentMetadata contains metadata about a signed document.
+type SignedDocumentMetadata struct {
+	Issuer     string `json:"issuer"`
+	DocumentID string `json:"document_id"`
+	CreatedAt  string `json:"created_at"`
+	Hash       string `json:"hash"`
+}
+
+// JacsSignatureBlock contains the JACS signature fields.
+type JacsSignatureBlock struct {
+	AgentID   string `json:"agentID"`
+	Date      string `json:"date"`
+	Signature string `json:"signature"`
+}

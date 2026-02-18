@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -363,6 +365,56 @@ func (c *Client) VerifyAgent(ctx context.Context, agentID string) (*VerifyResult
 		return nil, err
 	}
 	return &result, nil
+}
+
+// SignBenchmarkResult signs a benchmark result as a JACS document for
+// independent verification. The format matches the Python SDK's sign_response.
+func (c *Client) SignBenchmarkResult(result map[string]interface{}) (*SignedDocument, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Generate UUIDv4
+	var uuid [16]byte
+	if _, err := rand.Read(uuid[:]); err != nil {
+		return nil, wrapError(ErrSigningFailed, err, "failed to generate UUID")
+	}
+	uuid[6] = (uuid[6] & 0x0f) | 0x40 // version 4
+	uuid[8] = (uuid[8] & 0x3f) | 0x80 // variant 2
+	documentID := fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16])
+
+	// Canonical JSON of the data for signing and hashing.
+	// Go's encoding/json sorts map keys by default.
+	dataJSON, err := json.Marshal(result)
+	if err != nil {
+		return nil, wrapError(ErrSigningFailed, err, "failed to marshal benchmark result")
+	}
+
+	// SHA-256 hash of canonical data
+	hashBytes := sha256.Sum256(dataJSON)
+	hash := fmt.Sprintf("%x", hashBytes)
+
+	// Sign the canonical data payload
+	sig := Sign(c.privateKey, dataJSON)
+	sigB64 := base64.StdEncoding.EncodeToString(sig)
+
+	doc := &SignedDocument{
+		Version:      "1.0.0",
+		DocumentType: "benchmark_result",
+		Data:         result,
+		Metadata: SignedDocumentMetadata{
+			Issuer:     c.jacsID,
+			DocumentID: documentID,
+			CreatedAt:  now,
+			Hash:       hash,
+		},
+		JacsSignature: JacsSignatureBlock{
+			AgentID:   c.jacsID,
+			Date:      now,
+			Signature: sigB64,
+		},
+	}
+
+	return doc, nil
 }
 
 // FetchRemoteKey fetches a public key from HAI's key distribution service.

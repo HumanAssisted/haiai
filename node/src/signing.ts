@@ -1,20 +1,21 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { signString, verifyString } from './crypt.js';
 
-/** JACS document envelope wrapping a payload with metadata and signature. */
+/** JACS document envelope wrapping data with metadata and jacsSignature. */
 export interface JacsDocument {
-  payload: unknown;
+  version: string;
+  document_type: string;
+  data: unknown;
   metadata: {
     issuer: string;
     document_id: string;
     created_at: string;
     hash: string;
   };
-  signature: {
-    key_id: string;
-    algorithm: string;
+  jacsSignature: {
+    agentID: string;
+    date: string;
     signature: string;
-    signed_at: string;
   };
 }
 
@@ -69,9 +70,9 @@ export function canonicalJson(obj: unknown): string {
 /**
  * Unwrap a JACS-signed event, verifying the signature if server keys are provided.
  *
- * If the event is not a JacsDocument (no metadata+signature fields), it is
- * returned as-is. If it is a JacsDocument and a matching server public key
- * is available, the signature is verified before returning the payload.
+ * Supports both the canonical format (version/document_type/data/metadata/jacsSignature)
+ * and the legacy format (payload/metadata/signature). If the event is not a
+ * JacsDocument, it is returned as-is.
  *
  * Throws if a known key fails verification (signature mismatch).
  */
@@ -79,35 +80,56 @@ export function unwrapSignedEvent(
   eventData: Record<string, unknown>,
   serverPublicKeys: Record<string, string>,
 ): unknown {
-  // Not a JacsDocument -- return unchanged
-  if (!eventData.metadata || !eventData.signature) {
-    return eventData;
-  }
+  // Canonical JacsDocument format: {version, document_type, data, metadata, jacsSignature}
+  if (eventData.jacsSignature && eventData.metadata && eventData.data !== undefined) {
+    const doc = eventData as unknown as JacsDocument;
+    const agentID = doc.jacsSignature.agentID;
+    const publicKeyPem = serverPublicKeys[agentID];
 
-  const doc = eventData as unknown as JacsDocument;
-  const keyId = doc.signature.key_id;
-  const publicKeyPem = serverPublicKeys[keyId];
-
-  if (publicKeyPem) {
-    // The signed content is canonical JSON of {metadata, payload} (without signature)
-    const signedContent = canonicalJson({
-      metadata: doc.metadata,
-      payload: doc.payload,
-    });
-    const valid = verifyString(publicKeyPem, signedContent, doc.signature.signature);
-    if (!valid) {
-      throw new Error(`JACS signature verification failed for key_id="${keyId}"`);
+    if (publicKeyPem) {
+      const signedContent = canonicalJson(doc.data);
+      const valid = verifyString(publicKeyPem, signedContent, doc.jacsSignature.signature);
+      if (!valid) {
+        throw new Error(`JACS signature verification failed for agentID="${agentID}"`);
+      }
     }
+
+    return doc.data;
   }
 
-  return doc.payload;
+  // Legacy format: {payload, metadata, signature}
+  if (eventData.metadata && eventData.signature) {
+    const payload = eventData.payload;
+    const sig = eventData.signature as Record<string, unknown>;
+    const keyId = (sig.key_id as string) || '';
+    const publicKeyPem = serverPublicKeys[keyId];
+
+    if (publicKeyPem) {
+      const signedContent = canonicalJson({
+        metadata: eventData.metadata,
+        payload: eventData.payload,
+      });
+      const valid = verifyString(publicKeyPem, signedContent, (sig.signature as string) || '');
+      if (!valid) {
+        throw new Error(`JACS signature verification failed for key_id="${keyId}"`);
+      }
+    }
+
+    return payload;
+  }
+
+  // Not a JacsDocument -- return unchanged
+  return eventData;
 }
 
 /**
  * Sign a job response as a JACS document.
  *
- * Creates a JacsDocument with the response as payload, signs it with
- * the agent's Ed25519 private key, and returns the envelope.
+ * Creates a JacsDocument matching the Python SDK format:
+ *   {version, document_type, data, metadata, jacsSignature}
+ *
+ * The signature is computed over the canonical JSON of the job response
+ * payload (matching Python which signs `canonicalize_json(job_response_payload)`).
  */
 export function signResponse(
   jobResponse: unknown,
@@ -117,34 +139,30 @@ export function signResponse(
   const now = new Date().toISOString();
   const documentId = randomUUID();
 
-  // Build the content to be signed (metadata + payload, no signature yet)
-  const contentToSign = {
+  // Canonical JSON of the payload for signing and hashing
+  const canonicalPayload = canonicalJson(jobResponse);
+  const hash = createHash('sha256').update(canonicalPayload).digest('hex');
+
+  // Store data in canonical (sorted-key) form for cross-language compat
+  const sortedData: unknown = JSON.parse(canonicalPayload);
+
+  // Sign the canonical payload data (matching Python)
+  const signature = signString(privateKeyPem, canonicalPayload);
+
+  const jacsDoc: JacsDocument = {
+    version: '1.0.0',
+    document_type: 'job_response',
+    data: sortedData,
     metadata: {
       issuer: jacsId,
       document_id: documentId,
       created_at: now,
-      hash: '',
+      hash,
     },
-    payload: jobResponse,
-  };
-
-  // Compute hash of the payload
-  const payloadCanonical = canonicalJson(jobResponse);
-  const hash = createHash('sha256').update(payloadCanonical).digest('hex');
-  contentToSign.metadata.hash = hash;
-
-  // Canonical JSON of {metadata, payload} for signing
-  const canonical = canonicalJson(contentToSign);
-  const signature = signString(privateKeyPem, canonical);
-
-  const jacsDoc: JacsDocument = {
-    payload: jobResponse,
-    metadata: contentToSign.metadata,
-    signature: {
-      key_id: jacsId,
-      algorithm: 'Ed25519',
+    jacsSignature: {
+      agentID: jacsId,
+      date: now,
       signature,
-      signed_at: now,
     },
   };
 

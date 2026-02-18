@@ -373,7 +373,7 @@ export class HaiClient {
 
     while (Date.now() - startTime < pollTimeoutMs) {
       try {
-        const statusResp = await fetch(paymentStatusUrl, {
+        const statusResp = await this.fetchWithRetry(paymentStatusUrl, {
           headers: this.buildAuthHeaders(),
         });
 
@@ -542,6 +542,43 @@ export class HaiClient {
         await handler(job);
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // testConnection()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Test connectivity to the HAI server.
+   *
+   * Tries multiple health endpoints and returns true if any respond with 2xx.
+   * Does not require authentication.
+   */
+  async testConnection(): Promise<boolean> {
+    const endpoints = ['/api/v1/health', '/health', '/api/health', '/'];
+    const timeoutMs = Math.min(this.timeout, 10000);
+
+    for (const endpoint of endpoints) {
+      try {
+        const url = this.makeUrl(endpoint);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+        const resp = await fetch(url, {
+          signal: controller.signal,
+          redirect: 'follow',
+        });
+
+        clearTimeout(timeoutId);
+
+        if (resp.ok) {
+          return true;
+        }
+      } catch {
+        // Ignore errors and try next endpoint
+      }
+    }
+    return false;
   }
 
   // ---------------------------------------------------------------------------

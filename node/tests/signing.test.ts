@@ -77,10 +77,11 @@ describe('signResponse', () => {
     expect(typeof result.signed_document).toBe('string');
 
     const doc = JSON.parse(result.signed_document);
-    expect(doc.payload).toEqual(payload);
+    expect(doc.version).toBe('1.0.0');
+    expect(doc.document_type).toBe('job_response');
+    expect(doc.data).toEqual(JSON.parse(canonicalJson(payload)));
     expect(doc.metadata.issuer).toBe(TEST_JACS_ID);
-    expect(doc.signature.key_id).toBe(TEST_JACS_ID);
-    expect(doc.signature.algorithm).toBe('Ed25519');
+    expect(doc.jacsSignature.agentID).toBe(TEST_JACS_ID);
     expect(doc.metadata.hash).toBeTruthy();
   });
 
@@ -89,13 +90,10 @@ describe('signResponse', () => {
     const result = signResponse(payload, TEST_KEYPAIR.privateKeyPem, TEST_JACS_ID);
     const doc = JSON.parse(result.signed_document);
 
-    // Reconstruct what was signed
-    const signedContent = canonicalJson({
-      metadata: doc.metadata,
-      payload: doc.payload,
-    });
+    // The signed content is canonical JSON of the data payload
+    const signedContent = canonicalJson(doc.data);
 
-    const valid = verifyString(TEST_KEYPAIR.publicKeyPem, signedContent, doc.signature.signature);
+    const valid = verifyString(TEST_KEYPAIR.publicKeyPem, signedContent, doc.jacsSignature.signature);
     expect(valid).toBe(true);
   });
 });
@@ -130,7 +128,7 @@ describe('unwrapSignedEvent', () => {
     const payload = { hello: 'world' };
     const result = signResponse(payload, TEST_KEYPAIR.privateKeyPem, TEST_JACS_ID);
     const doc = JSON.parse(result.signed_document);
-    doc.signature.signature = 'invalid-signature';
+    doc.jacsSignature.signature = 'invalid-signature';
 
     expect(() => {
       unwrapSignedEvent(doc, { [TEST_JACS_ID]: TEST_KEYPAIR.publicKeyPem });

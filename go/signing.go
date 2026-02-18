@@ -2,6 +2,7 @@ package haisdk
 
 import (
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"os"
@@ -100,3 +101,54 @@ func GenerateKeyPair() (ed25519.PublicKey, ed25519.PrivateKey, error) {
 
 // ErrInvalidKeyFormat is returned when a key cannot be parsed.
 var ErrInvalidKeyFormat = errors.New("invalid key format")
+
+// ParsePublicKey parses an Ed25519 public key from PEM-encoded bytes.
+func ParsePublicKey(pemData []byte) (ed25519.PublicKey, error) {
+	block, _ := pem.Decode(pemData)
+	if block == nil {
+		return nil, newError(ErrSigningFailed, "no PEM block found in public key data")
+	}
+
+	der := block.Bytes
+
+	switch len(der) {
+	case ed25519.PublicKeySize:
+		// Raw 32-byte public key
+		return ed25519.PublicKey(der), nil
+	default:
+		// SPKI format: the last 32 bytes contain the key.
+		// Ed25519 SPKI structure:
+		//   30 2a 30 05 06 03 2b 65 70 03 21 00 [32 bytes]
+		if len(der) >= ed25519.PublicKeySize {
+			pubBytes := der[len(der)-ed25519.PublicKeySize:]
+			return ed25519.PublicKey(pubBytes), nil
+		}
+		return nil, newError(ErrSigningFailed,
+			"unsupported public key format (length %d bytes)", len(der))
+	}
+}
+
+// VerifyHaiMessage verifies a message signed by HAI or another agent.
+// The signature is expected to be base64-encoded. The publicKeyPem
+// should be a PEM-encoded Ed25519 public key.
+func VerifyHaiMessage(message string, signatureB64 string, publicKeyPem string) (bool, error) {
+	if message == "" || signatureB64 == "" || publicKeyPem == "" {
+		return false, nil
+	}
+
+	sigBytes, err := base64.StdEncoding.DecodeString(signatureB64)
+	if err != nil {
+		// Try URL-safe base64
+		sigBytes, err = base64.RawStdEncoding.DecodeString(signatureB64)
+		if err != nil {
+			return false, nil
+		}
+	}
+
+	pubKey, err := ParsePublicKey([]byte(publicKeyPem))
+	if err != nil {
+		return false, err
+	}
+
+	return Verify(pubKey, []byte(message), sigBytes), nil
+}

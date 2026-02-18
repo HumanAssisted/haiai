@@ -99,6 +99,11 @@ func (ws *WSConnection) sendPong(timestamp int64) error {
 
 // ConnectWS establishes a WebSocket connection to HAI for real-time communication.
 //
+// JACS authentication is handled via HTTP upgrade headers (Authorization header).
+// No post-connection handshake message is required — this matches the Python SDK
+// behavior and the server's resolve_agent_for_connection() which extracts JACS
+// credentials from the upgrade request headers.
+//
 // Uses endpoint: GET /ws/agent/connect (upgraded to WebSocket).
 func (c *Client) ConnectWS(ctx context.Context) (*WSConnection, error) {
 	ctx, cancel := context.WithCancel(ctx)

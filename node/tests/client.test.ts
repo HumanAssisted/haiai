@@ -326,9 +326,9 @@ describe('HaiClient', () => {
 
       // Verify the signed document is valid JSON
       const doc = JSON.parse(result.signed_document);
-      expect(doc.payload).toEqual({ score: 85, suite: 'mediation_basic' });
-      expect(doc.signature.algorithm).toBe('Ed25519');
-      expect(doc.signature.key_id).toBe(TEST_JACS_ID);
+      expect(doc.data).toEqual(JSON.parse(JSON.stringify({ score: 85, suite: 'mediation_basic' })));
+      expect(doc.version).toBe('1.0.0');
+      expect(doc.jacsSignature.agentID).toBe(TEST_JACS_ID);
       expect(doc.metadata.issuer).toBe(TEST_JACS_ID);
     });
   });
