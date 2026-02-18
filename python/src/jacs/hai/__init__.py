@@ -24,6 +24,8 @@ __version__ = "0.1.0"
 from jacs.hai import config
 from jacs.hai.async_client import AsyncHaiClient
 from jacs.hai.client import (
+    MAX_VERIFY_DOCUMENT_BYTES,
+    MAX_VERIFY_URL_LEN,
     HaiClient,
     benchmark,
     connect,
@@ -31,6 +33,7 @@ from jacs.hai.client import (
     dns_certified_run,
     fetch_remote_key,
     free_run,
+    generate_verify_link,
     get_email_status,
     hello_world,
     list_messages,
@@ -109,7 +112,11 @@ __all__ = [
     "RegistrationResult",
     "SendEmailResult",
     "TranscriptMessage",
+    # Constants
+    "MAX_VERIFY_URL_LEN",
+    "MAX_VERIFY_DOCUMENT_BYTES",
     # Convenience functions
+    "generate_verify_link",
     "testconnection",
     "hello_world",
     "register",

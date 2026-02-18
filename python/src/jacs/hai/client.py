@@ -56,6 +56,10 @@ from jacs.hai.signing import is_signed_event, sign_response, unwrap_signed_event
 
 logger = logging.getLogger("jacs.hai.client")
 
+# Verify link constants (HAI / public verification URLs)
+MAX_VERIFY_URL_LEN = 2048
+MAX_VERIFY_DOCUMENT_BYTES = 1515
+
 
 # ---------------------------------------------------------------------------
 # HaiClient
@@ -344,6 +348,11 @@ class HaiClient:
         owner_email: Optional[str] = None,
     ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
         """Register a JACS agent with HAI.
+
+        This replaces the legacy ``jacs.simple.register_with_hai()`` from the
+        JACS monolith.  Key differences: uses JACS-signature authentication
+        (not API keys), auto-builds the agent document from config, and
+        supports preview mode and retry.
 
         Sends ``POST /api/v1/agents/register`` with
         ``{agent_json, public_key}``.
@@ -1962,6 +1971,78 @@ def fetch_remote_key(
 ) -> PublicKeyInfo:
     """Fetch another agent's public key from HAI."""
     return _get_client().fetch_remote_key(hai_url, jacs_id, version)
+
+
+# ---------------------------------------------------------------------------
+# generate_verify_link
+# ---------------------------------------------------------------------------
+
+
+def generate_verify_link(
+    document: str,
+    base_url: str = "https://hai.ai",
+    hosted: Optional[bool] = None,
+) -> str:
+    """Build a verification URL for a signed JACS document.
+
+    Supports two modes:
+
+    - **Inline** (default): Encodes the full document in the URL as base64:
+      ``{base_url}/jacs/verify?s={base64url(document)}``
+    - **Hosted** (opt-in): Uses the document ID to reference a server-stored
+      copy: ``{base_url}/verify/{document_id}``
+
+    Args:
+        document: The full signed JACS document string (JSON).
+        base_url: Base URL of the verifier (no trailing slash).
+            Default ``"https://hai.ai"``.
+        hosted: Force hosted mode (``True``) or inline mode (``False``).
+            ``None`` defaults to inline mode.
+
+    Returns:
+        Full verification URL.
+
+    Raises:
+        ValueError: If inline mode is used but the document exceeds URL
+            limits, or if hosted mode is used but no document ID is found.
+    """
+    base = base_url.rstrip("/")
+
+    if hosted is None:
+        hosted = False
+
+    if not hosted:
+        encoded = base64.urlsafe_b64encode(
+            document.encode("utf-8")
+        ).rstrip(b"=").decode("ascii")
+        path_and_query = f"/jacs/verify?s={encoded}"
+        full_url = f"{base}{path_and_query}"
+        if len(full_url) > MAX_VERIFY_URL_LEN:
+            raise ValueError(
+                f"Verify URL would exceed max length ({MAX_VERIFY_URL_LEN}). "
+                f"Document must be at most {MAX_VERIFY_DOCUMENT_BYTES} UTF-8 bytes. "
+                f"Use hosted=True for large documents (e.g. post-quantum signatures)."
+            )
+        return full_url
+    else:
+        try:
+            doc_data = json.loads(document)
+            doc_id = (
+                doc_data.get("jacsDocumentId")
+                or doc_data.get("document_id")
+                or doc_data.get("id")
+                or ""
+            )
+        except (json.JSONDecodeError, TypeError):
+            doc_id = ""
+
+        if not doc_id:
+            raise ValueError(
+                "Cannot generate hosted verify link: no document ID found in document. "
+                "Document must contain 'jacsDocumentId', 'document_id', or 'id' field."
+            )
+
+        return f"{base}/verify/{doc_id}"
 
 
 # ---------------------------------------------------------------------------

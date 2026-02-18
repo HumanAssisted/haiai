@@ -241,6 +241,11 @@ export class HaiClient {
    * Generates a JACS agent document with the agent's public key and
    * POSTs to the registration endpoint.
    *
+   * This is the haisdk equivalent of JACS's `registerWithHai()`. Unlike
+   * the JACS version (which uses API-key Bearer auth), this method uses
+   * JACS-signed headers for authentication. See also {@link registerNewAgent}
+   * for a full generate-and-register workflow.
+   *
    * @param options - Optional registration parameters
    */
   async register(options?: { ownerEmail?: string }): Promise<RegistrationResult> {
