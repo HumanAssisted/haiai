@@ -266,6 +266,7 @@ class HaiClient:
                 message=json.dumps(data, sort_keys=True),
                 signature=hai_ack_sig,
                 hai_public_key=data.get("hai_public_key_fingerprint", ""),
+                hai_url=hai_url,
             )
 
         return HelloWorldResult(
@@ -289,6 +290,7 @@ class HaiClient:
         message: str,
         signature: str,
         hai_public_key: str = "",
+        hai_url: Optional[str] = None,
     ) -> bool:
         """Verify a message signed by HAI.
 
@@ -323,11 +325,25 @@ class HaiClient:
 
             msg_bytes = message.encode("utf-8")
 
+            pub_key: Any
             if hai_public_key.startswith("-----"):
                 pub_key = load_pem_public_key(hai_public_key.encode("utf-8"))
             else:
-                key_bytes = base64.b64decode(hai_public_key)
-                pub_key = Ed25519PublicKey.from_public_bytes(key_bytes)
+                try:
+                    key_bytes = base64.b64decode(hai_public_key)
+                    pub_key = Ed25519PublicKey.from_public_bytes(key_bytes)
+                except Exception:
+                    # Treat non-key values as key IDs/fingerprints and look up
+                    # active HAI signing keys from the server.
+                    if not hai_url:
+                        return False
+                    from jacs.hai.signing import fetch_server_keys
+
+                    keys = fetch_server_keys(hai_url)
+                    match = next((k for k in keys if k.key_id == hai_public_key), None)
+                    if match is None:
+                        return False
+                    pub_key = match.public_key
 
             pub_key.verify(sig_bytes, msg_bytes)  # type: ignore[union-attr]
             return True
@@ -2055,9 +2071,10 @@ def register_new_agent(
     owner_email: str,
     version: str = "1.0.0",
     hai_url: str = "https://hai.ai",
-    key_dir: str = "./keys",
+    key_dir: Optional[str] = None,
     config_path: str = "./jacs.config.json",
     domain: Optional[str] = None,
+    description: Optional[str] = None,
     quiet: bool = False,
 ) -> RegistrationResult:
     """Generate a keypair, self-sign, register with HAI, and save config.
@@ -2074,9 +2091,10 @@ def register_new_agent(
         owner_email: Owner's email for linking agent to a HAI user account.
         version: Agent version string.
         hai_url: HAI server base URL.
-        key_dir: Directory to write key files into.
+        key_dir: Directory to write key files into. Defaults to ``~/.jacs/keys``.
         config_path: Path for the generated ``jacs.config.json``.
         domain: Optional domain for DNS verification.
+        description: Optional agent description.
         quiet: Suppress post-registration messaging.
 
     Returns:
@@ -2103,12 +2121,22 @@ def register_new_agent(
     private_key = Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
 
-    kd = Path(key_dir)
-    kd.mkdir(parents=True, exist_ok=True)
+    kd = Path(key_dir).expanduser() if key_dir else (Path.home() / ".jacs" / "keys")
+    kd.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        kd.chmod(0o700)
+    except OSError:
+        pass
 
-    (kd / "agent_private_key.pem").write_bytes(
+    private_key_path = kd / "agent_private_key.pem"
+    private_key_path.write_bytes(
         private_key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
     )
+    # Keep private key permissions restrictive even if umask is permissive.
+    try:
+        private_key_path.chmod(0o600)
+    except OSError:
+        pass
     public_pem = public_key.public_bytes(
         Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
     ).decode()
@@ -2121,6 +2149,9 @@ def register_new_agent(
         public_key_pem=public_pem,
         private_key=private_key,
     )
+    agent_doc["description"] = description or "Agent registered via Python SDK"
+    if domain:
+        agent_doc["domain"] = domain
     agent_json_str = json.dumps(agent_doc, indent=2)
 
     # 3. Register with HAI (no API key -- the self-signed doc is the auth)
@@ -2130,6 +2161,8 @@ def register_new_agent(
         "public_key": base64.b64encode(public_pem.encode("utf-8")).decode("utf-8"),
         "owner_email": owner_email,
     }
+    if domain:
+        payload["domain"] = domain
 
     resp = httpx.post(
         url, json=payload, headers={"Content-Type": "application/json"}, timeout=30.0,
@@ -2150,7 +2183,7 @@ def register_new_agent(
     config_data = {
         "jacsAgentName": name,
         "jacsAgentVersion": version,
-        "jacsKeyDir": key_dir,
+        "jacsKeyDir": str(kd.resolve()),
         "jacsId": jacs_id,
     }
     p = Path(config_path)
@@ -2172,7 +2205,7 @@ def register_new_agent(
         print(f"  -> After verification, claim a @hai.ai username with:")
         print(f"     client.claim_username('my-agent')")
         print(f"  -> Config saved to {config_path}")
-        print(f"  -> Keys saved to {key_dir}")
+        print(f"  -> Keys saved to {kd}")
 
         if domain:
             key_hash = _compute_public_key_hash(public_pem)

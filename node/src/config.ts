@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { AgentConfig } from './types.js';
 
 /**
@@ -11,19 +11,26 @@ import type { AgentConfig } from './types.js';
  * 3. ./jacs.config.json (current directory)
  */
 export async function loadConfig(configPath?: string): Promise<AgentConfig> {
-  const resolved = configPath
+  const resolvedPath = configPath
     ?? process.env.JACS_CONFIG_PATH
     ?? './jacs.config.json';
+  const absoluteConfigPath = resolve(resolvedPath);
+  const configDir = dirname(absoluteConfigPath);
 
-  const raw = await readFile(resolved, 'utf-8');
+  const raw = await readFile(absoluteConfigPath, 'utf-8');
   const json = JSON.parse(raw) as Record<string, unknown>;
+  const keyDir = (json.jacsKeyDir ?? json.key_dir ?? '.') as string;
+  const privateKeyPath = (json.jacsPrivateKeyPath ?? json.private_key_path) as string | undefined;
 
   return {
     jacsAgentName: (json.jacsAgentName ?? json.agent_name ?? 'unnamed-agent') as string,
     jacsAgentVersion: (json.jacsAgentVersion ?? json.agent_version ?? '1.0.0') as string,
-    jacsKeyDir: (json.jacsKeyDir ?? json.key_dir ?? '.') as string,
+    // Resolve relative paths from the config location, not the caller CWD.
+    jacsKeyDir: isAbsolute(keyDir) ? keyDir : resolve(configDir, keyDir),
     jacsId: (json.jacsId ?? json.jacs_id) as string | undefined,
-    jacsPrivateKeyPath: (json.jacsPrivateKeyPath ?? json.private_key_path) as string | undefined,
+    jacsPrivateKeyPath: privateKeyPath
+      ? (isAbsolute(privateKeyPath) ? privateKeyPath : resolve(configDir, privateKeyPath))
+      : undefined,
   };
 }
 

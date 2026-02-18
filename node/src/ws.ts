@@ -26,35 +26,41 @@ export function openWebSocket(
   headers: Record<string, string>,
   timeout: number,
 ): Promise<WsLike> {
-  return new Promise((resolve, reject) => {
+  return (async () => {
     // Try ws package first
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const WS = require('ws') as { new (url: string, opts: Record<string, unknown>): WsLike };
-      const ws = new WS(url, { headers, handshakeTimeout: timeout });
-      ws.on!('open', () => resolve(ws));
-      ws.on!('error', (err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        reject(new HaiConnectionError(`WebSocket error: ${msg}`));
+      const wsModule = await import('ws');
+      const WS = ((wsModule as unknown as { default?: unknown }).default ?? wsModule) as {
+        new (wsUrl: string, opts: Record<string, unknown>): WsLike;
+      };
+
+      return await new Promise<WsLike>((resolve, reject) => {
+        const ws = new WS(url, { headers, handshakeTimeout: timeout });
+        ws.on!('open', () => resolve(ws));
+        ws.on!('error', (err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          reject(new HaiConnectionError(`WebSocket error: ${msg}`));
+        });
       });
-      return;
     } catch {
       // ws not installed, fall through
     }
 
     // Built-in WebSocket (Node 21+)
     try {
-      const ws = new WebSocket(url) as unknown as WsLike;
-      ws.addEventListener!('open', () => resolve(ws));
-      ws.addEventListener!('error', (e: unknown) => {
-        reject(new HaiConnectionError(`WebSocket error: ${e}`));
+      return await new Promise<WsLike>((resolve, reject) => {
+        const ws = new WebSocket(url) as unknown as WsLike;
+        ws.addEventListener!('open', () => resolve(ws));
+        ws.addEventListener!('error', (e: unknown) => {
+          reject(new HaiConnectionError(`WebSocket error: ${e}`));
+        });
       });
     } catch {
-      reject(new WebSocketError(
+      throw new WebSocketError(
         'WebSocket support requires the "ws" package or Node 21+. Install with: npm install ws',
-      ));
+      );
     }
-  });
+  })();
 }
 
 /** Receive a single message from a WebSocket, parsing JSON if possible. */

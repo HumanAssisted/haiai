@@ -55,6 +55,8 @@ def cmd_register(args: argparse.Namespace) -> None:
         hai_url=args.api_url,
         key_dir=args.key_dir,
         config_path=args.config_path,
+        domain=args.dns,
+        description=args.description,
     )
     print(f"Agent registered successfully!")
     print(f"  JACS ID:  {result.jacs_id}")
@@ -195,9 +197,11 @@ def build_parser() -> argparse.ArgumentParser:
     # register
     p = sub.add_parser("register", help="Register a new JACS agent")
     p.add_argument("--name", required=True, help="Agent display name")
+    p.add_argument("--description", required=True, help="Agent description")
+    p.add_argument("--dns", "--domain", dest="dns", required=True, help="DNS domain for verification")
     p.add_argument("--owner-email", required=True, help="Owner's email address")
     p.add_argument("--version", default="1.0.0", help="Agent version (default: 1.0.0)")
-    p.add_argument("--key-dir", default="./keys", help="Directory for key files")
+    p.add_argument("--key-dir", default=None, help="Directory for key files (default: ~/.jacs/keys)")
     p.add_argument("--config-path", default="./jacs.config.json", help="Config file path")
 
     # hello

@@ -5,6 +5,10 @@
  * Usage: npx haisdk <command> [options]
  */
 import { HaiClient } from './client.js';
+import { generateKeypair } from './crypt.js';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 
 const USAGE = `Usage: haisdk <command> [options]
 
@@ -105,7 +109,7 @@ async function main() {
 
 function showCommandHelp(command: string) {
   const help: Record<string, string> = {
-    register: 'Usage: haisdk register --name <name> --owner-email <email> [--domain <domain>] [--url <api-url>]',
+    register: 'Usage: haisdk register --name <name> --description <text> --dns <domain> --owner-email <email> [--key-dir <path>] [--config-path <path>] [--url <api-url>]',
     hello: 'Usage: haisdk hello [--include-test] [--url <api-url>]',
     benchmark: 'Usage: haisdk benchmark [--tier free|dns_certified|fully_certified] [--url <api-url>]',
     verify: 'Usage: haisdk verify [--jacs-id <id>] [--url <api-url>]',
@@ -126,12 +130,59 @@ async function createClient(args: string[]): Promise<HaiClient> {
 
 async function cmdRegister(args: string[]) {
   const name = requireArg(args, '--name', 'Agent name');
+  const description = requireArg(args, '--description', 'Description');
+  const dns = getArg(args, '--dns') ?? getArg(args, '--domain');
+  if (!dns) fail('DNS domain is required (--dns)');
   const ownerEmail = requireArg(args, '--owner-email', 'Owner email');
-  const domain = getArg(args, '--domain');
-  const client = await createClient(args);
+  const url = getArg(args, '--url');
+  const keyDir = resolve(getArg(args, '--key-dir') ?? join(homedir(), '.jacs', 'keys'));
+  const configPath = resolve(getArg(args, '--config-path') ?? './jacs.config.json');
 
-  const result = await client.registerNewAgent(name, { ownerEmail, domain });
-  process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  // Bootstrap registration must work before any local config exists.
+  const keypair = generateKeypair();
+  const client = HaiClient.fromCredentials(
+    name,
+    keypair.privateKeyPem,
+    url ? { url } : undefined,
+  );
+
+  const result = await client.register({
+    ownerEmail,
+    description,
+    domain: dns,
+  });
+
+  await mkdir(keyDir, { recursive: true, mode: 0o700 });
+  try {
+    await chmod(keyDir, 0o700);
+  } catch {
+    // Best effort on non-POSIX filesystems.
+  }
+
+  const privateKeyPath = join(keyDir, 'agent_private_key.pem');
+  const publicKeyPath = join(keyDir, 'agent_public_key.pem');
+  await writeFile(privateKeyPath, keypair.privateKeyPem, { mode: 0o600 });
+  try {
+    await chmod(privateKeyPath, 0o600);
+  } catch {
+    // Best effort on non-POSIX filesystems.
+  }
+  await writeFile(publicKeyPath, keypair.publicKeyPem, { mode: 0o644 });
+
+  const configData = {
+    jacsAgentName: name,
+    jacsAgentVersion: '1.0.0',
+    jacsKeyDir: keyDir,
+    jacsId: result.jacsId || name,
+  };
+  await mkdir(dirname(configPath), { recursive: true });
+  await writeFile(configPath, JSON.stringify(configData, null, 2) + '\n', { mode: 0o600 });
+
+  process.stdout.write(JSON.stringify({
+    ...result,
+    configPath,
+    keyDir,
+  }, null, 2) + '\n');
 }
 
 async function cmdHello(args: string[]) {

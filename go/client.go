@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -111,7 +112,7 @@ func NewClient(opts ...Option) (*Client, error) {
 
 	// Auto-discover config if jacsID or privateKey are missing
 	if cl.jacsID == "" || cl.privateKey == nil {
-		cfg, err := DiscoverConfig()
+		cfg, configPath, err := discoverConfigWithPath()
 		if err != nil {
 			return nil, err
 		}
@@ -121,11 +122,6 @@ func NewClient(opts ...Option) (*Client, error) {
 		}
 
 		if cl.privateKey == nil {
-			// Determine config path to resolve relative key path
-			configPath := os.Getenv("JACS_CONFIG_PATH")
-			if configPath == "" {
-				configPath = "jacs.config.json"
-			}
 			keyPath := ResolveKeyPath(cfg, configPath)
 			key, err := LoadPrivateKey(keyPath)
 			if err != nil {
@@ -270,6 +266,44 @@ func (c *Client) Register(ctx context.Context, opts RegisterOptions) (*Registrat
 	if err := c.doRequest(ctx, http.MethodPost, "/api/v1/agents/register", wireOpts, &result); err != nil {
 		return nil, err
 	}
+	return &result, nil
+}
+
+// registerWithoutAuth registers an agent document without JACS request auth.
+// New-agent registration is self-authenticated by the signed agent document.
+func (c *Client) registerWithoutAuth(ctx context.Context, opts RegisterOptions) (*RegistrationResult, error) {
+	wireOpts := opts
+	if wireOpts.PublicKey != "" {
+		wireOpts.PublicKey = base64.StdEncoding.EncodeToString([]byte(opts.PublicKey))
+	}
+
+	body, err := json.Marshal(wireOpts)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal registration request")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint+"/api/v1/agents/register", bytes.NewReader(body))
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "failed to create registration request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "registration request failed")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyHTTPError(resp.StatusCode, respBody)
+	}
+
+	var result RegistrationResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode registration response")
+	}
+
 	return &result, nil
 }
 
@@ -490,7 +524,9 @@ func (c *Client) VerifyAgent(ctx context.Context, agentID string) (*VerifyResult
 // CheckUsername checks if a username is available for @hai.ai email.
 // Calls GET /api/v1/agents/username/check?username={name}.
 func (c *Client) CheckUsername(ctx context.Context, username string) (*CheckUsernameResult, error) {
-	path := fmt.Sprintf("/api/v1/agents/username/check?username=%s", username)
+	query := neturl.Values{}
+	query.Set("username", username)
+	path := "/api/v1/agents/username/check?" + query.Encode()
 	var result CheckUsernameResult
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
@@ -501,7 +537,7 @@ func (c *Client) CheckUsername(ctx context.Context, username string) (*CheckUser
 // ClaimUsername claims a username for an agent, getting {username}@hai.ai email.
 // Calls POST /api/v1/agents/{agentID}/username.
 func (c *Client) ClaimUsername(ctx context.Context, agentID string, username string) (*ClaimUsernameResult, error) {
-	path := fmt.Sprintf("/api/v1/agents/%s/username", agentID)
+	path := fmt.Sprintf("/api/v1/agents/%s/username", neturl.PathEscape(agentID))
 	reqBody := struct {
 		Username string `json:"username"`
 	}{
@@ -531,11 +567,13 @@ func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions
 
 // ListMessages retrieves messages from the agent's mailbox.
 func (c *Client) ListMessages(ctx context.Context, opts ListMessagesOptions) ([]EmailMessage, error) {
-	path := fmt.Sprintf("/api/agents/%s/email/messages?limit=%d&offset=%d",
-		c.jacsID, opts.Limit, opts.Offset)
+	query := neturl.Values{}
+	query.Set("limit", fmt.Sprintf("%d", opts.Limit))
+	query.Set("offset", fmt.Sprintf("%d", opts.Offset))
 	if opts.Folder != "" {
-		path += "&folder=" + opts.Folder
+		query.Set("folder", opts.Folder)
 	}
+	path := fmt.Sprintf("/api/agents/%s/email/messages?%s", neturl.PathEscape(c.jacsID), query.Encode())
 	var messages []EmailMessage
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &messages); err != nil {
 		return nil, err
@@ -545,7 +583,11 @@ func (c *Client) ListMessages(ctx context.Context, opts ListMessagesOptions) ([]
 
 // MarkRead marks a message as read.
 func (c *Client) MarkRead(ctx context.Context, messageID string) error {
-	path := fmt.Sprintf("/api/agents/%s/email/messages/%s/read", c.jacsID, messageID)
+	path := fmt.Sprintf(
+		"/api/agents/%s/email/messages/%s/read",
+		neturl.PathEscape(c.jacsID),
+		neturl.PathEscape(messageID),
+	)
 	return c.doRequest(ctx, http.MethodPost, path, nil, nil)
 }
 
@@ -590,13 +632,18 @@ func (c *Client) RegisterNewAgent(ctx context.Context, agentName string, opts *R
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	// Build flat JACS document with jacsSignature (minus .signature).
+	description := "Agent registered via Go SDK"
+	if opts != nil && opts.Description != "" {
+		description = opts.Description
+	}
+
 	doc := map[string]interface{}{
 		"jacsId":           jacsID,
 		"jacsVersion":      "1.0.0",
 		"jacsAgentVersion": "1.0.0",
 		"jacsAgentName":    agentName,
 		"jacsPublicKey":    pubPEMStr,
-		"description":      "Agent registered via Go SDK",
+		"description":      description,
 		"jacsSignature": map[string]interface{}{
 			"agentID": jacsID,
 			"date":    now,
@@ -625,7 +672,7 @@ func (c *Client) RegisterNewAgent(ctx context.Context, agentName string, opts *R
 		return nil, wrapError(ErrSigningFailed, err, "failed to marshal signed agent document")
 	}
 
-	// Register with HAI via the Register method.
+	// Register with HAI (self-authenticated agent document).
 	regOpts := RegisterOptions{
 		AgentJSON: string(agentJSON),
 		PublicKey: pubPEMStr,
@@ -634,7 +681,7 @@ func (c *Client) RegisterNewAgent(ctx context.Context, agentName string, opts *R
 		regOpts.OwnerEmail = opts.OwnerEmail
 	}
 
-	reg, err := c.Register(ctx, regOpts)
+	reg, err := c.registerWithoutAuth(ctx, regOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -661,8 +708,7 @@ func (c *Client) RegisterNewAgent(ctx context.Context, agentName string, opts *R
 		fmt.Println("  -> Click the link and log into hai.ai to complete registration")
 		fmt.Println("  -> After verification, claim a @hai.ai username with:")
 		fmt.Println("     client.ClaimUsername(ctx, agentID, \"my-agent\")")
-		fmt.Println("  -> Config saved to ./jacs.config.json")
-		fmt.Println("  -> Keys saved to ./keys")
+		fmt.Println("  -> Save your config and private key to a secure, access-controlled location")
 
 		if opts != nil && opts.Domain != "" {
 			hash := sha256.Sum256([]byte(pubPEMStr))
@@ -683,6 +729,18 @@ func (c *Client) RegisterNewAgent(ctx context.Context, agentName string, opts *R
 		PublicKey:    pubPEM,
 		AgentJSON:    string(agentJSON),
 	}, nil
+}
+
+// RegisterNewAgentWithEndpoint bootstraps registration on a clean machine
+// without requiring a local config or existing private key.
+func RegisterNewAgentWithEndpoint(ctx context.Context, endpoint, agentName string, opts *RegisterNewAgentOptions) (*RegisterResult, error) {
+	cl := &Client{
+		endpoint: strings.TrimRight(endpoint, "/"),
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}
+	return cl.RegisterNewAgent(ctx, agentName, opts)
 }
 
 // openBrowser opens a URL in the user's default browser.

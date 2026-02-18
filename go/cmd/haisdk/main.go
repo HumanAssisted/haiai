@@ -2,7 +2,7 @@
 //
 // Usage:
 //
-//	haisdk register --name "My Agent" --owner-email "user@example.com"
+//	haisdk register --name "My Agent" --description "..." --dns "agent.example" --owner-email "user@example.com"
 //	haisdk hello
 //	haisdk benchmark --tier free
 //	haisdk verify --jacs-id <id>
@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	haisdk "github.com/HumanAssisted/haisdk-go"
 )
@@ -94,31 +95,97 @@ func fatal(msg string, err error) {
 	os.Exit(1)
 }
 
+func defaultSecureKeyDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ".keys"
+	}
+	return filepath.Join(home, ".jacs", "keys")
+}
+
 func cmdRegister(args []string) {
 	fs := flag.NewFlagSet("register", flag.ExitOnError)
 	name := fs.String("name", "", "Agent name (required)")
+	description := fs.String("description", "", "Agent description (required)")
+	dns := fs.String("dns", "", "Agent DNS domain (required)")
+	domainAlias := fs.String("domain", "", "Alias for --dns")
 	email := fs.String("owner-email", "", "Owner email (required)")
-	domain := fs.String("domain", "", "Agent domain (optional)")
+	keyDir := fs.String("key-dir", "", "Key directory (default: ~/.jacs/keys)")
+	configPath := fs.String("config-path", "jacs.config.json", "Config file path")
 	fs.Parse(args)
 
-	if *name == "" || *email == "" {
-		fmt.Fprintln(os.Stderr, "error: --name and --owner-email are required")
+	domain := *dns
+	if domain == "" {
+		domain = *domainAlias
+	}
+
+	if *name == "" || *description == "" || domain == "" || *email == "" {
+		fmt.Fprintln(os.Stderr, "error: --name, --description, --dns, and --owner-email are required")
 		fs.Usage()
 		os.Exit(1)
 	}
-
-	cl := newClient()
-	opts := &haisdk.RegisterNewAgentOptions{
-		OwnerEmail: *email,
-		Domain:     *domain,
+	if *keyDir == "" {
+		*keyDir = defaultSecureKeyDir()
 	}
-	result, err := cl.RegisterNewAgent(context.Background(), *name, opts)
+	if absKeyDir, err := filepath.Abs(*keyDir); err == nil {
+		*keyDir = absKeyDir
+	}
+	if absConfigPath, err := filepath.Abs(*configPath); err == nil {
+		*configPath = absConfigPath
+	}
+
+	opts := &haisdk.RegisterNewAgentOptions{
+		Description: *description,
+		OwnerEmail:  *email,
+		Domain:      domain,
+	}
+	endpoint := os.Getenv("HAI_URL")
+	if endpoint == "" {
+		endpoint = haisdk.DefaultEndpoint
+	}
+	result, err := haisdk.RegisterNewAgentWithEndpoint(context.Background(), endpoint, *name, opts)
 	if err != nil {
 		fatal("registration failed", err)
 	}
+	if result.Registration == nil {
+		fatal("registration failed", fmt.Errorf("empty registration response"))
+	}
+
+	if err := os.MkdirAll(*keyDir, 0o700); err != nil {
+		fatal("failed to create key directory", err)
+	}
+	_ = os.Chmod(*keyDir, 0o700)
+
+	privateKeyPath := filepath.Join(*keyDir, "agent_private_key.pem")
+	publicKeyPath := filepath.Join(*keyDir, "agent_public_key.pem")
+	if err := os.WriteFile(privateKeyPath, result.PrivateKey, 0o600); err != nil {
+		fatal("failed to write private key", err)
+	}
+	if err := os.WriteFile(publicKeyPath, result.PublicKey, 0o644); err != nil {
+		fatal("failed to write public key", err)
+	}
+
+	cfg := map[string]string{
+		"jacsAgentName":    *name,
+		"jacsAgentVersion": "1.0.0",
+		"jacsKeyDir":       *keyDir,
+		"jacsId":           result.Registration.JacsID,
+	}
+	cfgJSON, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		fatal("failed to encode config", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(*configPath), 0o700); err != nil {
+		fatal("failed to create config directory", err)
+	}
+	if err := os.WriteFile(*configPath, append(cfgJSON, '\n'), 0o600); err != nil {
+		fatal("failed to write config", err)
+	}
 
 	printJSON(result.Registration)
-	fmt.Printf("\nKeys saved. Check %s for verification link.\n", *email)
+	fmt.Printf("\nConfig saved to %s\n", *configPath)
+	fmt.Printf("Keys saved to %s\n", *keyDir)
+	fmt.Printf("Check %s for verification link.\n", *email)
 }
 
 func cmdHello(args []string) {

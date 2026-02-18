@@ -38,14 +38,26 @@ func LoadConfig(path string) (*Config, error) {
 //  2. ./jacs.config.json (current directory)
 //  3. ~/.jacs/jacs.config.json (home directory)
 func DiscoverConfig() (*Config, error) {
+	cfg, _, err := discoverConfigWithPath()
+	return cfg, err
+}
+
+// discoverConfigWithPath is DiscoverConfig plus the resolved config file path.
+// The returned path is absolute when possible.
+func discoverConfigWithPath() (*Config, string, error) {
 	// 1. Environment variable
 	if envPath := os.Getenv("JACS_CONFIG_PATH"); envPath != "" {
-		return LoadConfig(envPath)
+		cfg, err := LoadConfig(envPath)
+		if err != nil {
+			return nil, "", err
+		}
+		return cfg, absPathOrOriginal(envPath), nil
 	}
 
 	// 2. Current directory
-	if cfg, err := LoadConfig("jacs.config.json"); err == nil {
-		return cfg, nil
+	const localPath = "jacs.config.json"
+	if cfg, err := LoadConfig(localPath); err == nil {
+		return cfg, absPathOrOriginal(localPath), nil
 	}
 
 	// 3. Home directory
@@ -53,12 +65,20 @@ func DiscoverConfig() (*Config, error) {
 	if err == nil {
 		homePath := filepath.Join(home, ".jacs", "jacs.config.json")
 		if cfg, err := LoadConfig(homePath); err == nil {
-			return cfg, nil
+			return cfg, absPathOrOriginal(homePath), nil
 		}
 	}
 
-	return nil, newError(ErrConfigNotFound,
+	return nil, "", newError(ErrConfigNotFound,
 		"jacs.config.json not found. Set JACS_CONFIG_PATH or place it in . or ~/.jacs/")
+}
+
+func absPathOrOriginal(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	return abs
 }
 
 // ResolveKeyPath resolves a private key file path relative to the config's key directory.
@@ -70,8 +90,11 @@ func DiscoverConfig() (*Config, error) {
 //  3. private_key.pem (legacy short name)
 func ResolveKeyPath(cfg *Config, configPath string) string {
 	keyDir := cfg.JacsKeyDir
+	configDir := filepath.Dir(configPath)
 	if keyDir == "" {
-		keyDir = filepath.Dir(configPath)
+		keyDir = configDir
+	} else if !filepath.IsAbs(keyDir) {
+		keyDir = filepath.Join(configDir, keyDir)
 	}
 
 	candidates := []string{
@@ -94,8 +117,11 @@ func ResolveKeyPath(cfg *Config, configPath string) string {
 // priority as ResolveKeyPath.
 func ResolvePublicKeyPath(cfg *Config, configPath string) string {
 	keyDir := cfg.JacsKeyDir
+	configDir := filepath.Dir(configPath)
 	if keyDir == "" {
-		keyDir = filepath.Dir(configPath)
+		keyDir = configDir
+	} else if !filepath.IsAbs(keyDir) {
+		keyDir = filepath.Join(configDir, keyDir)
 	}
 
 	candidates := []string{

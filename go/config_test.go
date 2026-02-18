@@ -119,7 +119,7 @@ func TestResolveKeyPath(t *testing.T) {
 	}
 
 	path := ResolveKeyPath(cfg, "/some/dir/jacs.config.json")
-	expected := "/custom/keys/my-agent.private.pem"
+	expected := "/custom/keys/agent_private_key.pem"
 	if path != expected {
 		t.Errorf("expected '%s', got '%s'", expected, path)
 	}
@@ -132,7 +132,20 @@ func TestResolveKeyPathDefaultDir(t *testing.T) {
 	}
 
 	path := ResolveKeyPath(cfg, "/home/user/.jacs/jacs.config.json")
-	expected := "/home/user/.jacs/my-agent.private.pem"
+	expected := "/home/user/.jacs/agent_private_key.pem"
+	if path != expected {
+		t.Errorf("expected '%s', got '%s'", expected, path)
+	}
+}
+
+func TestResolveKeyPathRelativeDirUsesConfigLocation(t *testing.T) {
+	cfg := &Config{
+		JacsAgentName: "my-agent",
+		JacsKeyDir:    "keys",
+	}
+
+	path := ResolveKeyPath(cfg, "/home/user/.jacs/jacs.config.json")
+	expected := "/home/user/.jacs/keys/agent_private_key.pem"
 	if path != expected {
 		t.Errorf("expected '%s', got '%s'", expected, path)
 	}

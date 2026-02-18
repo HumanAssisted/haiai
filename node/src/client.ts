@@ -33,6 +33,12 @@ import {
   AuthenticationError,
   HaiConnectionError,
 } from './errors.js';
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  verify as verifySignature,
+} from 'node:crypto';
 import { signString, verifyString, generateKeypair } from './crypt.js';
 import { signResponse, canonicalJson, getServerKeys, unwrapSignedEvent } from './signing.js';
 import { loadConfig, loadPrivateKey } from './config.js';
@@ -243,12 +249,12 @@ export class HaiClient {
    *
    * This is the haisdk equivalent of JACS's `registerWithHai()`. Unlike
    * the JACS version (which uses API-key Bearer auth), this method uses
-   * JACS-signed headers for authentication. See also {@link registerNewAgent}
+   * the self-signed agent document as authentication. See also {@link registerNewAgent}
    * for a full generate-and-register workflow.
    *
    * @param options - Optional registration parameters
    */
-  async register(options?: { ownerEmail?: string }): Promise<RegistrationResult> {
+  async register(options?: { ownerEmail?: string; description?: string; domain?: string }): Promise<RegistrationResult> {
     const { publicKeyPem } = this.exportKeys();
 
     // Build JACS agent document
@@ -261,9 +267,13 @@ export class HaiClient {
       },
       jacsPublicKey: publicKeyPem,
       name: this.config.jacsAgentName,
+      description: options?.description ?? 'Agent registered via Node SDK',
       capabilities: ['mediation'],
       version: this.config.jacsAgentVersion,
     };
+    if (options?.domain) {
+      agentDoc.domain = options.domain;
+    }
 
     // Sign canonical JSON
     const canonical = canonicalJson(agentDoc);
@@ -279,10 +289,14 @@ export class HaiClient {
     if (options?.ownerEmail) {
       body.owner_email = options.ownerEmail;
     }
+    if (options?.domain) {
+      body.domain = options.domain;
+    }
 
     const response = await this.fetchWithRetry(url, {
       method: 'POST',
-      headers: this.buildAuthHeaders(),
+      // New-agent registration is self-authenticated by the signed agent document.
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
 
@@ -291,6 +305,7 @@ export class HaiClient {
     return {
       success: true,
       agentId: (data.agent_id as string) || (data.agentId as string) || '',
+      jacsId: (data.jacs_id as string) || (data.jacsId as string) || this.jacsId,
       haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
       registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
       registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
@@ -669,10 +684,15 @@ export class HaiClient {
    * signing, and registration in one call.
    *
    * @param agentName - Name for the new agent
-   * @param options - Registration options (ownerEmail required, domain optional)
+   * @param options - Registration options
    * @returns Registration result
    */
-  async registerNewAgent(agentName: string, options: { ownerEmail: string; domain?: string; quiet?: boolean }): Promise<RegistrationResult> {
+  async registerNewAgent(agentName: string, options: {
+    ownerEmail: string;
+    domain?: string;
+    description?: string;
+    quiet?: boolean;
+  }): Promise<RegistrationResult> {
     const { publicKeyPem, privateKeyPem } = generateKeypair();
 
     // Build minimal JACS agent document
@@ -685,6 +705,7 @@ export class HaiClient {
       },
       jacsPublicKey: publicKeyPem,
       name: agentName,
+      description: options.description ?? 'Agent registered via Node SDK',
       capabilities: ['mediation'],
       version: '1.0.0',
     };
@@ -707,7 +728,7 @@ export class HaiClient {
 
     const response = await this.fetchWithRetry(url, {
       method: 'POST',
-      headers: this.buildAuthHeaders(),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
 
@@ -720,11 +741,9 @@ export class HaiClient {
       console.log(`  -> Click the link and log into hai.ai to complete registration`);
       console.log(`  -> After verification, claim a @hai.ai username with:`);
       console.log(`     client.claimUsername('${(data.agent_id as string) || ''}', 'my-agent')`);
-      console.log(`  -> Config saved to ./jacs.config.json`);
-      console.log(`  -> Keys saved to ./keys`);
+      console.log(`  -> Save your config and private key to a secure, access-controlled location`);
 
       if (options.domain) {
-        const { createHash } = require('node:crypto') as typeof import('node:crypto');
         const hash = createHash('sha256').update(publicKeyPem).digest('hex');
         console.log(`\n--- DNS Setup Instructions ---`);
         console.log(`Add this TXT record to your domain '${options.domain}':`);
@@ -740,6 +759,7 @@ export class HaiClient {
     return {
       success: true,
       agentId: (data.agent_id as string) || (data.agentId as string) || '',
+      jacsId: (data.jacs_id as string) || (data.jacsId as string) || (agentDoc.jacsId as string) || '',
       haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
       registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
       registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
@@ -793,7 +813,6 @@ export class HaiClient {
    * Returns { publicKeyPem, privateKeyPem }.
    */
   exportKeys(): { publicKeyPem: string; privateKeyPem: string } {
-    const { createPrivateKey, createPublicKey } = require('node:crypto') as typeof import('node:crypto');
     const privKey = createPrivateKey(this.privateKeyPem);
     const pubKey = createPublicKey(privKey);
     const publicKeyPem = pubKey.export({ type: 'spki', format: 'pem' }) as string;
@@ -1247,12 +1266,10 @@ export class HaiClient {
    * 2. DNS verification (via server attestation)
    * 3. HAI registration attestation
    *
-   * @param agentDocument - JACS agent document (object or JSON string)
-   * @returns Verification result with signature validity and trust level
-   */
+  * @param agentDocument - JACS agent document (object or JSON string)
+  * @returns Verification result with signature validity and trust level
+  */
   async verifyAgent(agentDocument: Record<string, unknown> | string): Promise<VerificationResult> {
-    const { createPublicKey, verify } = require('node:crypto') as typeof import('node:crypto');
-
     const doc = typeof agentDocument === 'string'
       ? JSON.parse(agentDocument) as Record<string, unknown>
       : agentDocument;
@@ -1288,7 +1305,7 @@ export class HaiClient {
       const canonical = canonicalJson(verifyDoc);
 
       const keyObject = createPublicKey(publicKeyPem);
-      result.signatureValid = verify(
+      result.signatureValid = verifySignature(
         null,
         Buffer.from(canonical),
         keyObject,

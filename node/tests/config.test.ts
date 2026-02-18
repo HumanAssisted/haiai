@@ -29,7 +29,7 @@ describe('config', () => {
       const config = await loadConfig(configPath);
       expect(config.jacsAgentName).toBe('test-bot');
       expect(config.jacsAgentVersion).toBe('2.0.0');
-      expect(config.jacsKeyDir).toBe('./keys');
+      expect(config.jacsKeyDir).toBe(path.resolve(tmpDir, 'keys'));
       expect(config.jacsId).toBe('jacs-id-1');
     });
 
@@ -45,7 +45,7 @@ describe('config', () => {
       const config = await loadConfig(configPath);
       expect(config.jacsAgentName).toBe('snake-bot');
       expect(config.jacsAgentVersion).toBe('1.0.0');
-      expect(config.jacsKeyDir).toBe('./mykeys');
+      expect(config.jacsKeyDir).toBe(path.resolve(tmpDir, 'mykeys'));
       expect(config.jacsId).toBe('snake-id');
     });
 
@@ -56,7 +56,7 @@ describe('config', () => {
       const config = await loadConfig(configPath);
       expect(config.jacsAgentName).toBe('unnamed-agent');
       expect(config.jacsAgentVersion).toBe('1.0.0');
-      expect(config.jacsKeyDir).toBe('.');
+      expect(config.jacsKeyDir).toBe(path.resolve(tmpDir));
     });
 
     it('throws for non-existent file', async () => {
@@ -82,6 +82,7 @@ describe('config', () => {
         process.env.JACS_CONFIG_PATH = configPath;
         const config = await loadConfig();
         expect(config.jacsAgentName).toBe('env-bot');
+        expect(config.jacsKeyDir).toBe(path.resolve(tmpDir));
       } finally {
         if (originalEnv !== undefined) {
           process.env.JACS_CONFIG_PATH = originalEnv;
@@ -89,6 +90,21 @@ describe('config', () => {
           delete process.env.JACS_CONFIG_PATH;
         }
       }
+    });
+
+    it('resolves relative jacsPrivateKeyPath from config directory', async () => {
+      const configPath = path.join(tmpDir, 'jacs.config.json');
+      await fs.writeFile(configPath, JSON.stringify({
+        jacsAgentName: 'test-bot',
+        jacsAgentVersion: '1.0.0',
+        jacsKeyDir: './keys',
+        jacsPrivateKeyPath: './custom/agent_private_key.pem',
+      }));
+
+      const config = await loadConfig(configPath);
+      expect(config.jacsPrivateKeyPath).toBe(
+        path.resolve(tmpDir, 'custom/agent_private_key.pem'),
+      );
     });
   });
 

@@ -31,11 +31,11 @@ type HaiSignature struct {
 // StatusResult contains the verification/registration status of an agent.
 // Maps to GET /api/v1/agents/{jacs_id}/verify response.
 type StatusResult struct {
-	JacsID        string          `json:"jacs_id"`
-	Registered    bool            `json:"registered"`
-	Registrations []Registration  `json:"registrations"`
-	DNSVerified   bool            `json:"dns_verified"`
-	RegisteredAt  string          `json:"registered_at"`
+	JacsID        string         `json:"jacs_id"`
+	Registered    bool           `json:"registered"`
+	Registrations []Registration `json:"registrations"`
+	DNSVerified   bool           `json:"dns_verified"`
+	RegisteredAt  string         `json:"registered_at"`
 }
 
 // Registration represents a single registration entry in the verify response.
@@ -89,8 +89,8 @@ type AgentEvent struct {
 	Reason string `json:"reason,omitempty"`
 
 	// BenchmarkJob event fields
-	JobID      string             `json:"job_id,omitempty"`
-	ScenarioID string             `json:"scenario_id,omitempty"`
+	JobID      string              `json:"job_id,omitempty"`
+	ScenarioID string              `json:"scenario_id,omitempty"`
 	Config     *BenchmarkJobConfig `json:"config,omitempty"`
 }
 
@@ -126,20 +126,20 @@ type JobResponseResult struct {
 
 // HelloResult is the response from the hello endpoint.
 type HelloResult struct {
-	Timestamp              string `json:"timestamp"`
-	ClientIP               string `json:"client_ip"`
+	Timestamp               string `json:"timestamp"`
+	ClientIP                string `json:"client_ip"`
 	HaiPublicKeyFingerprint string `json:"hai_public_key_fingerprint"`
-	Message                string `json:"message"`
-	HaiSignedAck           string `json:"hai_signed_ack"`
-	HelloID                string `json:"hello_id"`
-	TestScenario           string `json:"test_scenario,omitempty"`
+	Message                 string `json:"message"`
+	HaiSignedAck            string `json:"hai_signed_ack"`
+	HelloID                 string `json:"hello_id"`
+	TestScenario            string `json:"test_scenario,omitempty"`
 }
 
 // AttestationResult is the response from the attestation endpoint.
 type AttestationResult struct {
-	AgentID     string         `json:"agent_id"`
+	AgentID     string          `json:"agent_id"`
 	Attestation json.RawMessage `json:"attestation"`
-	Signatures  []HaiSignature `json:"signatures,omitempty"`
+	Signatures  []HaiSignature  `json:"signatures,omitempty"`
 }
 
 // VerifyResult is the response from verifying another agent.
@@ -157,7 +157,7 @@ type SignedDocument struct {
 	Version       string                 `json:"version"`
 	DocumentType  string                 `json:"document_type"`
 	Data          map[string]interface{} `json:"data"`
-	Metadata      SignedDocumentMetadata  `json:"metadata"`
+	Metadata      SignedDocumentMetadata `json:"metadata"`
 	JacsSignature JacsSignatureBlock     `json:"jacsSignature"`
 }
 
@@ -192,9 +192,10 @@ type ClaimUsernameResult struct {
 
 // RegisterNewAgentOptions configures RegisterNewAgent behavior.
 type RegisterNewAgentOptions struct {
-	Domain     string
-	OwnerEmail string
-	Quiet      bool
+	Domain      string
+	Description string
+	OwnerEmail  string
+	Quiet       bool
 }
 
 // RegisterResult is the result of RegisterNewAgent, containing

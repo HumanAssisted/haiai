@@ -131,6 +131,7 @@ describe('type definitions', () => {
     const result: RegistrationResult = {
       success: true,
       agentId: 'agent-1',
+      jacsId: 'jacs-1',
       haiSignature: 'sig',
       registrationId: 'reg-1',
       registeredAt: '2024-01-01T00:00:00Z',

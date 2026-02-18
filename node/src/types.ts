@@ -129,6 +129,7 @@ export interface HelloWorldResult {
 export interface RegistrationResult {
   success: boolean;
   agentId: string;
+  jacsId: string;
   haiSignature: string;
   registrationId: string;
   registeredAt: string;
