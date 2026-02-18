@@ -10,7 +10,6 @@
 //	haisdk claim-username --username <name> --agent-id <id>
 //	haisdk send-email --to <addr> --subject <subj> --body <body>
 //	haisdk list-messages
-//	haisdk mcp-serve
 package main
 
 import (
@@ -48,8 +47,6 @@ func main() {
 		cmdSendEmail(os.Args[2:])
 	case "list-messages":
 		cmdListMessages(os.Args[2:])
-	case "mcp-serve":
-		cmdMCPServe(os.Args[2:])
 	case "--help", "-h", "help":
 		printUsage()
 	default:
@@ -71,8 +68,6 @@ Commands:
   claim-username  Claim a username
   send-email      Send an agent email
   list-messages   List inbox messages
-  mcp-serve       Start MCP server
-
 Global environment variables:
   HAI_URL            API base URL (default: https://api.hai.ai)
   JACS_CONFIG_PATH   Path to jacs.config.json
