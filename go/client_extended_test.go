@@ -34,7 +34,7 @@ func TestHelloAuthHeaderFormat(t *testing.T) {
 			t.Errorf("expected jacsID 'test-agent-id', got '%s'", parts[0])
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(HelloResult{Message: "ok"})
+		json.NewEncoder(w).Encode(HelloResult{Message: "ok", HelloID: "h1"})
 	}))
 	defer server.Close()
 
@@ -52,7 +52,7 @@ func TestHelloNoBearer(t *testing.T) {
 			t.Error("Authorization header should NOT contain Bearer")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(HelloResult{Message: "ok"})
+		json.NewEncoder(w).Encode(HelloResult{Message: "ok", HelloID: "h1"})
 	}))
 	defer server.Close()
 
@@ -173,7 +173,7 @@ func TestStatus500(t *testing.T) {
 	}
 }
 
-func TestStatusSetsAgentIDIfEmpty(t *testing.T) {
+func TestStatusSetsJacsIDIfEmpty(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -187,8 +187,8 @@ func TestStatusSetsAgentIDIfEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.AgentID != "test-agent-id" {
-		t.Errorf("expected AgentID to default to jacsID, got '%s'", result.AgentID)
+	if result.JacsID != "test-agent-id" {
+		t.Errorf("expected JacsID to default to jacsID, got '%s'", result.JacsID)
 	}
 }
 
@@ -199,14 +199,18 @@ func TestStatusSetsAgentIDIfEmpty(t *testing.T) {
 func TestBaselineRun(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Suite string `json:"suite"`
+			Name string `json:"name"`
+			Tier string `json:"tier"`
 		}
 		json.NewDecoder(r.Body).Decode(&body)
-		if body.Suite != "baseline" {
-			t.Errorf("expected suite 'baseline', got '%s'", body.Suite)
+		if body.Tier != "baseline" {
+			t.Errorf("expected tier 'baseline', got '%s'", body.Tier)
+		}
+		if body.Name != "baseline" {
+			t.Errorf("expected name 'baseline', got '%s'", body.Name)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(BenchmarkResult{RunID: "run-bl"})
+		json.NewEncoder(w).Encode(BenchmarkResult{RunID: "run-bl", Tier: "baseline"})
 	}))
 	defer server.Close()
 
@@ -329,7 +333,15 @@ func TestVerifyAgentSuccess(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(VerifyResult{Valid: true, AgentID: "other-agent"})
+		json.NewEncoder(w).Encode(VerifyResult{
+			JacsID:     "other-agent",
+			Registered: true,
+			DNSVerified: true,
+			RegisteredAt: "2024-01-15T10:30:00Z",
+			Registrations: []Registration{
+				{KeyID: "k1", Algorithm: "Ed25519", SignatureJSON: "{}", SignedAt: "2024-01-15T10:30:00Z"},
+			},
+		})
 	}))
 	defer server.Close()
 
@@ -338,8 +350,11 @@ func TestVerifyAgentSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !result.Valid {
-		t.Error("expected Valid to be true")
+	if !result.Registered {
+		t.Error("expected Registered to be true")
+	}
+	if result.JacsID != "other-agent" {
+		t.Errorf("expected JacsID 'other-agent', got '%s'", result.JacsID)
 	}
 }
 
@@ -551,11 +566,14 @@ func TestRegistrationResultJSON(t *testing.T) {
 
 func TestStatusResultJSON(t *testing.T) {
 	s := StatusResult{
-		Registered:     true,
-		AgentID:        "a1",
-		RegistrationID: "reg-1",
-		RegisteredAt:   "2025-01-01",
-		HaiSignatures:  []string{"sig1", "sig2"},
+		JacsID:       "a1",
+		Registered:   true,
+		DNSVerified:  true,
+		RegisteredAt: "2025-01-01",
+		Registrations: []Registration{
+			{KeyID: "k1", Algorithm: "Ed25519", SignatureJSON: "{}", SignedAt: "2025-01-01"},
+			{KeyID: "k2", Algorithm: "Ed25519", SignatureJSON: "{}", SignedAt: "2025-01-02"},
+		},
 	}
 	data, err := json.Marshal(s)
 	if err != nil {
@@ -565,7 +583,7 @@ func TestStatusResultJSON(t *testing.T) {
 	if err := json.Unmarshal(data, &s2); err != nil {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
-	if !s2.Registered || s2.AgentID != "a1" || s2.RegistrationID != "reg-1" || len(s2.HaiSignatures) != 2 {
+	if !s2.Registered || s2.JacsID != "a1" || !s2.DNSVerified || len(s2.Registrations) != 2 {
 		t.Errorf("roundtrip mismatch: %+v", s2)
 	}
 }
@@ -573,7 +591,8 @@ func TestStatusResultJSON(t *testing.T) {
 func TestBenchmarkResultJSON(t *testing.T) {
 	br := BenchmarkResult{
 		RunID: "run-1",
-		Suite: "baseline",
+		Name:  "baseline",
+		Tier:  "baseline",
 		Score: 0.85,
 		Results: []BenchmarkTestResult{
 			{Name: "test1", Passed: true, Score: 1.0},
@@ -586,6 +605,9 @@ func TestBenchmarkResultJSON(t *testing.T) {
 	json.Unmarshal(data, &br2)
 	if br2.RunID != "run-1" || br2.Score != 0.85 || len(br2.Results) != 2 {
 		t.Errorf("roundtrip mismatch: %+v", br2)
+	}
+	if br2.Tier != "baseline" {
+		t.Errorf("expected tier 'baseline', got '%s'", br2.Tier)
 	}
 	if br2.Results[1].Message != "failed" {
 		t.Errorf("expected message 'failed', got '%s'", br2.Results[1].Message)
@@ -604,14 +626,17 @@ func TestJobResponseResultJSON(t *testing.T) {
 
 func TestVerifyResultJSON(t *testing.T) {
 	v := VerifyResult{
-		Valid:   false,
-		AgentID: "a1",
-		Errors:  []string{"expired", "revoked"},
+		JacsID:     "a1",
+		Registered: false,
+		DNSVerified: false,
+		Registrations: []Registration{
+			{KeyID: "k1", Algorithm: "Ed25519", SignatureJSON: "{}", SignedAt: "2025-01-01"},
+		},
 	}
 	data, _ := json.Marshal(v)
 	var v2 VerifyResult
 	json.Unmarshal(data, &v2)
-	if v2.Valid || v2.AgentID != "a1" || len(v2.Errors) != 2 {
+	if v2.Registered || v2.JacsID != "a1" || len(v2.Registrations) != 1 {
 		t.Errorf("roundtrip mismatch: %+v", v2)
 	}
 }
@@ -785,14 +810,15 @@ func TestErrorMessageFormat(t *testing.T) {
 func TestFreeChaoticRun(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Suite string `json:"suite"`
+			Name string `json:"name"`
+			Tier string `json:"tier"`
 		}
 		json.NewDecoder(r.Body).Decode(&body)
-		if body.Suite != "free_chaotic" {
-			t.Errorf("expected suite 'free_chaotic', got '%s'", body.Suite)
+		if body.Tier != "free_chaotic" {
+			t.Errorf("expected tier 'free_chaotic', got '%s'", body.Tier)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(BenchmarkResult{RunID: "run-fc"})
+		json.NewEncoder(w).Encode(BenchmarkResult{RunID: "run-fc", Tier: "free_chaotic"})
 	}))
 	defer server.Close()
 

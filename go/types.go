@@ -28,13 +28,22 @@ type HaiSignature struct {
 	SignedAt  string `json:"signed_at"`
 }
 
-// StatusResult contains the registration status of an agent.
+// StatusResult contains the verification/registration status of an agent.
+// Maps to GET /api/v1/agents/{jacs_id}/verify response.
 type StatusResult struct {
-	Registered     bool     `json:"registered"`
-	AgentID        string   `json:"agent_id"`
-	RegistrationID string   `json:"registration_id"`
-	RegisteredAt   string   `json:"registered_at"`
-	HaiSignatures  []string `json:"hai_signatures"`
+	JacsID        string          `json:"jacs_id"`
+	Registered    bool            `json:"registered"`
+	Registrations []Registration  `json:"registrations"`
+	DNSVerified   bool            `json:"dns_verified"`
+	RegisteredAt  string          `json:"registered_at"`
+}
+
+// Registration represents a single registration entry in the verify response.
+type Registration struct {
+	KeyID         string `json:"key_id"`
+	Algorithm     string `json:"algorithm"`
+	SignatureJSON string `json:"signature_json"`
+	SignedAt      string `json:"signed_at"`
 }
 
 // PublicKeyInfo contains information about a public key fetched from HAI.
@@ -49,7 +58,8 @@ type PublicKeyInfo struct {
 // BenchmarkResult contains the result of a benchmark run.
 type BenchmarkResult struct {
 	RunID       string                `json:"run_id"`
-	Suite       string                `json:"suite"`
+	Name        string                `json:"name"`
+	Tier        string                `json:"tier"`
 	Score       float64               `json:"score"`
 	Results     []BenchmarkTestResult `json:"results"`
 	CompletedAt string                `json:"completed_at"`
@@ -116,8 +126,13 @@ type JobResponseResult struct {
 
 // HelloResult is the response from the hello endpoint.
 type HelloResult struct {
-	Message string `json:"message"`
-	AgentID string `json:"agent_id,omitempty"`
+	Timestamp              string `json:"timestamp"`
+	ClientIP               string `json:"client_ip"`
+	HaiPublicKeyFingerprint string `json:"hai_public_key_fingerprint"`
+	Message                string `json:"message"`
+	HaiSignedAck           string `json:"hai_signed_ack"`
+	HelloID                string `json:"hello_id"`
+	TestScenario           string `json:"test_scenario,omitempty"`
 }
 
 // AttestationResult is the response from the attestation endpoint.
@@ -128,11 +143,13 @@ type AttestationResult struct {
 }
 
 // VerifyResult is the response from verifying another agent.
+// Maps to GET /api/v1/agents/{jacs_id}/verify response.
 type VerifyResult struct {
-	Valid       bool           `json:"valid"`
-	AgentID     string         `json:"agent_id"`
-	Signatures  []HaiSignature `json:"signatures,omitempty"`
-	Errors      []string       `json:"errors,omitempty"`
+	JacsID        string         `json:"jacs_id"`
+	Registered    bool           `json:"registered"`
+	Registrations []Registration `json:"registrations"`
+	DNSVerified   bool           `json:"dns_verified"`
+	RegisteredAt  string         `json:"registered_at"`
 }
 
 // SignedDocument is a JACS-signed document envelope matching the Python SDK format.
@@ -157,4 +174,32 @@ type JacsSignatureBlock struct {
 	AgentID   string `json:"agentID"`
 	Date      string `json:"date"`
 	Signature string `json:"signature"`
+}
+
+// CheckUsernameResult is the response from checking username availability.
+type CheckUsernameResult struct {
+	Available bool   `json:"available"`
+	Username  string `json:"username"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// ClaimUsernameResult is the response from claiming a username.
+type ClaimUsernameResult struct {
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	AgentID  string `json:"agent_id"`
+}
+
+// RegisterNewAgentOptions configures RegisterNewAgent behavior.
+type RegisterNewAgentOptions struct {
+	Domain string
+}
+
+// RegisterResult is the result of RegisterNewAgent, containing
+// the generated key material and registration response.
+type RegisterResult struct {
+	Registration *RegistrationResult
+	PrivateKey   []byte // PEM-encoded Ed25519 private key
+	PublicKey    []byte // PEM-encoded Ed25519 public key
+	AgentJSON    string // The signed JACS agent document
 }

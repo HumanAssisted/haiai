@@ -211,11 +211,16 @@ class TestRegister:
 class TestStatus:
     @respx.mock
     def test_registered(self, loaded_config: None, jacs_id: str) -> None:
-        respx.get(f"https://hai.ai/api/v1/agents/{jacs_id}/status").mock(
+        respx.get(f"https://hai.ai/api/v1/agents/{jacs_id}/verify").mock(
             return_value=httpx.Response(200, json={
-                "agent_id": jacs_id,
-                "registration_id": "reg-1",
-                "hai_signatures": ["ed25519"],
+                "jacs_id": jacs_id,
+                "registered": True,
+                "registrations": [
+                    {"key_id": "k1", "algorithm": "ed25519",
+                     "signature_json": "{}", "signed_at": "2024-01-01"},
+                ],
+                "dns_verified": False,
+                "registered_at": "2024-01-01",
             })
         )
         client = HaiClient()
@@ -226,7 +231,7 @@ class TestStatus:
 
     @respx.mock
     def test_not_registered(self, loaded_config: None, jacs_id: str) -> None:
-        respx.get(f"https://hai.ai/api/v1/agents/{jacs_id}/status").mock(
+        respx.get(f"https://hai.ai/api/v1/agents/{jacs_id}/verify").mock(
             return_value=httpx.Response(404, json={"message": "not found"})
         )
         client = HaiClient()
@@ -242,10 +247,16 @@ class TestStatus:
 class TestGetAgentAttestation:
     @respx.mock
     def test_registered_agent(self, loaded_config: None) -> None:
-        respx.get("https://hai.ai/api/v1/agents/other-id/status").mock(
+        respx.get("https://hai.ai/api/v1/agents/other-id/verify").mock(
             return_value=httpx.Response(200, json={
-                "agent_id": "other-id",
-                "hai_signatures": ["ed25519"],
+                "jacs_id": "other-id",
+                "registered": True,
+                "registrations": [
+                    {"key_id": "k1", "algorithm": "ed25519",
+                     "signature_json": "{}", "signed_at": "2024-01-01"},
+                ],
+                "dns_verified": False,
+                "registered_at": "2024-01-01",
             })
         )
         client = HaiClient()
@@ -255,7 +266,7 @@ class TestGetAgentAttestation:
 
     @respx.mock
     def test_unregistered_agent(self, loaded_config: None) -> None:
-        respx.get("https://hai.ai/api/v1/agents/unknown/status").mock(
+        respx.get("https://hai.ai/api/v1/agents/unknown/verify").mock(
             return_value=httpx.Response(404, json={})
         )
         client = HaiClient()
@@ -475,8 +486,14 @@ class TestConvenienceFunctions:
 
     @respx.mock
     def test_status(self, loaded_config: None, jacs_id: str) -> None:
-        respx.get(f"https://hai.ai/api/v1/agents/{jacs_id}/status").mock(
-            return_value=httpx.Response(200, json={"agent_id": jacs_id})
+        respx.get(f"https://hai.ai/api/v1/agents/{jacs_id}/verify").mock(
+            return_value=httpx.Response(200, json={
+                "jacs_id": jacs_id,
+                "registered": True,
+                "registrations": [],
+                "dns_verified": False,
+                "registered_at": "2024-01-01",
+            })
         )
         result = status("https://hai.ai")
         assert result.registered

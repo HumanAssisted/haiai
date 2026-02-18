@@ -14,7 +14,10 @@ import type {
   CertifiedResult,
   BenchmarkResult,
   JobResponseResult,
-  StatusResult,
+  VerifyAgentResult,
+  RegistrationEntry,
+  CheckUsernameResult,
+  ClaimUsernameResult,
   TranscriptMessage,
   ConversationTurn,
   AgentCapability,
@@ -113,10 +116,15 @@ describe('type definitions', () => {
       clientIp: '127.0.0.1',
       haiPublicKeyFingerprint: 'abc123',
       message: 'Hello!',
+      haiSignedAck: 'ack-sig',
+      helloId: 'hello-1',
+      testScenario: null,
       haiSignatureValid: true,
       rawResponse: {},
     };
     expect(result.success).toBe(true);
+    expect(result.haiSignedAck).toBe('ack-sig');
+    expect(result.helloId).toBe('hello-1');
   });
 
   it('RegistrationResult has correct shape', () => {
@@ -185,15 +193,48 @@ describe('type definitions', () => {
     expect(result.success).toBe(true);
   });
 
-  it('StatusResult has correct shape', () => {
-    const result: StatusResult = {
-      active: true,
-      agentId: 'agent-1',
+  it('VerifyAgentResult has correct shape', () => {
+    const result: VerifyAgentResult = {
+      jacsId: 'agent-1',
+      registered: true,
+      registrations: [
+        { keyId: 'key-1', algorithm: 'Ed25519', signatureJson: '{}', signedAt: '2024-01-01T00:00:00Z' },
+      ],
+      dnsVerified: true,
       registeredAt: '2024-01-01T00:00:00Z',
-      benchmarkCount: 5,
       rawResponse: {},
     };
-    expect(result.benchmarkCount).toBe(5);
+    expect(result.registered).toBe(true);
+    expect(result.registrations).toHaveLength(1);
+    expect(result.dnsVerified).toBe(true);
+  });
+
+  it('RegistrationEntry has correct shape', () => {
+    const entry: RegistrationEntry = {
+      keyId: 'key-1',
+      algorithm: 'Ed25519',
+      signatureJson: '{"sig":"abc"}',
+      signedAt: '2024-01-01T00:00:00Z',
+    };
+    expect(entry.algorithm).toBe('Ed25519');
+  });
+
+  it('CheckUsernameResult has correct shape', () => {
+    const result: CheckUsernameResult = {
+      available: true,
+      username: 'my-agent',
+    };
+    expect(result.available).toBe(true);
+    expect(result.reason).toBeUndefined();
+  });
+
+  it('ClaimUsernameResult has correct shape', () => {
+    const result: ClaimUsernameResult = {
+      username: 'my-agent',
+      email: 'my-agent@hai.ai',
+      agentId: 'agent-1',
+    };
+    expect(result.email).toBe('my-agent@hai.ai');
   });
 
   it('AgentCapability accepts known and custom strings', () => {

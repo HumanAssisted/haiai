@@ -82,6 +82,9 @@ describe('HaiClient', () => {
           client_ip: '1.2.3.4',
           hai_public_key_fingerprint: 'fp123',
           message: 'Hello, agent!',
+          hai_signed_ack: 'ack-sig-123',
+          hello_id: 'hello-456',
+          test_scenario: null,
         },
       });
       globalThis.fetch = mock.fetch;
@@ -94,6 +97,9 @@ describe('HaiClient', () => {
       expect(result.clientIp).toBe('1.2.3.4');
       expect(result.message).toBe('Hello, agent!');
       expect(result.haiPublicKeyFingerprint).toBe('fp123');
+      expect(result.haiSignedAck).toBe('ack-sig-123');
+      expect(result.helloId).toBe('hello-456');
+      expect(result.testScenario).toBeNull();
 
       // Verify auth header was sent
       const authHeader = (mock.calls[0].init.headers as Record<string, string>)['Authorization'];
@@ -155,17 +161,46 @@ describe('HaiClient', () => {
     });
   });
 
-  describe('status', () => {
-    it('returns agent status', async () => {
+  describe('verify', () => {
+    it('returns agent verification result', async () => {
       const mock = createMockFetch({
         status: 200,
         body: {
+          jacs_id: TEST_JACS_ID,
           registered: true,
-          agent_id: TEST_JACS_ID,
-          registration_id: 'reg-1',
+          registrations: [
+            { key_id: 'key-1', algorithm: 'Ed25519', signature_json: '{}', signed_at: '2024-01-01T00:00:00Z' },
+          ],
+          dns_verified: true,
           registered_at: '2024-01-01T00:00:00Z',
-          hai_signatures: ['ed25519'],
-          benchmark_count: 3,
+        },
+      });
+      globalThis.fetch = mock.fetch;
+
+      const client = createClient();
+      const result = await client.verify();
+
+      expect(result.jacsId).toBe(TEST_JACS_ID);
+      expect(result.registered).toBe(true);
+      expect(result.registrations).toHaveLength(1);
+      expect(result.registrations[0].keyId).toBe('key-1');
+      expect(result.registrations[0].algorithm).toBe('Ed25519');
+      expect(result.dnsVerified).toBe(true);
+      expect(result.registeredAt).toBe('2024-01-01T00:00:00Z');
+
+      // Verify URL uses /verify not /status
+      expect(mock.calls[0].url).toContain('/api/v1/agents/test-agent-001/verify');
+    });
+
+    it('status() delegates to verify()', async () => {
+      const mock = createMockFetch({
+        status: 200,
+        body: {
+          jacs_id: TEST_JACS_ID,
+          registered: true,
+          registrations: [],
+          dns_verified: false,
+          registered_at: '',
         },
       });
       globalThis.fetch = mock.fetch;
@@ -173,23 +208,9 @@ describe('HaiClient', () => {
       const client = createClient();
       const result = await client.status();
 
+      expect(result.jacsId).toBe(TEST_JACS_ID);
       expect(result.registered).toBe(true);
-      expect(result.agentId).toBe(TEST_JACS_ID);
-      expect(result.registrationId).toBe('reg-1');
-      expect(result.haiSignatures).toEqual(['ed25519']);
-      expect(result.benchmarkCount).toBe(3);
-    });
-
-    it('handles legacy active field as registered', async () => {
-      const mock = createMockFetch({
-        status: 200,
-        body: { active: true, agent_id: TEST_JACS_ID },
-      });
-      globalThis.fetch = mock.fetch;
-
-      const client = createClient();
-      const result = await client.status();
-      expect(result.registered).toBe(true);
+      expect(mock.calls[0].url).toContain('/verify');
     });
 
     it('defaults to empty values', async () => {
@@ -197,11 +218,11 @@ describe('HaiClient', () => {
       globalThis.fetch = mock.fetch;
 
       const client = createClient();
-      const result = await client.status();
+      const result = await client.verify();
       expect(result.registered).toBe(false);
-      expect(result.registrationId).toBe('');
-      expect(result.haiSignatures).toEqual([]);
-      expect(result.benchmarkCount).toBe(0);
+      expect(result.registrations).toEqual([]);
+      expect(result.dnsVerified).toBe(false);
+      expect(result.registeredAt).toBe('');
     });
   });
 
@@ -289,22 +310,35 @@ describe('HaiClient', () => {
   });
 
   describe('getAgentAttestation', () => {
-    it('fetches attestation for another agent', async () => {
+    it('fetches attestation for another agent via /verify', async () => {
       const mock = createMockFetch({
         status: 200,
-        body: { agent_id: 'other-agent', registered: true, hai_signatures: ['ed25519'] },
+        body: {
+          jacs_id: 'other-agent',
+          registered: true,
+          registrations: [
+            { key_id: 'key-1', algorithm: 'Ed25519', signature_json: '{}', signed_at: '2024-01-01T00:00:00Z' },
+          ],
+          dns_verified: false,
+          registered_at: '2024-01-01T00:00:00Z',
+        },
       });
       globalThis.fetch = mock.fetch;
 
       const client = createClient();
       const result = await client.getAgentAttestation('other-agent');
 
-      expect(result.agent_id).toBe('other-agent');
-      expect(mock.calls[0].url).toContain('/api/v1/agents/other-agent/status');
+      expect(result.jacsId).toBe('other-agent');
+      expect(result.registered).toBe(true);
+      expect(result.registrations).toHaveLength(1);
+      expect(mock.calls[0].url).toContain('/api/v1/agents/other-agent/verify');
     });
 
     it('uses JACS auth', async () => {
-      const mock = createMockFetch({ status: 200, body: {} });
+      const mock = createMockFetch({
+        status: 200,
+        body: { jacs_id: 'other', registered: false, registrations: [], dns_verified: false, registered_at: '' },
+      });
       globalThis.fetch = mock.fetch;
 
       const client = createClient();
@@ -334,24 +368,24 @@ describe('HaiClient', () => {
   });
 
   describe('benchmark', () => {
-    it('runs a legacy suite-based benchmark', async () => {
+    it('sends name and tier in request body', async () => {
       const mock = createMockFetch({
         status: 200,
-        body: { score: 72.5, suite: 'mediation_basic', passed: 8, total: 10 },
+        body: { score: 72.5, name: 'mediation_basic', tier: 'free_chaotic' },
       });
       globalThis.fetch = mock.fetch;
 
       const client = createClient();
-      const result = await client.benchmark('mediation_basic');
+      const result = await client.benchmark('mediation_basic', 'free_chaotic');
 
       expect(result.score).toBe(72.5);
-      expect(result.suite).toBe('mediation_basic');
 
       const body = JSON.parse(mock.calls[0].init.body as string);
-      expect(body.suite).toBe('mediation_basic');
+      expect(body.name).toBe('mediation_basic');
+      expect(body.tier).toBe('free_chaotic');
     });
 
-    it('defaults to mediation_basic suite', async () => {
+    it('defaults to mediation_basic name and free_chaotic tier', async () => {
       const mock = createMockFetch({ status: 200, body: {} });
       globalThis.fetch = mock.fetch;
 
@@ -359,7 +393,8 @@ describe('HaiClient', () => {
       await client.benchmark();
 
       const body = JSON.parse(mock.calls[0].init.body as string);
-      expect(body.suite).toBe('mediation_basic');
+      expect(body.name).toBe('mediation_basic');
+      expect(body.tier).toBe('free_chaotic');
     });
   });
 

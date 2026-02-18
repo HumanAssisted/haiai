@@ -132,8 +132,12 @@ func TestHello(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(HelloResult{
-			Message: "hello",
-			AgentID: "test-agent-id",
+			Timestamp:              "2024-01-15T10:30:00Z",
+			ClientIP:               "127.0.0.1",
+			HaiPublicKeyFingerprint: "abc123",
+			Message:                "hello",
+			HaiSignedAck:           "signed-ack-data",
+			HelloID:                "hello-001",
 		})
 	}))
 	defer server.Close()
@@ -146,6 +150,12 @@ func TestHello(t *testing.T) {
 	if result.Message != "hello" {
 		t.Errorf("expected message 'hello', got '%s'", result.Message)
 	}
+	if result.HelloID != "hello-001" {
+		t.Errorf("expected hello_id 'hello-001', got '%s'", result.HelloID)
+	}
+	if result.HaiSignedAck != "signed-ack-data" {
+		t.Errorf("expected hai_signed_ack 'signed-ack-data', got '%s'", result.HaiSignedAck)
+	}
 }
 
 func TestStatusSuccess(t *testing.T) {
@@ -156,14 +166,21 @@ func TestStatusSuccess(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		// Verify path uses /verify not /status
+		if !strings.HasSuffix(r.URL.Path, "/verify") {
+			t.Errorf("expected path ending in /verify, got '%s'", r.URL.Path)
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"registered":      true,
-			"agent_id":        "test-agent-id",
-			"registration_id": "reg-123",
-			"registered_at":   "2024-01-15T10:30:00Z",
-			"hai_signatures":  []string{"sig-1", "sig-2"},
+			"jacs_id":      "test-agent-id",
+			"registered":   true,
+			"dns_verified": true,
+			"registered_at": "2024-01-15T10:30:00Z",
+			"registrations": []map[string]string{
+				{"key_id": "k1", "algorithm": "Ed25519", "signature_json": "{}", "signed_at": "2024-01-15T10:30:00Z"},
+				{"key_id": "k2", "algorithm": "Ed25519", "signature_json": "{}", "signed_at": "2024-01-15T10:31:00Z"},
+			},
 		})
 	}))
 	defer server.Close()
@@ -177,11 +194,14 @@ func TestStatusSuccess(t *testing.T) {
 	if !result.Registered {
 		t.Error("expected Registered to be true")
 	}
-	if result.RegistrationID != "reg-123" {
-		t.Errorf("expected RegistrationID 'reg-123', got '%s'", result.RegistrationID)
+	if result.JacsID != "test-agent-id" {
+		t.Errorf("expected JacsID 'test-agent-id', got '%s'", result.JacsID)
 	}
-	if len(result.HaiSignatures) != 2 {
-		t.Errorf("expected 2 signatures, got %d", len(result.HaiSignatures))
+	if !result.DNSVerified {
+		t.Error("expected DNSVerified to be true")
+	}
+	if len(result.Registrations) != 2 {
+		t.Errorf("expected 2 registrations, got %d", len(result.Registrations))
 	}
 }
 
@@ -199,6 +219,9 @@ func TestStatusNotFound(t *testing.T) {
 
 	if result.Registered {
 		t.Error("expected Registered to be false for 404")
+	}
+	if result.JacsID != "test-agent-id" {
+		t.Errorf("expected JacsID to default to jacsID, got '%s'", result.JacsID)
 	}
 }
 
@@ -262,24 +285,28 @@ func TestBenchmark(t *testing.T) {
 		if r.Method != "POST" {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
-		if r.URL.Path != "/api/v1/benchmarks/run" {
-			t.Errorf("expected path '/api/v1/benchmarks/run', got '%s'", r.URL.Path)
+		if r.URL.Path != "/api/benchmark/run" {
+			t.Errorf("expected path '/api/benchmark/run', got '%s'", r.URL.Path)
 		}
 
 		var reqBody struct {
-			AgentID string `json:"agent_id"`
-			Suite   string `json:"suite"`
+			Name string `json:"name"`
+			Tier string `json:"tier"`
 		}
 		json.NewDecoder(r.Body).Decode(&reqBody)
 
-		if reqBody.Suite != "free_chaotic" {
-			t.Errorf("expected suite 'free_chaotic', got '%s'", reqBody.Suite)
+		if reqBody.Tier != "free_chaotic" {
+			t.Errorf("expected tier 'free_chaotic', got '%s'", reqBody.Tier)
+		}
+		if reqBody.Name != "free_chaotic" {
+			t.Errorf("expected name 'free_chaotic', got '%s'", reqBody.Name)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"run_id":       "run-123",
-			"suite":        "free_chaotic",
+			"name":         "free_chaotic",
+			"tier":         "free_chaotic",
 			"score":        0.85,
 			"completed_at": "2024-01-15T10:30:00Z",
 			"results": []map[string]interface{}{

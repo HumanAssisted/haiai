@@ -248,13 +248,15 @@ class HaiClient:
         data = resp.json()
 
         # Verify HAI's signature on the ACK
+        # API returns: hai_signed_ack (not hai_ack_signature)
+        #              hai_public_key_fingerprint (not hai_public_key)
         hai_sig_valid = False
-        hai_ack_sig = data.get("hai_ack_signature", "")
+        hai_ack_sig = data.get("hai_signed_ack", "")
         if hai_ack_sig:
             hai_sig_valid = self.verify_hai_message(
                 message=json.dumps(data, sort_keys=True),
                 signature=hai_ack_sig,
-                hai_public_key=data.get("hai_public_key", ""),
+                hai_public_key=data.get("hai_public_key_fingerprint", ""),
             )
 
         return HelloWorldResult(
@@ -264,6 +266,8 @@ class HaiClient:
             hai_public_key_fingerprint=data.get("hai_public_key_fingerprint", ""),
             message=data.get("message", ""),
             hai_signature_valid=hai_sig_valid,
+            hello_id=data.get("hello_id", ""),
+            test_scenario=data.get("test_scenario"),
             raw_response=data,
         )
 
@@ -329,14 +333,22 @@ class HaiClient:
     def register(
         self,
         hai_url: str,
+        agent_json: Optional[str] = None,
+        public_key: Optional[str] = None,
         preview: bool = False,
     ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
-        """Register the loaded JACS agent with HAI.
+        """Register a JACS agent with HAI.
 
-        Uses JACS-signed auth headers.  No API key.
+        Sends ``POST /api/v1/agents/register`` with
+        ``{agent_json, public_key}``.
+
+        If *agent_json* is not provided, a self-signed agent document is
+        built from the loaded config and keypair automatically.
 
         Args:
             hai_url: Base URL of the HAI server.
+            agent_json: Signed JACS agent document as a JSON string.
+            public_key: PEM-encoded public key (optional).
             preview: If True, return preview without actually registering.
 
         Returns:
@@ -349,11 +361,32 @@ class HaiClient:
         from jacs.hai.config import get_config
 
         cfg = get_config()
-        agent_doc = {
-            "jacsAgentName": cfg.name,
-            "jacsAgentVersion": cfg.version,
-            "jacsId": cfg.jacs_id or "",
-        }
+
+        # Build agent_json from config if not provided
+        if agent_json is None:
+            from jacs.hai.config import get_private_key
+
+            priv_key = get_private_key()
+            from cryptography.hazmat.primitives.serialization import (
+                Encoding,
+                PublicFormat,
+            )
+            pub_pem = priv_key.public_key().public_bytes(
+                Encoding.PEM, PublicFormat.SubjectPublicKeyInfo,
+            ).decode()
+            agent_doc = create_agent_document(
+                name=cfg.name,
+                version=cfg.version,
+                public_key_pem=pub_pem,
+                private_key=priv_key,
+            )
+            agent_json = json.dumps(agent_doc, indent=2)
+            if public_key is None:
+                public_key = pub_pem
+
+        payload: dict[str, Any] = {"agent_json": agent_json}
+        if public_key is not None:
+            payload["public_key"] = public_key
 
         url = self._make_url(hai_url, "/api/v1/agents/register")
 
@@ -361,7 +394,7 @@ class HaiClient:
             return HaiRegistrationPreview(
                 agent_id=cfg.jacs_id or "",
                 agent_name=cfg.name,
-                payload_json=json.dumps(agent_doc, indent=2),
+                payload_json=json.dumps(payload, indent=2),
                 endpoint=url,
                 headers={"Content-Type": "application/json", "Authorization": "JACS ***"},
             )
@@ -373,24 +406,21 @@ class HaiClient:
         for attempt in range(self._max_retries):
             try:
                 resp = httpx.post(
-                    url, json=agent_doc, headers=headers, timeout=self._timeout,
+                    url, json=payload, headers=headers, timeout=self._timeout,
                 )
 
                 if resp.status_code in (200, 201):
                     data = resp.json()
+                    # RegisterAgentResponse fields:
+                    # agent_id, jacs_id, jacs_version, registrations,
+                    # dns_verified, registered_at, a2a_detected, a2a_skills_count
                     return HaiRegistrationResult(
                         success=True,
-                        agent_id=data.get("agent_id", data.get("agentId", "")),
-                        hai_signature=data.get(
-                            "hai_signature", data.get("haiSignature", "")
-                        ),
-                        registration_id=data.get(
-                            "registration_id", data.get("registrationId", "")
-                        ),
-                        registered_at=data.get(
-                            "registered_at", data.get("registeredAt", "")
-                        ),
-                        capabilities=data.get("capabilities", []),
+                        agent_id=data.get("agent_id", ""),
+                        hai_signature="",
+                        registration_id="",
+                        registered_at=data.get("registered_at", ""),
+                        capabilities=[],
                         raw_response=data,
                     )
 
@@ -431,16 +461,18 @@ class HaiClient:
     # ------------------------------------------------------------------
 
     def status(self, hai_url: str) -> HaiStatusResult:
-        """Check registration status of the current agent.
+        """Check registration/verification status of the current agent.
+
+        Calls ``GET /api/v1/agents/{jacs_id}/verify``.
 
         Args:
             hai_url: Base URL of the HAI server.
 
         Returns:
-            HaiStatusResult with registration details.
+            HaiStatusResult with verification details.
         """
         jacs_id = self._get_jacs_id()
-        url = self._make_url(hai_url, f"/api/v1/agents/{jacs_id}/status")
+        url = self._make_url(hai_url, f"/api/v1/agents/{jacs_id}/verify")
         headers = self._build_auth_headers()
 
         last_error: Optional[Exception] = None
@@ -450,18 +482,17 @@ class HaiClient:
 
                 if resp.status_code == 200:
                     data = resp.json()
+                    # VerifyAgentResponse fields:
+                    # jacs_id, registered, registrations, dns_verified, registered_at
+                    registrations = data.get("registrations", [])
                     return HaiStatusResult(
-                        registered=True,
-                        agent_id=data.get("agent_id", data.get("agentId", jacs_id)),
-                        registration_id=data.get(
-                            "registration_id", data.get("registrationId", "")
-                        ),
-                        registered_at=data.get(
-                            "registered_at", data.get("registeredAt", "")
-                        ),
-                        hai_signatures=data.get(
-                            "hai_signatures", data.get("haiSignatures", [])
-                        ),
+                        registered=data.get("registered", True),
+                        agent_id=data.get("jacs_id", jacs_id),
+                        registration_id="",
+                        registered_at=data.get("registered_at", ""),
+                        hai_signatures=[
+                            r.get("algorithm", "") for r in registrations
+                        ],
                         raw_response=data,
                     )
 
@@ -519,7 +550,7 @@ class HaiClient:
         Returns:
             HaiStatusResult with registration details.
         """
-        url = self._make_url(hai_url, f"/api/v1/agents/{agent_id}/status")
+        url = self._make_url(hai_url, f"/api/v1/agents/{agent_id}/verify")
         headers = self._build_auth_headers()
 
         try:
@@ -527,18 +558,15 @@ class HaiClient:
 
             if resp.status_code == 200:
                 data = resp.json()
+                registrations = data.get("registrations", [])
                 return HaiStatusResult(
-                    registered=True,
-                    agent_id=data.get("agent_id", data.get("agentId", agent_id)),
-                    registration_id=data.get(
-                        "registration_id", data.get("registrationId", "")
-                    ),
-                    registered_at=data.get(
-                        "registered_at", data.get("registeredAt", "")
-                    ),
-                    hai_signatures=data.get(
-                        "hai_signatures", data.get("haiSignatures", [])
-                    ),
+                    registered=data.get("registered", True),
+                    agent_id=data.get("jacs_id", agent_id),
+                    registration_id="",
+                    registered_at=data.get("registered_at", ""),
+                    hai_signatures=[
+                        r.get("algorithm", "") for r in registrations
+                    ],
                     raw_response=data,
                 )
 
@@ -560,31 +588,127 @@ class HaiClient:
             raise HaiError(f"Failed to get attestation: {exc}")
 
     # ------------------------------------------------------------------
-    # benchmark (legacy)
+    # check_username / claim_username
+    # ------------------------------------------------------------------
+
+    def check_username(self, hai_url: str, username: str) -> dict[str, Any]:
+        """Check if a username is available for @hai.ai email.
+
+        ``GET /api/v1/agents/username/check?username={name}``
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            username: Desired username to check.
+
+        Returns:
+            Dict with ``available`` (bool), ``username`` (str), and
+            optional ``reason`` (str).
+        """
+        url = self._make_url(hai_url, "/api/v1/agents/username/check")
+
+        try:
+            resp = httpx.get(
+                url,
+                params={"username": username},
+                timeout=self._timeout,
+            )
+
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Username check failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            return resp.json()
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Username check failed: {exc}")
+
+    def claim_username(
+        self, hai_url: str, agent_id: str, username: str
+    ) -> dict[str, Any]:
+        """Claim a username for an agent, getting ``{username}@hai.ai`` email.
+
+        ``POST /api/v1/agents/{agent_id}/username`` with body
+        ``{username}``.  Requires JACS auth.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            agent_id: Agent ID to claim the username for.
+            username: Desired username.
+
+        Returns:
+            Dict with ``username``, ``email``, and ``agent_id``.
+        """
+        url = self._make_url(hai_url, f"/api/v1/agents/{agent_id}/username")
+        headers = self._build_auth_headers()
+        headers["Content-Type"] = "application/json"
+
+        try:
+            resp = httpx.post(
+                url,
+                json={"username": username},
+                headers=headers,
+                timeout=self._timeout,
+            )
+
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Username claim auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Username claim failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            return resp.json()
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Username claim failed: {exc}")
+
+    # ------------------------------------------------------------------
+    # benchmark
     # ------------------------------------------------------------------
 
     def benchmark(
         self,
         hai_url: str,
-        suite: str = "mediator",
+        name: str = "mediator",
+        tier: str = "free_chaotic",
         timeout: Optional[float] = None,
     ) -> BenchmarkResult:
-        """Run a benchmark suite via HAI.
+        """Run a benchmark via HAI.
+
+        Sends ``POST /api/benchmark/run`` with ``{name, tier}``.
 
         Args:
             hai_url: Base URL of the HAI server.
-            suite: Benchmark suite name (default: "mediator").
+            name: Benchmark scenario name (default: "mediator").
+            tier: Benchmark tier: "free_chaotic", "baseline", or "certified".
             timeout: Optional timeout override for benchmark execution.
 
         Returns:
             BenchmarkResult with scores and detailed test results.
         """
-        jacs_id = self._get_jacs_id()
         url = self._make_url(hai_url, "/api/benchmark/run")
         headers = self._build_auth_headers()
         headers["Content-Type"] = "application/json"
 
-        payload = {"agent_id": jacs_id, "suite": suite}
+        payload = {"name": name, "tier": tier}
         request_timeout = timeout or max(self._timeout, 120.0)
 
         try:
@@ -614,7 +738,7 @@ class HaiClient:
 
             return BenchmarkResult(
                 success=data.get("success", True),
-                suite=suite,
+                suite=name,
                 score=float(data.get("score", 0)),
                 passed=int(data.get("passed", 0)),
                 failed=int(data.get("failed", 0)),
@@ -1396,12 +1520,23 @@ def status(hai_url: str) -> HaiStatusResult:
     return _get_client().status(hai_url)
 
 
+def check_username(hai_url: str, username: str) -> dict[str, Any]:
+    """Check if a username is available for @hai.ai email."""
+    return _get_client().check_username(hai_url, username)
+
+
+def claim_username(hai_url: str, agent_id: str, username: str) -> dict[str, Any]:
+    """Claim a username for an agent."""
+    return _get_client().claim_username(hai_url, agent_id, username)
+
+
 def benchmark(
     hai_url: str,
-    suite: str = "mediator",
+    name: str = "mediator",
+    tier: str = "free_chaotic",
 ) -> BenchmarkResult:
-    """Run a benchmark suite via HAI."""
-    return _get_client().benchmark(hai_url, suite)
+    """Run a benchmark via HAI."""
+    return _get_client().benchmark(hai_url, name=name, tier=tier)
 
 
 def free_chaotic_run(

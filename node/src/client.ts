@@ -9,7 +9,10 @@ import type {
   BaselineResult,
   CertifiedResult,
   JobResponseResult,
-  StatusResult,
+  VerifyAgentResult,
+  RegistrationEntry,
+  CheckUsernameResult,
+  ClaimUsernameResult,
   TranscriptMessage,
   ConnectionMode,
   ConnectOptions,
@@ -192,6 +195,9 @@ export class HaiClient {
       clientIp: (data.client_ip as string) || '',
       haiPublicKeyFingerprint: (data.hai_public_key_fingerprint as string) || '',
       message: (data.message as string) || '',
+      haiSignedAck: (data.hai_signed_ack as string) || '',
+      helloId: (data.hello_id as string) || '',
+      testScenario: data.test_scenario,
       haiSignatureValid: haiSigValid,
       rawResponse: data,
     };
@@ -271,12 +277,12 @@ export class HaiClient {
   }
 
   // ---------------------------------------------------------------------------
-  // status()
+  // verify()
   // ---------------------------------------------------------------------------
 
-  /** Check the agent's registration status. */
-  async status(): Promise<StatusResult> {
-    const url = this.makeUrl(`/api/v1/agents/${this.jacsId}/status`);
+  /** Verify the agent's registration status. */
+  async verify(): Promise<VerifyAgentResult> {
+    const url = this.makeUrl(`/api/v1/agents/${this.jacsId}/verify`);
 
     const response = await this.fetchWithRetry(url, {
       method: 'GET',
@@ -285,15 +291,27 @@ export class HaiClient {
 
     const data = await response.json() as Record<string, unknown>;
 
+    const rawRegistrations = (data.registrations as Array<Record<string, unknown>>) || [];
+    const registrations: RegistrationEntry[] = rawRegistrations.map((r) => ({
+      keyId: (r.key_id as string) || '',
+      algorithm: (r.algorithm as string) || '',
+      signatureJson: (r.signature_json as string) || '',
+      signedAt: (r.signed_at as string) || '',
+    }));
+
     return {
-      registered: (data.registered as boolean) ?? (data.active as boolean) ?? false,
-      agentId: (data.agent_id as string) || (data.agentId as string) || this.jacsId,
-      registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
-      registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
-      haiSignatures: (data.hai_signatures as string[]) || (data.haiSignatures as string[]) || [],
-      benchmarkCount: Number(data.benchmark_count ?? data.benchmarkCount ?? 0),
+      jacsId: (data.jacs_id as string) || this.jacsId,
+      registered: (data.registered as boolean) ?? false,
+      registrations,
+      dnsVerified: (data.dns_verified as boolean) ?? false,
+      registeredAt: (data.registered_at as string) || '',
       rawResponse: data,
     };
+  }
+
+  /** @deprecated Use verify() instead. */
+  async status(): Promise<VerifyAgentResult> {
+    return this.verify();
   }
 
   // ---------------------------------------------------------------------------
@@ -542,6 +560,126 @@ export class HaiClient {
         await handler(job);
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // checkUsername()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Check if a username is available for claiming.
+   * This is a public endpoint and does not require authentication.
+   *
+   * @param username - The username to check
+   * @returns Availability result
+   */
+  async checkUsername(username: string): Promise<CheckUsernameResult> {
+    const url = this.makeUrl(`/api/v1/agents/username/check?username=${encodeURIComponent(username)}`);
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+
+    return {
+      available: (data.available as boolean) ?? false,
+      username: (data.username as string) || username,
+      reason: (data.reason as string) || undefined,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // claimUsername()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Claim a username for an agent. Requires JACS auth.
+   *
+   * @param agentId - The JACS ID of the agent to claim the username for
+   * @param username - The username to claim
+   * @returns Claim result with the assigned email
+   */
+  async claimUsername(agentId: string, username: string): Promise<ClaimUsernameResult> {
+    const url = this.makeUrl(`/api/v1/agents/${agentId}/username`);
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: this.buildAuthHeaders(),
+      body: JSON.stringify({ username }),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+
+    return {
+      username: (data.username as string) || username,
+      email: (data.email as string) || '',
+      agentId: (data.agent_id as string) || (data.agentId as string) || agentId,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // registerNewAgent()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Generate a fresh JACS agent and register it with HAI.
+   *
+   * Convenience method that combines key generation, document building,
+   * signing, and registration in one call.
+   *
+   * @param agentName - Name for the new agent
+   * @param options - Optional domain for the agent
+   * @returns Registration result
+   */
+  async registerNewAgent(agentName: string, options?: { domain?: string }): Promise<RegistrationResult> {
+    const { publicKeyPem, privateKeyPem } = generateKeypair();
+
+    // Build minimal JACS agent document
+    const agentDoc: Record<string, unknown> = {
+      jacsId: agentName,
+      jacsAgentVersion: '1.0.0',
+      jacsSignature: {
+        agentID: agentName,
+        date: new Date().toISOString(),
+      },
+      jacsPublicKey: publicKeyPem,
+      name: agentName,
+      capabilities: ['mediation'],
+      version: '1.0.0',
+    };
+
+    // Sign canonical JSON
+    const canonical = JSON.stringify(agentDoc, Object.keys(agentDoc).sort());
+    const signature = signString(privateKeyPem, canonical);
+    (agentDoc.jacsSignature as Record<string, string>).signature = signature;
+
+    const url = this.makeUrl('/api/v1/agents/register');
+    const body: Record<string, unknown> = {
+      agent_json: JSON.stringify(agentDoc),
+      public_key: publicKeyPem,
+    };
+    if (options?.domain) {
+      body.domain = options.domain;
+    }
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: this.buildAuthHeaders(),
+      body: JSON.stringify(body),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+
+    return {
+      success: true,
+      agentId: (data.agent_id as string) || (data.agentId as string) || '',
+      haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
+      registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
+      registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
+      rawResponse: data,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -855,15 +993,32 @@ export class HaiClient {
    * @param agentId - The JACS ID of the agent to query
    * @returns Attestation status including HAI signatures
    */
-  async getAgentAttestation(agentId: string): Promise<Record<string, unknown>> {
-    const url = this.makeUrl(`/api/v1/agents/${agentId}/status`);
+  async getAgentAttestation(agentId: string): Promise<VerifyAgentResult> {
+    const url = this.makeUrl(`/api/v1/agents/${agentId}/verify`);
 
     const response = await this.fetchWithRetry(url, {
       method: 'GET',
       headers: this.buildAuthHeaders(),
     });
 
-    return await response.json() as Record<string, unknown>;
+    const data = await response.json() as Record<string, unknown>;
+
+    const rawRegistrations = (data.registrations as Array<Record<string, unknown>>) || [];
+    const registrations: RegistrationEntry[] = rawRegistrations.map((r) => ({
+      keyId: (r.key_id as string) || '',
+      algorithm: (r.algorithm as string) || '',
+      signatureJson: (r.signature_json as string) || '',
+      signedAt: (r.signed_at as string) || '',
+    }));
+
+    return {
+      jacsId: (data.jacs_id as string) || agentId,
+      registered: (data.registered as boolean) ?? false,
+      registrations,
+      dnsVerified: (data.dns_verified as boolean) ?? false,
+      registeredAt: (data.registered_at as string) || '',
+      rawResponse: data,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -889,18 +1044,19 @@ export class HaiClient {
   // ---------------------------------------------------------------------------
 
   /**
-   * Run a legacy suite-based benchmark.
+   * Run a benchmark with specified name and tier.
    *
-   * @param suite - Benchmark suite name (e.g., 'mediation_basic')
+   * @param name - Benchmark run name
+   * @param tier - Benchmark tier ("free_chaotic", "baseline", "certified"). Default: "free_chaotic"
    * @returns Benchmark result with scores
    */
-  async benchmark(suite: string = 'mediation_basic'): Promise<Record<string, unknown>> {
+  async benchmark(name: string = 'mediation_basic', tier: string = 'free_chaotic'): Promise<Record<string, unknown>> {
     const url = this.makeUrl('/api/benchmark/run');
 
     const response = await this.fetchWithRetry(url, {
       method: 'POST',
       headers: this.buildAuthHeaders(),
-      body: JSON.stringify({ suite }),
+      body: JSON.stringify({ name, tier }),
     });
 
     const data = await response.json() as Record<string, unknown>;

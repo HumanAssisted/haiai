@@ -113,6 +113,12 @@ export interface HelloWorldResult {
   haiPublicKeyFingerprint: string;
   /** Human-readable acknowledgment message from HAI. */
   message: string;
+  /** HAI's signed acknowledgment. */
+  haiSignedAck: string;
+  /** Unique hello exchange ID. */
+  helloId: string;
+  /** Test scenario preview (if requested). */
+  testScenario?: unknown;
   /** Whether HAI's signature on the ACK was verified. */
   haiSignatureValid: boolean;
   /** Full response from the API. */
@@ -192,22 +198,52 @@ export interface JobResponseResult {
   rawResponse: Record<string, unknown>;
 }
 
-/** Result of an agent status check. */
-export interface StatusResult {
+/** A single registration entry from the verify endpoint. */
+export interface RegistrationEntry {
+  /** Key ID used for this registration. */
+  keyId: string;
+  /** Signature algorithm (e.g., "Ed25519"). */
+  algorithm: string;
+  /** Signature JSON payload. */
+  signatureJson: string;
+  /** Timestamp when the registration was signed. */
+  signedAt: string;
+}
+
+/** Result of verifying an agent's registration (GET /api/v1/agents/{jacs_id}/verify). */
+export interface VerifyAgentResult {
+  /** The agent's JACS ID. */
+  jacsId: string;
   /** Whether the agent is registered with HAI. */
   registered: boolean;
-  /** The agent's JACS ID. */
-  agentId: string;
-  /** HAI registration ID. */
-  registrationId: string;
+  /** List of registration entries. */
+  registrations: RegistrationEntry[];
+  /** Whether DNS has been verified for the agent's domain. */
+  dnsVerified: boolean;
   /** Agent registration timestamp. */
   registeredAt: string;
-  /** HAI signature algorithms used. */
-  haiSignatures: string[];
-  /** Number of benchmark runs completed. */
-  benchmarkCount: number;
   /** Full response from the API. */
   rawResponse: Record<string, unknown>;
+}
+
+/** Result of checking username availability. */
+export interface CheckUsernameResult {
+  /** Whether the username is available. */
+  available: boolean;
+  /** The username that was checked. */
+  username: string;
+  /** Reason if unavailable. */
+  reason?: string;
+}
+
+/** Result of claiming a username. */
+export interface ClaimUsernameResult {
+  /** The claimed username. */
+  username: string;
+  /** The resulting hai.ai email address. */
+  email: string;
+  /** The agent ID the username was claimed for. */
+  agentId: string;
 }
 
 /** Payload submitted to HAI for a benchmark job response. */

@@ -10,7 +10,7 @@
 //	    log.Fatal(err)
 //	}
 //
-//	result, err := client.Status(ctx)
+//	result, err := client.Hello(ctx)
 package haisdk
 
 import (
@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
@@ -262,9 +263,10 @@ func (c *Client) Register(ctx context.Context, agentJSON string) (*RegistrationR
 	return &result, nil
 }
 
-// Status checks the registration status of this agent with HAI.
+// Status checks the registration/verification status of this agent with HAI.
+// Calls GET /api/v1/agents/{jacs_id}/verify.
 func (c *Client) Status(ctx context.Context) (*StatusResult, error) {
-	path := fmt.Sprintf("/api/v1/agents/%s/status", c.jacsID)
+	path := fmt.Sprintf("/api/v1/agents/%s/verify", c.jacsID)
 
 	url := c.endpoint + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -282,7 +284,7 @@ func (c *Client) Status(ctx context.Context) (*StatusResult, error) {
 	if resp.StatusCode == http.StatusNotFound {
 		return &StatusResult{
 			Registered: false,
-			AgentID:    c.jacsID,
+			JacsID:     c.jacsID,
 		}, nil
 	}
 
@@ -293,29 +295,29 @@ func (c *Client) Status(ctx context.Context) (*StatusResult, error) {
 
 	var result StatusResult
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, wrapError(ErrInvalidResponse, err, "failed to decode status response")
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode verify response")
 	}
 
-	result.Registered = true
-	if result.AgentID == "" {
-		result.AgentID = c.jacsID
+	if result.JacsID == "" {
+		result.JacsID = c.jacsID
 	}
 
 	return &result, nil
 }
 
 // Benchmark runs a benchmark suite at the given tier.
+// Calls POST /api/benchmark/run with {name, tier}.
 func (c *Client) Benchmark(ctx context.Context, tier string) (*BenchmarkResult, error) {
 	reqBody := struct {
-		AgentID string `json:"agent_id"`
-		Suite   string `json:"suite"`
+		Name string `json:"name"`
+		Tier string `json:"tier"`
 	}{
-		AgentID: c.jacsID,
-		Suite:   tier,
+		Name: tier,
+		Tier: tier,
 	}
 
 	var result BenchmarkResult
-	if err := c.doRequest(ctx, http.MethodPost, "/api/v1/benchmarks/run", reqBody, &result); err != nil {
+	if err := c.doRequest(ctx, http.MethodPost, "/api/benchmark/run", reqBody, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -365,6 +367,107 @@ func (c *Client) VerifyAgent(ctx context.Context, agentID string) (*VerifyResult
 		return nil, err
 	}
 	return &result, nil
+}
+
+// CheckUsername checks if a username is available for @hai.ai email.
+// Calls GET /api/v1/agents/username/check?username={name}.
+func (c *Client) CheckUsername(ctx context.Context, username string) (*CheckUsernameResult, error) {
+	path := fmt.Sprintf("/api/v1/agents/username/check?username=%s", username)
+	var result CheckUsernameResult
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ClaimUsername claims a username for an agent, getting {username}@hai.ai email.
+// Calls POST /api/v1/agents/{agentID}/username.
+func (c *Client) ClaimUsername(ctx context.Context, agentID string, username string) (*ClaimUsernameResult, error) {
+	path := fmt.Sprintf("/api/v1/agents/%s/username", agentID)
+	reqBody := struct {
+		Username string `json:"username"`
+	}{
+		Username: username,
+	}
+	var result ClaimUsernameResult
+	if err := c.doRequest(ctx, http.MethodPost, path, reqBody, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// RegisterNewAgent generates a new Ed25519 keypair, creates a JACS agent document,
+// signs it, and registers with HAI.
+func (c *Client) RegisterNewAgent(ctx context.Context, agentName string, opts *RegisterNewAgentOptions) (*RegisterResult, error) {
+	pub, priv, err := GenerateKeyPair()
+	if err != nil {
+		return nil, err
+	}
+
+	pubB64 := base64.StdEncoding.EncodeToString(pub)
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	agent := map[string]interface{}{
+		"jacsAgentName":    agentName,
+		"jacsAgentVersion": "1.0",
+		"publicKey":        pubB64,
+		"algorithm":        "Ed25519",
+		"createdAt":        now,
+	}
+
+	if opts != nil && opts.Domain != "" {
+		agent["domain"] = opts.Domain
+	}
+
+	agentJSON, err := json.Marshal(agent)
+	if err != nil {
+		return nil, wrapError(ErrSigningFailed, err, "failed to marshal agent document")
+	}
+
+	// Sign the agent document
+	sig := Sign(priv, agentJSON)
+	sigB64 := base64.StdEncoding.EncodeToString(sig)
+
+	signedAgent := map[string]interface{}{
+		"agent":     json.RawMessage(agentJSON),
+		"signature": sigB64,
+		"algorithm": "Ed25519",
+	}
+
+	signedJSON, err := json.Marshal(signedAgent)
+	if err != nil {
+		return nil, wrapError(ErrSigningFailed, err, "failed to marshal signed agent")
+	}
+
+	// Register with HAI using a temporary client with the new key
+	tempClient := &Client{
+		endpoint:   c.endpoint,
+		jacsID:     agentName,
+		privateKey: priv,
+		httpClient: c.httpClient,
+	}
+
+	reg, err := tempClient.Register(ctx, string(signedJSON))
+	if err != nil {
+		return nil, err
+	}
+
+	// Encode keys as PEM
+	privPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: priv.Seed(),
+	})
+	pubPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pub,
+	})
+
+	return &RegisterResult{
+		Registration: reg,
+		PrivateKey:   privPEM,
+		PublicKey:    pubPEM,
+		AgentJSON:    string(signedJSON),
+	}, nil
 }
 
 // SignBenchmarkResult signs a benchmark result as a JACS document for

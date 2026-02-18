@@ -126,6 +126,8 @@ class HelloWorldResult:
     hai_public_key_fingerprint: str = ""
     message: str = ""
     hai_signature_valid: bool = False
+    hello_id: str = ""
+    test_scenario: Optional[str] = None
     raw_response: dict[str, Any] = field(default_factory=dict)
 
 
