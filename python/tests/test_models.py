@@ -47,11 +47,13 @@ class TestHaiEvent:
 class TestRegistrationResult:
     def test_defaults(self) -> None:
         r = RegistrationResult(agent_id="a1", jacs_id="j1")
-        assert r.api_key is None
+        assert r.agent_id == "a1"
+        assert r.jacs_id == "j1"
 
-    def test_with_api_key(self) -> None:
-        r = RegistrationResult(agent_id="a", jacs_id="j", api_key="k")
-        assert r.api_key == "k"
+    def test_no_api_key_field(self) -> None:
+        """Verify api_key was removed (JACS-only auth)."""
+        r = RegistrationResult(agent_id="a", jacs_id="j")
+        assert not hasattr(r, "api_key")
 
 
 class TestHaiRegistrationResult:

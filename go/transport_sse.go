@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -102,7 +103,7 @@ func (s *SSEConnection) readLoop(resp *http.Response) {
 					select {
 					case s.events <- *event:
 					default:
-						// Channel full, drop event
+						log.Printf("[haisdk] WARNING: SSE event dropped (channel full, buffer=%d): type=%s", cap(s.events), event.Type)
 					}
 				}
 			}
@@ -170,11 +171,15 @@ func (c *Client) ConnectSSEWithHandler(ctx context.Context, handler func(context
 }
 
 // OnBenchmarkJob is a convenience method that connects via SSE and calls the handler
-// for each benchmark job. It reconnects automatically on connection loss.
+// for each benchmark job. It reconnects automatically on connection loss with
+// exponential backoff (1s, 2s, 4s, ... up to 60s).
 //
 // The handler receives the job event and should call client.SubmitResponse() with the result.
 // Blocks until the context is cancelled.
 func (c *Client) OnBenchmarkJob(ctx context.Context, handler func(ctx context.Context, event AgentEvent) error) error {
+	reconnectDelay := 1 * time.Second
+	maxDelay := 60 * time.Second
+
 	for {
 		err := c.ConnectSSEWithHandler(ctx, handler)
 
@@ -183,14 +188,20 @@ func (c *Client) OnBenchmarkJob(ctx context.Context, handler func(ctx context.Co
 			return ctx.Err()
 		}
 
-		// Reconnect after a brief delay
+		// Reconnect with exponential backoff
 		if err != nil {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(5 * time.Second):
-				// Retry
+			case <-time.After(reconnectDelay):
+				reconnectDelay = reconnectDelay * 2
+				if reconnectDelay > maxDelay {
+					reconnectDelay = maxDelay
+				}
 			}
+		} else {
+			// Connection ended cleanly, reset backoff
+			reconnectDelay = 1 * time.Second
 		}
 	}
 }

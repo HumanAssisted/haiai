@@ -194,12 +194,16 @@ export interface JobResponseResult {
 
 /** Result of an agent status check. */
 export interface StatusResult {
-  /** Whether the agent is registered and active. */
-  active: boolean;
+  /** Whether the agent is registered with HAI. */
+  registered: boolean;
   /** The agent's JACS ID. */
   agentId: string;
+  /** HAI registration ID. */
+  registrationId: string;
   /** Agent registration timestamp. */
   registeredAt: string;
+  /** HAI signature algorithms used. */
+  haiSignatures: string[];
   /** Number of benchmark runs completed. */
   benchmarkCount: number;
   /** Full response from the API. */

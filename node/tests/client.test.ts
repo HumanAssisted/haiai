@@ -160,9 +160,11 @@ describe('HaiClient', () => {
       const mock = createMockFetch({
         status: 200,
         body: {
-          active: true,
+          registered: true,
           agent_id: TEST_JACS_ID,
+          registration_id: 'reg-1',
           registered_at: '2024-01-01T00:00:00Z',
+          hai_signatures: ['ed25519'],
           benchmark_count: 3,
         },
       });
@@ -171,9 +173,35 @@ describe('HaiClient', () => {
       const client = createClient();
       const result = await client.status();
 
-      expect(result.active).toBe(true);
+      expect(result.registered).toBe(true);
       expect(result.agentId).toBe(TEST_JACS_ID);
+      expect(result.registrationId).toBe('reg-1');
+      expect(result.haiSignatures).toEqual(['ed25519']);
       expect(result.benchmarkCount).toBe(3);
+    });
+
+    it('handles legacy active field as registered', async () => {
+      const mock = createMockFetch({
+        status: 200,
+        body: { active: true, agent_id: TEST_JACS_ID },
+      });
+      globalThis.fetch = mock.fetch;
+
+      const client = createClient();
+      const result = await client.status();
+      expect(result.registered).toBe(true);
+    });
+
+    it('defaults to empty values', async () => {
+      const mock = createMockFetch({ status: 200, body: {} });
+      globalThis.fetch = mock.fetch;
+
+      const client = createClient();
+      const result = await client.status();
+      expect(result.registered).toBe(false);
+      expect(result.registrationId).toBe('');
+      expect(result.haiSignatures).toEqual([]);
+      expect(result.benchmarkCount).toBe(0);
     });
   });
 
@@ -257,6 +285,81 @@ describe('HaiClient', () => {
       const client = createClient();
       expect(() => client.disconnect()).not.toThrow();
       expect(client.isConnected).toBe(false);
+    });
+  });
+
+  describe('getAgentAttestation', () => {
+    it('fetches attestation for another agent', async () => {
+      const mock = createMockFetch({
+        status: 200,
+        body: { agent_id: 'other-agent', registered: true, hai_signatures: ['ed25519'] },
+      });
+      globalThis.fetch = mock.fetch;
+
+      const client = createClient();
+      const result = await client.getAgentAttestation('other-agent');
+
+      expect(result.agent_id).toBe('other-agent');
+      expect(mock.calls[0].url).toContain('/api/v1/agents/other-agent/status');
+    });
+
+    it('uses JACS auth', async () => {
+      const mock = createMockFetch({ status: 200, body: {} });
+      globalThis.fetch = mock.fetch;
+
+      const client = createClient();
+      await client.getAgentAttestation('other');
+
+      const authHeader = (mock.calls[0].init.headers as Record<string, string>)['Authorization'];
+      expect(authHeader).toMatch(/^JACS /);
+    });
+  });
+
+  describe('signBenchmarkResult', () => {
+    it('returns a signed JACS document', () => {
+      const client = createClient();
+      const result = client.signBenchmarkResult({ score: 85, suite: 'mediation_basic' });
+
+      expect(result.signed_document).toBeDefined();
+      expect(typeof result.signed_document).toBe('string');
+      expect(result.agent_jacs_id).toBe(TEST_JACS_ID);
+
+      // Verify the signed document is valid JSON
+      const doc = JSON.parse(result.signed_document);
+      expect(doc.payload).toEqual({ score: 85, suite: 'mediation_basic' });
+      expect(doc.signature.algorithm).toBe('Ed25519');
+      expect(doc.signature.key_id).toBe(TEST_JACS_ID);
+      expect(doc.metadata.issuer).toBe(TEST_JACS_ID);
+    });
+  });
+
+  describe('benchmark', () => {
+    it('runs a legacy suite-based benchmark', async () => {
+      const mock = createMockFetch({
+        status: 200,
+        body: { score: 72.5, suite: 'mediation_basic', passed: 8, total: 10 },
+      });
+      globalThis.fetch = mock.fetch;
+
+      const client = createClient();
+      const result = await client.benchmark('mediation_basic');
+
+      expect(result.score).toBe(72.5);
+      expect(result.suite).toBe('mediation_basic');
+
+      const body = JSON.parse(mock.calls[0].init.body as string);
+      expect(body.suite).toBe('mediation_basic');
+    });
+
+    it('defaults to mediation_basic suite', async () => {
+      const mock = createMockFetch({ status: 200, body: {} });
+      globalThis.fetch = mock.fetch;
+
+      const client = createClient();
+      await client.benchmark();
+
+      const body = JSON.parse(mock.calls[0].init.body as string);
+      expect(body.suite).toBe('mediation_basic');
     });
   });
 

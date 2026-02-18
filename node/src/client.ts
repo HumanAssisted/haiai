@@ -286,9 +286,11 @@ export class HaiClient {
     const data = await response.json() as Record<string, unknown>;
 
     return {
-      active: (data.active as boolean) ?? false,
+      registered: (data.registered as boolean) ?? (data.active as boolean) ?? false,
       agentId: (data.agent_id as string) || (data.agentId as string) || this.jacsId,
+      registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
       registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
+      haiSignatures: (data.hai_signatures as string[]) || (data.haiSignatures as string[]) || [],
       benchmarkCount: Number(data.benchmark_count ?? data.benchmarkCount ?? 0),
       rawResponse: data,
     };
@@ -837,11 +839,11 @@ export class HaiClient {
    * @param benchmarkResult - The benchmark result data to sign
    * @returns Signed JACS document envelope
    */
-  signBenchmarkResult(benchmarkResult: Record<string, unknown>): Record<string, unknown> {
+  signBenchmarkResult(benchmarkResult: Record<string, unknown>): { signed_document: string; agent_jacs_id: string } {
     return signResponse(
+      benchmarkResult,
       this.privateKeyPem,
       this.jacsId,
-      benchmarkResult,
     );
   }
 
