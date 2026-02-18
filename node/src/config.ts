@@ -43,10 +43,11 @@ export async function loadPrivateKey(config: AgentConfig): Promise<string> {
     candidates.push(config.jacsPrivateKeyPath);
   }
 
+  // Search in standardized order for cross-SDK compatibility
   candidates.push(
-    join(keyDir, 'private_key.pem'),
     join(keyDir, 'agent_private_key.pem'),
-    join(keyDir, 'test_agent_private_key.pem'),
+    join(keyDir, `${config.jacsAgentName}.private.pem`),
+    join(keyDir, 'private_key.pem'),
   );
 
   for (const candidate of candidates) {

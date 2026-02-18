@@ -9,6 +9,7 @@ Ports every public method from the JACS monolith (jacs.hai) with:
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -37,6 +38,8 @@ from jacs.hai.models import (
     AgentVerificationResult,
     BaselineRunResult,
     BenchmarkResult,
+    EmailMessage,
+    EmailStatus,
     FreeChaoticResult,
     HaiEvent,
     HaiRegistrationPreview,
@@ -44,7 +47,9 @@ from jacs.hai.models import (
     HaiStatusResult,
     HelloWorldResult,
     JobResponseResult,
+    PublicKeyInfo,
     RegistrationResult,
+    SendEmailResult,
     TranscriptMessage,
 )
 from jacs.hai.signing import is_signed_event, sign_response, unwrap_signed_event
@@ -336,6 +341,7 @@ class HaiClient:
         agent_json: Optional[str] = None,
         public_key: Optional[str] = None,
         preview: bool = False,
+        owner_email: Optional[str] = None,
     ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
         """Register a JACS agent with HAI.
 
@@ -350,6 +356,7 @@ class HaiClient:
             agent_json: Signed JACS agent document as a JSON string.
             public_key: PEM-encoded public key (optional).
             preview: If True, return preview without actually registering.
+            owner_email: Owner's email for linking agent to a HAI user.
 
         Returns:
             HaiRegistrationResult or HaiRegistrationPreview.
@@ -386,7 +393,11 @@ class HaiClient:
 
         payload: dict[str, Any] = {"agent_json": agent_json}
         if public_key is not None:
-            payload["public_key"] = public_key
+            payload["public_key"] = base64.b64encode(
+                public_key.encode("utf-8")
+            ).decode("utf-8")
+        if owner_email is not None:
+            payload["owner_email"] = owner_email
 
         url = self._make_url(hai_url, "/api/v1/agents/register")
 
@@ -688,7 +699,7 @@ class HaiClient:
         self,
         hai_url: str,
         name: str = "mediator",
-        tier: str = "free_chaotic",
+        tier: str = "free",
         timeout: Optional[float] = None,
     ) -> BenchmarkResult:
         """Run a benchmark via HAI.
@@ -698,7 +709,7 @@ class HaiClient:
         Args:
             hai_url: Base URL of the HAI server.
             name: Benchmark scenario name (default: "mediator").
-            tier: Benchmark tier: "free_chaotic", "baseline", or "certified".
+            tier: Benchmark tier: "free", "dns_certified", or "fully_certified".
             timeout: Optional timeout override for benchmark execution.
 
         Returns:
@@ -811,19 +822,19 @@ class HaiClient:
         raise BenchmarkError(f"Benchmark timed out after {timeout}s")
 
     # ------------------------------------------------------------------
-    # free_chaotic_run
+    # free_run
     # ------------------------------------------------------------------
 
-    def free_chaotic_run(
+    def free_run(
         self,
         hai_url: str,
         transport: str = "sse",
     ) -> FreeChaoticResult:
-        """Run a free chaotic benchmark.
+        """Run a free benchmark.
 
-        Connects to HAI and runs the canonical baseline scenario with a
-        cheap model.  No judge evaluation, no scoring.  Returns the raw
-        conversation transcript with structural annotations.
+        Connects to HAI and runs the canonical scenario with a cheap model.
+        No judge evaluation, no scoring.  Returns the raw conversation
+        transcript with structural annotations.
 
         Rate limited to 3 runs per JACS keypair per 24 hours.
 
@@ -840,8 +851,8 @@ class HaiClient:
         headers["Content-Type"] = "application/json"
 
         payload: dict[str, Any] = {
-            "name": f"Free Chaotic Run - {jacs_id[:8]}",
-            "tier": "free_chaotic",
+            "name": f"Free Run - {jacs_id[:8]}",
+            "tier": "free",
             "transport": transport,
         }
 
@@ -894,10 +905,10 @@ class HaiClient:
             raise HaiError(f"Free chaotic run failed: {exc}")
 
     # ------------------------------------------------------------------
-    # baseline_run
+    # dns_certified_run
     # ------------------------------------------------------------------
 
-    def baseline_run(
+    def dns_certified_run(
         self,
         hai_url: str,
         transport: str = "sse",
@@ -905,7 +916,7 @@ class HaiClient:
         payment_poll_interval: float = 2.0,
         payment_poll_timeout: float = 300.0,
     ) -> BaselineRunResult:
-        """Run a $5 baseline benchmark.
+        """Run a $5 DNS-certified benchmark.
 
         Flow:
         1. Creates a Stripe Checkout session via the API.
@@ -931,7 +942,7 @@ class HaiClient:
         headers = self._build_auth_headers()
         headers["Content-Type"] = "application/json"
 
-        purchase_payload = {"tier": "baseline", "agent_id": jacs_id}
+        purchase_payload = {"tier": "dns_certified", "agent_id": jacs_id}
 
         try:
             resp = httpx.post(
@@ -1011,8 +1022,8 @@ class HaiClient:
         run_headers["Content-Type"] = "application/json"
 
         run_payload: dict[str, Any] = {
-            "name": f"Baseline Run - {jacs_id[:8]}",
-            "tier": "baseline",
+            "name": f"DNS Certified Run - {jacs_id[:8]}",
+            "tier": "dns_certified",
             "payment_id": payment_id,
             "transport": transport,
         }
@@ -1050,6 +1061,21 @@ class HaiClient:
             raise
         except Exception as exc:
             raise BenchmarkError(f"Baseline run failed: {exc}")
+
+    # ------------------------------------------------------------------
+    # certified_run
+    # ------------------------------------------------------------------
+
+    def certified_run(self, **kwargs: Any) -> None:
+        """Run a fully_certified tier benchmark.
+
+        The fully_certified tier ($499/month) is coming soon.
+        Contact support@hai.ai for early access.
+        """
+        raise NotImplementedError(
+            "The fully_certified tier ($499/month) is coming soon. "
+            "Contact support@hai.ai for early access."
+        )
 
     # ------------------------------------------------------------------
     # submit_benchmark_response
@@ -1180,7 +1206,7 @@ class HaiClient:
         Args:
             run_id: The benchmark run ID from HAI.
             score: The benchmark score (0-100), if available.
-            tier: Benchmark tier ("free_chaotic", "baseline", "certified").
+            tier: Benchmark tier ("free", "dns_certified", "fully_certified").
             transcript: Optional transcript messages to include.
             metadata: Optional additional metadata.
 
@@ -1206,6 +1232,298 @@ class HaiClient:
             payload["metadata"] = metadata
 
         return sign_response(payload, get_private_key(), cfg.jacs_id or "")
+
+    # ------------------------------------------------------------------
+    # Email CRUD
+    # ------------------------------------------------------------------
+
+    def send_email(
+        self,
+        hai_url: str,
+        to: str,
+        subject: str,
+        body: str,
+        in_reply_to: Optional[str] = None,
+    ) -> SendEmailResult:
+        """Send an email from this agent's @hai.ai address.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            to: Recipient address (must be @hai.ai for MVP).
+            subject: Email subject line.
+            body: Plain text email body.
+            in_reply_to: Optional Message-ID for threading.
+
+        Returns:
+            SendEmailResult with message_id and status.
+        """
+        jacs_id = self._get_jacs_id()
+        url = self._make_url(hai_url, f"/api/agents/{jacs_id}/email/send")
+        headers = self._build_auth_headers()
+        headers["Content-Type"] = "application/json"
+
+        payload: dict[str, Any] = {
+            "to": to,
+            "subject": subject,
+            "body": body,
+        }
+        if in_reply_to is not None:
+            payload["in_reply_to"] = in_reply_to
+
+        try:
+            resp = httpx.post(url, json=payload, headers=headers, timeout=self._timeout)
+
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email send auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code == 429:
+                raise HaiApiError(
+                    f"Email rate limited: {resp.text}",
+                    status_code=429,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Email send failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            data = resp.json()
+            return SendEmailResult(
+                message_id=data.get("message_id", ""),
+                status=data.get("status", "sent"),
+            )
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email send failed: {exc}")
+
+    def list_messages(
+        self,
+        hai_url: str,
+        limit: int = 20,
+        offset: int = 0,
+        folder: str = "inbox",
+    ) -> list[EmailMessage]:
+        """List email messages for this agent.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            limit: Max messages to return.
+            offset: Pagination offset.
+            folder: Folder to list ("inbox", "sent").
+
+        Returns:
+            List of EmailMessage objects.
+        """
+        jacs_id = self._get_jacs_id()
+        url = self._make_url(hai_url, f"/api/agents/{jacs_id}/email/messages")
+        headers = self._build_auth_headers()
+
+        try:
+            resp = httpx.get(
+                url,
+                params={"limit": limit, "offset": offset, "folder": folder},
+                headers=headers,
+                timeout=self._timeout,
+            )
+
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email list auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Email list failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            data = resp.json()
+            messages = data if isinstance(data, list) else data.get("messages", [])
+            return [
+                EmailMessage(
+                    id=m.get("id", ""),
+                    from_address=m.get("from_address", m.get("from", "")),
+                    to_address=m.get("to_address", m.get("to", "")),
+                    subject=m.get("subject", ""),
+                    body=m.get("body", ""),
+                    sent_at=m.get("sent_at", ""),
+                    read_at=m.get("read_at"),
+                    thread_id=m.get("thread_id"),
+                )
+                for m in messages
+            ]
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email list failed: {exc}")
+
+    def mark_read(self, hai_url: str, message_id: str) -> bool:
+        """Mark an email message as read.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            message_id: ID of the message to mark as read.
+
+        Returns:
+            True if successful.
+        """
+        jacs_id = self._get_jacs_id()
+        url = self._make_url(
+            hai_url,
+            f"/api/agents/{jacs_id}/email/messages/{message_id}/read",
+        )
+        headers = self._build_auth_headers()
+
+        try:
+            resp = httpx.post(url, headers=headers, timeout=self._timeout)
+
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email mark_read auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201, 204):
+                raise HaiApiError(
+                    f"Email mark_read failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return True
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email mark_read failed: {exc}")
+
+    def get_email_status(self, hai_url: str) -> EmailStatus:
+        """Get email rate-limit and reputation status.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+
+        Returns:
+            EmailStatus with daily limits and tier info.
+        """
+        jacs_id = self._get_jacs_id()
+        url = self._make_url(hai_url, f"/api/agents/{jacs_id}/email/status")
+        headers = self._build_auth_headers()
+
+        try:
+            resp = httpx.get(url, headers=headers, timeout=self._timeout)
+
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email status auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Email status failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            data = resp.json()
+            return EmailStatus(
+                daily_limit=int(data.get("daily_limit", 0)),
+                daily_used=int(data.get("daily_used", 0)),
+                resets_at=data.get("resets_at", ""),
+                reputation_tier=data.get("reputation_tier", ""),
+                current_tier=data.get("current_tier", ""),
+            )
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email status failed: {exc}")
+
+    # ------------------------------------------------------------------
+    # fetch_remote_key
+    # ------------------------------------------------------------------
+
+    def fetch_remote_key(
+        self,
+        hai_url: str,
+        jacs_id: str,
+        version: str = "latest",
+    ) -> PublicKeyInfo:
+        """Fetch another agent's public key from HAI.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            jacs_id: The target agent's JACS ID.
+            version: Key version ("latest" or a specific version string).
+
+        Returns:
+            PublicKeyInfo with the agent's public key and metadata.
+
+        Raises:
+            HaiApiError: If the agent or key is not found (404).
+        """
+        url = self._make_url(
+            hai_url, f"/jacs/v1/agents/{jacs_id}/keys/{version}"
+        )
+
+        try:
+            resp = httpx.get(url, timeout=self._timeout)
+
+            if resp.status_code == 404:
+                raise HaiApiError(
+                    f"No public key found for agent {jacs_id} version {version}",
+                    status_code=404,
+                    body=resp.text,
+                )
+
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Key lookup failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            warning = resp.headers.get("Warning")
+            if warning:
+                logger.warning("HAI key service: %s", warning)
+
+            data = resp.json()
+            return PublicKeyInfo(
+                jacs_id=data.get("jacs_id", jacs_id),
+                version=data.get("version", version),
+                public_key=data.get("public_key", ""),
+                public_key_raw_b64=data.get("public_key_raw_b64", ""),
+                algorithm=data.get("algorithm", ""),
+                public_key_hash=data.get("public_key_hash", ""),
+                status=data.get("status", ""),
+                dns_verified=data.get("dns_verified", False),
+                created_at=data.get("created_at", ""),
+            )
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Key lookup failed: {exc}")
 
     # ------------------------------------------------------------------
     # connect (SSE + WS)
@@ -1510,9 +1828,10 @@ def hello_world(hai_url: str, include_test: bool = False) -> HelloWorldResult:
 def register(
     hai_url: str,
     preview: bool = False,
+    owner_email: Optional[str] = None,
 ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
     """Register the loaded JACS agent with HAI."""
-    return _get_client().register(hai_url, preview)
+    return _get_client().register(hai_url, preview=preview, owner_email=owner_email)
 
 
 def status(hai_url: str) -> HaiStatusResult:
@@ -1533,24 +1852,36 @@ def claim_username(hai_url: str, agent_id: str, username: str) -> dict[str, Any]
 def benchmark(
     hai_url: str,
     name: str = "mediator",
-    tier: str = "free_chaotic",
+    tier: str = "free",
 ) -> BenchmarkResult:
     """Run a benchmark via HAI."""
     return _get_client().benchmark(hai_url, name=name, tier=tier)
 
 
-def free_chaotic_run(
+def free_run(
     hai_url: str, transport: str = "sse"
 ) -> FreeChaoticResult:
-    """Run a free chaotic benchmark."""
-    return _get_client().free_chaotic_run(hai_url, transport)
+    """Run a free benchmark."""
+    return _get_client().free_run(hai_url, transport)
 
 
-def baseline_run(
+def dns_certified_run(
     hai_url: str, transport: str = "sse", open_browser: bool = True
 ) -> BaselineRunResult:
-    """Run a $5 baseline benchmark."""
-    return _get_client().baseline_run(hai_url, transport, open_browser)
+    """Run a $5 DNS-certified benchmark."""
+    return _get_client().dns_certified_run(hai_url, transport, open_browser)
+
+
+def certified_run(**kwargs: Any) -> None:
+    """Run a fully_certified tier benchmark.
+
+    The fully_certified tier ($499/month) is coming soon.
+    Contact support@hai.ai for early access.
+    """
+    raise NotImplementedError(
+        "The fully_certified tier ($499/month) is coming soon. "
+        "Contact support@hai.ai for early access."
+    )
 
 
 def submit_benchmark_response(
@@ -1593,6 +1924,46 @@ def disconnect() -> None:
     _get_client().disconnect()
 
 
+def send_email(
+    hai_url: str,
+    to: str,
+    subject: str,
+    body: str,
+    in_reply_to: Optional[str] = None,
+) -> SendEmailResult:
+    """Send an email from this agent's @hai.ai address."""
+    return _get_client().send_email(hai_url, to, subject, body, in_reply_to)
+
+
+def list_messages(
+    hai_url: str,
+    limit: int = 20,
+    offset: int = 0,
+    folder: str = "inbox",
+) -> list[EmailMessage]:
+    """List email messages for this agent."""
+    return _get_client().list_messages(hai_url, limit, offset, folder)
+
+
+def mark_read(hai_url: str, message_id: str) -> bool:
+    """Mark an email message as read."""
+    return _get_client().mark_read(hai_url, message_id)
+
+
+def get_email_status(hai_url: str) -> EmailStatus:
+    """Get email rate-limit and reputation status."""
+    return _get_client().get_email_status(hai_url)
+
+
+def fetch_remote_key(
+    hai_url: str,
+    jacs_id: str,
+    version: str = "latest",
+) -> PublicKeyInfo:
+    """Fetch another agent's public key from HAI."""
+    return _get_client().fetch_remote_key(hai_url, jacs_id, version)
+
+
 # ---------------------------------------------------------------------------
 # register_new_agent (standalone bootstrapper)
 # ---------------------------------------------------------------------------
@@ -1600,10 +1971,13 @@ def disconnect() -> None:
 
 def register_new_agent(
     name: str,
+    owner_email: str,
     version: str = "1.0.0",
     hai_url: str = "https://hai.ai",
     key_dir: str = "./keys",
     config_path: str = "./jacs.config.json",
+    domain: Optional[str] = None,
+    quiet: bool = False,
 ) -> RegistrationResult:
     """Generate a keypair, self-sign, register with HAI, and save config.
 
@@ -1616,14 +1990,24 @@ def register_new_agent(
 
     Args:
         name: Agent display name (ASCII-only).
+        owner_email: Owner's email for linking agent to a HAI user account.
         version: Agent version string.
         hai_url: HAI server base URL.
         key_dir: Directory to write key files into.
         config_path: Path for the generated ``jacs.config.json``.
+        domain: Optional domain for DNS verification.
+        quiet: Suppress post-registration messaging.
 
     Returns:
         RegistrationResult with ``agent_id``, ``jacs_id``.
+
+    Raises:
+        ValueError: If *owner_email* is empty.
     """
+    if not owner_email:
+        raise ValueError(
+            "owner_email is required -- agents must be associated with a verified HAI user"
+        )
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from cryptography.hazmat.primitives.serialization import (
         Encoding,
@@ -1660,7 +2044,11 @@ def register_new_agent(
 
     # 3. Register with HAI (no API key -- the self-signed doc is the auth)
     url = f"{hai_url.rstrip('/')}/api/v1/agents/register"
-    payload = {"agent_json": agent_json_str, "public_key": public_pem}
+    payload = {
+        "agent_json": agent_json_str,
+        "public_key": base64.b64encode(public_pem.encode("utf-8")).decode("utf-8"),
+        "owner_email": owner_email,
+    }
 
     resp = httpx.post(
         url, json=payload, headers={"Content-Type": "application/json"}, timeout=30.0,
@@ -1690,10 +2078,71 @@ def register_new_agent(
         json.dump(config_data, f, indent=2)
         f.write("\n")
 
-    # 5. Load into module state
+    # 5. Load into module state and reset singleton
     hai_config.load(config_path)
+    global _client
+    _client = None
+
+    # 6. Print next-step messaging
+    if not quiet:
+        print(f"\nAgent created and submitted for registration!")
+        print(f"  -> Check your email ({owner_email}) for a verification link")
+        print(f"  -> Click the link and log into hai.ai to complete registration")
+        print(f"  -> After verification, claim a @hai.ai username with:")
+        print(f"     client.claim_username('my-agent')")
+        print(f"  -> Config saved to {config_path}")
+        print(f"  -> Keys saved to {key_dir}")
+
+        if domain:
+            key_hash = _compute_public_key_hash(public_pem)
+            print(f"\n--- DNS Setup Instructions ---")
+            print(f"Add this TXT record to your domain '{domain}':")
+            print(f"  Name:  _jacs.{domain}")
+            print(f"  Type:  TXT")
+            print(f"  Value: {key_hash}")
+            print(f"DNS verification enables the dns_certified tier.\n")
+        else:
+            print()
 
     return RegistrationResult(agent_id=agent_id, jacs_id=jacs_id)
+
+
+def _compute_public_key_hash(pem: str) -> str:
+    """Compute SHA-256 hash of a PEM public key, matching Rust API format."""
+    import hashlib
+    digest = hashlib.sha256(pem.encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
+def _verify_dns(domain: str, public_key_pem: str) -> tuple[bool, str]:
+    """Verify DNS TXT record for Level 2 domain verification.
+
+    Returns:
+        (valid, message) tuple.
+    """
+    try:
+        import dns.resolver
+    except ImportError:
+        return False, "dnspython not installed (pip install jacs[dns])"
+
+    expected_hash = _compute_public_key_hash(public_key_pem)
+    record_name = f"_jacs.{domain}"
+
+    try:
+        answers = dns.resolver.resolve(record_name, "TXT")
+        for rdata in answers:
+            txt_value = rdata.to_text().strip('"')
+            if txt_value == expected_hash:
+                return True, f"DNS TXT record matches at {record_name}"
+        return False, f"DNS TXT record found at {record_name} but no matching hash"
+    except dns.resolver.NXDOMAIN:
+        return False, f"No DNS record found at {record_name}"
+    except dns.resolver.NoAnswer:
+        return False, f"No TXT record at {record_name}"
+    except dns.exception.Timeout:
+        return False, f"DNS lookup timed out for {record_name}"
+    except Exception as e:
+        return False, f"DNS lookup failed: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -1746,10 +2195,18 @@ def verify_agent(
 
     # Level 1: JACS signature verification (local cryptographic check)
     agent_id = doc.get("jacsId", "")
-    sig = doc.get("jacsSignature", "")
+    jacs_sig = doc.get("jacsSignature")
     pub_key_pem = doc.get("jacsPublicKey", "")
 
-    if sig and pub_key_pem:
+    # Extract the base64 signature from either structured or bare format
+    if isinstance(jacs_sig, dict):
+        sig_b64 = jacs_sig.get("signature", "")
+    elif isinstance(jacs_sig, str):
+        sig_b64 = jacs_sig
+    else:
+        sig_b64 = ""
+
+    if sig_b64 and pub_key_pem:
         try:
             from cryptography.hazmat.primitives.serialization import (
                 load_pem_public_key,
@@ -1757,12 +2214,15 @@ def verify_agent(
 
             pub_key = load_pem_public_key(pub_key_pem.encode("utf-8"))
 
-            # Reconstruct the unsigned doc for verification
-            unsigned_doc = {
-                k: v for k, v in doc.items() if k != "jacsSignature"
-            }
-            canonical = canonicalize_json(unsigned_doc)
-            jacs_valid = _verify_string(pub_key, canonical, sig)  # type: ignore[arg-type]
+            # Reconstruct canonical form: include jacsSignature minus .signature
+            import copy
+            signing_doc = copy.deepcopy(doc)
+            if isinstance(signing_doc.get("jacsSignature"), dict):
+                signing_doc["jacsSignature"].pop("signature", None)
+            else:
+                del signing_doc["jacsSignature"]
+            canonical = canonicalize_json(signing_doc)
+            jacs_valid = _verify_string(pub_key, canonical, sig_b64)  # type: ignore[arg-type]
             if not jacs_valid:
                 errors.append("JACS signature invalid")
         except Exception as exc:
@@ -1772,8 +2232,10 @@ def verify_agent(
 
     # Level 2: DNS verification
     domain = doc.get("jacsDomain", "") or require_domain or ""
-    # DNS verification would require network lookup -- mark as not implemented
-    # in standalone SDK. Level 2 needs a DNS query library or server-side check.
+    if jacs_valid and domain and pub_key_pem:
+        dns_valid, dns_msg = _verify_dns(domain, pub_key_pem)
+        if not dns_valid:
+            errors.append(dns_msg)
 
     # Level 3: HAI attestation (requires network)
     if jacs_valid and agent_id:

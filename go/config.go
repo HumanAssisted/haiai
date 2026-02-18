@@ -2,6 +2,7 @@ package haisdk
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -62,12 +63,52 @@ func DiscoverConfig() (*Config, error) {
 
 // ResolveKeyPath resolves a private key file path relative to the config's key directory.
 // If jacsKeyDir is empty, it defaults to the directory containing the config file.
+//
+// Searches in priority order for cross-SDK compatibility:
+//  1. agent_private_key.pem (standard, matches Python SDK)
+//  2. {agentName}.private.pem (legacy Go naming)
+//  3. private_key.pem (legacy short name)
 func ResolveKeyPath(cfg *Config, configPath string) string {
 	keyDir := cfg.JacsKeyDir
 	if keyDir == "" {
 		keyDir = filepath.Dir(configPath)
 	}
 
-	// Convention: private key file is named {agentName}.private.pem
-	return filepath.Join(keyDir, cfg.JacsAgentName+".private.pem")
+	candidates := []string{
+		filepath.Join(keyDir, "agent_private_key.pem"),
+		filepath.Join(keyDir, fmt.Sprintf("%s.private.pem", cfg.JacsAgentName)),
+		filepath.Join(keyDir, "private_key.pem"),
+	}
+
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+
+	// Default to standard name (will error at load time if missing)
+	return candidates[0]
+}
+
+// ResolvePublicKeyPath resolves a public key file path with the same search
+// priority as ResolveKeyPath.
+func ResolvePublicKeyPath(cfg *Config, configPath string) string {
+	keyDir := cfg.JacsKeyDir
+	if keyDir == "" {
+		keyDir = filepath.Dir(configPath)
+	}
+
+	candidates := []string{
+		filepath.Join(keyDir, "agent_public_key.pem"),
+		filepath.Join(keyDir, fmt.Sprintf("%s.public.pem", cfg.JacsAgentName)),
+		filepath.Join(keyDir, "public_key.pem"),
+	}
+
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+
+	return candidates[0]
 }

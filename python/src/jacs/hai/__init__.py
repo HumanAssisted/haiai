@@ -15,23 +15,29 @@ Zero-config quickstart::
 
     from jacs.hai import register_new_agent
 
-    result = register_new_agent(name="My Agent")
+    result = register_new_agent(name="My Agent", owner_email="user@example.com")
     print(f"Registered: {result.jacs_id}")
 """
 
 __version__ = "0.1.0"
 
 from jacs.hai import config
+from jacs.hai.async_client import AsyncHaiClient
 from jacs.hai.client import (
     HaiClient,
-    baseline_run,
     benchmark,
     connect,
     disconnect,
-    free_chaotic_run,
+    dns_certified_run,
+    fetch_remote_key,
+    free_run,
+    get_email_status,
     hello_world,
+    list_messages,
+    mark_read,
     register,
     register_new_agent,
+    send_email,
     sign_benchmark_result,
     status,
     submit_benchmark_response,
@@ -54,6 +60,8 @@ from jacs.hai.models import (
     AgentVerificationResult,
     BaselineRunResult,
     BenchmarkResult,
+    EmailMessage,
+    EmailStatus,
     FreeChaoticResult,
     HaiEvent,
     HaiRegistrationPreview,
@@ -61,15 +69,18 @@ from jacs.hai.models import (
     HaiStatusResult,
     HelloWorldResult,
     JobResponseResult,
+    PublicKeyInfo,
     RegistrationResult,
+    SendEmailResult,
     TranscriptMessage,
 )
 
 __all__ = [
     # Config
     "config",
-    # Client class
+    # Client classes
     "HaiClient",
+    "AsyncHaiClient",
     # Error types
     "HaiError",
     "HaiApiError",
@@ -85,6 +96,8 @@ __all__ = [
     "AgentVerificationResult",
     "BaselineRunResult",
     "BenchmarkResult",
+    "EmailMessage",
+    "EmailStatus",
     "FreeChaoticResult",
     "HaiEvent",
     "HaiRegistrationPreview",
@@ -92,7 +105,9 @@ __all__ = [
     "HaiStatusResult",
     "HelloWorldResult",
     "JobResponseResult",
+    "PublicKeyInfo",
     "RegistrationResult",
+    "SendEmailResult",
     "TranscriptMessage",
     # Convenience functions
     "testconnection",
@@ -102,10 +117,15 @@ __all__ = [
     "verify_agent",
     "status",
     "benchmark",
-    "free_chaotic_run",
-    "baseline_run",
+    "free_run",
+    "dns_certified_run",
     "submit_benchmark_response",
     "sign_benchmark_result",
+    "send_email",
+    "list_messages",
+    "mark_read",
+    "get_email_status",
+    "fetch_remote_key",
     "connect",
     "disconnect",
 ]

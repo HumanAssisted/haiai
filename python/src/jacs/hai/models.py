@@ -271,3 +271,51 @@ class AgentVerificationResult:
     hai_signatures: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     raw_response: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class SendEmailResult:
+    """Result of sending an email from this agent's @hai.ai address."""
+
+    message_id: str
+    status: str
+
+
+@dataclass
+class EmailMessage:
+    """An email message in the agent's inbox or sent folder."""
+
+    id: str
+    from_address: str
+    to_address: str
+    subject: str
+    body: str
+    sent_at: str
+    read_at: Optional[str] = None
+    thread_id: Optional[str] = None
+
+
+@dataclass
+class EmailStatus:
+    """Email rate-limit and reputation status for the current agent."""
+
+    daily_limit: int
+    daily_used: int
+    resets_at: str
+    reputation_tier: str
+    current_tier: str
+
+
+@dataclass
+class PublicKeyInfo:
+    """Public key information from a remote agent lookup."""
+
+    jacs_id: str
+    version: str
+    public_key: str
+    algorithm: str
+    public_key_hash: str
+    status: str
+    dns_verified: bool
+    created_at: str
+    public_key_raw_b64: str = ""

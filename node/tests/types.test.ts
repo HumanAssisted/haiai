@@ -10,8 +10,8 @@ import type {
   HelloWorldResult,
   RegistrationResult,
   FreeChaoticResult,
-  BaselineResult,
-  CertifiedResult,
+  DnsCertifiedResult,
+  FullyCertifiedResult,
   BenchmarkResult,
   JobResponseResult,
   VerifyAgentResult,
@@ -24,7 +24,7 @@ import type {
   BenchmarkJobConfig,
   ConnectOptions,
   OnBenchmarkJobOptions,
-  BaselineRunOptions,
+  DnsCertifiedRunOptions,
   FreeChaoticRunOptions,
   JobResponse,
 } from '../src/types.js';
@@ -66,7 +66,7 @@ describe('type definitions', () => {
   });
 
   it('BenchmarkTier accepts all three tiers', () => {
-    const tiers: BenchmarkTier[] = ['free_chaotic', 'baseline', 'certified'];
+    const tiers: BenchmarkTier[] = ['free', 'dns_certified', 'fully_certified'];
     expect(tiers).toHaveLength(3);
   });
 
@@ -150,8 +150,8 @@ describe('type definitions', () => {
     expect(result.upsellMessage).toBe('Upgrade!');
   });
 
-  it('BaselineResult has score', () => {
-    const result: BaselineResult = {
+  it('DnsCertifiedResult has score', () => {
+    const result: DnsCertifiedResult = {
       success: true,
       runId: 'run-1',
       score: 85,
@@ -162,8 +162,8 @@ describe('type definitions', () => {
     expect(result.score).toBe(85);
   });
 
-  it('CertifiedResult has categories', () => {
-    const result: CertifiedResult = {
+  it('FullyCertifiedResult has categories', () => {
+    const result: FullyCertifiedResult = {
       success: true,
       runId: 'run-1',
       score: 92,
@@ -244,12 +244,12 @@ describe('type definitions', () => {
 
   it('BenchmarkJobConfig has correct shape', () => {
     const config: BenchmarkJobConfig = {
-      tier: 'baseline',
+      tier: 'dns_certified',
       name: 'Test Run',
       transport: 'sse',
       paymentId: 'pay-1',
     };
-    expect(config.tier).toBe('baseline');
+    expect(config.tier).toBe('dns_certified');
   });
 
   it('ConnectOptions has correct shape', () => {
@@ -265,8 +265,8 @@ describe('type definitions', () => {
     expect(opts.transport).toBe('sse');
   });
 
-  it('BaselineRunOptions has all fields', () => {
-    const opts: BaselineRunOptions = {
+  it('DnsCertifiedRunOptions has all fields', () => {
+    const opts: DnsCertifiedRunOptions = {
       transport: 'sse',
       pollIntervalMs: 3000,
       pollTimeoutMs: 600000,

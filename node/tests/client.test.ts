@@ -235,7 +235,7 @@ describe('HaiClient', () => {
           transcript: [
             { role: 'party_a', content: 'I need help', timestamp: 'now', annotations: [] },
           ],
-          upsell_message: 'Try baseline!',
+          upsell_message: 'Try dns_certified!',
         },
       });
       globalThis.fetch = mock.fetch;
@@ -247,10 +247,10 @@ describe('HaiClient', () => {
       expect(result.runId).toBe('run-1');
       expect(result.transcript).toHaveLength(1);
       expect(result.transcript[0].role).toBe('party_a');
-      expect(result.upsellMessage).toBe('Try baseline!');
+      expect(result.upsellMessage).toBe('Try dns_certified!');
 
       const body = JSON.parse(mock.calls[0].init.body as string);
-      expect(body.tier).toBe('free_chaotic');
+      expect(body.tier).toBe('free');
     });
   });
 
@@ -371,21 +371,21 @@ describe('HaiClient', () => {
     it('sends name and tier in request body', async () => {
       const mock = createMockFetch({
         status: 200,
-        body: { score: 72.5, name: 'mediation_basic', tier: 'free_chaotic' },
+        body: { score: 72.5, name: 'mediation_basic', tier: 'free' },
       });
       globalThis.fetch = mock.fetch;
 
       const client = createClient();
-      const result = await client.benchmark('mediation_basic', 'free_chaotic');
+      const result = await client.benchmark('mediation_basic', 'free');
 
       expect(result.score).toBe(72.5);
 
       const body = JSON.parse(mock.calls[0].init.body as string);
       expect(body.name).toBe('mediation_basic');
-      expect(body.tier).toBe('free_chaotic');
+      expect(body.tier).toBe('free');
     });
 
-    it('defaults to mediation_basic name and free_chaotic tier', async () => {
+    it('defaults to mediation_basic name and free tier', async () => {
       const mock = createMockFetch({ status: 200, body: {} });
       globalThis.fetch = mock.fetch;
 
@@ -394,7 +394,7 @@ describe('HaiClient', () => {
 
       const body = JSON.parse(mock.calls[0].init.body as string);
       expect(body.name).toBe('mediation_basic');
-      expect(body.tier).toBe('free_chaotic');
+      expect(body.tier).toBe('free');
     });
   });
 

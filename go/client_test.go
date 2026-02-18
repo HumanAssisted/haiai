@@ -261,7 +261,7 @@ func TestRegister(t *testing.T) {
 	defer server.Close()
 
 	cl, _ := newTestClient(t, server.URL)
-	result, err := cl.Register(context.Background(), `{"jacsId": "test-agent"}`)
+	result, err := cl.Register(context.Background(), RegisterOptions{AgentJSON: `{"jacsId": "test-agent"}`})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -295,18 +295,18 @@ func TestBenchmark(t *testing.T) {
 		}
 		json.NewDecoder(r.Body).Decode(&reqBody)
 
-		if reqBody.Tier != "free_chaotic" {
-			t.Errorf("expected tier 'free_chaotic', got '%s'", reqBody.Tier)
+		if reqBody.Tier != "free" {
+			t.Errorf("expected tier 'free', got '%s'", reqBody.Tier)
 		}
-		if reqBody.Name != "free_chaotic" {
-			t.Errorf("expected name 'free_chaotic', got '%s'", reqBody.Name)
+		if !strings.HasPrefix(reqBody.Name, "Free Run - ") {
+			t.Errorf("expected descriptive name starting with 'Free Run - ', got '%s'", reqBody.Name)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"run_id":       "run-123",
-			"name":         "free_chaotic",
-			"tier":         "free_chaotic",
+			"name":         reqBody.Name,
+			"tier":         "free",
 			"score":        0.85,
 			"completed_at": "2024-01-15T10:30:00Z",
 			"results": []map[string]interface{}{
@@ -317,7 +317,7 @@ func TestBenchmark(t *testing.T) {
 	defer server.Close()
 
 	cl, _ := newTestClient(t, server.URL)
-	result, err := cl.FreeChaoticRun(context.Background())
+	result, err := cl.FreeRun(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

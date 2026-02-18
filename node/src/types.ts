@@ -58,7 +58,7 @@ export type ConnectionMode = 'sse' | 'ws';
 // =============================================================================
 
 /** Benchmark tier identifiers. */
-export type BenchmarkTier = 'free_chaotic' | 'baseline' | 'certified';
+export type BenchmarkTier = 'free' | 'dns_certified' | 'fully_certified';
 
 /** A benchmark job received from HAI via SSE or WebSocket. */
 export interface BenchmarkJob {
@@ -78,7 +78,7 @@ export interface BenchmarkJobConfig {
   name?: string;
   /** Transport protocol for the benchmark. */
   transport?: ConnectionMode;
-  /** Stripe payment ID (required for baseline). */
+  /** Stripe payment ID (required for dns_certified). */
   paymentId?: string;
 }
 
@@ -149,8 +149,8 @@ export interface FreeChaoticResult {
   rawResponse: Record<string, unknown>;
 }
 
-/** Result of a $5 baseline benchmark run. Single score, no breakdown. */
-export interface BaselineResult {
+/** Result of a $5 DNS-certified benchmark run. Single score, no breakdown. */
+export interface DnsCertifiedResult {
   /** Whether the run completed. */
   success: boolean;
   /** Unique ID for this benchmark run. */
@@ -165,8 +165,8 @@ export interface BaselineResult {
   rawResponse: Record<string, unknown>;
 }
 
-/** Result of a $499 certified benchmark run. */
-export interface CertifiedResult {
+/** Result of a $499 fully-certified benchmark run. */
+export interface FullyCertifiedResult {
   /** Whether the run completed. */
   success: boolean;
   /** Unique ID for this benchmark run. */
@@ -184,7 +184,7 @@ export interface CertifiedResult {
 }
 
 /** Generic benchmark result (union of all tiers). */
-export type BenchmarkResult = FreeChaoticResult | BaselineResult | CertifiedResult;
+export type BenchmarkResult = FreeChaoticResult | DnsCertifiedResult | FullyCertifiedResult;
 
 /** Result of submitting a benchmark job response. */
 export interface JobResponseResult {
@@ -286,8 +286,8 @@ export interface OnBenchmarkJobOptions {
   transport?: ConnectionMode;
 }
 
-/** Options for baseline benchmark run. */
-export interface BaselineRunOptions {
+/** Options for DNS-certified benchmark run. */
+export interface DnsCertifiedRunOptions {
   /** Transport protocol. */
   transport?: ConnectionMode;
   /** Milliseconds between payment status checks. Default: 2000. */
@@ -302,4 +302,123 @@ export interface BaselineRunOptions {
 export interface FreeChaoticRunOptions {
   /** Transport protocol. */
   transport?: ConnectionMode;
+}
+
+// =============================================================================
+// Email types
+// =============================================================================
+
+/** Options for sending an email. */
+export interface SendEmailOptions {
+  /** Recipient email address. */
+  to: string;
+  /** Email subject line. */
+  subject: string;
+  /** Email body text. */
+  body: string;
+  /** Message ID to reply to (for threading). */
+  inReplyTo?: string;
+}
+
+/** Result of sending an email. */
+export interface SendEmailResult {
+  /** Unique message ID assigned by HAI. */
+  messageId: string;
+  /** Delivery status. */
+  status: string;
+}
+
+/** An email message. */
+export interface EmailMessage {
+  /** Unique message ID. */
+  id: string;
+  /** Sender email address. */
+  fromAddress: string;
+  /** Recipient email address. */
+  toAddress: string;
+  /** Email subject. */
+  subject: string;
+  /** Email body text. */
+  body: string;
+  /** ISO 8601 timestamp when the message was sent. */
+  sentAt: string;
+  /** ISO 8601 timestamp when the message was read, or null. */
+  readAt: string | null;
+  /** Thread ID for grouping replies. */
+  threadId: string | null;
+}
+
+/** Options for listing email messages. */
+export interface ListMessagesOptions {
+  /** Max number of messages to return. */
+  limit?: number;
+  /** Offset for pagination. */
+  offset?: number;
+  /** Folder to list from. */
+  folder?: 'inbox' | 'outbox' | 'all';
+}
+
+/** Email rate limit and status info. */
+export interface EmailStatus {
+  /** Maximum emails per day for current tier. */
+  dailyLimit: number;
+  /** Emails sent today. */
+  dailyUsed: number;
+  /** ISO 8601 timestamp when the daily counter resets. */
+  resetsAt: string;
+  /** Agent's reputation tier. */
+  reputationTier: string;
+  /** Current billing tier. */
+  currentTier: string;
+}
+
+// =============================================================================
+// Key lookup types
+// =============================================================================
+
+/** Public key information returned by the key lookup endpoint. */
+export interface PublicKeyInfo {
+  /** Agent's JACS ID. */
+  jacsId: string;
+  /** Key version. */
+  version: string;
+  /** Public key in PEM format. */
+  publicKey: string;
+  /** Base64-encoded raw public key bytes. */
+  publicKeyRawB64: string;
+  /** Signature algorithm (e.g., "Ed25519"). */
+  algorithm: string;
+  /** Hash of the public key. */
+  publicKeyHash: string;
+  /** Key status (e.g., "active"). */
+  status: string;
+  /** Whether DNS has been verified for this agent. */
+  dnsVerified: boolean;
+  /** ISO 8601 timestamp when the key was created. */
+  createdAt: string;
+}
+
+// =============================================================================
+// Verification types
+// =============================================================================
+
+/** Badge levels for agent verification. */
+export type BadgeLevel = 'none' | 'basic' | 'domain' | 'attested';
+
+/** Result of verifying an agent document. */
+export interface VerificationResult {
+  /** Whether the Ed25519 signature is valid. */
+  signatureValid: boolean;
+  /** Whether DNS has been verified. */
+  dnsVerified: boolean;
+  /** Whether the agent is registered with HAI. */
+  haiRegistered: boolean;
+  /** Agent's badge/trust level. */
+  badgeLevel: BadgeLevel;
+  /** Agent's JACS ID from the document. */
+  jacsId: string;
+  /** JACS version from the document. */
+  version: string;
+  /** Any errors encountered during verification. */
+  errors: string[];
 }

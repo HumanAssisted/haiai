@@ -307,7 +307,7 @@ class TestSubmitBenchmarkResponse:
 
 
 # ---------------------------------------------------------------------------
-# HaiClient.free_chaotic_run
+# HaiClient.free_run
 # ---------------------------------------------------------------------------
 
 
@@ -325,7 +325,7 @@ class TestFreeChaoticRun:
             })
         )
         client = HaiClient()
-        result = client.free_chaotic_run("https://hai.ai")
+        result = client.free_run("https://hai.ai")
         assert result.success
         assert len(result.transcript) == 2
         assert result.upsell_message == "Upgrade for scores!"
@@ -337,7 +337,7 @@ class TestFreeChaoticRun:
         )
         client = HaiClient()
         with pytest.raises(HaiError, match="Rate limited"):
-            client.free_chaotic_run("https://hai.ai")
+            client.free_run("https://hai.ai")
 
 
 # ---------------------------------------------------------------------------

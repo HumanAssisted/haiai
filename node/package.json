@@ -16,7 +16,12 @@
       "require": { "types": "./dist/types/types.d.ts", "default": "./dist/cjs/types.js" }
     }
   },
+  "bin": {
+    "haisdk": "./dist/esm/cli.js",
+    "haisdk-mcp": "./dist/esm/mcp-server.js"
+  },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
     "ws": "^8.16.0"
   },
   "devDependencies": {

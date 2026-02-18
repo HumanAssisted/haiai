@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -52,6 +53,10 @@ def create_agent_document(
 ) -> dict:
     """Create a self-signed JACS agent document.
 
+    The signing algorithm matches the Rust verifier: the canonical form
+    includes the ``jacsSignature`` object with ``agentID`` and ``date``
+    but WITHOUT the ``signature`` sub-field.
+
     Args:
         name: Agent name (ASCII-only).
         version: Agent version string.
@@ -70,9 +75,19 @@ def create_agent_document(
         "jacsAgentVersion": version,
         "jacsId": jacs_id,
         "jacsPublicKey": public_key_pem,
+        "jacsVersion": version,
     }
 
+    # Build jacsSignature WITHOUT .signature first (matches Rust canonical form)
+    doc["jacsSignature"] = {
+        "agentID": jacs_id,
+        "date": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Sign the canonical form (includes jacsSignature with agentID+date, no signature)
     canonical = canonicalize_json(doc)
     signature = sign_string(private_key, canonical)
-    doc["jacsSignature"] = signature
+
+    # Insert signature into the jacsSignature object
+    doc["jacsSignature"]["signature"] = signature
     return doc

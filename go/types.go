@@ -192,7 +192,9 @@ type ClaimUsernameResult struct {
 
 // RegisterNewAgentOptions configures RegisterNewAgent behavior.
 type RegisterNewAgentOptions struct {
-	Domain string
+	Domain     string
+	OwnerEmail string
+	Quiet      bool
 }
 
 // RegisterResult is the result of RegisterNewAgent, containing
@@ -202,4 +204,51 @@ type RegisterResult struct {
 	PrivateKey   []byte // PEM-encoded Ed25519 private key
 	PublicKey    []byte // PEM-encoded Ed25519 public key
 	AgentJSON    string // The signed JACS agent document
+}
+
+// SendEmailOptions configures an email send request.
+type SendEmailOptions struct {
+	To        string `json:"to"`
+	Subject   string `json:"subject"`
+	Body      string `json:"body"`
+	InReplyTo string `json:"in_reply_to,omitempty"`
+}
+
+// SendEmailResult is the response from sending an email.
+type SendEmailResult struct {
+	MessageID string `json:"message_id"`
+	Status    string `json:"status"`
+}
+
+// EmailMessage represents an email message in the agent's mailbox.
+type EmailMessage struct {
+	ID          string  `json:"id"`
+	FromAddress string  `json:"from_address"`
+	ToAddress   string  `json:"to_address"`
+	Subject     string  `json:"subject"`
+	Body        string  `json:"body"`
+	SentAt      string  `json:"sent_at"`
+	ReadAt      *string `json:"read_at"`
+	ThreadID    *string `json:"thread_id"`
+}
+
+// ListMessagesOptions configures a list messages request.
+type ListMessagesOptions struct {
+	Limit  int    // Maximum number of messages to return.
+	Offset int    // Number of messages to skip.
+	Folder string // "inbox", "outbox", or "all".
+}
+
+// MarkReadResult is the response from marking a message as read.
+type MarkReadResult struct {
+	Success bool `json:"success"`
+}
+
+// EmailStatus describes the agent's email usage and limits.
+type EmailStatus struct {
+	DailyLimit     int    `json:"daily_limit"`
+	DailyUsed      int    `json:"daily_used"`
+	ResetsAt       string `json:"resets_at"`
+	ReputationTier string `json:"reputation_tier"`
+	CurrentTier    string `json:"current_tier"`
 }

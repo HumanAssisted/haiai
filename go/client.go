@@ -19,6 +19,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
@@ -26,6 +27,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -248,16 +251,23 @@ func (c *Client) TestConnection(ctx context.Context) (bool, error) {
 	return health.Status == "ok" || health.Status == "healthy", nil
 }
 
+// RegisterOptions configures the Register call.
+type RegisterOptions struct {
+	AgentJSON  string `json:"agent_json"`
+	PublicKey  string `json:"public_key,omitempty"`
+	OwnerEmail string `json:"owner_email,omitempty"`
+}
+
 // Register registers the agent with HAI.
-func (c *Client) Register(ctx context.Context, agentJSON string) (*RegistrationResult, error) {
-	reqBody := struct {
-		AgentJSON string `json:"agent_json"`
-	}{
-		AgentJSON: agentJSON,
+// The public key PEM is base64-encoded on the wire to match Python/Node SDKs.
+func (c *Client) Register(ctx context.Context, opts RegisterOptions) (*RegistrationResult, error) {
+	wireOpts := opts
+	if wireOpts.PublicKey != "" {
+		wireOpts.PublicKey = base64.StdEncoding.EncodeToString([]byte(opts.PublicKey))
 	}
 
 	var result RegistrationResult
-	if err := c.doRequest(ctx, http.MethodPost, "/api/v1/agents/register", reqBody, &result); err != nil {
+	if err := c.doRequest(ctx, http.MethodPost, "/api/v1/agents/register", wireOpts, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -312,7 +322,7 @@ func (c *Client) Benchmark(ctx context.Context, tier string) (*BenchmarkResult, 
 		Name string `json:"name"`
 		Tier string `json:"tier"`
 	}{
-		Name: tier,
+		Name: generateBenchmarkName(tier, c.jacsID),
 		Tier: tier,
 	}
 
@@ -323,30 +333,138 @@ func (c *Client) Benchmark(ctx context.Context, tier string) (*BenchmarkResult, 
 	return &result, nil
 }
 
-// FreeChaoticRun runs the free chaotic benchmark tier.
-func (c *Client) FreeChaoticRun(ctx context.Context) (*BenchmarkResult, error) {
-	return c.Benchmark(ctx, "free_chaotic")
+// generateBenchmarkName creates a descriptive benchmark run name.
+func generateBenchmarkName(tier, jacsID string) string {
+	displayNames := map[string]string{
+		"free":            "Free",
+		"dns_certified":   "DNS Certified",
+		"fully_certified": "Fully Certified",
+		// Legacy names (backward compat during transition)
+		"free_chaotic": "Free",
+		"baseline":     "DNS Certified",
+		"certified":    "Fully Certified",
+	}
+
+	display, ok := displayNames[tier]
+	if !ok {
+		display = tier
+	}
+
+	suffix := jacsID
+	if len(suffix) > 8 {
+		suffix = suffix[:8]
+	}
+	if suffix == "" {
+		suffix = time.Now().Format("20060102-150405")
+	}
+
+	return fmt.Sprintf("%s Run - %s", display, suffix)
 }
 
-// BaselineRun runs the baseline benchmark tier.
-func (c *Client) BaselineRun(ctx context.Context) (*BenchmarkResult, error) {
-	return c.Benchmark(ctx, "baseline")
+// FreeRun runs the free benchmark tier.
+func (c *Client) FreeRun(ctx context.Context) (*BenchmarkResult, error) {
+	return c.Benchmark(ctx, "free")
 }
 
-// SubmitResponse submits a moderation response for a benchmark job.
+// DnsCertifiedRun runs the dns_certified benchmark tier with Stripe checkout.
+// It creates a subscription session, opens the user's browser, polls for
+// payment confirmation, then runs the benchmark.
+func (c *Client) DnsCertifiedRun(ctx context.Context) (*BenchmarkResult, error) {
+	// 1. Create subscription session.
+	var sub struct {
+		CheckoutURL string `json:"checkout_url"`
+		SessionID   string `json:"session_id"`
+		AlreadyPaid bool   `json:"already_paid"`
+	}
+	err := c.doRequest(ctx, http.MethodPost, "/api/benchmark/subscribe", map[string]string{
+		"tier": "dns_certified",
+	}, &sub)
+	if err != nil {
+		return nil, err
+	}
+
+	// Skip checkout if already subscribed.
+	if !sub.AlreadyPaid && sub.CheckoutURL != "" {
+		// 2. Open browser to Stripe checkout.
+		_ = openBrowser(sub.CheckoutURL)
+
+		// 3. Poll for payment confirmation.
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		timeout := time.After(5 * time.Minute)
+
+		for {
+			select {
+			case <-ticker.C:
+				var status struct {
+					Paid bool `json:"paid"`
+				}
+				statusPath := fmt.Sprintf("/api/benchmark/subscribe/status/%s", sub.SessionID)
+				if err := c.doRequest(ctx, http.MethodGet, statusPath, nil, &status); err == nil && status.Paid {
+					goto runBenchmark
+				}
+			case <-timeout:
+				return nil, newError(ErrTimeout, "payment confirmation timed out after 5 minutes")
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+	}
+
+runBenchmark:
+	return c.Benchmark(ctx, "dns_certified")
+}
+
+// CertifiedRun runs a fully_certified tier benchmark.
+//
+// The fully_certified tier ($499/month) is coming soon.
+// Contact support@hai.ai for early access.
+func (c *Client) CertifiedRun(ctx context.Context) (*BenchmarkResult, error) {
+	return nil, fmt.Errorf(
+		"the fully_certified tier ($499/month) is coming soon; " +
+			"contact support@hai.ai for early access",
+	)
+}
+
+// SubmitResponse submits a moderation response for a benchmark job, wrapped
+// in a signed JACS document envelope.
 func (c *Client) SubmitResponse(ctx context.Context, jobID string, response ModerationResponse) (*JobResponseResult, error) {
-	reqBody := struct {
-		Response ModerationResponse `json:"response"`
-	}{
-		Response: response,
+	signedDoc, err := c.signResponse(response)
+	if err != nil {
+		return nil, err
 	}
 
 	path := fmt.Sprintf("/api/v1/agents/jobs/%s/response", jobID)
 	var result JobResponseResult
-	if err := c.doRequest(ctx, http.MethodPost, path, reqBody, &result); err != nil {
+	if err := c.doRequest(ctx, http.MethodPost, path, signedDoc, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
+}
+
+// signResponse wraps a response payload in a JACS document envelope and signs it.
+func (c *Client) signResponse(response interface{}) (map[string]interface{}, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	doc := map[string]interface{}{
+		"jacsId":      c.jacsID,
+		"jacsVersion": "1.0.0",
+		"jacsSignature": map[string]interface{}{
+			"agentID": c.jacsID,
+			"date":    now,
+		},
+		"response": response,
+	}
+
+	canonical, err := json.Marshal(doc)
+	if err != nil {
+		return nil, wrapError(ErrSigningFailed, err, "failed to marshal response for signing")
+	}
+
+	sig := Sign(c.privateKey, canonical)
+	doc["jacsSignature"].(map[string]interface{})["signature"] = base64.StdEncoding.EncodeToString(sig)
+
+	return doc, nil
 }
 
 // GetAgentAttestation gets the agent's attestation from HAI.
@@ -396,78 +514,199 @@ func (c *Client) ClaimUsername(ctx context.Context, agentID string, username str
 	return &result, nil
 }
 
-// RegisterNewAgent generates a new Ed25519 keypair, creates a JACS agent document,
-// signs it, and registers with HAI.
+// SendEmail sends an email from this agent.
+func (c *Client) SendEmail(ctx context.Context, to, subject, body string) (*SendEmailResult, error) {
+	return c.SendEmailWithOptions(ctx, SendEmailOptions{To: to, Subject: subject, Body: body})
+}
+
+// SendEmailWithOptions sends an email with full options (e.g. threading).
+func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions) (*SendEmailResult, error) {
+	path := fmt.Sprintf("/api/agents/%s/email/send", c.jacsID)
+	var result SendEmailResult
+	if err := c.doRequest(ctx, http.MethodPost, path, opts, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListMessages retrieves messages from the agent's mailbox.
+func (c *Client) ListMessages(ctx context.Context, opts ListMessagesOptions) ([]EmailMessage, error) {
+	path := fmt.Sprintf("/api/agents/%s/email/messages?limit=%d&offset=%d",
+		c.jacsID, opts.Limit, opts.Offset)
+	if opts.Folder != "" {
+		path += "&folder=" + opts.Folder
+	}
+	var messages []EmailMessage
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &messages); err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+// MarkRead marks a message as read.
+func (c *Client) MarkRead(ctx context.Context, messageID string) error {
+	path := fmt.Sprintf("/api/agents/%s/email/messages/%s/read", c.jacsID, messageID)
+	return c.doRequest(ctx, http.MethodPost, path, nil, nil)
+}
+
+// GetEmailStatus retrieves the agent's email usage and limits.
+func (c *Client) GetEmailStatus(ctx context.Context) (*EmailStatus, error) {
+	path := fmt.Sprintf("/api/agents/%s/email/status", c.jacsID)
+	var status EmailStatus
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &status); err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+// RegisterNewAgent generates a new Ed25519 keypair, creates a flat JACS agent
+// document, signs it, and registers with HAI.
+//
+// The document structure matches the Rust API's expected format:
+//
+//	{
+//	    "jacsId": "<uuid>",
+//	    "jacsVersion": "1.0.0",
+//	    "jacsAgentVersion": "1.0.0",
+//	    "jacsAgentName": "<name>",
+//	    "jacsPublicKey": "<PEM>",
+//	    "jacsSignature": {"agentID": "<uuid>", "date": "<ISO8601>", "signature": "<base64>"},
+//	    ...
+//	}
 func (c *Client) RegisterNewAgent(ctx context.Context, agentName string, opts *RegisterNewAgentOptions) (*RegisterResult, error) {
 	pub, priv, err := GenerateKeyPair()
 	if err != nil {
 		return nil, err
 	}
 
-	pubB64 := base64.StdEncoding.EncodeToString(pub)
+	// Marshal public key to SPKI PEM (matches Rust verifier expectation).
+	pubDER, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return nil, wrapError(ErrSigningFailed, err, "failed to marshal public key")
+	}
+	pubPEMStr := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}))
+
+	jacsID := generateUUID()
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	agent := map[string]interface{}{
+	// Build flat JACS document with jacsSignature (minus .signature).
+	doc := map[string]interface{}{
+		"jacsId":           jacsID,
+		"jacsVersion":      "1.0.0",
+		"jacsAgentVersion": "1.0.0",
 		"jacsAgentName":    agentName,
-		"jacsAgentVersion": "1.0",
-		"publicKey":        pubB64,
-		"algorithm":        "Ed25519",
-		"createdAt":        now,
+		"jacsPublicKey":    pubPEMStr,
+		"description":      "Agent registered via Go SDK",
+		"jacsSignature": map[string]interface{}{
+			"agentID": jacsID,
+			"date":    now,
+		},
 	}
 
 	if opts != nil && opts.Domain != "" {
-		agent["domain"] = opts.Domain
+		doc["domain"] = opts.Domain
 	}
 
-	agentJSON, err := json.Marshal(agent)
+	// Canonical JSON (Go encoding/json sorts map keys by default).
+	canonical, err := json.Marshal(doc)
 	if err != nil {
 		return nil, wrapError(ErrSigningFailed, err, "failed to marshal agent document")
 	}
 
-	// Sign the agent document
-	sig := Sign(priv, agentJSON)
+	// Sign the canonical JSON with Ed25519.
+	sig := Sign(priv, canonical)
 	sigB64 := base64.StdEncoding.EncodeToString(sig)
 
-	signedAgent := map[string]interface{}{
-		"agent":     json.RawMessage(agentJSON),
-		"signature": sigB64,
-		"algorithm": "Ed25519",
-	}
+	// Insert signature into jacsSignature and re-serialize.
+	doc["jacsSignature"].(map[string]interface{})["signature"] = sigB64
 
-	signedJSON, err := json.Marshal(signedAgent)
+	agentJSON, err := json.Marshal(doc)
 	if err != nil {
-		return nil, wrapError(ErrSigningFailed, err, "failed to marshal signed agent")
+		return nil, wrapError(ErrSigningFailed, err, "failed to marshal signed agent document")
 	}
 
-	// Register with HAI using a temporary client with the new key
-	tempClient := &Client{
-		endpoint:   c.endpoint,
-		jacsID:     agentName,
-		privateKey: priv,
-		httpClient: c.httpClient,
+	// Register with HAI via the Register method.
+	regOpts := RegisterOptions{
+		AgentJSON: string(agentJSON),
+		PublicKey: pubPEMStr,
+	}
+	if opts != nil {
+		regOpts.OwnerEmail = opts.OwnerEmail
 	}
 
-	reg, err := tempClient.Register(ctx, string(signedJSON))
+	reg, err := c.Register(ctx, regOpts)
 	if err != nil {
 		return nil, err
 	}
 
-	// Encode keys as PEM
+	// Encode keys as PEM for local storage.
 	privPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "PRIVATE KEY",
 		Bytes: priv.Seed(),
 	})
 	pubPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "PUBLIC KEY",
-		Bytes: pub,
+		Bytes: pubDER,
 	})
+
+	// Print next-step messaging
+	if opts == nil || !opts.Quiet {
+		ownerEmail := ""
+		if opts != nil {
+			ownerEmail = opts.OwnerEmail
+		}
+		fmt.Println()
+		fmt.Println("Agent created and submitted for registration!")
+		fmt.Printf("  -> Check your email (%s) for a verification link\n", ownerEmail)
+		fmt.Println("  -> Click the link and log into hai.ai to complete registration")
+		fmt.Println("  -> After verification, claim a @hai.ai username with:")
+		fmt.Println("     client.ClaimUsername(ctx, agentID, \"my-agent\")")
+		fmt.Println("  -> Config saved to ./jacs.config.json")
+		fmt.Println("  -> Keys saved to ./keys")
+
+		if opts != nil && opts.Domain != "" {
+			hash := sha256.Sum256([]byte(pubPEMStr))
+			fmt.Println()
+			fmt.Println("--- DNS Setup Instructions ---")
+			fmt.Printf("Add this TXT record to your domain '%s':\n", opts.Domain)
+			fmt.Printf("  Name:  _jacs.%s\n", opts.Domain)
+			fmt.Println("  Type:  TXT")
+			fmt.Printf("  Value: sha256:%x\n", hash)
+			fmt.Println("DNS verification enables the dns_certified tier.")
+		}
+		fmt.Println()
+	}
 
 	return &RegisterResult{
 		Registration: reg,
 		PrivateKey:   privPEM,
 		PublicKey:    pubPEM,
-		AgentJSON:    string(signedJSON),
+		AgentJSON:    string(agentJSON),
 	}, nil
+}
+
+// openBrowser opens a URL in the user's default browser.
+func openBrowser(url string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", url).Start()
+	case "linux":
+		return exec.Command("xdg-open", url).Start()
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	default:
+		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+	}
+}
+
+// generateUUID produces a UUIDv4 string.
+func generateUUID() string {
+	var uuid [16]byte
+	_, _ = rand.Read(uuid[:])
+	uuid[6] = (uuid[6] & 0x0f) | 0x40 // version 4
+	uuid[8] = (uuid[8] & 0x3f) | 0x80 // variant 2
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+		uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16])
 }
 
 // SignBenchmarkResult signs a benchmark result as a JACS document for

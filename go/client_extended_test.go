@@ -109,7 +109,7 @@ func TestRegister401(t *testing.T) {
 	defer server.Close()
 
 	cl, _ := newTestClient(t, server.URL)
-	_, err := cl.Register(context.Background(), `{"jacsId":"test"}`)
+	_, err := cl.Register(context.Background(), RegisterOptions{AgentJSON: `{"jacsId":"test"}`})
 	if err == nil {
 		t.Fatal("expected error for 401")
 	}
@@ -131,7 +131,7 @@ func TestRegisterContentType(t *testing.T) {
 	defer server.Close()
 
 	cl, _ := newTestClient(t, server.URL)
-	_, _ = cl.Register(context.Background(), `{}`)
+	_, _ = cl.Register(context.Background(), RegisterOptions{AgentJSON: `{}`})
 }
 
 // ===========================================================================
@@ -196,31 +196,31 @@ func TestStatusSetsJacsIDIfEmpty(t *testing.T) {
 // Benchmark endpoint tests
 // ===========================================================================
 
-func TestBaselineRun(t *testing.T) {
+func TestBenchmarkDnsCertifiedTier(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Name string `json:"name"`
 			Tier string `json:"tier"`
 		}
 		json.NewDecoder(r.Body).Decode(&body)
-		if body.Tier != "baseline" {
-			t.Errorf("expected tier 'baseline', got '%s'", body.Tier)
+		if body.Tier != "dns_certified" {
+			t.Errorf("expected tier 'dns_certified', got '%s'", body.Tier)
 		}
-		if body.Name != "baseline" {
-			t.Errorf("expected name 'baseline', got '%s'", body.Name)
+		if !strings.HasPrefix(body.Name, "DNS Certified Run - ") {
+			t.Errorf("expected descriptive name, got '%s'", body.Name)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(BenchmarkResult{RunID: "run-bl", Tier: "baseline"})
+		json.NewEncoder(w).Encode(BenchmarkResult{RunID: "run-dc", Tier: "dns_certified"})
 	}))
 	defer server.Close()
 
 	cl, _ := newTestClient(t, server.URL)
-	result, err := cl.BaselineRun(context.Background())
+	result, err := cl.Benchmark(context.Background(), "dns_certified")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.RunID != "run-bl" {
-		t.Errorf("expected RunID 'run-bl', got '%s'", result.RunID)
+	if result.RunID != "run-dc" {
+		t.Errorf("expected RunID 'run-dc', got '%s'", result.RunID)
 	}
 }
 
@@ -459,7 +459,7 @@ func TestRegisterContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_, err := cl.Register(ctx, `{}`)
+	_, err := cl.Register(ctx, RegisterOptions{AgentJSON: `{}`})
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
 	}
@@ -807,28 +807,31 @@ func TestErrorMessageFormat(t *testing.T) {
 // FreeChaoticRun test
 // ===========================================================================
 
-func TestFreeChaoticRun(t *testing.T) {
+func TestFreeRun(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Name string `json:"name"`
 			Tier string `json:"tier"`
 		}
 		json.NewDecoder(r.Body).Decode(&body)
-		if body.Tier != "free_chaotic" {
-			t.Errorf("expected tier 'free_chaotic', got '%s'", body.Tier)
+		if body.Tier != "free" {
+			t.Errorf("expected tier 'free', got '%s'", body.Tier)
+		}
+		if !strings.HasPrefix(body.Name, "Free Run - ") {
+			t.Errorf("expected descriptive name, got '%s'", body.Name)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(BenchmarkResult{RunID: "run-fc", Tier: "free_chaotic"})
+		json.NewEncoder(w).Encode(BenchmarkResult{RunID: "run-f", Tier: "free"})
 	}))
 	defer server.Close()
 
 	cl, _ := newTestClient(t, server.URL)
-	result, err := cl.FreeChaoticRun(context.Background())
+	result, err := cl.FreeRun(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.RunID != "run-fc" {
-		t.Errorf("expected RunID 'run-fc', got '%s'", result.RunID)
+	if result.RunID != "run-f" {
+		t.Errorf("expected RunID 'run-f', got '%s'", result.RunID)
 	}
 }
 

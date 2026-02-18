@@ -79,9 +79,16 @@ class TestCreateAgentDocument:
             name="Bot", version="1.0",
             public_key_pem=public_pem, private_key=private_key,
         )
-        sig = doc.pop("jacsSignature")
-        canonical = canonicalize_json(doc)
-        assert verify_string(private_key.public_key(), canonical, sig)
+        # jacsSignature is now a structured object
+        jacs_sig = doc["jacsSignature"]
+        assert isinstance(jacs_sig, dict)
+        sig_b64 = jacs_sig["signature"]
+        # Reconstruct canonical form: remove only .signature sub-field
+        import copy
+        signing_doc = copy.deepcopy(doc)
+        del signing_doc["jacsSignature"]["signature"]
+        canonical = canonicalize_json(signing_doc)
+        assert verify_string(private_key.public_key(), canonical, sig_b64)
 
     def test_custom_jacs_id(self, ed25519_keypair: tuple) -> None:
         private_key, public_pem = ed25519_keypair

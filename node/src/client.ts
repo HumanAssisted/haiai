@@ -6,8 +6,8 @@ import type {
   HelloWorldResult,
   RegistrationResult,
   FreeChaoticResult,
-  BaselineResult,
-  CertifiedResult,
+  DnsCertifiedResult,
+  FullyCertifiedResult,
   JobResponseResult,
   VerifyAgentResult,
   RegistrationEntry,
@@ -17,21 +17,27 @@ import type {
   ConnectionMode,
   ConnectOptions,
   OnBenchmarkJobOptions,
-  BaselineRunOptions,
+  DnsCertifiedRunOptions,
   FreeChaoticRunOptions,
   JobResponse,
+  SendEmailOptions,
+  SendEmailResult,
+  EmailMessage,
+  ListMessagesOptions,
+  EmailStatus,
+  PublicKeyInfo,
+  VerificationResult,
 } from './types.js';
 import {
   HaiError,
   AuthenticationError,
   HaiConnectionError,
-  WebSocketError,
 } from './errors.js';
 import { signString, verifyString, generateKeypair } from './crypt.js';
 import { signResponse, canonicalJson, getServerKeys, unwrapSignedEvent } from './signing.js';
 import { loadConfig, loadPrivateKey } from './config.js';
 import { parseSseStream } from './sse.js';
-import { openWebSocket, wsRecv, wsEventStream } from './ws.js';
+import { openWebSocket, wsEventStream } from './ws.js';
 
 /**
  * HAI platform client.
@@ -180,13 +186,17 @@ export class HaiClient {
 
     // Verify HAI's signature on the ACK
     let haiSigValid = false;
-    const haiAckSignature = data.hai_ack_signature as string | undefined;
-    if (haiAckSignature) {
-      haiSigValid = this.verifyHaiMessage(
-        JSON.stringify(data),
-        haiAckSignature,
-        (data.hai_public_key as string) || '',
-      );
+    const haiSignedAck = data.hai_signed_ack as string | undefined;
+    if (haiSignedAck) {
+      const fingerprint = (data.hai_public_key_fingerprint as string) || '';
+      const serverKey = this.serverPublicKeys[fingerprint];
+      if (serverKey) {
+        haiSigValid = this.verifyHaiMessage(
+          JSON.stringify(data),
+          haiSignedAck,
+          serverKey,
+        );
+      }
     }
 
     return {
@@ -230,8 +240,10 @@ export class HaiClient {
    *
    * Generates a JACS agent document with the agent's public key and
    * POSTs to the registration endpoint.
+   *
+   * @param options - Optional registration parameters
    */
-  async register(): Promise<RegistrationResult> {
+  async register(options?: { ownerEmail?: string }): Promise<RegistrationResult> {
     const { publicKeyPem } = this.exportKeys();
 
     // Build JACS agent document
@@ -249,19 +261,24 @@ export class HaiClient {
     };
 
     // Sign canonical JSON
-    const canonical = JSON.stringify(agentDoc, Object.keys(agentDoc).sort());
+    const canonical = canonicalJson(agentDoc);
     const signature = signString(this.privateKeyPem, canonical);
     (agentDoc.jacsSignature as Record<string, string>).signature = signature;
 
     const url = this.makeUrl('/api/v1/agents/register');
+    const publicKeyB64 = Buffer.from(publicKeyPem, 'utf-8').toString('base64');
+    const body: Record<string, unknown> = {
+      agent_json: JSON.stringify(agentDoc),
+      public_key: publicKeyB64,
+    };
+    if (options?.ownerEmail) {
+      body.owner_email = options.ownerEmail;
+    }
 
     const response = await this.fetchWithRetry(url, {
       method: 'POST',
       headers: this.buildAuthHeaders(),
-      body: JSON.stringify({
-        agent_json: JSON.stringify(agentDoc),
-        public_key: publicKeyPem,
-      }),
+      body: JSON.stringify(body),
     });
 
     const data = await response.json() as Record<string, unknown>;
@@ -327,8 +344,8 @@ export class HaiClient {
   async freeChaoticRun(options?: FreeChaoticRunOptions): Promise<FreeChaoticResult> {
     const url = this.makeUrl('/api/benchmark/run');
     const payload = {
-      name: `Free Chaotic Run - ${this.jacsId.slice(0, 8)}`,
-      tier: 'free_chaotic',
+      name: `Free Run - ${this.jacsId.slice(0, 8)}`,
+      tier: 'free',
       transport: options?.transport ?? 'sse',
     };
 
@@ -350,21 +367,21 @@ export class HaiClient {
   }
 
   // ---------------------------------------------------------------------------
-  // baselineRun()
+  // dnsCertifiedRun()
   // ---------------------------------------------------------------------------
 
   /**
-   * Run a $5 baseline benchmark.
+   * Run a $5 DNS-certified benchmark.
    *
    * Flow: create Stripe checkout -> poll for payment -> run benchmark.
    */
-  async baselineRun(options?: BaselineRunOptions): Promise<BaselineResult> {
+  async dnsCertifiedRun(options?: DnsCertifiedRunOptions): Promise<DnsCertifiedResult> {
     const pollIntervalMs = options?.pollIntervalMs ?? 2000;
     const pollTimeoutMs = options?.pollTimeoutMs ?? 300000;
 
     // Step 1: Create Stripe Checkout session
     const purchaseUrl = this.makeUrl('/api/benchmark/purchase');
-    const purchasePayload = { tier: 'baseline', agent_id: this.jacsId };
+    const purchasePayload = { tier: 'dns_certified', agent_id: this.jacsId };
 
     const purchaseResp = await this.fetchWithRetry(purchaseUrl, {
       method: 'POST',
@@ -419,8 +436,8 @@ export class HaiClient {
     // Step 4: Run the benchmark
     const runUrl = this.makeUrl('/api/benchmark/run');
     const runPayload = {
-      name: `Baseline Run - ${this.jacsId.slice(0, 8)}`,
-      tier: 'baseline',
+      name: `DNS Certified Run - ${this.jacsId.slice(0, 8)}`,
+      tier: 'dns_certified',
       payment_id: paymentId,
       transport: options?.transport ?? 'sse',
     };
@@ -441,6 +458,23 @@ export class HaiClient {
       paymentId,
       rawResponse: data,
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // certifiedRun()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Run a fully_certified tier benchmark.
+   *
+   * The fully_certified tier ($499/month) is coming soon.
+   * Contact support@hai.ai for early access.
+   */
+  async certifiedRun(_options?: Record<string, unknown>): Promise<never> {
+    throw new Error(
+      'The fully_certified tier ($499/month) is coming soon. ' +
+      'Contact support@hai.ai for early access.'
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -630,16 +664,16 @@ export class HaiClient {
    * signing, and registration in one call.
    *
    * @param agentName - Name for the new agent
-   * @param options - Optional domain for the agent
+   * @param options - Registration options (ownerEmail required, domain optional)
    * @returns Registration result
    */
-  async registerNewAgent(agentName: string, options?: { domain?: string }): Promise<RegistrationResult> {
+  async registerNewAgent(agentName: string, options: { ownerEmail: string; domain?: string; quiet?: boolean }): Promise<RegistrationResult> {
     const { publicKeyPem, privateKeyPem } = generateKeypair();
 
     // Build minimal JACS agent document
     const agentDoc: Record<string, unknown> = {
       jacsId: agentName,
-      jacsAgentVersion: '1.0.0',
+      jacsVersion: '1.0.0',
       jacsSignature: {
         agentID: agentName,
         date: new Date().toISOString(),
@@ -651,16 +685,18 @@ export class HaiClient {
     };
 
     // Sign canonical JSON
-    const canonical = JSON.stringify(agentDoc, Object.keys(agentDoc).sort());
+    const canonical = canonicalJson(agentDoc);
     const signature = signString(privateKeyPem, canonical);
     (agentDoc.jacsSignature as Record<string, string>).signature = signature;
 
     const url = this.makeUrl('/api/v1/agents/register');
+    const publicKeyB64 = Buffer.from(publicKeyPem, 'utf-8').toString('base64');
     const body: Record<string, unknown> = {
       agent_json: JSON.stringify(agentDoc),
-      public_key: publicKeyPem,
+      public_key: publicKeyB64,
+      owner_email: options.ownerEmail,
     };
-    if (options?.domain) {
+    if (options.domain) {
       body.domain = options.domain;
     }
 
@@ -671,6 +707,30 @@ export class HaiClient {
     });
 
     const data = await response.json() as Record<string, unknown>;
+
+    // Print next-step messaging
+    if (!options.quiet) {
+      console.log(`\nAgent created and submitted for registration!`);
+      console.log(`  -> Check your email (${options.ownerEmail}) for a verification link`);
+      console.log(`  -> Click the link and log into hai.ai to complete registration`);
+      console.log(`  -> After verification, claim a @hai.ai username with:`);
+      console.log(`     client.claimUsername('${(data.agent_id as string) || ''}', 'my-agent')`);
+      console.log(`  -> Config saved to ./jacs.config.json`);
+      console.log(`  -> Keys saved to ./keys`);
+
+      if (options.domain) {
+        const { createHash } = require('node:crypto') as typeof import('node:crypto');
+        const hash = createHash('sha256').update(publicKeyPem).digest('hex');
+        console.log(`\n--- DNS Setup Instructions ---`);
+        console.log(`Add this TXT record to your domain '${options.domain}':`);
+        console.log(`  Name:  _jacs.${options.domain}`);
+        console.log(`  Type:  TXT`);
+        console.log(`  Value: sha256:${hash}`);
+        console.log(`DNS verification enables the dns_certified tier.\n`);
+      } else {
+        console.log();
+      }
+    }
 
     return {
       success: true,
@@ -817,35 +877,25 @@ export class HaiClient {
 
     while (!this._shouldDisconnect) {
       try {
-        const ws = await openWebSocket(wsUrl, {
+        const headers: Record<string, string> = {
           Authorization: this.buildAuthHeader(),
-        }, this.timeout);
+        };
+        if (this._lastEventId) {
+          headers['Last-Event-ID'] = this._lastEventId;
+        }
+
+        const ws = await openWebSocket(wsUrl, headers, this.timeout);
         this._wsConnection = ws;
 
         try {
-          // Send JACS-signed handshake
-          const handshake = this.buildWsHandshake();
-          ws.send(JSON.stringify(handshake));
-
-          // Wait for handshake ACK
-          const ackData = await wsRecv(ws);
-          if (typeof ackData === 'object' && ackData !== null) {
-            const ack = ackData as Record<string, unknown>;
-            if (ack.type === 'error') {
-              const msg = (ack.message as string) || 'Handshake rejected';
-              if (ack.code === 401) throw new AuthenticationError(msg, 401);
-              throw new WebSocketError(msg);
-            }
-          }
-
           this._connected = true;
           reconnectDelay = 1000;
 
           // Yield connected event
           const connEvent: HaiEvent = {
             eventType: 'connected',
-            data: ackData,
-            raw: JSON.stringify(ackData),
+            data: null,
+            raw: '',
           };
           if (onEvent) onEvent(connEvent);
           yield connEvent;
@@ -880,25 +930,6 @@ export class HaiClient {
     }
 
     this._connected = false;
-  }
-
-  private buildWsHandshake(): Record<string, unknown> {
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const message = `${this.jacsId}:${timestamp}`;
-    const signature = signString(this.privateKeyPem, message);
-
-    const handshake: Record<string, unknown> = {
-      type: 'handshake',
-      agent_id: this.jacsId,
-      timestamp,
-      signature,
-    };
-
-    if (this._lastEventId) {
-      handshake.last_event_id = this._lastEventId;
-    }
-
-    return handshake;
   }
 
   // ---------------------------------------------------------------------------
@@ -1047,10 +1078,10 @@ export class HaiClient {
    * Run a benchmark with specified name and tier.
    *
    * @param name - Benchmark run name
-   * @param tier - Benchmark tier ("free_chaotic", "baseline", "certified"). Default: "free_chaotic"
+   * @param tier - Benchmark tier ("free", "dns_certified", "fully_certified"). Default: "free"
    * @returns Benchmark result with scores
    */
-  async benchmark(name: string = 'mediation_basic', tier: string = 'free_chaotic'): Promise<Record<string, unknown>> {
+  async benchmark(name: string = 'mediation_basic', tier: string = 'free'): Promise<Record<string, unknown>> {
     const url = this.makeUrl('/api/benchmark/run');
 
     const response = await this.fetchWithRetry(url, {
@@ -1061,5 +1092,222 @@ export class HaiClient {
 
     const data = await response.json() as Record<string, unknown>;
     return data;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Email CRUD
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Send an email from the agent's @hai.ai address.
+   *
+   * @param options - Email send options (to, subject, body, optional inReplyTo)
+   * @returns Send result with message ID and status
+   */
+  async sendEmail(options: SendEmailOptions): Promise<SendEmailResult> {
+    const url = this.makeUrl(`/api/agents/${this.jacsId}/email/send`);
+    const response = await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: this.buildAuthHeaders(),
+      body: JSON.stringify({
+        to: options.to,
+        subject: options.subject,
+        body: options.body,
+        in_reply_to: options.inReplyTo,
+      }),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    return {
+      messageId: (data.message_id as string) || '',
+      status: (data.status as string) || '',
+    };
+  }
+
+  /**
+   * List email messages for this agent.
+   *
+   * @param options - Pagination and folder filter options
+   * @returns Array of email messages
+   */
+  async listMessages(options?: ListMessagesOptions): Promise<EmailMessage[]> {
+    const params = new URLSearchParams();
+    if (options?.limit != null) params.set('limit', String(options.limit));
+    if (options?.offset != null) params.set('offset', String(options.offset));
+    if (options?.folder) params.set('folder', options.folder);
+
+    const qs = params.toString();
+    const url = this.makeUrl(`/api/agents/${this.jacsId}/email/messages${qs ? `?${qs}` : ''}`);
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: this.buildAuthHeaders(),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    const messages = (data.messages as Array<Record<string, unknown>>) || [];
+    return messages.map((m) => ({
+      id: (m.id as string) || '',
+      fromAddress: (m.from_address as string) || '',
+      toAddress: (m.to_address as string) || '',
+      subject: (m.subject as string) || '',
+      body: (m.body as string) || '',
+      sentAt: (m.sent_at as string) || '',
+      readAt: (m.read_at as string | null) ?? null,
+      threadId: (m.thread_id as string | null) ?? null,
+    }));
+  }
+
+  /**
+   * Mark an email message as read.
+   *
+   * @param messageId - The message ID to mark as read
+   */
+  async markRead(messageId: string): Promise<void> {
+    const url = this.makeUrl(`/api/agents/${this.jacsId}/email/messages/${messageId}/read`);
+    await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: this.buildAuthHeaders(),
+    });
+  }
+
+  /**
+   * Get email rate limit and status info for this agent.
+   *
+   * @returns Email status with daily limits and usage
+   */
+  async getEmailStatus(): Promise<EmailStatus> {
+    const url = this.makeUrl(`/api/agents/${this.jacsId}/email/status`);
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: this.buildAuthHeaders(),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    return {
+      dailyLimit: (data.daily_limit as number) || 0,
+      dailyUsed: (data.daily_used as number) || 0,
+      resetsAt: (data.resets_at as string) || '',
+      reputationTier: (data.reputation_tier as string) || '',
+      currentTier: (data.current_tier as string) || '',
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // fetchRemoteKey()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Look up another agent's public key from the HAI key directory.
+   *
+   * @param jacsId - The JACS ID of the agent to look up
+   * @param version - Key version (default: "latest")
+   * @returns Public key information
+   */
+  async fetchRemoteKey(jacsId: string, version: string = 'latest'): Promise<PublicKeyInfo> {
+    const url = this.makeUrl(`/jacs/v1/agents/${jacsId}/keys/${version}`);
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const warning = response.headers.get('Warning');
+    if (warning) {
+      console.warn(`HAI key service: ${warning}`);
+    }
+
+    const data = await response.json() as Record<string, unknown>;
+    return {
+      jacsId: (data.jacs_id as string) || '',
+      version: (data.version as string) || '',
+      publicKey: (data.public_key as string) || '',
+      publicKeyRawB64: (data.public_key_raw_b64 as string) || '',
+      algorithm: (data.algorithm as string) || '',
+      publicKeyHash: (data.public_key_hash as string) || '',
+      status: (data.status as string) || '',
+      dnsVerified: (data.dns_verified as boolean) ?? false,
+      createdAt: (data.created_at as string) || '',
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // verifyAgent()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Verify another agent's JACS document.
+   *
+   * Performs three levels of verification:
+   * 1. Local Ed25519 signature verification
+   * 2. DNS verification (via server attestation)
+   * 3. HAI registration attestation
+   *
+   * @param agentDocument - JACS agent document (object or JSON string)
+   * @returns Verification result with signature validity and trust level
+   */
+  async verifyAgent(agentDocument: Record<string, unknown> | string): Promise<VerificationResult> {
+    const { createPublicKey, verify } = require('node:crypto') as typeof import('node:crypto');
+
+    const doc = typeof agentDocument === 'string'
+      ? JSON.parse(agentDocument) as Record<string, unknown>
+      : agentDocument;
+
+    const result: VerificationResult = {
+      signatureValid: false,
+      dnsVerified: false,
+      haiRegistered: false,
+      badgeLevel: 'none',
+      jacsId: (doc.jacsId as string) || '',
+      version: (doc.jacsVersion as string) || '',
+      errors: [],
+    };
+
+    // Level 1: Local crypto verification
+    try {
+      const publicKeyPem = doc.jacsPublicKey as string | undefined;
+      if (!publicKeyPem) {
+        result.errors.push('No jacsPublicKey in document');
+        return result;
+      }
+
+      const sig = doc.jacsSignature as Record<string, unknown> | undefined;
+      const signature = sig?.signature as string | undefined;
+      if (!signature) {
+        result.errors.push('No signature in jacsSignature');
+        return result;
+      }
+
+      // Remove signature, canonicalize, verify
+      const verifyDoc = JSON.parse(JSON.stringify(doc)) as Record<string, unknown>;
+      delete (verifyDoc.jacsSignature as Record<string, unknown>).signature;
+      const canonical = canonicalJson(verifyDoc);
+
+      const keyObject = createPublicKey(publicKeyPem);
+      result.signatureValid = verify(
+        null,
+        Buffer.from(canonical),
+        keyObject,
+        Buffer.from(signature, 'base64'),
+      );
+    } catch (e) {
+      result.errors.push(`Signature verification failed: ${(e as Error).message}`);
+    }
+
+    // Level 3: Server attestation
+    try {
+      const attestUrl = this.makeUrl(`/api/v1/agents/${doc.jacsId}/verify`);
+      const resp = await this.fetchWithRetry(attestUrl, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await resp.json() as Record<string, unknown>;
+      result.haiRegistered = (data.registered as boolean) ?? false;
+      result.dnsVerified = (data.dns_verified as boolean) ?? false;
+      result.badgeLevel = (data.badge_level as VerificationResult['badgeLevel']) || 'none';
+    } catch (e) {
+      result.errors.push(`Server attestation check failed: ${(e as Error).message}`);
+    }
+
+    return result;
   }
 }
