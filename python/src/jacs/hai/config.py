@@ -33,6 +33,77 @@ _private_key: Optional[Ed25519PrivateKey] = None
 _REQUIRED_FIELDS = ("jacsAgentName", "jacsAgentVersion", "jacsKeyDir")
 
 
+def _trim_trailing_newlines(value: str) -> str:
+    return value.rstrip("\r\n")
+
+
+def _is_disabled(flag_name: str) -> bool:
+    value = os.environ.get(flag_name, "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def load_private_key_password() -> bytes:
+    """Resolve private-key password from configured secret sources.
+
+    Available sources:
+      - ``JACS_PRIVATE_KEY_PASSWORD`` (developer default)
+      - ``JACS_PASSWORD_FILE``
+
+    Exactly one source must be configured after source filters are applied.
+
+    Optional source disable flags:
+      - ``JACS_DISABLE_PASSWORD_ENV=1``
+      - ``JACS_DISABLE_PASSWORD_FILE=1``
+
+    Raises:
+        FileNotFoundError: If ``JACS_PASSWORD_FILE`` is selected but missing.
+        ValueError: If zero or multiple password sources are configured.
+    """
+    env_enabled = not _is_disabled("JACS_DISABLE_PASSWORD_ENV")
+    file_enabled = not _is_disabled("JACS_DISABLE_PASSWORD_FILE")
+
+    env_password = os.environ.get("JACS_PRIVATE_KEY_PASSWORD")
+    password_file = os.environ.get("JACS_PASSWORD_FILE")
+
+    configured_sources: list[str] = []
+    if env_enabled and env_password:
+        configured_sources.append("JACS_PRIVATE_KEY_PASSWORD")
+    if file_enabled and password_file:
+        configured_sources.append("JACS_PASSWORD_FILE")
+
+    if len(configured_sources) > 1:
+        raise ValueError(
+            "Multiple password sources configured: "
+            f"{', '.join(configured_sources)}. Configure exactly one."
+        )
+
+    if not configured_sources:
+        raise ValueError(
+            "Private key password required. Configure exactly one of "
+            "JACS_PRIVATE_KEY_PASSWORD or JACS_PASSWORD_FILE."
+        )
+
+    selected = configured_sources[0]
+    if selected == "JACS_PRIVATE_KEY_PASSWORD":
+        assert env_password is not None
+        return env_password.encode("utf-8")
+
+    assert password_file is not None
+    file_path = Path(password_file)
+    if not file_path.is_file():
+        raise FileNotFoundError(
+            f"JACS_PASSWORD_FILE does not exist: {file_path}"
+        )
+
+    file_value = _trim_trailing_newlines(
+        file_path.read_text(encoding="utf-8")
+    )
+    if not file_value:
+        raise ValueError(f"JACS_PASSWORD_FILE is empty: {file_path}")
+
+    return file_value.encode("utf-8")
+
+
 def load(config_path: str | None = None) -> None:
     """Load JACS config and the Ed25519 private key from disk.
 
@@ -41,8 +112,12 @@ def load(config_path: str | None = None) -> None:
       2. ``JACS_CONFIG_PATH`` environment variable
       3. ``./jacs.config.json`` in the current directory
 
-    The private-key password is read from the ``JACS_PRIVATE_KEY_PASSWORD``
-    environment variable when present.
+    Password source discovery:
+      - ``JACS_PRIVATE_KEY_PASSWORD``
+      - ``JACS_PASSWORD_FILE``
+
+    Exactly one password source must be configured.
+    Keys must be encrypted at rest.
     """
     global _config, _private_key
 
@@ -52,7 +127,7 @@ def load(config_path: str | None = None) -> None:
     if not path.is_file():
         raise FileNotFoundError(f"JACS config not found: {path}")
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         raw = json.load(f)
 
     missing = [k for k in _REQUIRED_FIELDS if k not in raw]
@@ -89,12 +164,15 @@ def load(config_path: str | None = None) -> None:
     ]
     pem_data = b"\n".join(pem_lines)
 
-    password_env = os.environ.get("JACS_PRIVATE_KEY_PASSWORD")
-    password: Optional[bytes] = (
-        password_env.encode("utf-8") if password_env else None
-    )
+    password = load_private_key_password()
 
-    loaded_key = load_pem_private_key(pem_data, password=password)
+    try:
+        loaded_key = load_pem_private_key(pem_data, password=password)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Failed to load encrypted private key from {pem_path}: {exc}"
+        ) from exc
+
     if not isinstance(loaded_key, Ed25519PrivateKey):
         raise TypeError(
             f"Expected Ed25519 private key, got {type(loaded_key).__name__}"
@@ -137,7 +215,7 @@ def save(config_path: str = "./jacs.config.json") -> None:
 
     path = Path(config_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
         f.write("\n")
 

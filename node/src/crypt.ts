@@ -6,12 +6,23 @@ import { createPrivateKey, createPublicKey, sign, verify, generateKeyPairSync } 
  * delegate to JACS functions. Do not add new local cryptographic implementations.
  */
 
+function parsePrivateKey(privateKeyPem: string, passphrase?: string): ReturnType<typeof createPrivateKey> {
+  if (passphrase) {
+    return createPrivateKey({
+      key: privateKeyPem,
+      format: 'pem',
+      passphrase,
+    });
+  }
+  return createPrivateKey(privateKeyPem);
+}
+
 /**
  * Sign a UTF-8 message with an Ed25519 private key (PEM-encoded).
  * Returns the signature as a base64 string.
  */
-export function signString(privateKeyPem: string, message: string): string {
-  const key = createPrivateKey(privateKeyPem);
+export function signString(privateKeyPem: string, message: string, passphrase?: string): string {
+  const key = parsePrivateKey(privateKeyPem, passphrase);
   const signature = sign(null, Buffer.from(message, 'utf-8'), key);
   return signature.toString('base64');
 }
@@ -39,6 +50,19 @@ export function verifyString(publicKeyPem: string, message: string, signatureB64
   } catch {
     return false;
   }
+}
+
+/**
+ * Encrypt a PEM-encoded private key with a passphrase for at-rest storage.
+ */
+export function encryptPrivateKeyPem(privateKeyPem: string, passphrase: string): string {
+  const key = createPrivateKey(privateKeyPem);
+  return key.export({
+    type: 'pkcs8',
+    format: 'pem',
+    cipher: 'aes-256-cbc',
+    passphrase,
+  }) as string;
 }
 
 /**

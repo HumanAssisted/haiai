@@ -14,5 +14,10 @@
     "explicit_path",
     "JACS_CONFIG_PATH",
     "./jacs.config.json"
-  ]
+  ],
+  "private_key_password_sources": [
+    "JACS_PRIVATE_KEY_PASSWORD",
+    "JACS_PASSWORD_FILE"
+  ],
+  "private_key_password_strategy": "single_source_required"
 }

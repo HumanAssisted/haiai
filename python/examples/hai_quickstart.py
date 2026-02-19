@@ -5,10 +5,15 @@ Prerequisites:
     pip install haisdk
 
 Usage (new agent):
+    export JACS_PRIVATE_KEY_PASSWORD=dev-password
     python hai_quickstart.py
 
 Usage (existing agent with jacs.config.json):
+    export JACS_PRIVATE_KEY_PASSWORD=dev-password
     python hai_quickstart.py --existing
+
+Alternative: set JACS_PASSWORD_FILE to a file containing the password.
+Configure exactly one password source.
 """
 
 import argparse
@@ -64,7 +69,9 @@ def quickstart_existing_agent():
     """Use an existing jacs.config.json to run hello + benchmark."""
 
     # 1. Load existing config
-    print("=== Loading existing config ===")
+    print(
+        "=== Loading existing config (requires JACS_PASSWORD_FILE or JACS_PRIVATE_KEY_PASSWORD) ==="
+    )
     config.load("./jacs.config.json")
     client = HaiClient()
 

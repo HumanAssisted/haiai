@@ -2128,8 +2128,8 @@ def register_new_agent(
         )
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from cryptography.hazmat.primitives.serialization import (
+        BestAvailableEncryption,
         Encoding,
-        NoEncryption,
         PrivateFormat,
         PublicFormat,
     )
@@ -2140,6 +2140,8 @@ def register_new_agent(
     private_key = Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
 
+    private_key_password = hai_config.load_private_key_password()
+
     kd = Path(key_dir).expanduser() if key_dir else (Path.home() / ".jacs" / "keys")
     kd.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
@@ -2149,7 +2151,11 @@ def register_new_agent(
 
     private_key_path = kd / "agent_private_key.pem"
     private_key_path.write_bytes(
-        private_key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
+        private_key.private_bytes(
+            Encoding.PEM,
+            PrivateFormat.PKCS8,
+            BestAvailableEncryption(private_key_password),
+        )
     )
     # Keep private key permissions restrictive even if umask is permissive.
     try:
@@ -2227,6 +2233,9 @@ def register_new_agent(
         print(f"     client.claim_username('my-agent')")
         print(f"  -> Config saved to {config_path}")
         print(f"  -> Keys saved to {kd}")
+        print(
+            "  -> Private key encrypted using JACS_PASSWORD_FILE/JACS_PRIVATE_KEY_PASSWORD"
+        )
 
         if domain:
             key_hash = _compute_public_key_hash(public_pem)

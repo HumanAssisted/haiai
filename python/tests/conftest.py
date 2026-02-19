@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 import json
-import os
-import textwrap
 from pathlib import Path
 from typing import Generator
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import (
+    BestAvailableEncryption,
     Encoding,
-    NoEncryption,
     PrivateFormat,
     PublicFormat,
 )
+
+
+TEST_PRIVATE_KEY_PASSWORD = "test-private-key-password"
 
 
 @pytest.fixture()
@@ -34,6 +35,16 @@ def ed25519_keypair() -> tuple[Ed25519PrivateKey, str]:
     return private_key, public_pem
 
 
+@pytest.fixture(autouse=True)
+def password_env(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+    """Default developer path: env-based password source."""
+    monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", TEST_PRIVATE_KEY_PASSWORD)
+    monkeypatch.delenv("JACS_PASSWORD_FILE", raising=False)
+    monkeypatch.delenv("JACS_DISABLE_PASSWORD_ENV", raising=False)
+    monkeypatch.delenv("JACS_DISABLE_PASSWORD_FILE", raising=False)
+    yield
+
+
 @pytest.fixture()
 def key_dir(tmp_path: Path, ed25519_keypair: tuple) -> Path:
     """Write a keypair to a temporary directory and return the path."""
@@ -41,7 +52,11 @@ def key_dir(tmp_path: Path, ed25519_keypair: tuple) -> Path:
     kd = tmp_path / "keys"
     kd.mkdir()
     (kd / "agent_private_key.pem").write_bytes(
-        private_key.private_bytes(Encoding.PEM, PrivateFormat.PKCS8, NoEncryption())
+        private_key.private_bytes(
+            Encoding.PEM,
+            PrivateFormat.PKCS8,
+            BestAvailableEncryption(TEST_PRIVATE_KEY_PASSWORD.encode("utf-8")),
+        )
     )
     (kd / "agent_public_key.pem").write_text(public_pem)
     return kd

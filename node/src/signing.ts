@@ -135,6 +135,7 @@ export function signResponse(
   jobResponse: unknown,
   privateKeyPem: string,
   jacsId: string,
+  privateKeyPassphrase?: string,
 ): { signed_document: string; agent_jacs_id: string } {
   const now = new Date().toISOString();
   const documentId = randomUUID();
@@ -147,7 +148,7 @@ export function signResponse(
   const sortedData: unknown = JSON.parse(canonicalPayload);
 
   // Sign the canonical payload data (matching Python)
-  const signature = signString(privateKeyPem, canonicalPayload);
+  const signature = signString(privateKeyPem, canonicalPayload, privateKeyPassphrase);
 
   const jacsDoc: JacsDocument = {
     version: '1.0.0',

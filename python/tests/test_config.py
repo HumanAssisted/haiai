@@ -13,6 +13,7 @@ from jacs.hai.config import (
     get_private_key,
     is_loaded,
     load,
+    load_private_key_password,
     reset,
     save,
 )
@@ -104,3 +105,89 @@ class TestReset:
         assert is_loaded()
         reset()
         assert not is_loaded()
+
+
+class TestPasswordResolution:
+    def test_env_password_default_source(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", "env-password")
+        monkeypatch.delenv("JACS_PASSWORD_FILE", raising=False)
+        assert load_private_key_password() == b"env-password"
+
+    def test_password_file_source_when_env_disabled(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        password_file = tmp_path / "password.txt"
+        password_file.write_text("file-password\n", encoding="utf-8")
+
+        monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", "env-password")
+        monkeypatch.setenv("JACS_PASSWORD_FILE", str(password_file))
+        monkeypatch.setenv("JACS_DISABLE_PASSWORD_ENV", "1")
+
+        assert load_private_key_password() == b"file-password"
+
+    def test_multiple_sources_raise(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        password_file = tmp_path / "password.txt"
+        password_file.write_text("file-password\n", encoding="utf-8")
+
+        monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", "env-password")
+        monkeypatch.setenv("JACS_PASSWORD_FILE", str(password_file))
+
+        with pytest.raises(ValueError, match="Multiple password sources configured"):
+            load_private_key_password()
+
+    def test_password_file_missing_raises(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("JACS_PASSWORD_FILE", "/nonexistent/password.txt")
+        monkeypatch.setenv("JACS_DISABLE_PASSWORD_ENV", "1")
+        monkeypatch.delenv("JACS_PRIVATE_KEY_PASSWORD", raising=False)
+
+        with pytest.raises(FileNotFoundError, match="JACS_PASSWORD_FILE"):
+            load_private_key_password()
+
+    def test_password_required_raises_without_any_source(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("JACS_PASSWORD_FILE", raising=False)
+        monkeypatch.delenv("JACS_PRIVATE_KEY_PASSWORD", raising=False)
+
+        with pytest.raises(ValueError, match="Private key password required"):
+            load_private_key_password()
+
+    def test_load_requires_password_source(
+        self,
+        jacs_config_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset()
+        monkeypatch.delenv("JACS_PASSWORD_FILE", raising=False)
+        monkeypatch.delenv("JACS_PRIVATE_KEY_PASSWORD", raising=False)
+
+        with pytest.raises(ValueError, match="Private key password required"):
+            load(str(jacs_config_path))
+
+    def test_load_fails_on_multiple_sources(
+        self,
+        jacs_config_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        reset()
+        password_file = tmp_path / "password.txt"
+        password_file.write_text("test-private-key-password\n", encoding="utf-8")
+        monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", "test-private-key-password")
+        monkeypatch.setenv("JACS_PASSWORD_FILE", str(password_file))
+
+        with pytest.raises(ValueError, match="Multiple password sources configured"):
+            load(str(jacs_config_path))

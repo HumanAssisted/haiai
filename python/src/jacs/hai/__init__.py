@@ -4,6 +4,9 @@ Usage (preferred)::
 
     from haisdk import config, HaiClient
 
+    # Required for encrypted private keys (configure exactly one source):
+    # export JACS_PRIVATE_KEY_PASSWORD=dev-password
+    # or: export JACS_PASSWORD_FILE=/secure/path/jacs-password.txt
     config.load("./jacs.config.json")
 
     client = HaiClient()

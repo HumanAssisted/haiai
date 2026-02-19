@@ -2,6 +2,81 @@ import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { AgentConfig } from './types.js';
 
+const ENV_PASSWORD = 'JACS_PRIVATE_KEY_PASSWORD';
+const ENV_PASSWORD_FILE = 'JACS_PASSWORD_FILE';
+const ENV_DISABLE_PASSWORD_ENV = 'JACS_DISABLE_PASSWORD_ENV';
+const ENV_DISABLE_PASSWORD_FILE = 'JACS_DISABLE_PASSWORD_FILE';
+
+function isDisabled(flagName: string): boolean {
+  const raw = process.env[flagName]?.trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
+function trimTrailingNewlines(value: string): string {
+  return value.replace(/[\r\n]+$/, '');
+}
+
+/**
+ * Resolve private-key passphrase from configured secret sources.
+ *
+ * Exactly one source must be configured after source filters are applied.
+ *
+ * Sources:
+ * - JACS_PRIVATE_KEY_PASSWORD (developer default)
+ * - JACS_PASSWORD_FILE
+ *
+ * Optional source disable flags:
+ * - JACS_DISABLE_PASSWORD_ENV=1
+ * - JACS_DISABLE_PASSWORD_FILE=1
+ */
+export async function loadPrivateKeyPassphrase(): Promise<string> {
+  const envEnabled = !isDisabled(ENV_DISABLE_PASSWORD_ENV);
+  const fileEnabled = !isDisabled(ENV_DISABLE_PASSWORD_FILE);
+
+  const envPassword = process.env[ENV_PASSWORD];
+  const passwordFile = process.env[ENV_PASSWORD_FILE];
+
+  const configured: string[] = [];
+  if (envEnabled && envPassword) {
+    configured.push(ENV_PASSWORD);
+  }
+  if (fileEnabled && passwordFile) {
+    configured.push(ENV_PASSWORD_FILE);
+  }
+
+  if (configured.length > 1) {
+    throw new Error(
+      `Multiple password sources configured: ${configured.join(', ')}. Configure exactly one.`,
+    );
+  }
+
+  if (configured.length === 0) {
+    throw new Error(
+      'Private key password required. Configure exactly one of JACS_PRIVATE_KEY_PASSWORD or JACS_PASSWORD_FILE.',
+    );
+  }
+
+  if (configured[0] === ENV_PASSWORD) {
+    return envPassword as string;
+  }
+
+  const filePath = passwordFile as string;
+  let content: string;
+  try {
+    content = await readFile(filePath, 'utf-8');
+  } catch (error) {
+    const message = (error as Error).message;
+    throw new Error(`Failed to read JACS_PASSWORD_FILE (${filePath}): ${message}`);
+  }
+
+  const passphrase = trimTrailingNewlines(content);
+  if (!passphrase) {
+    throw new Error(`JACS_PASSWORD_FILE is empty: ${filePath}`);
+  }
+
+  return passphrase;
+}
+
 /**
  * Load JACS agent configuration from a jacs.config.json file.
  *
