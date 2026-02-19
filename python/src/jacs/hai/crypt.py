@@ -50,6 +50,7 @@ def create_agent_document(
     public_key_pem: str,
     private_key: Ed25519PrivateKey,
     jacs_id: Optional[str] = None,
+    extra_fields: Optional[dict] = None,
 ) -> dict:
     """Create a self-signed JACS agent document.
 
@@ -63,6 +64,8 @@ def create_agent_document(
         public_key_pem: PEM-encoded Ed25519 public key.
         private_key: Ed25519 private key for signing.
         jacs_id: Optional pre-assigned JACS ID. Generated if omitted.
+        extra_fields: Optional dict of additional fields to include in the
+            document before signing (e.g. ``description``, ``domain``).
 
     Returns:
         Agent document dict with ``jacsSignature`` field populated.
@@ -77,6 +80,10 @@ def create_agent_document(
         "jacsPublicKey": public_key_pem,
         "jacsVersion": version,
     }
+
+    # Include extra fields before signing so the signature covers them
+    if extra_fields:
+        doc.update(extra_fields)
 
     # Build jacsSignature WITHOUT .signature first (matches Rust canonical form)
     doc["jacsSignature"] = {

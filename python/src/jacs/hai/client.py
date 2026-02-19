@@ -2142,16 +2142,18 @@ def register_new_agent(
     ).decode()
     (kd / "agent_public_key.pem").write_text(public_pem)
 
-    # 2. Self-sign agent document
+    # 2. Self-sign agent document (include description/domain before signing
+    #    so the signature covers all fields the server will verify)
+    extra_fields: dict = {"description": description or "Agent registered via Python SDK"}
+    if domain:
+        extra_fields["domain"] = domain
     agent_doc = create_agent_document(
         name=name,
         version=version,
         public_key_pem=public_pem,
         private_key=private_key,
+        extra_fields=extra_fields,
     )
-    agent_doc["description"] = description or "Agent registered via Python SDK"
-    if domain:
-        agent_doc["domain"] = domain
     agent_json_str = json.dumps(agent_doc, indent=2)
 
     # 3. Register with HAI (no API key -- the self-signed doc is the auth)
