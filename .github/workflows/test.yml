@@ -7,8 +7,18 @@ on:
     branches: [main]
 
 jobs:
+  crypto-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce crypto delegation policy
+        run: |
+          chmod +x scripts/ci/check_no_local_crypto.sh
+          ./scripts/ci/check_no_local_crypto.sh
+
   test-python:
     runs-on: ubuntu-latest
+    needs: [crypto-policy]
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
@@ -28,6 +38,7 @@ jobs:
 
   test-node:
     runs-on: ubuntu-latest
+    needs: [crypto-policy]
     strategy:
       matrix:
         node-version: [18, 20, 22]
@@ -47,6 +58,7 @@ jobs:
 
   test-go:
     runs-on: ubuntu-latest
+    needs: [crypto-policy]
     strategy:
       matrix:
         go-version: ["1.22", "1.23"]

@@ -8,6 +8,10 @@ import (
 	"os"
 )
 
+// CRYPTO POLICY:
+// This module is transitional. Cryptographic operations in haisdk must
+// delegate to JACS functions. Do not add new local cryptographic implementations.
+
 // LoadPrivateKey loads an Ed25519 private key from a PEM file.
 //
 // Supports two PEM formats:

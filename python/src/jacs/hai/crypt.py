@@ -1,5 +1,9 @@
 """Ed25519 signing and verification.
 
+CRYPTO POLICY:
+This module is transitional. Cryptographic operations in haisdk must delegate
+to JACS functions. Do not add new local cryptographic implementations.
+
 Produces signatures identical to Rust jacs::crypt::ringwrapper -- both use raw
 Ed25519 (RFC 8032), NOT Ed25519ph.
 """

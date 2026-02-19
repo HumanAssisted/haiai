@@ -17,9 +17,8 @@
  */
 
 import { HaiClient } from '../src/client.js';
-import { signString } from '../src/crypt.js';
+import { generateKeypair, signString } from '../src/crypt.js';
 import { canonicalJson } from '../src/signing.js';
-import { loadConfig, loadPrivateKey } from '../src/config.js';
 import { randomUUID } from 'node:crypto';
 
 const HAI_URL = 'https://hai.ai';
@@ -235,16 +234,20 @@ function generateWellKnownDocuments(
 async function main(): Promise<void> {
   // --- Step 1: Register agent with HAI ---
   console.log('=== Step 1: Register a JACS agent with HAI ===');
-  const client = await HaiClient.create({ url: HAI_URL });
-  const reg = await client.registerNewAgent('a2a-demo-agent', {
+  const keypair = generateKeypair();
+  const client = HaiClient.fromCredentials(
+    'a2a-demo-agent',
+    keypair.privateKeyPem,
+    { url: HAI_URL },
+  );
+  const reg = await client.register({
     ownerEmail: 'you@example.com',
   });
-  const jacsId = reg.agentId;
+  const jacsId = reg.jacsId || client.jacsId;
   console.log(`Agent registered with ID: ${jacsId}`);
 
-  // Get private key for signing artifacts
-  const agentConfig = await loadConfig();
-  const privateKeyPem = await loadPrivateKey(agentConfig);
+  // Use the in-memory keypair for signing artifacts in this quickstart flow.
+  const privateKeyPem = keypair.privateKeyPem;
 
   // --- Step 2: Export as A2A Agent Card ---
   console.log('\n=== Step 2: Export A2A Agent Card (v0.4.0) ===');
@@ -263,7 +266,7 @@ async function main(): Promise<void> {
   };
   const wrapped = wrapArtifactWithProvenance(
     privateKeyPem,
-    client.jacsId,
+    jacsId,
     taskArtifact,
     'task',
   );
@@ -286,7 +289,7 @@ async function main(): Promise<void> {
   };
   const wrappedResult = wrapArtifactWithProvenance(
     privateKeyPem,
-    client.jacsId,
+    jacsId,
     resultArtifact,
     'task-result',
     wrapped.jacsSignature ? [wrapped.jacsSignature as unknown as Record<string, unknown>] : [],
@@ -300,7 +303,7 @@ async function main(): Promise<void> {
 
   // --- Step 6: Generate .well-known documents ---
   console.log('\n=== Step 6: .well-known documents ===');
-  const wellKnown = generateWellKnownDocuments(agentCard, client.jacsId);
+  const wellKnown = generateWellKnownDocuments(agentCard, jacsId);
   for (const [path, doc] of Object.entries(wellKnown)) {
     console.log(`\n${path}:`);
     console.log(JSON.stringify(doc, null, 2).slice(0, 200) + '...');

@@ -28,7 +28,7 @@ all = ["haisdk[ws,sse,dns,langchain,crewai,anthropic,fastapi,mcp,a2a]"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "respx>=0.22"]
 
 [project.scripts]
-haisdk = "jacs.hai.cli:main"
+haisdk = "haisdk.cli:main"
 
 [project.urls]
 Homepage = "https://hai.ai"
@@ -36,7 +36,7 @@ Documentation = "https://hai.ai/docs/sdk/python"
 Repository = "https://github.com/HumanAssisted/haisdk"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/jacs"]
+packages = ["src/jacs", "src/haisdk"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

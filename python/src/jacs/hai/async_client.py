@@ -5,8 +5,8 @@ for use in FastAPI, LangChain, CrewAI, AutoGen, and other async frameworks.
 
 Usage::
 
-    from jacs.hai import config
-    from jacs.hai.async_client import AsyncHaiClient
+    from haisdk import config
+    from haisdk.async_client import AsyncHaiClient
 
     config.load("./jacs.config.json")
 
@@ -23,6 +23,7 @@ import json
 import logging
 import time
 from typing import Any, AsyncIterator, Optional, Union
+from urllib.parse import quote
 
 import httpx
 
@@ -106,6 +107,10 @@ class AsyncHaiClient:
         base = base_url.rstrip("/")
         path = "/" + path.lstrip("/")
         return base + path
+
+    @staticmethod
+    def _escape_path_segment(value: str) -> str:
+        return quote(value, safe="")
 
     def _get_jacs_id(self) -> str:
         from jacs.hai.config import get_config
@@ -317,7 +322,8 @@ class AsyncHaiClient:
         """Check registration/verification status."""
         http = await self._get_http()
         jacs_id = self._get_jacs_id()
-        url = self._make_url(hai_url, f"/api/v1/agents/{jacs_id}/verify")
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(hai_url, f"/api/v1/agents/{safe_jacs_id}/verify")
         headers = self._build_auth_headers()
 
         try:
@@ -416,7 +422,8 @@ class AsyncHaiClient:
         self, hai_url: str, job_id: str, timeout: float,
     ) -> BenchmarkResult:
         http = await self._get_http()
-        url = self._make_url(hai_url, f"/api/benchmark/jobs/{job_id}")
+        safe_job_id = self._escape_path_segment(job_id)
+        url = self._make_url(hai_url, f"/api/benchmark/jobs/{safe_job_id}")
         headers = self._build_auth_headers()
 
         start_time = time.time()
@@ -464,7 +471,8 @@ class AsyncHaiClient:
         """Send an email from this agent's @hai.ai address."""
         http = await self._get_http()
         jacs_id = self._get_jacs_id()
-        url = self._make_url(hai_url, f"/api/agents/{jacs_id}/email/send")
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/send")
         headers = self._build_auth_headers()
         headers["Content-Type"] = "application/json"
 
@@ -495,7 +503,8 @@ class AsyncHaiClient:
         """List email messages for this agent."""
         http = await self._get_http()
         jacs_id = self._get_jacs_id()
-        url = self._make_url(hai_url, f"/api/agents/{jacs_id}/email/messages")
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/messages")
         headers = self._build_auth_headers()
 
         try:
@@ -528,7 +537,12 @@ class AsyncHaiClient:
         """Mark an email message as read."""
         http = await self._get_http()
         jacs_id = self._get_jacs_id()
-        url = self._make_url(hai_url, f"/api/agents/{jacs_id}/email/messages/{message_id}/read")
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        safe_message_id = self._escape_path_segment(message_id)
+        url = self._make_url(
+            hai_url,
+            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/read",
+        )
         headers = self._build_auth_headers()
 
         try:
@@ -547,7 +561,8 @@ class AsyncHaiClient:
         """Get email rate-limit and reputation status."""
         http = await self._get_http()
         jacs_id = self._get_jacs_id()
-        url = self._make_url(hai_url, f"/api/agents/{jacs_id}/email/status")
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/status")
         headers = self._build_auth_headers()
 
         try:
@@ -578,7 +593,9 @@ class AsyncHaiClient:
     ) -> PublicKeyInfo:
         """Fetch another agent's public key from HAI."""
         http = await self._get_http()
-        url = self._make_url(hai_url, f"/jacs/v1/agents/{jacs_id}/keys/{version}")
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        safe_version = self._escape_path_segment(version)
+        url = self._make_url(hai_url, f"/jacs/v1/agents/{safe_jacs_id}/keys/{safe_version}")
 
         try:
             resp = await http.get(url)

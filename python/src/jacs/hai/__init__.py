@@ -1,8 +1,8 @@
 """HAI Python SDK -- agent identity, JACS signing, and benchmark client.
 
-Usage::
+Usage (preferred)::
 
-    from jacs.hai import config, HaiClient
+    from haisdk import config, HaiClient
 
     config.load("./jacs.config.json")
 
@@ -13,7 +13,7 @@ Usage::
 
 Zero-config quickstart::
 
-    from jacs.hai import register_new_agent
+    from haisdk import register_new_agent
 
     result = register_new_agent(name="My Agent", owner_email="user@example.com")
     print(f"Registered: {result.jacs_id}")

@@ -2,9 +2,9 @@
 
 Usage::
 
-    python -m jacs.hai register --name "My Agent" --owner-email "user@example.com"
-    python -m jacs.hai hello --api-url https://hai.ai
-    python -m jacs.hai benchmark --tier free
+    python -m haisdk register --name "My Agent" --owner-email "user@example.com"
+    python -m haisdk hello --api-url https://hai.ai
+    python -m haisdk benchmark --tier free
     haisdk --help
 """
 

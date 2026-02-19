@@ -30,6 +30,8 @@ import (
 	haisdk "github.com/HumanAssisted/haisdk-go"
 )
 
+const HAIURL = haisdk.DefaultEndpoint
+
 // generateUUID produces a UUIDv4 string.
 func generateUUID() string {
 	var uuid [16]byte
@@ -89,9 +91,9 @@ type WrappedArtifact struct {
 	JacsType             string                   `json:"jacsType"`
 	JacsLevel            string                   `json:"jacsLevel"`
 	JacsVersionDate      string                   `json:"jacsVersionDate"`
-	A2AArtifact          map[string]interface{}    `json:"a2aArtifact"`
-	JacsParentSignatures []map[string]interface{}  `json:"jacsParentSignatures,omitempty"`
-	JacsSignature        *JacsArtifactSignature    `json:"jacsSignature,omitempty"`
+	A2AArtifact          map[string]interface{}   `json:"a2aArtifact"`
+	JacsParentSignatures []map[string]interface{} `json:"jacsParentSignatures,omitempty"`
+	JacsSignature        *JacsArtifactSignature   `json:"jacsSignature,omitempty"`
 }
 
 type JacsArtifactSignature struct {
@@ -273,29 +275,25 @@ func main() {
 
 	// --- Step 1: Register agent with HAI ---
 	fmt.Println("=== Step 1: Register a JACS agent with HAI ===")
-	client, err := haisdk.NewClient()
-	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
-	}
-
-	reg, err := client.RegisterNewAgent(ctx, "a2a-demo-agent", &haisdk.RegisterNewAgentOptions{
+	reg, err := haisdk.RegisterNewAgentWithEndpoint(ctx, HAIURL, "a2a-demo-agent", &haisdk.RegisterNewAgentOptions{
 		OwnerEmail: "you@example.com",
 	})
 	if err != nil {
 		log.Fatalf("Registration failed: %v", err)
 	}
-	jacsID := reg.Registration.AgentID
+	if reg.Registration == nil {
+		log.Fatal("Registration failed: empty registration response")
+	}
+	jacsID := reg.Registration.JacsID
+	if jacsID == "" {
+		jacsID = reg.Registration.AgentID
+	}
 	fmt.Printf("Agent registered with ID: %s\n", jacsID)
 
-	// Get the private key for signing artifacts
-	cfg, err := haisdk.DiscoverConfig()
+	// Use generated bootstrap key material for artifact signing.
+	privateKey, err := haisdk.ParsePrivateKey(reg.PrivateKey)
 	if err != nil {
-		log.Fatalf("Failed to discover config: %v", err)
-	}
-	keyPath := haisdk.ResolveKeyPath(cfg, "jacs.config.json")
-	privateKey, err := haisdk.LoadPrivateKey(keyPath)
-	if err != nil {
-		log.Fatalf("Failed to load private key: %v", err)
+		log.Fatalf("Failed to parse generated private key: %v", err)
 	}
 
 	// --- Step 2: Export as A2A Agent Card ---
@@ -314,7 +312,7 @@ func main() {
 			"topic":   "Resource allocation disagreement",
 		},
 	}
-	wrapped, err := WrapArtifactWithProvenance(privateKey, client.JacsID(), taskArtifact, "task", nil)
+	wrapped, err := WrapArtifactWithProvenance(privateKey, jacsID, taskArtifact, "task", nil)
 	if err != nil {
 		log.Fatalf("Failed to wrap artifact: %v", err)
 	}
@@ -342,7 +340,7 @@ func main() {
 			"signature": wrapped.JacsSignature.Signature,
 		},
 	}
-	wrappedResult, err := WrapArtifactWithProvenance(privateKey, client.JacsID(), resultArtifact, "task-result", parentSigs)
+	wrappedResult, err := WrapArtifactWithProvenance(privateKey, jacsID, resultArtifact, "task-result", parentSigs)
 	if err != nil {
 		log.Fatalf("Failed to wrap result: %v", err)
 	}
@@ -355,7 +353,7 @@ func main() {
 
 	// --- Step 6: Generate .well-known documents ---
 	fmt.Println("\n=== Step 6: .well-known documents ===")
-	wellKnown := GenerateWellKnownDocuments(agentCard, client.JacsID())
+	wellKnown := GenerateWellKnownDocuments(agentCard, jacsID)
 	for path, doc := range wellKnown {
 		docJSON, _ := json.MarshalIndent(doc, "", "  ")
 		preview := string(docJSON)

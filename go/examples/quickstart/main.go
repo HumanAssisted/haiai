@@ -24,6 +24,8 @@ import (
 	haisdk "github.com/HumanAssisted/haisdk-go"
 )
 
+const HAIURL = haisdk.DefaultEndpoint
+
 func main() {
 	existing := flag.Bool("existing", false, "Use existing jacs.config.json")
 	flag.Parse()
@@ -39,21 +41,42 @@ func quickstartNew() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	// 1. Create client (auto-discovers jacs.config.json or use env vars)
-	client, err := haisdk.NewClient()
-	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
-	}
-
-	// 2. Register a new agent with HAI
+	// 1. Register a new agent without requiring a pre-existing local config.
 	fmt.Println("=== Step 1: Register a new JACS agent with HAI ===")
-	reg, err := client.RegisterNewAgent(ctx, "my-quickstart-agent", &haisdk.RegisterNewAgentOptions{
-		OwnerEmail: "you@example.com",
-	})
+	reg, err := haisdk.RegisterNewAgentWithEndpoint(
+		ctx,
+		HAIURL,
+		"my-quickstart-agent",
+		&haisdk.RegisterNewAgentOptions{
+			OwnerEmail: "you@example.com",
+		},
+	)
 	if err != nil {
 		log.Fatalf("Registration failed: %v", err)
 	}
+	if reg.Registration == nil {
+		log.Fatal("Registration failed: empty registration response")
+	}
 	fmt.Printf("Agent ID: %s\n", reg.Registration.AgentID)
+
+	privateKey, err := haisdk.ParsePrivateKey(reg.PrivateKey)
+	if err != nil {
+		log.Fatalf("Failed to parse generated private key: %v", err)
+	}
+	jacsID := reg.Registration.JacsID
+	if jacsID == "" {
+		jacsID = reg.Registration.AgentID
+	}
+
+	// 2. Create an authenticated client from the in-memory bootstrap credentials.
+	client, err := haisdk.NewClient(
+		haisdk.WithEndpoint(HAIURL),
+		haisdk.WithJACSID(jacsID),
+		haisdk.WithPrivateKey(privateKey),
+	)
+	if err != nil {
+		log.Fatalf("Failed to create client from bootstrap credentials: %v", err)
+	}
 
 	// 3. Hello world -- verify signed connectivity
 	fmt.Println("\n=== Step 2: Hello world ===")
@@ -92,7 +115,7 @@ func quickstartExisting() {
 
 	// 1. Load existing config
 	fmt.Println("=== Loading existing config ===")
-	client, err := haisdk.NewClient()
+	client, err := haisdk.NewClient(haisdk.WithEndpoint(HAIURL))
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}

@@ -10,7 +10,7 @@ Demonstrates how to use haisdk with the A2A protocol (v0.4.0):
   6. Publish .well-known documents
 
 Prerequisites:
-    pip install jacs-hai
+    pip install haisdk
 
 Usage:
     python a2a_quickstart.py
@@ -23,9 +23,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from jacs.hai import HaiClient, config, register_new_agent
-from jacs.hai.crypt import canonicalize_json, sign_string
-from jacs.hai.config import get_config, get_private_key
+from haisdk import HaiClient, config, register_new_agent
+from haisdk.crypt import canonicalize_json, sign_string
+from haisdk.config import get_config, get_private_key
 
 HAI_URL = "https://hai.ai"
 

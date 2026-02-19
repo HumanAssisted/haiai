@@ -17,6 +17,7 @@ import time
 import webbrowser
 from pathlib import Path
 from typing import Any, Generator, Iterator, Optional, Union
+from urllib.parse import quote
 
 import httpx
 
@@ -75,7 +76,7 @@ class HaiClient:
 
     Example::
 
-        from jacs.hai import config, HaiClient
+        from haisdk import config, HaiClient
 
         config.load("./jacs.config.json")
         client = HaiClient()
@@ -111,6 +112,11 @@ class HaiClient:
         base = base_url.rstrip("/")
         path = "/" + path.lstrip("/")
         return base + path
+
+    @staticmethod
+    def _escape_path_segment(value: str) -> str:
+        """Escape a user-controlled URL path segment."""
+        return quote(value, safe="")
 
     def _get_jacs_id(self) -> str:
         """Return the loaded JACS ID, raising if not available."""
@@ -508,7 +514,8 @@ class HaiClient:
             HaiStatusResult with verification details.
         """
         jacs_id = self._get_jacs_id()
-        url = self._make_url(hai_url, f"/api/v1/agents/{jacs_id}/verify")
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(hai_url, f"/api/v1/agents/{safe_jacs_id}/verify")
         headers = self._build_auth_headers()
 
         last_error: Optional[Exception] = None
@@ -586,7 +593,8 @@ class HaiClient:
         Returns:
             HaiStatusResult with registration details.
         """
-        url = self._make_url(hai_url, f"/api/v1/agents/{agent_id}/verify")
+        safe_agent_id = self._escape_path_segment(agent_id)
+        url = self._make_url(hai_url, f"/api/v1/agents/{safe_agent_id}/verify")
         headers = self._build_auth_headers()
 
         try:
@@ -681,7 +689,8 @@ class HaiClient:
         Returns:
             Dict with ``username``, ``email``, and ``agent_id``.
         """
-        url = self._make_url(hai_url, f"/api/v1/agents/{agent_id}/username")
+        safe_agent_id = self._escape_path_segment(agent_id)
+        url = self._make_url(hai_url, f"/api/v1/agents/{safe_agent_id}/username")
         headers = self._build_auth_headers()
         headers["Content-Type"] = "application/json"
 
@@ -798,7 +807,8 @@ class HaiClient:
         timeout: float,
     ) -> BenchmarkResult:
         """Poll for an async benchmark result."""
-        url = self._make_url(hai_url, f"/api/benchmark/jobs/{job_id}")
+        safe_job_id = self._escape_path_segment(job_id)
+        url = self._make_url(hai_url, f"/api/benchmark/jobs/{safe_job_id}")
         headers = self._build_auth_headers()
 
         start_time = time.time()
@@ -1007,8 +1017,9 @@ class HaiClient:
             webbrowser.open(checkout_url)
 
         # Step 3: Poll for payment confirmation
+        safe_payment_id = self._escape_path_segment(payment_id)
         payment_status_url = self._make_url(
-            hai_url, f"/api/benchmark/payments/{payment_id}/status"
+            hai_url, f"/api/benchmark/payments/{safe_payment_id}/status"
         )
         start_time = time.time()
 
@@ -1148,7 +1159,8 @@ class HaiClient:
             job_response_payload, get_private_key(), cfg.jacs_id or "",
         )
 
-        url = self._make_url(hai_url, f"/api/v1/agents/jobs/{job_id}/response")
+        safe_job_id = self._escape_path_segment(job_id)
+        url = self._make_url(hai_url, f"/api/v1/agents/jobs/{safe_job_id}/response")
 
         last_exc: Optional[Exception] = None
         for attempt in range(RETRY_MAX_ATTEMPTS):
@@ -1283,7 +1295,8 @@ class HaiClient:
             SendEmailResult with message_id and status.
         """
         jacs_id = self._get_jacs_id()
-        url = self._make_url(hai_url, f"/api/agents/{jacs_id}/email/send")
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/send")
         headers = self._build_auth_headers()
         headers["Content-Type"] = "application/json"
 
@@ -1349,7 +1362,8 @@ class HaiClient:
             List of EmailMessage objects.
         """
         jacs_id = self._get_jacs_id()
-        url = self._make_url(hai_url, f"/api/agents/{jacs_id}/email/messages")
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/messages")
         headers = self._build_auth_headers()
 
         try:
@@ -1407,9 +1421,11 @@ class HaiClient:
             True if successful.
         """
         jacs_id = self._get_jacs_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        safe_message_id = self._escape_path_segment(message_id)
         url = self._make_url(
             hai_url,
-            f"/api/agents/{jacs_id}/email/messages/{message_id}/read",
+            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/read",
         )
         headers = self._build_auth_headers()
 
@@ -1447,7 +1463,8 @@ class HaiClient:
             EmailStatus with daily limits and tier info.
         """
         jacs_id = self._get_jacs_id()
-        url = self._make_url(hai_url, f"/api/agents/{jacs_id}/email/status")
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/status")
         headers = self._build_auth_headers()
 
         try:
@@ -1505,8 +1522,10 @@ class HaiClient:
         Raises:
             HaiApiError: If the agent or key is not found (404).
         """
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        safe_version = self._escape_path_segment(version)
         url = self._make_url(
-            hai_url, f"/jacs/v1/agents/{jacs_id}/keys/{version}"
+            hai_url, f"/jacs/v1/agents/{safe_jacs_id}/keys/{safe_version}"
         )
 
         try:

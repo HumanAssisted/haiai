@@ -162,6 +162,10 @@ export class HaiClient {
     return `${this.baseUrl}${cleanPath}`;
   }
 
+  private encodePathSegment(segment: string): string {
+    return encodeURIComponent(segment);
+  }
+
   // ---------------------------------------------------------------------------
   // hello()
   // ---------------------------------------------------------------------------
@@ -319,7 +323,8 @@ export class HaiClient {
 
   /** Verify the agent's registration status. */
   async verify(): Promise<VerifyAgentResult> {
-    const url = this.makeUrl(`/api/v1/agents/${this.jacsId}/verify`);
+    const safeJacsId = this.encodePathSegment(this.jacsId);
+    const url = this.makeUrl(`/api/v1/agents/${safeJacsId}/verify`);
 
     const response = await this.fetchWithRetry(url, {
       method: 'GET',
@@ -423,7 +428,9 @@ export class HaiClient {
     }
 
     // Step 3: Poll for payment confirmation
-    const paymentStatusUrl = this.makeUrl(`/api/benchmark/payments/${paymentId}/status`);
+    const paymentStatusUrl = this.makeUrl(
+      `/api/benchmark/payments/${this.encodePathSegment(paymentId)}/status`,
+    );
     const startTime = Date.now();
 
     while (Date.now() - startTime < pollTimeoutMs) {
@@ -516,7 +523,8 @@ export class HaiClient {
       processingTimeMs?: number;
     },
   ): Promise<JobResponseResult> {
-    const url = this.makeUrl(`/api/v1/agents/jobs/${jobId}/response`);
+    const safeJobId = this.encodePathSegment(jobId);
+    const url = this.makeUrl(`/api/v1/agents/jobs/${safeJobId}/response`);
 
     const body: JobResponse = {
       response: {
@@ -656,7 +664,8 @@ export class HaiClient {
    * @returns Claim result with the assigned email
    */
   async claimUsername(agentId: string, username: string): Promise<ClaimUsernameResult> {
-    const url = this.makeUrl(`/api/v1/agents/${agentId}/username`);
+    const safeAgentId = this.encodePathSegment(agentId);
+    const url = this.makeUrl(`/api/v1/agents/${safeAgentId}/username`);
 
     const response = await this.fetchWithRetry(url, {
       method: 'POST',
@@ -1049,7 +1058,8 @@ export class HaiClient {
    * @returns Attestation status including HAI signatures
    */
   async getAgentAttestation(agentId: string): Promise<VerifyAgentResult> {
-    const url = this.makeUrl(`/api/v1/agents/${agentId}/verify`);
+    const safeAgentId = this.encodePathSegment(agentId);
+    const url = this.makeUrl(`/api/v1/agents/${safeAgentId}/verify`);
 
     const response = await this.fetchWithRetry(url, {
       method: 'GET',
@@ -1129,7 +1139,8 @@ export class HaiClient {
    * @returns Send result with message ID and status
    */
   async sendEmail(options: SendEmailOptions): Promise<SendEmailResult> {
-    const url = this.makeUrl(`/api/agents/${this.jacsId}/email/send`);
+    const safeJacsId = this.encodePathSegment(this.jacsId);
+    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/send`);
     const response = await this.fetchWithRetry(url, {
       method: 'POST',
       headers: this.buildAuthHeaders(),
@@ -1161,7 +1172,8 @@ export class HaiClient {
     if (options?.folder) params.set('folder', options.folder);
 
     const qs = params.toString();
-    const url = this.makeUrl(`/api/agents/${this.jacsId}/email/messages${qs ? `?${qs}` : ''}`);
+    const safeJacsId = this.encodePathSegment(this.jacsId);
+    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/messages${qs ? `?${qs}` : ''}`);
 
     const response = await this.fetchWithRetry(url, {
       method: 'GET',
@@ -1188,7 +1200,9 @@ export class HaiClient {
    * @param messageId - The message ID to mark as read
    */
   async markRead(messageId: string): Promise<void> {
-    const url = this.makeUrl(`/api/agents/${this.jacsId}/email/messages/${messageId}/read`);
+    const safeJacsId = this.encodePathSegment(this.jacsId);
+    const safeMessageId = this.encodePathSegment(messageId);
+    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/messages/${safeMessageId}/read`);
     await this.fetchWithRetry(url, {
       method: 'POST',
       headers: this.buildAuthHeaders(),
@@ -1201,7 +1215,8 @@ export class HaiClient {
    * @returns Email status with daily limits and usage
    */
   async getEmailStatus(): Promise<EmailStatus> {
-    const url = this.makeUrl(`/api/agents/${this.jacsId}/email/status`);
+    const safeJacsId = this.encodePathSegment(this.jacsId);
+    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/status`);
     const response = await this.fetchWithRetry(url, {
       method: 'GET',
       headers: this.buildAuthHeaders(),
@@ -1229,7 +1244,9 @@ export class HaiClient {
    * @returns Public key information
    */
   async fetchRemoteKey(jacsId: string, version: string = 'latest'): Promise<PublicKeyInfo> {
-    const url = this.makeUrl(`/jacs/v1/agents/${jacsId}/keys/${version}`);
+    const safeJacsId = this.encodePathSegment(jacsId);
+    const safeVersion = this.encodePathSegment(version);
+    const url = this.makeUrl(`/jacs/v1/agents/${safeJacsId}/keys/${safeVersion}`);
     const response = await this.fetchWithRetry(url, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
@@ -1317,7 +1334,8 @@ export class HaiClient {
 
     // Level 3: Server attestation
     try {
-      const attestUrl = this.makeUrl(`/api/v1/agents/${doc.jacsId}/verify`);
+      const safeDocJacsId = this.encodePathSegment(String(doc.jacsId || ''));
+      const attestUrl = this.makeUrl(`/api/v1/agents/${safeDocJacsId}/verify`);
       const resp = await this.fetchWithRetry(attestUrl, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },

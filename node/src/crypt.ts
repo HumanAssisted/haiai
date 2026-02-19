@@ -1,6 +1,12 @@
 import { createPrivateKey, createPublicKey, sign, verify, generateKeyPairSync } from 'node:crypto';
 
 /**
+ * CRYPTO POLICY:
+ * This module is transitional. Cryptographic operations in haisdk must
+ * delegate to JACS functions. Do not add new local cryptographic implementations.
+ */
+
+/**
  * Sign a UTF-8 message with an Ed25519 private key (PEM-encoded).
  * Returns the signature as a base64 string.
  */

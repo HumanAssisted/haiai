@@ -2,7 +2,7 @@
 """HAI SDK Quickstart -- register an agent, say hello, run a benchmark.
 
 Prerequisites:
-    pip install jacs-hai
+    pip install haisdk
 
 Usage (new agent):
     python hai_quickstart.py
@@ -14,7 +14,7 @@ Usage (existing agent with jacs.config.json):
 import argparse
 import sys
 
-from jacs.hai import config, HaiClient, register_new_agent
+from haisdk import config, HaiClient, register_new_agent
 
 HAI_URL = "https://hai.ai"
 

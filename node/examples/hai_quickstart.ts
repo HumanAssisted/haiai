@@ -12,17 +12,23 @@
  */
 
 import { HaiClient } from '../src/client.js';
+import { generateKeypair } from '../src/crypt.js';
 
 const HAI_URL = 'https://hai.ai';
 
 async function quickstartNewAgent(): Promise<void> {
-  // 1. Create client from config (auto-discovers jacs.config.json)
-  //    If you don't have a config yet, use registerNewAgent() first.
-  const client = await HaiClient.create({ url: HAI_URL });
+  // 1. Bootstrap an in-memory client for first-time registration.
+  //    Persist keys/config with the CLI for real usage.
+  const keypair = generateKeypair();
+  const client = HaiClient.fromCredentials(
+    'my-quickstart-agent',
+    keypair.privateKeyPem,
+    { url: HAI_URL },
+  );
 
-  // Register a new agent (generates keys + registers with HAI)
+  // Register this JACS identity with HAI.
   console.log('=== Step 1: Register a new JACS agent with HAI ===');
-  const reg = await client.registerNewAgent('my-quickstart-agent', {
+  const reg = await client.register({
     ownerEmail: 'you@example.com',
   });
   console.log(`Agent ID: ${reg.agentId}`);
