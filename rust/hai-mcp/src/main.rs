@@ -1,0 +1,928 @@
+use std::collections::BTreeMap;
+use std::error::Error;
+use std::path::Path;
+use std::process::Stdio;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use haisdk::{
+    generate_verify_link, generate_verify_link_hosted, CreateAgentOptions, HaiClient,
+    HaiClientOptions, JacsProvider, LocalJacsProvider, NoopJacsProvider, RegisterAgentOptions,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::sync::Mutex;
+
+const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+
+#[derive(Debug, Deserialize)]
+struct RpcRequest {
+    #[allow(dead_code)]
+    jsonrpc: Option<String>,
+    id: Option<Value>,
+    method: String,
+    params: Option<Value>,
+}
+
+#[derive(Debug, Serialize)]
+struct RpcError {
+    code: i64,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RpcResponse {
+    jsonrpc: &'static str,
+    id: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<RpcError>,
+}
+
+#[derive(Debug, Clone)]
+struct HaiServerContext {
+    base_url: String,
+    fallback_jacs_id: String,
+}
+
+impl HaiServerContext {
+    fn from_env() -> Self {
+        let base_url = std::env::var("HAI_URL").unwrap_or_else(|_| "https://hai.ai".to_string());
+        let fallback_jacs_id =
+            std::env::var("JACS_ID").unwrap_or_else(|_| "anonymous-agent".to_string());
+        Self {
+            base_url,
+            fallback_jacs_id,
+        }
+    }
+
+    fn noop_client_with_url(
+        &self,
+        base_url_override: Option<&str>,
+    ) -> std::result::Result<HaiClient<NoopJacsProvider>, String> {
+        let provider = NoopJacsProvider::new(self.fallback_jacs_id.clone());
+        self.client_with_provider(provider, base_url_override)
+    }
+
+    fn local_provider(
+        &self,
+        config_path: Option<&str>,
+    ) -> std::result::Result<LocalJacsProvider, String> {
+        LocalJacsProvider::from_config_path(config_path.map(Path::new)).map_err(|e| {
+            format!("failed to load local JACS agent; set JACS_CONFIG or pass config_path: {e}")
+        })
+    }
+
+    fn local_client_with_url(
+        &self,
+        config_path: Option<&str>,
+        base_url_override: Option<&str>,
+    ) -> std::result::Result<HaiClient<LocalJacsProvider>, String> {
+        let provider = self.local_provider(config_path)?;
+        self.client_with_provider(provider, base_url_override)
+    }
+
+    fn client_with_provider<P: JacsProvider>(
+        &self,
+        provider: P,
+        base_url_override: Option<&str>,
+    ) -> std::result::Result<HaiClient<P>, String> {
+        let base_url = base_url_override.unwrap_or(&self.base_url).to_string();
+        HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url,
+                ..HaiClientOptions::default()
+            },
+        )
+        .map_err(|e| e.to_string())
+    }
+}
+
+#[async_trait]
+trait JacsmcpBridge: Send + Sync {
+    async fn list_tools(&self) -> Vec<Value>;
+    async fn call_tool(
+        &self,
+        name: &str,
+        args: &Value,
+    ) -> Option<std::result::Result<Value, String>>;
+}
+
+struct NoopJacsmcpBridge;
+
+#[async_trait]
+impl JacsmcpBridge for NoopJacsmcpBridge {
+    async fn list_tools(&self) -> Vec<Value> {
+        Vec::new()
+    }
+
+    async fn call_tool(
+        &self,
+        _name: &str,
+        _args: &Value,
+    ) -> Option<std::result::Result<Value, String>> {
+        None
+    }
+}
+
+struct BridgeCandidate {
+    command: String,
+    args: Vec<String>,
+    cwd: Option<String>,
+}
+
+struct ChildSession {
+    _child: Child,
+    stdin: ChildStdin,
+    stdout: Lines<BufReader<ChildStdout>>,
+    next_id: u64,
+}
+
+impl ChildSession {
+    async fn spawn(candidate: &BridgeCandidate) -> std::result::Result<Self, String> {
+        let mut command = Command::new(&candidate.command);
+        command
+            .args(&candidate.args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+
+        if let Some(cwd) = &candidate.cwd {
+            command.current_dir(cwd);
+        }
+
+        let mut child = command.spawn().map_err(|e| {
+            format!(
+                "failed to spawn bridge command '{} {}': {e}",
+                candidate.command,
+                candidate.args.join(" ")
+            )
+        })?;
+
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "failed to capture jacs-mcp stdin".to_string())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "failed to capture jacs-mcp stdout".to_string())?;
+
+        let mut session = Self {
+            _child: child,
+            stdin,
+            stdout: BufReader::new(stdout).lines(),
+            next_id: 1,
+        };
+        session.initialize().await?;
+
+        Ok(session)
+    }
+
+    async fn initialize(&mut self) -> std::result::Result<(), String> {
+        let _ = self
+            .request(
+                "initialize",
+                Some(json!({
+                    "protocolVersion": MCP_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "hai-mcp-bridge",
+                        "version": env!("CARGO_PKG_VERSION")
+                    }
+                })),
+            )
+            .await?;
+
+        self.notify("notifications/initialized", None).await
+    }
+
+    async fn notify(
+        &mut self,
+        method: &str,
+        params: Option<Value>,
+    ) -> std::result::Result<(), String> {
+        let mut request = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+        });
+        if let Some(params) = params {
+            request["params"] = params;
+        }
+
+        let line = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+        self.stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|e| format!("failed writing notification to jacs-mcp: {e}"))?;
+        self.stdin
+            .write_all(b"\n")
+            .await
+            .map_err(|e| format!("failed writing newline to jacs-mcp: {e}"))?;
+        self.stdin
+            .flush()
+            .await
+            .map_err(|e| format!("failed flushing jacs-mcp stdin: {e}"))?;
+        Ok(())
+    }
+
+    async fn request(
+        &mut self,
+        method: &str,
+        params: Option<Value>,
+    ) -> std::result::Result<Value, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let mut request = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+        });
+        if let Some(params) = params {
+            request["params"] = params;
+        }
+
+        let line = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+        self.stdin
+            .write_all(line.as_bytes())
+            .await
+            .map_err(|e| format!("failed writing request to jacs-mcp: {e}"))?;
+        self.stdin
+            .write_all(b"\n")
+            .await
+            .map_err(|e| format!("failed writing newline to jacs-mcp: {e}"))?;
+        self.stdin
+            .flush()
+            .await
+            .map_err(|e| format!("failed flushing jacs-mcp stdin: {e}"))?;
+
+        loop {
+            let maybe_line = self
+                .stdout
+                .next_line()
+                .await
+                .map_err(|e| format!("failed reading jacs-mcp response: {e}"))?;
+            let line = maybe_line.ok_or_else(|| "jacs-mcp closed stdio".to_string())?;
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let value = match serde_json::from_str::<Value>(&line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            if !id_matches(&value, id) {
+                continue;
+            }
+
+            if let Some(error) = value.get("error") {
+                return Err(rpc_error_message(error));
+            }
+
+            return Ok(value.get("result").cloned().unwrap_or(Value::Null));
+        }
+    }
+}
+
+struct SubprocessJacsmcpBridge {
+    session: Mutex<ChildSession>,
+}
+
+impl SubprocessJacsmcpBridge {
+    async fn connect_from_env() -> std::result::Result<Self, String> {
+        let mut failures = Vec::new();
+
+        for candidate in bridge_candidates() {
+            match ChildSession::spawn(&candidate).await {
+                Ok(session) => {
+                    return Ok(Self {
+                        session: Mutex::new(session),
+                    });
+                }
+                Err(err) => {
+                    failures.push(format!(
+                        "{} {} ({err})",
+                        candidate.command,
+                        candidate.args.join(" ")
+                    ));
+                }
+            }
+        }
+
+        Err(format!(
+            "unable to start jacs-mcp bridge; tried: {}",
+            failures.join(" | ")
+        ))
+    }
+}
+
+#[async_trait]
+impl JacsmcpBridge for SubprocessJacsmcpBridge {
+    async fn list_tools(&self) -> Vec<Value> {
+        let mut session = self.session.lock().await;
+        match session.request("tools/list", Some(json!({}))).await {
+            Ok(result) => result
+                .get("tools")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            Err(err) => {
+                eprintln!("failed to list jacs-mcp tools: {err}");
+                Vec::new()
+            }
+        }
+    }
+
+    async fn call_tool(
+        &self,
+        name: &str,
+        args: &Value,
+    ) -> Option<std::result::Result<Value, String>> {
+        if !name.starts_with("jacs_") {
+            return None;
+        }
+
+        let mut session = self.session.lock().await;
+        Some(
+            session
+                .request(
+                    "tools/call",
+                    Some(json!({
+                        "name": name,
+                        "arguments": args
+                    })),
+                )
+                .await,
+        )
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let context = HaiServerContext::from_env();
+
+    let bridge: Arc<dyn JacsmcpBridge> = match SubprocessJacsmcpBridge::connect_from_env().await {
+        Ok(bridge) => Arc::new(bridge),
+        Err(err) => {
+            eprintln!("warning: {err}");
+            Arc::new(NoopJacsmcpBridge)
+        }
+    };
+
+    let stdin = BufReader::new(tokio::io::stdin());
+    let mut lines = stdin.lines();
+    let mut stdout = tokio::io::stdout();
+
+    while let Some(line) = lines.next_line().await? {
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let request = match serde_json::from_str::<RpcRequest>(&line) {
+            Ok(req) => req,
+            Err(err) => {
+                let response = RpcResponse {
+                    jsonrpc: "2.0",
+                    id: Value::Null,
+                    result: None,
+                    error: Some(RpcError {
+                        code: -32700,
+                        message: format!("parse error: {err}"),
+                    }),
+                };
+                let out = serde_json::to_string(&response)?;
+                stdout.write_all(out.as_bytes()).await?;
+                stdout.write_all(b"\n").await?;
+                stdout.flush().await?;
+                continue;
+            }
+        };
+
+        if let Some(response) = handle_request(&context, bridge.as_ref(), request).await {
+            let out = serde_json::to_string(&response)?;
+            stdout.write_all(out.as_bytes()).await?;
+            stdout.write_all(b"\n").await?;
+            stdout.flush().await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_request(
+    context: &HaiServerContext,
+    bridge: &dyn JacsmcpBridge,
+    request: RpcRequest,
+) -> Option<RpcResponse> {
+    if request.id.is_none() && request.method.starts_with("notifications/") {
+        return None;
+    }
+
+    let id = request.id.unwrap_or(Value::Null);
+
+    match request.method.as_str() {
+        "initialize" => Some(RpcResponse {
+            jsonrpc: "2.0",
+            id,
+            result: Some(json!({
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "serverInfo": {
+                    "name": "hai-mcp",
+                    "version": env!("CARGO_PKG_VERSION")
+                },
+                "capabilities": {
+                    "tools": {}
+                }
+            })),
+            error: None,
+        }),
+        "ping" => Some(RpcResponse {
+            jsonrpc: "2.0",
+            id,
+            result: Some(json!({})),
+            error: None,
+        }),
+        "tools/list" => {
+            let mut dedup = BTreeMap::new();
+            for tool in hai_tool_definitions() {
+                if let Some(name) = tool.get("name").and_then(Value::as_str) {
+                    dedup.insert(name.to_string(), tool);
+                }
+            }
+            for tool in bridge.list_tools().await {
+                if let Some(name) = tool.get("name").and_then(Value::as_str) {
+                    dedup.insert(name.to_string(), tool);
+                }
+            }
+
+            let tools: Vec<Value> = dedup.into_values().collect();
+            Some(RpcResponse {
+                jsonrpc: "2.0",
+                id,
+                result: Some(json!({ "tools": tools })),
+                error: None,
+            })
+        }
+        "tools/call" => {
+            let params = request.params.unwrap_or(Value::Null);
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let args = params.get("arguments").cloned().unwrap_or(Value::Null);
+
+            let result = match name {
+                "hai_check_username" => call_check_username(context, &args).await,
+                "hai_hello" => call_hello(context, &args).await,
+                "hai_verify_status" => call_verify_status(context, &args).await,
+                "hai_claim_username" => call_claim_username(context, &args).await,
+                "hai_create_agent" => call_create_agent(context, &args).await,
+                "hai_register_agent" => call_register_agent(context, &args).await,
+                "hai_generate_verify_link" => call_generate_verify_link(&args).await,
+                _ => {
+                    if let Some(result) = bridge.call_tool(name, &args).await {
+                        result
+                    } else {
+                        Err(format!("unknown tool: {name}"))
+                    }
+                }
+            };
+
+            Some(match result {
+                Ok(tool_result) => RpcResponse {
+                    jsonrpc: "2.0",
+                    id,
+                    result: Some(tool_result),
+                    error: None,
+                },
+                Err(message) => RpcResponse {
+                    jsonrpc: "2.0",
+                    id,
+                    result: Some(error_tool_result(message)),
+                    error: None,
+                },
+            })
+        }
+        _ => Some(RpcResponse {
+            jsonrpc: "2.0",
+            id,
+            result: None,
+            error: Some(RpcError {
+                code: -32601,
+                message: format!("method not found: {}", request.method),
+            }),
+        }),
+    }
+}
+
+fn hai_tool_definitions() -> Vec<Value> {
+    vec![
+        json!({
+            "name": "hai_check_username",
+            "description": "Check if a hai.ai username is available",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "username": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                },
+                "required": ["username"]
+            }
+        }),
+        json!({
+            "name": "hai_hello",
+            "description": "Run authenticated hello handshake with HAI using local JACS config",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "include_test": { "type": "boolean" },
+                    "config_path": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_verify_status",
+            "description": "Get verification status for the current or provided agent",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "agent_id": { "type": "string" },
+                    "config_path": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_claim_username",
+            "description": "Claim a username for an agent ID",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "agent_id": { "type": "string" },
+                    "username": { "type": "string" },
+                    "config_path": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                },
+                "required": ["agent_id", "username"]
+            }
+        }),
+        json!({
+            "name": "hai_create_agent",
+            "description": "Create a new JACS agent locally and optionally register with HAI",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "password": { "type": "string" },
+                    "algorithm": { "type": "string" },
+                    "data_directory": { "type": "string" },
+                    "key_directory": { "type": "string" },
+                    "config_path": { "type": "string" },
+                    "agent_type": { "type": "string" },
+                    "description": { "type": "string" },
+                    "domain": { "type": "string" },
+                    "default_storage": { "type": "string" },
+                    "register_with_hai": { "type": "boolean" },
+                    "owner_email": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                },
+                "required": ["name", "password"]
+            }
+        }),
+        json!({
+            "name": "hai_register_agent",
+            "description": "Register an existing local JACS agent with HAI",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "config_path": { "type": "string" },
+                    "owner_email": { "type": "string" },
+                    "domain": { "type": "string" },
+                    "description": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_generate_verify_link",
+            "description": "Generate a HAI verify link from a signed JACS document",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "document": { "type": "string" },
+                    "base_url": { "type": "string" },
+                    "hosted": { "type": "boolean" }
+                },
+                "required": ["document"]
+            }
+        }),
+    ]
+}
+
+async fn call_check_username(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let username = required_string(args, "username")?;
+    let hai_url = optional_string(args, "hai_url");
+
+    let client = context.noop_client_with_url(hai_url)?;
+    let result = client
+        .check_username(username)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(success_tool_result(
+        format!(
+            "username={} available={} reason={}",
+            result.username,
+            result.available,
+            result.reason.clone().unwrap_or_default()
+        ),
+        json!({ "check_username": result }),
+    ))
+}
+
+async fn call_hello(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let include_test = args
+        .get("include_test")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let config_path = optional_string(args, "config_path");
+    let hai_url = optional_string(args, "hai_url");
+
+    let client = context.local_client_with_url(config_path, hai_url)?;
+    let result = client
+        .hello(include_test)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(success_tool_result(
+        format!("hello_id={} message={}", result.hello_id, result.message),
+        json!({ "hello": result }),
+    ))
+}
+
+async fn call_verify_status(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let agent_id = optional_string(args, "agent_id");
+    let config_path = optional_string(args, "config_path");
+    let hai_url = optional_string(args, "hai_url");
+
+    let client = context.local_client_with_url(config_path, hai_url)?;
+    let result = client
+        .verify_status(agent_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(success_tool_result(
+        format!(
+            "jacs_id={} registered={} dns_verified={}",
+            result.jacs_id, result.registered, result.dns_verified
+        ),
+        json!({ "verify_status": result }),
+    ))
+}
+
+async fn call_claim_username(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let agent_id = required_string(args, "agent_id")?;
+    let username = required_string(args, "username")?;
+    let config_path = optional_string(args, "config_path");
+    let hai_url = optional_string(args, "hai_url");
+
+    let client = context.local_client_with_url(config_path, hai_url)?;
+    let result = client
+        .claim_username(agent_id, username)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(success_tool_result(
+        format!(
+            "claimed username={} for agent_id={}",
+            result.username, result.agent_id
+        ),
+        json!({ "claim_username": result }),
+    ))
+}
+
+async fn call_create_agent(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let options = CreateAgentOptions {
+        name: required_string(args, "name")?.to_string(),
+        password: required_string(args, "password")?.to_string(),
+        algorithm: optional_string(args, "algorithm").map(ToString::to_string),
+        data_directory: optional_string(args, "data_directory").map(ToString::to_string),
+        key_directory: optional_string(args, "key_directory").map(ToString::to_string),
+        config_path: optional_string(args, "config_path").map(ToString::to_string),
+        agent_type: optional_string(args, "agent_type").map(ToString::to_string),
+        description: optional_string(args, "description").map(ToString::to_string),
+        domain: optional_string(args, "domain").map(ToString::to_string),
+        default_storage: optional_string(args, "default_storage").map(ToString::to_string),
+    };
+
+    let created =
+        LocalJacsProvider::create_agent_with_options(&options).map_err(|e| e.to_string())?;
+
+    let register_with_hai = args
+        .get("register_with_hai")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let registration = if register_with_hai {
+        let config_path = if created.config_path.is_empty() {
+            None
+        } else {
+            Some(created.config_path.as_str())
+        };
+
+        let provider = context.local_provider(config_path)?;
+        let agent_json = provider.export_agent_json().map_err(|e| e.to_string())?;
+        let public_key_pem = provider.public_key_pem().map_err(|e| e.to_string())?;
+
+        let client = context.client_with_provider(provider, optional_string(args, "hai_url"))?;
+        let register_result = client
+            .register(&RegisterAgentOptions {
+                agent_json,
+                public_key_pem: Some(public_key_pem),
+                owner_email: optional_string(args, "owner_email").map(ToString::to_string),
+                domain: optional_string(args, "domain").map(ToString::to_string),
+                description: optional_string(args, "description").map(ToString::to_string),
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Some(register_result)
+    } else {
+        None
+    };
+
+    Ok(success_tool_result(
+        if registration.is_some() {
+            format!(
+                "created agent_id={} and registered with HAI",
+                created.agent_id
+            )
+        } else {
+            format!("created agent_id={}", created.agent_id)
+        },
+        json!({
+            "created_agent": created,
+            "registration": registration
+        }),
+    ))
+}
+
+async fn call_register_agent(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let config_path = optional_string(args, "config_path");
+    let provider = context.local_provider(config_path)?;
+
+    let agent_json = provider.export_agent_json().map_err(|e| e.to_string())?;
+    let public_key_pem = provider.public_key_pem().map_err(|e| e.to_string())?;
+
+    let client = context.client_with_provider(provider, optional_string(args, "hai_url"))?;
+    let result = client
+        .register(&RegisterAgentOptions {
+            agent_json,
+            public_key_pem: Some(public_key_pem),
+            owner_email: optional_string(args, "owner_email").map(ToString::to_string),
+            domain: optional_string(args, "domain").map(ToString::to_string),
+            description: optional_string(args, "description").map(ToString::to_string),
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(success_tool_result(
+        format!(
+            "registered jacs_id={} agent_id={}",
+            result.jacs_id, result.agent_id
+        ),
+        json!({ "registration": result }),
+    ))
+}
+
+async fn call_generate_verify_link(args: &Value) -> std::result::Result<Value, String> {
+    let document = required_string(args, "document")?;
+    let base_url = optional_string(args, "base_url");
+    let hosted = args.get("hosted").and_then(Value::as_bool).unwrap_or(false);
+
+    let url = if hosted {
+        generate_verify_link_hosted(document, base_url)
+    } else {
+        generate_verify_link(document, base_url)
+    }
+    .map_err(|e| e.to_string())?;
+
+    Ok(success_tool_result(
+        format!("verify_url={url}"),
+        json!({ "verify_url": url }),
+    ))
+}
+
+fn success_tool_result(text: String, structured: Value) -> Value {
+    json!({
+        "content": [{"type": "text", "text": text}],
+        "structuredContent": structured,
+    })
+}
+
+fn error_tool_result(message: String) -> Value {
+    json!({
+        "content": [{"type": "text", "text": message}],
+        "isError": true
+    })
+}
+
+fn required_string<'a>(args: &'a Value, key: &str) -> std::result::Result<&'a str, String> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{key} is required"))
+}
+
+fn optional_string<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
+    args.get(key).and_then(Value::as_str)
+}
+
+fn id_matches(value: &Value, id: u64) -> bool {
+    value.get("id").and_then(Value::as_u64) == Some(id)
+        || value.get("id").and_then(Value::as_i64) == Some(id as i64)
+}
+
+fn rpc_error_message(error: &Value) -> String {
+    let code = error
+        .get("code")
+        .and_then(Value::as_i64)
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown error");
+    format!("rpc error {code}: {message}")
+}
+
+fn bridge_candidates() -> Vec<BridgeCandidate> {
+    let mut out = Vec::new();
+
+    if let Ok(bin) = std::env::var("JACS_MCP_BIN") {
+        if !bin.is_empty() {
+            let args = std::env::var("JACS_MCP_ARGS")
+                .map(|v| split_whitespace_args(&v))
+                .unwrap_or_default();
+            let cwd = std::env::var("JACS_MCP_CWD").ok().filter(|v| !v.is_empty());
+            out.push(BridgeCandidate {
+                command: bin,
+                args,
+                cwd,
+            });
+            return out;
+        }
+    }
+
+    out.push(BridgeCandidate {
+        command: "jacs-mcp".to_string(),
+        args: Vec::new(),
+        cwd: std::env::var("JACS_MCP_CWD").ok().filter(|v| !v.is_empty()),
+    });
+
+    if let Ok(home) = std::env::var("HOME") {
+        let manifest = format!("{home}/personal/JACS/jacs-mcp/Cargo.toml");
+        if Path::new(&manifest).exists() {
+            out.push(BridgeCandidate {
+                command: "cargo".to_string(),
+                args: vec![
+                    "run".to_string(),
+                    "--quiet".to_string(),
+                    "--manifest-path".to_string(),
+                    manifest,
+                ],
+                cwd: None,
+            });
+        }
+    }
+
+    out
+}
+
+fn split_whitespace_args(raw: &str) -> Vec<String> {
+    raw.split_whitespace().map(ToString::to_string).collect()
+}

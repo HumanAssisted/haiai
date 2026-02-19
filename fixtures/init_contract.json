@@ -1,0 +1,18 @@
+{
+  "bootstrap_register": {
+    "method": "POST",
+    "path": "/api/v1/agents/register",
+    "auth_required": false,
+    "public_key_encoding": "base64"
+  },
+  "private_key_candidate_order": [
+    "agent_private_key.pem",
+    "{agentName}.private.pem",
+    "private_key.pem"
+  ],
+  "config_discovery_order": [
+    "explicit_path",
+    "JACS_CONFIG_PATH",
+    "./jacs.config.json"
+  ]
+}

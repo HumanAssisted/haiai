@@ -1,0 +1,244 @@
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HelloResult {
+    #[serde(default)]
+    pub timestamp: String,
+    #[serde(default)]
+    pub client_ip: String,
+    #[serde(default)]
+    pub hai_public_key_fingerprint: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub hai_signed_ack: String,
+    #[serde(default)]
+    pub hello_id: String,
+    #[serde(default)]
+    pub test_scenario: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CreateAgentOptions {
+    pub name: String,
+    pub password: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub algorithm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_directory: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_directory: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_storage: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CreateAgentResult {
+    #[serde(default)]
+    pub agent_id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub public_key_path: String,
+    #[serde(default)]
+    pub config_path: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub algorithm: String,
+    #[serde(default)]
+    pub private_key_path: String,
+    #[serde(default)]
+    pub data_directory: String,
+    #[serde(default)]
+    pub key_directory: String,
+    #[serde(default)]
+    pub domain: String,
+    #[serde(default)]
+    pub dns_record: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckUsernameResult {
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RegisterAgentOptions {
+    pub agent_json: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_key_pem: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RegistrationResult {
+    #[serde(default)]
+    pub success: bool,
+    #[serde(default)]
+    pub agent_id: String,
+    #[serde(default)]
+    pub jacs_id: String,
+    #[serde(default)]
+    pub dns_verified: bool,
+    #[serde(default)]
+    pub registrations: Vec<RegistrationEntry>,
+    #[serde(default)]
+    pub registered_at: String,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistrationEntry {
+    #[serde(default)]
+    pub key_id: String,
+    #[serde(default)]
+    pub algorithm: String,
+    #[serde(default)]
+    pub signature_json: String,
+    #[serde(default)]
+    pub signed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerifyAgentResult {
+    #[serde(default)]
+    pub jacs_id: String,
+    #[serde(default)]
+    pub registered: bool,
+    #[serde(default)]
+    pub registrations: Vec<RegistrationEntry>,
+    #[serde(default)]
+    pub dns_verified: bool,
+    #[serde(default)]
+    pub registered_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobResponseResult {
+    #[serde(default)]
+    pub success: bool,
+    #[serde(default)]
+    pub job_id: String,
+    #[serde(default)]
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaimUsernameResult {
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub agent_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendEmailOptions {
+    pub to: String,
+    pub subject: String,
+    pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_reply_to: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendEmailResult {
+    #[serde(default)]
+    pub message_id: String,
+    #[serde(default)]
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ListMessagesOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailMessage {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub from_address: String,
+    #[serde(default)]
+    pub to_address: String,
+    #[serde(default)]
+    pub subject: String,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub sent_at: String,
+    #[serde(default)]
+    pub read_at: Option<String>,
+    #[serde(default)]
+    pub thread_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailStatus {
+    #[serde(default)]
+    pub daily_limit: u32,
+    #[serde(default)]
+    pub daily_used: u32,
+    #[serde(default)]
+    pub resets_at: String,
+    #[serde(default)]
+    pub reputation_tier: String,
+    #[serde(default)]
+    pub current_tier: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicKeyInfo {
+    #[serde(default)]
+    pub jacs_id: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub public_key: String,
+    #[serde(default)]
+    pub public_key_raw_b64: String,
+    #[serde(default)]
+    pub algorithm: String,
+    #[serde(default)]
+    pub public_key_hash: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub dns_verified: bool,
+    #[serde(default)]
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedPayload {
+    pub signed_document: String,
+    pub agent_jacs_id: String,
+}

@@ -1,6 +1,6 @@
-.PHONY: test test-python test-node test-go
+.PHONY: test test-python test-node test-go test-rust
 
-test: test-python test-node test-go
+test: test-python test-node test-go test-rust
 
 test-python:
 	cd python && pip install -e ".[dev]" && pytest
@@ -10,3 +10,6 @@ test-node:
 
 test-go:
 	cd go && go test -race ./...
+
+test-rust:
+	cd rust && cargo test --workspace

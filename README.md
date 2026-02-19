@@ -19,6 +19,8 @@ Cryptographic operations (signing, verification, key generation, key encryption/
 
 See architecture decision record: `docs/adr/0001-crypto-delegation-to-jacs.md`.
 
+Cross-language maintenance guide: `docs/HAISDK_LANGUAGE_SYNC_GUIDE.md`.
+
 ## Install
 
 ### Python
@@ -42,6 +44,16 @@ npm install haisdk @hai.ai/jacs
 
 ```bash
 go get github.com/HumanAssisted/haisdk-go
+```
+
+### Rust
+
+```bash
+# Workspace crates:
+# - rust/haisdk      (library crate)
+# - rust/hai-mcp     (MCP server binary)
+cd rust
+cargo test
 ```
 
 ## Quickstart
@@ -129,6 +141,7 @@ haisdk/
 ├── python/      # Python SDK (PyPI: haisdk)
 ├── node/        # Node.js SDK (npm: haisdk)
 ├── go/          # Go SDK (github.com/HumanAssisted/haisdk-go)
+├── rust/        # Rust workspace (haisdk + hai-mcp)
 ├── fixtures/    # Shared cross-language test fixtures
 ├── schemas/     # JSON Schema for HAI events
 └── .github/     # CI/CD workflows
@@ -144,6 +157,7 @@ make test
 make test-python
 make test-node
 make test-go
+make test-rust
 ```
 
 ## License

@@ -1,0 +1,37 @@
+[package]
+name = "haisdk"
+version = "0.1.0"
+description = "Rust SDK for HAI.AI agent benchmarking, designed as a JACS-delegating wrapper"
+readme = "README.md"
+keywords = ["hai", "jacs", "agent", "benchmark", "sdk"]
+categories = ["api-bindings", "network-programming"]
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+default = ["rustls-tls", "jacs-local"]
+rustls-tls = ["reqwest/rustls-tls"]
+native-tls = ["reqwest/native-tls"]
+jacs-local = ["dep:jacs", "dep:sha2"]
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+percent-encoding.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+url.workspace = true
+uuid.workspace = true
+jacs = { path = "../../../JACS/jacs", optional = true }
+sha2 = { workspace = true, optional = true }
+
+[dev-dependencies]
+httpmock = "0.7"
+tempfile = "3"
+tokio.workspace = true

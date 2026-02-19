@@ -34,6 +34,9 @@ dist/
 *.out
 vendor/
 
+# Rust
+rust/target/
+
 # IDE
 .vscode/
 .idea/
