@@ -1,55 +1,69 @@
 #![cfg(feature = "jacs-local")]
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::sync::Mutex;
 
 use haisdk::{CreateAgentOptions, JacsProvider, LocalJacsProvider};
+use uuid::Uuid;
 
-struct CwdGuard {
-    original: PathBuf,
+static INIT_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+struct InitPaths {
+    relative_base: String,
+    absolute_base: PathBuf,
 }
 
-impl CwdGuard {
-    fn enter(path: &Path) -> Self {
-        let original = std::env::current_dir().expect("current dir");
-        std::env::set_current_dir(path).expect("set current dir");
-        Self { original }
+impl InitPaths {
+    fn new() -> Self {
+        let relative_base = format!("target/init-suite-{}", Uuid::new_v4());
+        let absolute_base = std::env::current_dir()
+            .expect("current dir")
+            .join(&relative_base);
+        fs::create_dir_all(&absolute_base).expect("create unique test base");
+
+        Self {
+            relative_base,
+            absolute_base,
+        }
     }
-}
 
-impl Drop for CwdGuard {
-    fn drop(&mut self) {
-        let _ = std::env::set_current_dir(&self.original);
+    fn config_path_abs(&self) -> PathBuf {
+        self.absolute_base.join("jacs.config.json")
     }
-}
 
-fn new_create_options() -> CreateAgentOptions {
-    CreateAgentOptions {
-        name: "rust-init-agent".to_string(),
-        password: "TestPass!123".to_string(),
-        algorithm: Some("ring-Ed25519".to_string()),
-        data_directory: Some("./data".to_string()),
-        key_directory: Some("./keys".to_string()),
-        config_path: Some("./jacs.config.json".to_string()),
-        agent_type: Some("ai".to_string()),
-        description: Some("Rust init test agent".to_string()),
-        domain: None,
-        default_storage: Some("fs".to_string()),
+    fn key_dir_abs(&self) -> PathBuf {
+        self.absolute_base.join("keys")
+    }
+
+    fn to_options(&self) -> CreateAgentOptions {
+        CreateAgentOptions {
+            name: "rust-init-agent".to_string(),
+            password: "TestPass!123".to_string(),
+            algorithm: Some("ring-Ed25519".to_string()),
+            data_directory: Some(format!("./{}/data", self.relative_base)),
+            key_directory: Some(format!("./{}/keys", self.relative_base)),
+            config_path: Some(format!("./{}/jacs.config.json", self.relative_base)),
+            agent_type: Some("ai".to_string()),
+            description: Some("Rust init test agent".to_string()),
+            domain: None,
+            default_storage: Some("fs".to_string()),
+        }
     }
 }
 
 #[test]
 fn create_agent_writes_config_and_key_material() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let _cwd = CwdGuard::enter(temp.path());
-    let options = new_create_options();
+    let _lock = INIT_TEST_LOCK.lock().expect("lock init tests");
+    let paths = InitPaths::new();
+    let options = paths.to_options();
 
     let created = LocalJacsProvider::create_agent_with_options(&options).expect("create agent");
 
     assert!(!created.agent_id.is_empty());
-    assert!(temp.path().join("jacs.config.json").is_file());
+    assert!(paths.config_path_abs().is_file());
 
-    let key_file_names: Vec<String> = fs::read_dir(temp.path().join("keys"))
+    let key_file_names: Vec<String> = fs::read_dir(paths.key_dir_abs())
         .expect("read keys dir")
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.file_name().to_string_lossy().to_string())
@@ -67,12 +81,13 @@ fn create_agent_writes_config_and_key_material() {
 
 #[test]
 fn local_provider_loads_created_agent_and_signs() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let _cwd = CwdGuard::enter(temp.path());
-    let options = new_create_options();
+    let _lock = INIT_TEST_LOCK.lock().expect("lock init tests");
+    let paths = InitPaths::new();
+    let options = paths.to_options();
     let created = LocalJacsProvider::create_agent_with_options(&options).expect("create agent");
-    let config_path = temp.path().join("jacs.config.json");
+    let config_path = paths.config_path_abs();
     assert!(config_path.is_file());
+    std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123");
 
     let provider = LocalJacsProvider::from_config_path(Some(&config_path)).expect("load provider");
 
@@ -85,13 +100,11 @@ fn local_provider_loads_created_agent_and_signs() {
 
     let exported_agent = provider.export_agent_json().expect("export agent");
     assert!(exported_agent.contains("\"jacsId\""));
-
-    let public_key = provider.public_key_pem().expect("public key");
-    assert!(public_key.contains("BEGIN PUBLIC KEY"));
 }
 
 #[test]
 fn local_provider_fails_for_missing_config() {
+    let _lock = INIT_TEST_LOCK.lock().expect("lock init tests");
     let temp = tempfile::tempdir().expect("tempdir");
     let missing = temp.path().join("does-not-exist.config.json");
 

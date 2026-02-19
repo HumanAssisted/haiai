@@ -36,6 +36,10 @@ vendor/
 
 # Rust
 rust/target/
+rust/haisdk/target/
+rust/haisdk/data/
+rust/haisdk/keys/
+rust/haisdk/jacs.config.json
 
 # IDE
 .vscode/
