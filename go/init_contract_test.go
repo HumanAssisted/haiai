@@ -21,9 +21,11 @@ type initBootstrapRegisterContract struct {
 }
 
 type initContractFixture struct {
-	BootstrapRegister        initBootstrapRegisterContract `json:"bootstrap_register"`
-	PrivateKeyCandidateOrder []string                      `json:"private_key_candidate_order"`
-	ConfigDiscoveryOrder     []string                      `json:"config_discovery_order"`
+	BootstrapRegister          initBootstrapRegisterContract `json:"bootstrap_register"`
+	PrivateKeyCandidateOrder   []string                      `json:"private_key_candidate_order"`
+	ConfigDiscoveryOrder       []string                      `json:"config_discovery_order"`
+	PrivateKeyPasswordSources  []string                      `json:"private_key_password_sources"`
+	PrivateKeyPasswordStrategy string                        `json:"private_key_password_strategy"`
 }
 
 func loadInitContractFixture(t *testing.T) initContractFixture {
@@ -46,6 +48,14 @@ func TestInitContractKeyCandidateOrder(t *testing.T) {
 	expectedDiscovery := []string{"explicit_path", "JACS_CONFIG_PATH", "./jacs.config.json"}
 	if strings.Join(fixture.ConfigDiscoveryOrder, "|") != strings.Join(expectedDiscovery, "|") {
 		t.Fatalf("unexpected config discovery order: got %v, want %v", fixture.ConfigDiscoveryOrder, expectedDiscovery)
+	}
+
+	expectedPasswordSources := []string{"JACS_PRIVATE_KEY_PASSWORD", "JACS_PASSWORD_FILE"}
+	if strings.Join(fixture.PrivateKeyPasswordSources, "|") != strings.Join(expectedPasswordSources, "|") {
+		t.Fatalf("unexpected password source list: got %v, want %v", fixture.PrivateKeyPasswordSources, expectedPasswordSources)
+	}
+	if fixture.PrivateKeyPasswordStrategy != "single_source_required" {
+		t.Fatalf("unexpected password strategy: got %q", fixture.PrivateKeyPasswordStrategy)
 	}
 
 	tmpDir := t.TempDir()

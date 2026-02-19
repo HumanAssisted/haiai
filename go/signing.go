@@ -2,6 +2,7 @@ package haisdk
 
 import (
 	"crypto/ed25519"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
@@ -18,7 +19,8 @@ import (
 //   - PKCS8 (48 bytes DER): standard "PRIVATE KEY" PEM with ASN.1 wrapper
 //   - Raw seed (32 bytes): just the seed bytes in PEM
 //   - Full key (64 bytes): seed + public key concatenated
-func LoadPrivateKey(path string) (ed25519.PrivateKey, error) {
+//   - Legacy encrypted PEM blocks (requires password)
+func LoadPrivateKey(path string, password []byte) (ed25519.PrivateKey, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -27,14 +29,48 @@ func LoadPrivateKey(path string) (ed25519.PrivateKey, error) {
 		return nil, wrapError(ErrSigningFailed, err, "failed to read private key: %s", path)
 	}
 
-	return ParsePrivateKey(data)
+	if len(password) == 0 {
+		return nil, newError(
+			ErrSigningFailed,
+			"private key password required: configure JACS_PRIVATE_KEY_PASSWORD or JACS_PASSWORD_FILE",
+		)
+	}
+
+	return ParsePrivateKeyWithPassword(data, password)
 }
 
 // ParsePrivateKey parses an Ed25519 private key from PEM-encoded bytes.
+//
+// This parser is used for in-memory bootstrap credentials. Disk-backed key
+// loading must use LoadPrivateKey which enforces password-source policy.
 func ParsePrivateKey(pemData []byte) (ed25519.PrivateKey, error) {
+	return ParsePrivateKeyWithPassword(pemData, nil)
+}
+
+// ParsePrivateKeyWithPassword parses an Ed25519 private key from PEM bytes and
+// decrypts legacy encrypted PEM blocks when necessary.
+func ParsePrivateKeyWithPassword(pemData []byte, password []byte) (ed25519.PrivateKey, error) {
 	block, _ := pem.Decode(pemData)
 	if block == nil {
 		return nil, newError(ErrSigningFailed, "no PEM block found in private key data")
+	}
+
+	if x509.IsEncryptedPEMBlock(block) {
+		if len(password) == 0 {
+			return nil, newError(ErrSigningFailed, "encrypted private key requires password")
+		}
+		der, err := x509.DecryptPEMBlock(block, password)
+		if err != nil {
+			return nil, wrapError(ErrSigningFailed, err, "failed to decrypt private key PEM block")
+		}
+		return parsePrivateKeyDER(der)
+	}
+
+	if block.Type == "ENCRYPTED PRIVATE KEY" {
+		return nil, newError(
+			ErrSigningFailed,
+			"PKCS#8 encrypted private keys are not yet supported by Go SDK key loader",
+		)
 	}
 
 	return parsePrivateKeyDER(block.Bytes)

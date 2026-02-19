@@ -5,7 +5,8 @@
  * Usage: npx haisdk <command> [options]
  */
 import { HaiClient } from './client.js';
-import { generateKeypair } from './crypt.js';
+import { generateKeypair, encryptPrivateKeyPem } from './crypt.js';
+import { loadPrivateKeyPassphrase } from './config.js';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -139,7 +140,9 @@ async function cmdRegister(args: string[]) {
   const configPath = resolve(getArg(args, '--config-path') ?? './jacs.config.json');
 
   // Bootstrap registration must work before any local config exists.
+  const keyPassphrase = await loadPrivateKeyPassphrase();
   const keypair = generateKeypair();
+  const encryptedPrivateKeyPem = encryptPrivateKeyPem(keypair.privateKeyPem, keyPassphrase);
   const client = HaiClient.fromCredentials(
     name,
     keypair.privateKeyPem,
@@ -161,7 +164,7 @@ async function cmdRegister(args: string[]) {
 
   const privateKeyPath = join(keyDir, 'agent_private_key.pem');
   const publicKeyPath = join(keyDir, 'agent_public_key.pem');
-  await writeFile(privateKeyPath, keypair.privateKeyPem, { mode: 0o600 });
+  await writeFile(privateKeyPath, encryptedPrivateKeyPem, { mode: 0o600 });
   try {
     await chmod(privateKeyPath, 0o600);
   } catch {

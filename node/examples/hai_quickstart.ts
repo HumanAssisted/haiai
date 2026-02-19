@@ -5,10 +5,14 @@
  *     npm install @humanassisted/haisdk
  *
  * Usage (new agent):
+ *     export JACS_PRIVATE_KEY_PASSWORD=dev-password
  *     npx tsx examples/hai_quickstart.ts
  *
  * Usage (existing agent with jacs.config.json):
+ *     export JACS_PRIVATE_KEY_PASSWORD=dev-password
  *     npx tsx examples/hai_quickstart.ts --existing
+ *
+ * Alternative: set JACS_PASSWORD_FILE and leave JACS_PRIVATE_KEY_PASSWORD unset.
  */
 
 import { HaiClient } from '../src/client.js';
@@ -61,7 +65,7 @@ async function quickstartNewAgent(): Promise<void> {
 
 async function quickstartExistingAgent(): Promise<void> {
   // 1. Load existing config
-  console.log('=== Loading existing config ===');
+  console.log('=== Loading existing config (configure exactly one password source) ===');
   const client = await HaiClient.create({ url: HAI_URL });
 
   // 2. Test connection

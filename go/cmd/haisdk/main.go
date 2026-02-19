@@ -14,7 +14,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"os"
@@ -70,8 +73,14 @@ Commands:
   send-email      Send an agent email
   list-messages   List inbox messages
 Global environment variables:
-  HAI_URL            API base URL (default: https://hai.ai)
-  JACS_CONFIG_PATH   Path to jacs.config.json
+  HAI_URL                   API base URL (default: https://hai.ai)
+  JACS_CONFIG_PATH          Path to jacs.config.json
+  JACS_PRIVATE_KEY_PASSWORD Private key password (developer default)
+  JACS_PASSWORD_FILE        File path containing private key password
+  JACS_DISABLE_PASSWORD_ENV Set to 1 to ignore env password source
+  JACS_DISABLE_PASSWORD_FILE Set to 1 to ignore file password source
+
+  Configure exactly one password source (env or file).
 
 Use "haisdk <command> --help" for more information.`)
 }
@@ -101,6 +110,26 @@ func defaultSecureKeyDir() string {
 		return ".keys"
 	}
 	return filepath.Join(home, ".jacs", "keys")
+}
+
+func encryptPrivateKeyPEM(privateKeyPEM []byte, password []byte) ([]byte, error) {
+	block, _ := pem.Decode(privateKeyPEM)
+	if block == nil {
+		return nil, fmt.Errorf("invalid private key PEM")
+	}
+
+	encrypted, err := x509.EncryptPEMBlock(
+		rand.Reader,
+		block.Type,
+		block.Bytes,
+		password,
+		x509.PEMCipherAES256,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return pem.EncodeToMemory(encrypted), nil
 }
 
 func cmdRegister(args []string) {
@@ -151,6 +180,16 @@ func cmdRegister(args []string) {
 		fatal("registration failed", fmt.Errorf("empty registration response"))
 	}
 
+	password, err := haisdk.ResolvePrivateKeyPassword()
+	if err != nil {
+		fatal("failed to resolve private key password", err)
+	}
+
+	encryptedPrivateKey, err := encryptPrivateKeyPEM(result.PrivateKey, password)
+	if err != nil {
+		fatal("failed to encrypt private key", err)
+	}
+
 	if err := os.MkdirAll(*keyDir, 0o700); err != nil {
 		fatal("failed to create key directory", err)
 	}
@@ -158,7 +197,7 @@ func cmdRegister(args []string) {
 
 	privateKeyPath := filepath.Join(*keyDir, "agent_private_key.pem")
 	publicKeyPath := filepath.Join(*keyDir, "agent_public_key.pem")
-	if err := os.WriteFile(privateKeyPath, result.PrivateKey, 0o600); err != nil {
+	if err := os.WriteFile(privateKeyPath, encryptedPrivateKey, 0o600); err != nil {
 		fatal("failed to write private key", err)
 	}
 	if err := os.WriteFile(publicKeyPath, result.PublicKey, 0o644); err != nil {

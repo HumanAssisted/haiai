@@ -2,6 +2,8 @@ package haisdk
 
 import (
 	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/pem"
 	"os"
 	"path/filepath"
@@ -83,11 +85,11 @@ func TestLoadPrivateKey(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	keyPath := filepath.Join(tmpDir, "test.private.pem")
-	if err := os.WriteFile(keyPath, pemData, 0600); err != nil {
+	if err := os.WriteFile(keyPath, pemData, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	loaded, err := LoadPrivateKey(keyPath)
+	loaded, err := LoadPrivateKey(keyPath, []byte("test-password"))
 	if err != nil {
 		t.Fatalf("LoadPrivateKey: %v", err)
 	}
@@ -115,11 +117,11 @@ func TestLoadPrivateKeyFullKey(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	keyPath := filepath.Join(tmpDir, "test.private.pem")
-	if err := os.WriteFile(keyPath, pemData, 0600); err != nil {
+	if err := os.WriteFile(keyPath, pemData, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	loaded, err := LoadPrivateKey(keyPath)
+	loaded, err := LoadPrivateKey(keyPath, []byte("test-password"))
 	if err != nil {
 		t.Fatalf("LoadPrivateKey: %v", err)
 	}
@@ -147,11 +149,11 @@ func TestLoadPrivateKeyPKCS8(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	keyPath := filepath.Join(tmpDir, "test.private.pem")
-	if err := os.WriteFile(keyPath, pemData, 0600); err != nil {
+	if err := os.WriteFile(keyPath, pemData, 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	loaded, err := LoadPrivateKey(keyPath)
+	loaded, err := LoadPrivateKey(keyPath, []byte("test-password"))
 	if err != nil {
 		t.Fatalf("LoadPrivateKey: %v", err)
 	}
@@ -165,8 +167,60 @@ func TestLoadPrivateKeyPKCS8(t *testing.T) {
 	}
 }
 
+func TestLoadPrivateKeyEncryptedPEM(t *testing.T) {
+	_, priv, _ := GenerateKeyPair()
+	seed := priv.Seed()
+	password := []byte("test-password")
+
+	encBlock, err := x509.EncryptPEMBlock(
+		rand.Reader,
+		"PRIVATE KEY",
+		seed,
+		password,
+		x509.PEMCipherAES256,
+	)
+	if err != nil {
+		t.Fatalf("EncryptPEMBlock: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	keyPath := filepath.Join(tmpDir, "encrypted.private.pem")
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(encBlock), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	loaded, err := LoadPrivateKey(keyPath, password)
+	if err != nil {
+		t.Fatalf("LoadPrivateKey: %v", err)
+	}
+
+	msg := []byte("encrypted key test")
+	sig := Sign(loaded, msg)
+	pub := PublicKeyFromPrivate(priv)
+	if !Verify(pub, msg, sig) {
+		t.Fatal("encrypted key should verify after load")
+	}
+}
+
+func TestLoadPrivateKeyRequiresPassword(t *testing.T) {
+	_, priv, _ := GenerateKeyPair()
+	seed := priv.Seed()
+
+	pemBlock := &pem.Block{Type: "PRIVATE KEY", Bytes: seed}
+	tmpDir := t.TempDir()
+	keyPath := filepath.Join(tmpDir, "test.private.pem")
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(pemBlock), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	_, err := LoadPrivateKey(keyPath, nil)
+	if err == nil {
+		t.Fatal("expected password-required error")
+	}
+}
+
 func TestLoadPrivateKeyNotFound(t *testing.T) {
-	_, err := LoadPrivateKey("/nonexistent/key.pem")
+	_, err := LoadPrivateKey("/nonexistent/key.pem", []byte("test-password"))
 	if err == nil {
 		t.Fatal("expected error for missing key file")
 	}

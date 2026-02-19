@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { loadConfig, loadPrivateKey } from '../src/config.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { loadConfig, loadPrivateKey, loadPrivateKeyPassphrase } from '../src/config.js';
 import { generateKeypair } from '../src/crypt.js';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -13,6 +13,11 @@ describe('config', () => {
   });
 
   afterEach(async () => {
+    delete process.env.JACS_CONFIG_PATH;
+    delete process.env.JACS_PRIVATE_KEY_PASSWORD;
+    delete process.env.JACS_PASSWORD_FILE;
+    delete process.env.JACS_DISABLE_PASSWORD_ENV;
+    delete process.env.JACS_DISABLE_PASSWORD_FILE;
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -77,19 +82,10 @@ describe('config', () => {
         jacsKeyDir: '.',
       }));
 
-      const originalEnv = process.env.JACS_CONFIG_PATH;
-      try {
-        process.env.JACS_CONFIG_PATH = configPath;
-        const config = await loadConfig();
-        expect(config.jacsAgentName).toBe('env-bot');
-        expect(config.jacsKeyDir).toBe(path.resolve(tmpDir));
-      } finally {
-        if (originalEnv !== undefined) {
-          process.env.JACS_CONFIG_PATH = originalEnv;
-        } else {
-          delete process.env.JACS_CONFIG_PATH;
-        }
-      }
+      process.env.JACS_CONFIG_PATH = configPath;
+      const config = await loadConfig();
+      expect(config.jacsAgentName).toBe('env-bot');
+      expect(config.jacsKeyDir).toBe(path.resolve(tmpDir));
     });
 
     it('resolves relative jacsPrivateKeyPath from config directory', async () => {
@@ -186,6 +182,49 @@ describe('config', () => {
 
       const pem = await loadPrivateKey(config);
       expect(pem).toContain('-----BEGIN PRIVATE KEY-----');
+    });
+  });
+
+  describe('loadPrivateKeyPassphrase', () => {
+    it('uses env password by default', async () => {
+      process.env.JACS_PRIVATE_KEY_PASSWORD = 'dev-password';
+      const passphrase = await loadPrivateKeyPassphrase();
+      expect(passphrase).toBe('dev-password');
+    });
+
+    it('uses password file when env source is disabled', async () => {
+      const passwordFile = path.join(tmpDir, 'password.txt');
+      await fs.writeFile(passwordFile, 'file-password\n', 'utf-8');
+
+      process.env.JACS_PRIVATE_KEY_PASSWORD = 'dev-password';
+      process.env.JACS_PASSWORD_FILE = passwordFile;
+      process.env.JACS_DISABLE_PASSWORD_ENV = '1';
+
+      const passphrase = await loadPrivateKeyPassphrase();
+      expect(passphrase).toBe('file-password');
+    });
+
+    it('throws when multiple password sources are configured', async () => {
+      const passwordFile = path.join(tmpDir, 'password.txt');
+      await fs.writeFile(passwordFile, 'file-password\n', 'utf-8');
+
+      process.env.JACS_PRIVATE_KEY_PASSWORD = 'dev-password';
+      process.env.JACS_PASSWORD_FILE = passwordFile;
+
+      await expect(loadPrivateKeyPassphrase()).rejects.toThrow('Multiple password sources configured');
+    });
+
+    it('throws when no password source is configured', async () => {
+      await expect(loadPrivateKeyPassphrase()).rejects.toThrow('Private key password required');
+    });
+
+    it('skips disabled file source and uses env', async () => {
+      process.env.JACS_PRIVATE_KEY_PASSWORD = 'dev-password';
+      process.env.JACS_PASSWORD_FILE = '/tmp/unused-password-file.txt';
+      process.env.JACS_DISABLE_PASSWORD_FILE = 'true';
+
+      const passphrase = await loadPrivateKeyPassphrase();
+      expect(passphrase).toBe('dev-password');
     });
   });
 });

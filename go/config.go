@@ -5,6 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+)
+
+const (
+	envConfigPath          = "JACS_CONFIG_PATH"
+	envPrivateKeyPassword  = "JACS_PRIVATE_KEY_PASSWORD"
+	envPasswordFile        = "JACS_PASSWORD_FILE"
+	envDisablePasswordEnv  = "JACS_DISABLE_PASSWORD_ENV"
+	envDisablePasswordFile = "JACS_DISABLE_PASSWORD_FILE"
 )
 
 // Config holds JACS agent configuration loaded from jacs.config.json.
@@ -46,7 +55,7 @@ func DiscoverConfig() (*Config, error) {
 // The returned path is absolute when possible.
 func discoverConfigWithPath() (*Config, string, error) {
 	// 1. Environment variable
-	if envPath := os.Getenv("JACS_CONFIG_PATH"); envPath != "" {
+	if envPath := os.Getenv(envConfigPath); envPath != "" {
 		cfg, err := LoadConfig(envPath)
 		if err != nil {
 			return nil, "", err
@@ -79,6 +88,83 @@ func absPathOrOriginal(path string) string {
 		return path
 	}
 	return abs
+}
+
+func isSourceDisabled(flagName string) bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(flagName)))
+	switch value {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func trimTrailingNewlines(value string) string {
+	return strings.TrimRight(value, "\r\n")
+}
+
+// ResolvePrivateKeyPassword resolves the local private-key password from
+// configured secret sources.
+//
+// Exactly one source must be configured after source filters are applied.
+// Sources:
+//   - JACS_PRIVATE_KEY_PASSWORD (developer default)
+//   - JACS_PASSWORD_FILE
+//
+// Optional source disable flags:
+//   - JACS_DISABLE_PASSWORD_ENV=1
+//   - JACS_DISABLE_PASSWORD_FILE=1
+func ResolvePrivateKeyPassword() ([]byte, error) {
+	envEnabled := !isSourceDisabled(envDisablePasswordEnv)
+	fileEnabled := !isSourceDisabled(envDisablePasswordFile)
+
+	envPassword := os.Getenv(envPrivateKeyPassword)
+	passwordFile := os.Getenv(envPasswordFile)
+
+	configured := make([]string, 0, 2)
+	if envEnabled && envPassword != "" {
+		configured = append(configured, envPrivateKeyPassword)
+	}
+	if fileEnabled && passwordFile != "" {
+		configured = append(configured, envPasswordFile)
+	}
+
+	if len(configured) > 1 {
+		return nil, newError(
+			ErrConfigInvalid,
+			"multiple password sources configured: %s; configure exactly one",
+			strings.Join(configured, ", "),
+		)
+	}
+
+	if len(configured) == 0 {
+		return nil, newError(
+			ErrConfigInvalid,
+			"private key password required: configure exactly one of %s or %s",
+			envPrivateKeyPassword,
+			envPasswordFile,
+		)
+	}
+
+	if configured[0] == envPrivateKeyPassword {
+		return []byte(envPassword), nil
+	}
+
+	data, err := os.ReadFile(passwordFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, newError(ErrConfigInvalid, "%s does not exist: %s", envPasswordFile, passwordFile)
+		}
+		return nil, wrapError(ErrConfigInvalid, err, "failed to read %s: %s", envPasswordFile, passwordFile)
+	}
+
+	password := trimTrailingNewlines(string(data))
+	if password == "" {
+		return nil, newError(ErrConfigInvalid, "%s is empty: %s", envPasswordFile, passwordFile)
+	}
+
+	return []byte(password), nil
 }
 
 // ResolveKeyPath resolves a private key file path relative to the config's key directory.

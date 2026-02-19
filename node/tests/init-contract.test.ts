@@ -19,6 +19,8 @@ interface InitContractFixture {
   bootstrap_register: BootstrapRegisterContract;
   private_key_candidate_order: string[];
   config_discovery_order: string[];
+  private_key_password_sources: string[];
+  private_key_password_strategy: string;
 }
 
 function loadInitContractFixture(): InitContractFixture {
@@ -40,6 +42,11 @@ describe('shared init contract (node)', () => {
       'JACS_CONFIG_PATH',
       './jacs.config.json',
     ]);
+    expect(fixture.private_key_password_sources).toEqual([
+      'JACS_PRIVATE_KEY_PASSWORD',
+      'JACS_PASSWORD_FILE',
+    ]);
+    expect(fixture.private_key_password_strategy).toBe('single_source_required');
 
     const tmp = await mkdtemp(join(tmpdir(), 'haisdk-node-init-contract-'));
     try {

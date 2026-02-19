@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { signString, verifyString, generateKeypair } from '../src/crypt.js';
+import {
+  signString,
+  verifyString,
+  generateKeypair,
+  encryptPrivateKeyPem,
+} from '../src/crypt.js';
 import { TEST_KEYPAIR } from './setup.js';
 
 describe('crypt', () => {
@@ -46,6 +51,16 @@ describe('crypt', () => {
     it('signs UTF-8 content', () => {
       const sig = signString(TEST_KEYPAIR.privateKeyPem, 'Hello 世界 🌍');
       expect(Buffer.from(sig, 'base64').length).toBe(64);
+    });
+
+    it('signs with encrypted private keys when passphrase is provided', () => {
+      const kp = generateKeypair();
+      const passphrase = 'node-test-password';
+      const encryptedPem = encryptPrivateKeyPem(kp.privateKeyPem, passphrase);
+      const message = 'encrypted-signing';
+
+      const sig = signString(encryptedPem, message, passphrase);
+      expect(verifyString(kp.publicKeyPem, message, sig)).toBe(true);
     });
   });
 

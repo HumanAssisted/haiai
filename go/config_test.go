@@ -18,7 +18,7 @@ func TestLoadConfig(t *testing.T) {
 		JacsID:           "jacs-id-123",
 	}
 	data, _ := json.Marshal(cfg)
-	if err := os.WriteFile(configPath, data, 0644); err != nil {
+	if err := os.WriteFile(configPath, data, 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -56,7 +56,7 @@ func TestLoadConfigNotFound(t *testing.T) {
 func TestLoadConfigInvalidJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "jacs.config.json")
-	if err := os.WriteFile(configPath, []byte("not json{{{"), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte("not json{{{"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -83,7 +83,7 @@ func TestDiscoverConfigFromEnv(t *testing.T) {
 		JacsID:        "env-id",
 	}
 	data, _ := json.Marshal(cfg)
-	os.WriteFile(configPath, data, 0644)
+	_ = os.WriteFile(configPath, data, 0o644)
 
 	t.Setenv("JACS_CONFIG_PATH", configPath)
 
@@ -103,8 +103,8 @@ func TestDiscoverConfigNotFound(t *testing.T) {
 	// Change to a temp dir with no config
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
+	_ = os.Chdir(tmpDir)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	_, err := DiscoverConfig()
 	if err == nil {
@@ -148,5 +148,64 @@ func TestResolveKeyPathRelativeDirUsesConfigLocation(t *testing.T) {
 	expected := "/home/user/.jacs/keys/agent_private_key.pem"
 	if path != expected {
 		t.Errorf("expected '%s', got '%s'", expected, path)
+	}
+}
+
+func TestResolvePrivateKeyPasswordFromEnv(t *testing.T) {
+	t.Setenv("JACS_PRIVATE_KEY_PASSWORD", "dev-password")
+	t.Setenv("JACS_PASSWORD_FILE", "")
+
+	pwd, err := ResolvePrivateKeyPassword()
+	if err != nil {
+		t.Fatalf("ResolvePrivateKeyPassword: %v", err)
+	}
+	if string(pwd) != "dev-password" {
+		t.Fatalf("unexpected password: %q", string(pwd))
+	}
+}
+
+func TestResolvePrivateKeyPasswordFromFileWhenEnvDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+	passwordFile := filepath.Join(tmpDir, "password.txt")
+	if err := os.WriteFile(passwordFile, []byte("file-password\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	t.Setenv("JACS_PRIVATE_KEY_PASSWORD", "dev-password")
+	t.Setenv("JACS_PASSWORD_FILE", passwordFile)
+	t.Setenv("JACS_DISABLE_PASSWORD_ENV", "1")
+
+	pwd, err := ResolvePrivateKeyPassword()
+	if err != nil {
+		t.Fatalf("ResolvePrivateKeyPassword: %v", err)
+	}
+	if string(pwd) != "file-password" {
+		t.Fatalf("unexpected password: %q", string(pwd))
+	}
+}
+
+func TestResolvePrivateKeyPasswordFailsOnMultipleSources(t *testing.T) {
+	tmpDir := t.TempDir()
+	passwordFile := filepath.Join(tmpDir, "password.txt")
+	if err := os.WriteFile(passwordFile, []byte("file-password\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	t.Setenv("JACS_PRIVATE_KEY_PASSWORD", "dev-password")
+	t.Setenv("JACS_PASSWORD_FILE", passwordFile)
+
+	_, err := ResolvePrivateKeyPassword()
+	if err == nil {
+		t.Fatal("expected conflict error for multiple password sources")
+	}
+}
+
+func TestResolvePrivateKeyPasswordFailsWhenMissing(t *testing.T) {
+	t.Setenv("JACS_PRIVATE_KEY_PASSWORD", "")
+	t.Setenv("JACS_PASSWORD_FILE", "")
+
+	_, err := ResolvePrivateKeyPassword()
+	if err == nil {
+		t.Fatal("expected missing password source error")
 	}
 }

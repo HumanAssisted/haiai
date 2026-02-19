@@ -6,11 +6,15 @@
 //
 // Usage (new agent):
 //
+//	export JACS_PRIVATE_KEY_PASSWORD=dev-password
 //	go run .
 //
 // Usage (existing agent with jacs.config.json):
 //
+//	export JACS_PRIVATE_KEY_PASSWORD=dev-password
 //	go run . --existing
+//
+//	# Alternative: set JACS_PASSWORD_FILE and leave JACS_PRIVATE_KEY_PASSWORD unset.
 package main
 
 import (
@@ -114,7 +118,7 @@ func quickstartExisting() {
 	defer cancel()
 
 	// 1. Load existing config
-	fmt.Println("=== Loading existing config ===")
+	fmt.Println("=== Loading existing config (configure exactly one password source) ===")
 	client, err := haisdk.NewClient(haisdk.WithEndpoint(HAIURL))
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)

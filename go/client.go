@@ -123,7 +123,12 @@ func NewClient(opts ...Option) (*Client, error) {
 
 		if cl.privateKey == nil {
 			keyPath := ResolveKeyPath(cfg, configPath)
-			key, err := LoadPrivateKey(keyPath)
+			password, err := ResolvePrivateKeyPassword()
+			if err != nil {
+				return nil, err
+			}
+
+			key, err := LoadPrivateKey(keyPath, password)
 			if err != nil {
 				return nil, err
 			}

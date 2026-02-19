@@ -41,7 +41,7 @@ import {
 } from 'node:crypto';
 import { signString, verifyString, generateKeypair } from './crypt.js';
 import { signResponse, canonicalJson, getServerKeys, unwrapSignedEvent } from './signing.js';
-import { loadConfig, loadPrivateKey } from './config.js';
+import { loadConfig, loadPrivateKey, loadPrivateKeyPassphrase } from './config.js';
 import { parseSseStream } from './sse.js';
 import { openWebSocket, wsEventStream } from './ws.js';
 
@@ -61,6 +61,7 @@ import { openWebSocket, wsEventStream } from './ws.js';
 export class HaiClient {
   private config!: AgentConfig;
   private privateKeyPem!: string;
+  private privateKeyPassphrase?: string;
   private baseUrl: string;
   private timeout: number;
   private maxRetries: number;
@@ -88,6 +89,7 @@ export class HaiClient {
     const client = new HaiClient(options);
     client.config = await loadConfig(options?.configPath);
     client.privateKeyPem = await loadPrivateKey(client.config);
+    client.privateKeyPassphrase = await loadPrivateKeyPassphrase();
     return client;
   }
 
@@ -98,7 +100,7 @@ export class HaiClient {
   static fromCredentials(
     jacsId: string,
     privateKeyPem: string,
-    options?: Omit<HaiClientOptions, 'configPath'>,
+    options?: Omit<HaiClientOptions, 'configPath'> & { privateKeyPassphrase?: string },
   ): HaiClient {
     const client = new HaiClient(options);
     client.config = {
@@ -108,6 +110,7 @@ export class HaiClient {
       jacsId,
     };
     client.privateKeyPem = privateKeyPem;
+    client.privateKeyPassphrase = options?.privateKeyPassphrase;
     return client;
   }
 
@@ -137,7 +140,7 @@ export class HaiClient {
   private buildAuthHeaders(): Record<string, string> {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const message = `${this.jacsId}:${timestamp}`;
-    const signature = signString(this.privateKeyPem, message);
+    const signature = signString(this.privateKeyPem, message, this.privateKeyPassphrase);
     return {
       'Authorization': `JACS ${this.jacsId}:${timestamp}:${signature}`,
       'Content-Type': 'application/json',
@@ -146,14 +149,14 @@ export class HaiClient {
 
   /** Sign a UTF-8 message with the agent's private key. Returns base64. */
   signMessage(message: string): string {
-    return signString(this.privateKeyPem, message);
+    return signString(this.privateKeyPem, message, this.privateKeyPassphrase);
   }
 
   /** Build the JACS Authorization header value string. */
   buildAuthHeader(): string {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const message = `${this.jacsId}:${timestamp}`;
-    const signature = signString(this.privateKeyPem, message);
+    const signature = signString(this.privateKeyPem, message, this.privateKeyPassphrase);
     return `JACS ${this.jacsId}:${timestamp}:${signature}`;
   }
 
@@ -281,7 +284,7 @@ export class HaiClient {
 
     // Sign canonical JSON
     const canonical = canonicalJson(agentDoc);
-    const signature = signString(this.privateKeyPem, canonical);
+    const signature = signString(this.privateKeyPem, canonical, this.privateKeyPassphrase);
     (agentDoc.jacsSignature as Record<string, string>).signature = signature;
 
     const url = this.makeUrl('/api/v1/agents/register');
@@ -535,7 +538,7 @@ export class HaiClient {
     };
 
     // Sign the response as a JACS document
-    const signed = signResponse(body, this.privateKeyPem, this.jacsId);
+    const signed = signResponse(body, this.privateKeyPem, this.jacsId, this.privateKeyPassphrase);
 
     const response = await this.fetchWithRetry(url, {
       method: 'POST',
@@ -822,7 +825,9 @@ export class HaiClient {
    * Returns { publicKeyPem, privateKeyPem }.
    */
   exportKeys(): { publicKeyPem: string; privateKeyPem: string } {
-    const privKey = createPrivateKey(this.privateKeyPem);
+    const privKey = this.privateKeyPassphrase
+      ? createPrivateKey({ key: this.privateKeyPem, format: 'pem', passphrase: this.privateKeyPassphrase })
+      : createPrivateKey(this.privateKeyPem);
     const pubKey = createPublicKey(privKey);
     const publicKeyPem = pubKey.export({ type: 'spki', format: 'pem' }) as string;
     return { publicKeyPem, privateKeyPem: this.privateKeyPem };
@@ -1101,6 +1106,7 @@ export class HaiClient {
       benchmarkResult,
       this.privateKeyPem,
       this.jacsId,
+      this.privateKeyPassphrase,
     );
   }
 
