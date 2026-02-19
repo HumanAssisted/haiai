@@ -70,7 +70,7 @@ Commands:
   send-email      Send an agent email
   list-messages   List inbox messages
 Global environment variables:
-  HAI_URL            API base URL (default: https://api.hai.ai)
+  HAI_URL            API base URL (default: https://hai.ai)
   JACS_CONFIG_PATH   Path to jacs.config.json
 
 Use "haisdk <command> --help" for more information.`)

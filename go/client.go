@@ -36,7 +36,7 @@ import (
 
 const (
 	// DefaultEndpoint is the default HAI API endpoint.
-	DefaultEndpoint = "https://api.hai.ai"
+	DefaultEndpoint = "https://hai.ai"
 
 	// DefaultKeysEndpoint is the default HAI key distribution service.
 	DefaultKeysEndpoint = "https://keys.hai.ai"
@@ -188,6 +188,35 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 	return nil
 }
 
+// doPublicRequest performs an unauthenticated HTTP request and decodes the JSON response.
+func (c *Client) doPublicRequest(ctx context.Context, method, path string, result interface{}) error {
+	url := c.endpoint + path
+
+	req, err := http.NewRequestWithContext(ctx, method, url, nil)
+	if err != nil {
+		return wrapError(ErrConnection, err, "failed to create request")
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return wrapError(ErrConnection, err, "request failed")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return classifyHTTPError(resp.StatusCode, respBody)
+	}
+
+	if result != nil {
+		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+			return wrapError(ErrInvalidResponse, err, "failed to decode response")
+		}
+	}
+
+	return nil
+}
+
 // classifyHTTPError maps HTTP status codes to appropriate ErrorKind values.
 func classifyHTTPError(statusCode int, body []byte) *Error {
 	msg := fmt.Sprintf("status %d: %s", statusCode, string(body))
@@ -211,8 +240,11 @@ func classifyHTTPError(statusCode int, body []byte) *Error {
 
 // Hello tests connectivity and authentication with HAI.
 func (c *Client) Hello(ctx context.Context) (*HelloResult, error) {
+	reqBody := map[string]string{
+		"agent_id": c.jacsID,
+	}
 	var result HelloResult
-	if err := c.doRequest(ctx, http.MethodGet, "/api/v1/hello", nil, &result); err != nil {
+	if err := c.doRequest(ctx, http.MethodPost, "/api/v1/agents/hello", reqBody, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -220,31 +252,43 @@ func (c *Client) Hello(ctx context.Context) (*HelloResult, error) {
 
 // TestConnection verifies connectivity to the HAI server (unauthenticated).
 func (c *Client) TestConnection(ctx context.Context) (bool, error) {
-	url := c.endpoint + "/health"
+	endpoints := []string{"/api/v1/health", "/health", "/api/health", "/"}
+	var lastErr error
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return false, wrapError(ErrConnection, err, "failed to create request")
+	for _, endpoint := range endpoints {
+		url := c.endpoint + endpoint
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return false, wrapError(ErrConnection, err, "failed to create request")
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			var health struct {
+				Status string `json:"status"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+				_ = resp.Body.Close()
+				return true, nil
+			}
+			_ = resp.Body.Close()
+			if health.Status == "" || health.Status == "ok" || health.Status == "healthy" {
+				return true, nil
+			}
+		} else {
+			_ = resp.Body.Close()
+		}
 	}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return false, wrapError(ErrConnection, err, "connection failed")
+	if lastErr != nil {
+		return false, wrapError(ErrConnection, lastErr, "connection failed")
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return false, newError(ErrConnection, "server returned status: %d", resp.StatusCode)
-	}
-
-	var health struct {
-		Status string `json:"status"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
-		return true, nil
-	}
-
-	return health.Status == "ok" || health.Status == "healthy", nil
+	return false, nil
 }
 
 // RegisterOptions configures the Register call.
@@ -310,7 +354,7 @@ func (c *Client) registerWithoutAuth(ctx context.Context, opts RegisterOptions) 
 // Status checks the registration/verification status of this agent with HAI.
 // Calls GET /api/v1/agents/{jacs_id}/verify.
 func (c *Client) Status(ctx context.Context) (*StatusResult, error) {
-	path := fmt.Sprintf("/api/v1/agents/%s/verify", c.jacsID)
+	path := fmt.Sprintf("/api/v1/agents/%s/verify", neturl.PathEscape(c.jacsID))
 
 	url := c.endpoint + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -433,7 +477,7 @@ func (c *Client) DnsCertifiedRun(ctx context.Context) (*BenchmarkResult, error) 
 				var status struct {
 					Paid bool `json:"paid"`
 				}
-				statusPath := fmt.Sprintf("/api/benchmark/subscribe/status/%s", sub.SessionID)
+				statusPath := fmt.Sprintf("/api/benchmark/subscribe/status/%s", neturl.PathEscape(sub.SessionID))
 				if err := c.doRequest(ctx, http.MethodGet, statusPath, nil, &status); err == nil && status.Paid {
 					goto runBenchmark
 				}
@@ -468,7 +512,7 @@ func (c *Client) SubmitResponse(ctx context.Context, jobID string, response Mode
 		return nil, err
 	}
 
-	path := fmt.Sprintf("/api/v1/agents/jobs/%s/response", jobID)
+	path := fmt.Sprintf("/api/v1/agents/jobs/%s/response", neturl.PathEscape(jobID))
 	var result JobResponseResult
 	if err := c.doRequest(ctx, http.MethodPost, path, signedDoc, &result); err != nil {
 		return nil, err
@@ -503,7 +547,7 @@ func (c *Client) signResponse(response interface{}) (map[string]interface{}, err
 
 // GetAgentAttestation gets the agent's attestation from HAI.
 func (c *Client) GetAgentAttestation(ctx context.Context) (*AttestationResult, error) {
-	path := fmt.Sprintf("/api/v1/agents/%s/attestation", c.jacsID)
+	path := fmt.Sprintf("/api/v1/agents/%s/attestation", neturl.PathEscape(c.jacsID))
 	var result AttestationResult
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
@@ -513,7 +557,7 @@ func (c *Client) GetAgentAttestation(ctx context.Context) (*AttestationResult, e
 
 // VerifyAgent verifies another agent's registration and identity with HAI.
 func (c *Client) VerifyAgent(ctx context.Context, agentID string) (*VerifyResult, error) {
-	path := fmt.Sprintf("/api/v1/agents/%s/verify", agentID)
+	path := fmt.Sprintf("/api/v1/agents/%s/verify", neturl.PathEscape(agentID))
 	var result VerifyResult
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
@@ -528,7 +572,7 @@ func (c *Client) CheckUsername(ctx context.Context, username string) (*CheckUser
 	query.Set("username", username)
 	path := "/api/v1/agents/username/check?" + query.Encode()
 	var result CheckUsernameResult
-	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
+	if err := c.doPublicRequest(ctx, http.MethodGet, path, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -557,7 +601,7 @@ func (c *Client) SendEmail(ctx context.Context, to, subject, body string) (*Send
 
 // SendEmailWithOptions sends an email with full options (e.g. threading).
 func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions) (*SendEmailResult, error) {
-	path := fmt.Sprintf("/api/agents/%s/email/send", c.jacsID)
+	path := fmt.Sprintf("/api/agents/%s/email/send", neturl.PathEscape(c.jacsID))
 	var result SendEmailResult
 	if err := c.doRequest(ctx, http.MethodPost, path, opts, &result); err != nil {
 		return nil, err
@@ -593,7 +637,7 @@ func (c *Client) MarkRead(ctx context.Context, messageID string) error {
 
 // GetEmailStatus retrieves the agent's email usage and limits.
 func (c *Client) GetEmailStatus(ctx context.Context) (*EmailStatus, error) {
-	path := fmt.Sprintf("/api/agents/%s/email/status", c.jacsID)
+	path := fmt.Sprintf("/api/agents/%s/email/status", neturl.PathEscape(c.jacsID))
 	var status EmailStatus
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &status); err != nil {
 		return nil, err
@@ -829,7 +873,12 @@ func (c *Client) FetchRemoteKey(ctx context.Context, agentID, version string) (*
 // FetchRemoteKeyFromURL fetches a public key from a specific key service URL.
 func FetchRemoteKeyFromURL(ctx context.Context, httpClient *http.Client, baseURL, agentID, version string) (*PublicKeyInfo, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
-	url := fmt.Sprintf("%s/jacs/v1/agents/%s/keys/%s", baseURL, agentID, version)
+	url := fmt.Sprintf(
+		"%s/jacs/v1/agents/%s/keys/%s",
+		baseURL,
+		neturl.PathEscape(agentID),
+		neturl.PathEscape(version),
+	)
 
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
