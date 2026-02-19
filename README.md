@@ -63,7 +63,10 @@ cargo test
 ```python
 from haisdk import config, HaiClient
 
-# Requires an existing jacs.config.json + private key
+# Requires an existing jacs.config.json + encrypted private key.
+# Configure exactly one password source (env is the developer default):
+# export JACS_PRIVATE_KEY_PASSWORD=dev-password
+# or: export JACS_PASSWORD_FILE=/secure/path/password.txt
 config.load("./jacs.config.json")
 client = HaiClient()
 
@@ -87,7 +90,10 @@ for event in client.connect("https://hai.ai", transport="ws"):
 ```typescript
 import { HaiClient } from "haisdk";
 
-// Requires an existing jacs.config.json + private key
+// Requires an existing jacs.config.json + encrypted private key.
+// Configure exactly one password source (env is the developer default):
+// process.env.JACS_PRIVATE_KEY_PASSWORD = "dev-password";
+// or set JACS_PASSWORD_FILE
 const client = await HaiClient.create({ url: "https://hai.ai" });
 
 // Hello handshake
@@ -119,7 +125,10 @@ import (
 )
 
 func main() {
-	// Requires an existing jacs.config.json + private key
+	// Requires an existing jacs.config.json + encrypted private key.
+	// Configure exactly one password source (env is the developer default):
+	// export JACS_PRIVATE_KEY_PASSWORD=dev-password
+	// or set JACS_PASSWORD_FILE
 	client, err := hai.NewClient()
 	if err != nil {
 		log.Fatal(err)
