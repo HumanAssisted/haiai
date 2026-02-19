@@ -195,6 +195,9 @@ describe('config', () => {
     it('uses password file when env source is disabled', async () => {
       const passwordFile = path.join(tmpDir, 'password.txt');
       await fs.writeFile(passwordFile, 'file-password\n', 'utf-8');
+      if (process.platform !== 'win32') {
+        await fs.chmod(passwordFile, 0o600);
+      }
 
       process.env.JACS_PRIVATE_KEY_PASSWORD = 'dev-password';
       process.env.JACS_PASSWORD_FILE = passwordFile;
@@ -225,6 +228,38 @@ describe('config', () => {
 
       const passphrase = await loadPrivateKeyPassphrase();
       expect(passphrase).toBe('dev-password');
+    });
+
+    it('rejects insecure password file permissions on unix', async () => {
+      if (process.platform === 'win32') {
+        return;
+      }
+
+      const passwordFile = path.join(tmpDir, 'password-insecure.txt');
+      await fs.writeFile(passwordFile, 'file-password\n', 'utf-8');
+      await fs.chmod(passwordFile, 0o644);
+
+      process.env.JACS_PASSWORD_FILE = passwordFile;
+      process.env.JACS_DISABLE_PASSWORD_ENV = '1';
+
+      await expect(loadPrivateKeyPassphrase()).rejects.toThrow('insecure permissions');
+    });
+
+    it('rejects symlink password file sources', async () => {
+      if (process.platform === 'win32') {
+        return;
+      }
+
+      const targetFile = path.join(tmpDir, 'password-target.txt');
+      const linkFile = path.join(tmpDir, 'password-link.txt');
+      await fs.writeFile(targetFile, 'file-password\n', 'utf-8');
+      await fs.chmod(targetFile, 0o600);
+      await fs.symlink(targetFile, linkFile);
+
+      process.env.JACS_PASSWORD_FILE = linkFile;
+      process.env.JACS_DISABLE_PASSWORD_ENV = '1';
+
+      await expect(loadPrivateKeyPassphrase()).rejects.toThrow('must not be a symlink');
     });
   });
 });

@@ -42,6 +42,51 @@ def _is_disabled(flag_name: str) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+def _read_password_file_strict(file_path: Path) -> bytes:
+    try:
+        stat_result = file_path.lstat()
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"JACS_PASSWORD_FILE does not exist: {file_path}"
+        ) from None
+    except OSError as exc:
+        raise ValueError(
+            f"Failed to read JACS_PASSWORD_FILE ({file_path}): {exc}"
+        ) from exc
+
+    if file_path.is_symlink():
+        raise ValueError(
+            f"JACS_PASSWORD_FILE must not be a symlink: {file_path}"
+        )
+
+    if not file_path.is_file():
+        raise ValueError(
+            f"JACS_PASSWORD_FILE must be a regular file: {file_path}"
+        )
+
+    if os.name != "nt":
+        mode = stat_result.st_mode & 0o777
+        if mode & 0o077:
+            raise ValueError(
+                "JACS_PASSWORD_FILE has insecure permissions "
+                f"({mode:o}): {file_path}. Restrict to owner-only "
+                "(for example: chmod 600 /path/to/password.txt)."
+            )
+
+    try:
+        file_contents = file_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(
+            f"Failed to read JACS_PASSWORD_FILE ({file_path}): {exc}"
+        ) from exc
+
+    file_value = _trim_trailing_newlines(file_contents)
+    if not file_value:
+        raise ValueError(f"JACS_PASSWORD_FILE is empty: {file_path}")
+
+    return file_value.encode("utf-8")
+
+
 def load_private_key_password() -> bytes:
     """Resolve private-key password from configured secret sources.
 
@@ -90,18 +135,7 @@ def load_private_key_password() -> bytes:
 
     assert password_file is not None
     file_path = Path(password_file)
-    if not file_path.is_file():
-        raise FileNotFoundError(
-            f"JACS_PASSWORD_FILE does not exist: {file_path}"
-        )
-
-    file_value = _trim_trailing_newlines(
-        file_path.read_text(encoding="utf-8")
-    )
-    if not file_value:
-        raise ValueError(f"JACS_PASSWORD_FILE is empty: {file_path}")
-
-    return file_value.encode("utf-8")
+    return _read_password_file_strict(file_path)
 
 
 def load(config_path: str | None = None) -> None:

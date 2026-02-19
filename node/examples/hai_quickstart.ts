@@ -7,12 +7,18 @@
  * Usage (new agent):
  *     export JACS_PRIVATE_KEY_PASSWORD=dev-password
  *     npx tsx examples/hai_quickstart.ts
+ *   or:
+ *     export JACS_PASSWORD_FILE=/secure/path/password.txt
+ *     npx tsx examples/hai_quickstart.ts
  *
  * Usage (existing agent with jacs.config.json):
  *     export JACS_PRIVATE_KEY_PASSWORD=dev-password
  *     npx tsx examples/hai_quickstart.ts --existing
+ *   or:
+ *     export JACS_PASSWORD_FILE=/secure/path/password.txt
+ *     npx tsx examples/hai_quickstart.ts --existing
  *
- * Alternative: set JACS_PASSWORD_FILE and leave JACS_PRIVATE_KEY_PASSWORD unset.
+ * Configure exactly one password source.
  */
 
 import { HaiClient } from '../src/client.js';

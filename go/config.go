@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -104,6 +105,52 @@ func trimTrailingNewlines(value string) string {
 	return strings.TrimRight(value, "\r\n")
 }
 
+func readPasswordFileStrict(passwordFile string) (string, error) {
+	info, err := os.Lstat(passwordFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", newError(ErrConfigInvalid, "%s does not exist: %s", envPasswordFile, passwordFile)
+		}
+		return "", wrapError(ErrConfigInvalid, err, "failed to read %s: %s", envPasswordFile, passwordFile)
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", newError(ErrConfigInvalid, "%s must not be a symlink: %s", envPasswordFile, passwordFile)
+	}
+
+	if !info.Mode().IsRegular() {
+		return "", newError(ErrConfigInvalid, "%s must be a regular file: %s", envPasswordFile, passwordFile)
+	}
+
+	if runtime.GOOS != "windows" {
+		mode := info.Mode().Perm()
+		if mode&0o077 != 0 {
+			return "", newError(
+				ErrConfigInvalid,
+				"%s has insecure permissions (%o): %s; restrict to owner-only (for example: chmod 600 /path/to/password.txt)",
+				envPasswordFile,
+				mode,
+				passwordFile,
+			)
+		}
+	}
+
+	data, err := os.ReadFile(passwordFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", newError(ErrConfigInvalid, "%s does not exist: %s", envPasswordFile, passwordFile)
+		}
+		return "", wrapError(ErrConfigInvalid, err, "failed to read %s: %s", envPasswordFile, passwordFile)
+	}
+
+	password := trimTrailingNewlines(string(data))
+	if password == "" {
+		return "", newError(ErrConfigInvalid, "%s is empty: %s", envPasswordFile, passwordFile)
+	}
+
+	return password, nil
+}
+
 // ResolvePrivateKeyPassword resolves the local private-key password from
 // configured secret sources.
 //
@@ -151,17 +198,9 @@ func ResolvePrivateKeyPassword() ([]byte, error) {
 		return []byte(envPassword), nil
 	}
 
-	data, err := os.ReadFile(passwordFile)
+	password, err := readPasswordFileStrict(passwordFile)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, newError(ErrConfigInvalid, "%s does not exist: %s", envPasswordFile, passwordFile)
-		}
-		return nil, wrapError(ErrConfigInvalid, err, "failed to read %s: %s", envPasswordFile, passwordFile)
-	}
-
-	password := trimTrailingNewlines(string(data))
-	if password == "" {
-		return nil, newError(ErrConfigInvalid, "%s is empty: %s", envPasswordFile, passwordFile)
+		return nil, err
 	}
 
 	return []byte(password), nil

@@ -93,7 +93,8 @@ import { HaiClient } from "haisdk";
 // Requires an existing jacs.config.json + encrypted private key.
 // Configure exactly one password source (env is the developer default):
 // process.env.JACS_PRIVATE_KEY_PASSWORD = "dev-password";
-// or set JACS_PASSWORD_FILE
+// or:
+// process.env.JACS_PASSWORD_FILE = "/secure/path/password.txt";
 const client = await HaiClient.create({ url: "https://hai.ai" });
 
 // Hello handshake
@@ -128,7 +129,7 @@ func main() {
 	// Requires an existing jacs.config.json + encrypted private key.
 	// Configure exactly one password source (env is the developer default):
 	// export JACS_PRIVATE_KEY_PASSWORD=dev-password
-	// or set JACS_PASSWORD_FILE
+	// or: export JACS_PASSWORD_FILE=/secure/path/password.txt
 	client, err := hai.NewClient()
 	if err != nil {
 		log.Fatal(err)
@@ -142,6 +143,8 @@ func main() {
 	fmt.Println(hello.Message)
 }
 ```
+
+When using `JACS_PASSWORD_FILE`, configure exactly one source and keep file permissions owner-only (for example `chmod 600 /secure/path/password.txt` on Unix-like systems).
 
 ## Repository Structure
 

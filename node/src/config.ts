@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { AgentConfig } from './types.js';
 
@@ -14,6 +14,49 @@ function isDisabled(flagName: string): boolean {
 
 function trimTrailingNewlines(value: string): string {
   return value.replace(/[\r\n]+$/, '');
+}
+
+async function readPasswordFileStrict(filePath: string): Promise<string> {
+  let stats;
+  try {
+    stats = await lstat(filePath);
+  } catch (error) {
+    const message = (error as Error).message;
+    throw new Error(`Failed to read JACS_PASSWORD_FILE (${filePath}): ${message}`);
+  }
+
+  if (stats.isSymbolicLink()) {
+    throw new Error(`JACS_PASSWORD_FILE must not be a symlink: ${filePath}`);
+  }
+
+  if (!stats.isFile()) {
+    throw new Error(`JACS_PASSWORD_FILE must be a regular file: ${filePath}`);
+  }
+
+  if (process.platform !== 'win32') {
+    const mode = stats.mode & 0o777;
+    if ((mode & 0o077) !== 0) {
+      throw new Error(
+        `JACS_PASSWORD_FILE has insecure permissions (${mode.toString(8)}): ${filePath}. ` +
+          "Restrict to owner-only (for example: chmod 600 '/path/to/password.txt').",
+      );
+    }
+  }
+
+  let content: string;
+  try {
+    content = await readFile(filePath, 'utf-8');
+  } catch (error) {
+    const message = (error as Error).message;
+    throw new Error(`Failed to read JACS_PASSWORD_FILE (${filePath}): ${message}`);
+  }
+
+  const passphrase = trimTrailingNewlines(content);
+  if (!passphrase) {
+    throw new Error(`JACS_PASSWORD_FILE is empty: ${filePath}`);
+  }
+
+  return passphrase;
 }
 
 /**
@@ -61,20 +104,7 @@ export async function loadPrivateKeyPassphrase(): Promise<string> {
   }
 
   const filePath = passwordFile as string;
-  let content: string;
-  try {
-    content = await readFile(filePath, 'utf-8');
-  } catch (error) {
-    const message = (error as Error).message;
-    throw new Error(`Failed to read JACS_PASSWORD_FILE (${filePath}): ${message}`);
-  }
-
-  const passphrase = trimTrailingNewlines(content);
-  if (!passphrase) {
-    throw new Error(`JACS_PASSWORD_FILE is empty: ${filePath}`);
-  }
-
-  return passphrase;
+  return readPasswordFileStrict(filePath);
 }
 
 /**

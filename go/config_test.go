@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -207,5 +209,63 @@ func TestResolvePrivateKeyPasswordFailsWhenMissing(t *testing.T) {
 	_, err := ResolvePrivateKeyPassword()
 	if err == nil {
 		t.Fatal("expected missing password source error")
+	}
+}
+
+func TestResolvePrivateKeyPasswordFailsOnInsecureFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission-mode checks are unix-specific")
+	}
+
+	tmpDir := t.TempDir()
+	passwordFile := filepath.Join(tmpDir, "password.txt")
+	if err := os.WriteFile(passwordFile, []byte("file-password\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.Chmod(passwordFile, 0o644); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+
+	t.Setenv("JACS_PRIVATE_KEY_PASSWORD", "")
+	t.Setenv("JACS_PASSWORD_FILE", passwordFile)
+	t.Setenv("JACS_DISABLE_PASSWORD_ENV", "1")
+
+	_, err := ResolvePrivateKeyPassword()
+	if err == nil {
+		t.Fatal("expected insecure permissions error")
+	}
+	if !strings.Contains(err.Error(), "insecure permissions") {
+		t.Fatalf("expected insecure permissions error, got: %v", err)
+	}
+}
+
+func TestResolvePrivateKeyPasswordFailsOnSymlinkFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink checks are unix-specific in CI/dev")
+	}
+
+	tmpDir := t.TempDir()
+	targetFile := filepath.Join(tmpDir, "password-target.txt")
+	linkFile := filepath.Join(tmpDir, "password-link.txt")
+	if err := os.WriteFile(targetFile, []byte("file-password\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.Chmod(targetFile, 0o600); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	if err := os.Symlink(targetFile, linkFile); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	t.Setenv("JACS_PRIVATE_KEY_PASSWORD", "")
+	t.Setenv("JACS_PASSWORD_FILE", linkFile)
+	t.Setenv("JACS_DISABLE_PASSWORD_ENV", "1")
+
+	_, err := ResolvePrivateKeyPassword()
+	if err == nil {
+		t.Fatal("expected symlink rejection error")
+	}
+	if !strings.Contains(err.Error(), "must not be a symlink") {
+		t.Fatalf("expected symlink rejection error, got: %v", err)
 	}
 }

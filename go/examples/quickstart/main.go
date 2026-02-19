@@ -8,13 +8,19 @@
 //
 //	export JACS_PRIVATE_KEY_PASSWORD=dev-password
 //	go run .
+// or:
+//	export JACS_PASSWORD_FILE=/secure/path/password.txt
+//	go run .
 //
 // Usage (existing agent with jacs.config.json):
 //
 //	export JACS_PRIVATE_KEY_PASSWORD=dev-password
 //	go run . --existing
+// or:
+//	export JACS_PASSWORD_FILE=/secure/path/password.txt
+//	go run . --existing
 //
-//	# Alternative: set JACS_PASSWORD_FILE and leave JACS_PRIVATE_KEY_PASSWORD unset.
+// Configure exactly one password source.
 package main
 
 import (

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -123,6 +124,8 @@ class TestPasswordResolution:
     ) -> None:
         password_file = tmp_path / "password.txt"
         password_file.write_text("file-password\n", encoding="utf-8")
+        if os.name != "nt":
+            password_file.chmod(0o600)
 
         monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", "env-password")
         monkeypatch.setenv("JACS_PASSWORD_FILE", str(password_file))
@@ -153,6 +156,46 @@ class TestPasswordResolution:
         monkeypatch.delenv("JACS_PRIVATE_KEY_PASSWORD", raising=False)
 
         with pytest.raises(FileNotFoundError, match="JACS_PASSWORD_FILE"):
+            load_private_key_password()
+
+    def test_password_file_insecure_permissions_raises(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if os.name == "nt":
+            pytest.skip("permission-mode checks are unix-specific")
+
+        password_file = tmp_path / "password-insecure.txt"
+        password_file.write_text("file-password\n", encoding="utf-8")
+        password_file.chmod(0o644)
+
+        monkeypatch.setenv("JACS_PASSWORD_FILE", str(password_file))
+        monkeypatch.setenv("JACS_DISABLE_PASSWORD_ENV", "1")
+        monkeypatch.delenv("JACS_PRIVATE_KEY_PASSWORD", raising=False)
+
+        with pytest.raises(ValueError, match="insecure permissions"):
+            load_private_key_password()
+
+    def test_password_file_symlink_raises(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        if os.name == "nt":
+            pytest.skip("symlink checks are unix-specific")
+
+        target = tmp_path / "password-target.txt"
+        target.write_text("file-password\n", encoding="utf-8")
+        target.chmod(0o600)
+        link = tmp_path / "password-link.txt"
+        link.symlink_to(target)
+
+        monkeypatch.setenv("JACS_PASSWORD_FILE", str(link))
+        monkeypatch.setenv("JACS_DISABLE_PASSWORD_ENV", "1")
+        monkeypatch.delenv("JACS_PRIVATE_KEY_PASSWORD", raising=False)
+
+        with pytest.raises(ValueError, match="must not be a symlink"):
             load_private_key_password()
 
     def test_password_required_raises_without_any_source(

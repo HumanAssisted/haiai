@@ -7,12 +7,17 @@ Prerequisites:
 Usage (new agent):
     export JACS_PRIVATE_KEY_PASSWORD=dev-password
     python hai_quickstart.py
+or:
+    export JACS_PASSWORD_FILE=/secure/path/password.txt
+    python hai_quickstart.py
 
 Usage (existing agent with jacs.config.json):
     export JACS_PRIVATE_KEY_PASSWORD=dev-password
     python hai_quickstart.py --existing
+or:
+    export JACS_PASSWORD_FILE=/secure/path/password.txt
+    python hai_quickstart.py --existing
 
-Alternative: set JACS_PASSWORD_FILE to a file containing the password.
 Configure exactly one password source.
 """
 
