@@ -17,6 +17,10 @@ export type { JacsDocument } from './signing.js';
 // Verify link
 export { generateVerifyLink, MAX_VERIFY_URL_LEN, MAX_VERIFY_DOCUMENT_BYTES } from './verify.js';
 
+// JACS CLI passthrough helpers
+export { runJacsCli, resolveJacsCliBin } from './jacs.js';
+export type { RunJacsCliOptions } from './jacs.js';
+
 // Config
 export { loadConfig, loadPrivateKey } from './config.js';
 

@@ -23,6 +23,16 @@ Cross-language maintenance guide: `docs/HAISDK_LANGUAGE_SYNC_GUIDE.md`.
 
 ## Install
 
+### Homebrew (macOS)
+
+Install `jacs` and `haisdk` separately from the tap:
+
+```bash
+brew tap HumanAssisted/homebrew-jacs
+brew install jacs
+brew install haisdk
+```
+
 ### Python
 
 ```bash
@@ -54,6 +64,35 @@ go get github.com/HumanAssisted/haisdk-go
 # - rust/hai-mcp     (MCP server binary)
 cd rust
 cargo test
+```
+
+## CLI Usage
+
+The `haisdk` CLI exposes HAI operations and wraps the full `jacs` CLI.
+
+### HAI commands
+
+```bash
+# Register with HAI
+haisdk register --name "My Agent" --description "..." --dns example.com --owner-email you@example.com
+
+# Check registration status
+haisdk status
+```
+
+### JACS passthrough (including MCP)
+
+```bash
+# Explicit passthrough form
+haisdk jacs --help
+haisdk jacs verify ./signed.json
+haisdk jacs mcp install
+haisdk jacs mcp run
+
+# Shorthand passthrough also works
+haisdk verify ./signed.json
+haisdk mcp install
+haisdk mcp run
 ```
 
 ## Quickstart

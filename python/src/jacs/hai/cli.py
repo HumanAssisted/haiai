@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
 from typing import Optional, Sequence
 
@@ -93,8 +95,8 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
     print(f"  Passed: {result.passed}/{result.total}")
 
 
-def cmd_verify(args: argparse.Namespace) -> None:
-    """Check agent verification status."""
+def cmd_status(args: argparse.Namespace) -> None:
+    """Check agent registration status."""
     _require_config()
     from jacs.hai.client import HaiClient
 
@@ -213,8 +215,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tier", default="free", choices=["free", "dns_certified", "fully_certified"])
     p.add_argument("--name", default="mediator", help="Benchmark scenario name")
 
-    # verify
-    sub.add_parser("verify", help="Check agent registration status")
+    # status
+    sub.add_parser("status", help="Check agent registration status")
 
     # check-username
     p = sub.add_parser("check-username", help="Check @hai.ai username availability")
@@ -250,7 +252,7 @@ COMMANDS = {
     "register": cmd_register,
     "hello": cmd_hello,
     "benchmark": cmd_benchmark,
-    "verify": cmd_verify,
+    "status": cmd_status,
     "check-username": cmd_check_username,
     "claim-username": cmd_claim_username,
     "send-email": cmd_send_email,
@@ -259,10 +261,70 @@ COMMANDS = {
 }
 
 
+def _print_merged_help(parser: argparse.ArgumentParser) -> None:
+    """Print local HAI help plus JACS CLI help."""
+    parser.print_help()
+    print("\nJACS CLI passthrough (all standard jacs commands are supported):\n")
+    jacs_bin = os.environ.get("JACS_CLI_BIN", "jacs").strip() or "jacs"
+    try:
+        completed = subprocess.run(
+            [jacs_bin, "--help"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        print(
+            "JACS CLI binary not found. Install `jacs` or set JACS_CLI_BIN.",
+            file=sys.stderr,
+        )
+        return
+    except OSError as exc:
+        print(f"Failed to execute JACS CLI: {exc}", file=sys.stderr)
+        return
+
+    if completed.stdout:
+        print(completed.stdout.rstrip())
+    if completed.returncode != 0 and completed.stderr:
+        print(completed.stderr.rstrip(), file=sys.stderr)
+
+
+def _forward_to_jacs_cli(argv: Sequence[str]) -> None:
+    """Execute the JACS CLI and exit with the same status code."""
+    jacs_bin = os.environ.get("JACS_CLI_BIN", "jacs").strip() or "jacs"
+    command = [jacs_bin, *argv]
+    try:
+        completed = subprocess.run(command, check=False)
+    except FileNotFoundError:
+        print(
+            "Error: JACS CLI binary not found. Install `jacs` or set JACS_CLI_BIN.",
+            file=sys.stderr,
+        )
+        sys.exit(127)
+    except OSError as exc:
+        print(f"Error: failed to execute JACS CLI: {exc}", file=sys.stderr)
+        sys.exit(1)
+    raise SystemExit(completed.returncode)
+
+
 def main(argv: Optional[Sequence[str]] = None) -> None:
     """CLI entry point."""
+    argv_list = list(argv) if argv is not None else sys.argv[1:]
+
+    # `haisdk jacs ...` => explicit passthrough to JACS CLI
+    if argv_list and argv_list[0] == "jacs":
+        _forward_to_jacs_cli(argv_list[1:])
+
+    # Any non-HAI command should transparently behave like `jacs ...`
+    if argv_list and argv_list[0] not in COMMANDS and argv_list[0] not in {"-h", "--help"}:
+        _forward_to_jacs_cli(argv_list)
+
     parser = build_parser()
-    args = parser.parse_args(argv)
+    if argv_list and argv_list[0] in {"-h", "--help"}:
+        _print_merged_help(parser)
+        raise SystemExit(0)
+
+    args = parser.parse_args(argv_list)
 
     if not args.command:
         parser.print_help()
