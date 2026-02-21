@@ -7,9 +7,11 @@
 import { HaiClient } from './client.js';
 import { generateKeypair, encryptPrivateKeyPem } from './crypt.js';
 import { loadPrivateKeyPassphrase } from './config.js';
+import { runJacsCli } from './jacs.js';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const USAGE = `Usage: haisdk <command> [options]
 
@@ -17,7 +19,7 @@ Commands:
   register         Register a new agent with HAI
   hello            Perform a hello-world handshake
   benchmark        Run a benchmark
-  verify           Check agent verification status
+  status           Check agent verification status
   check-username   Check username availability
   claim-username   Claim a username for an agent
   send-email       Send an email from the agent
@@ -31,8 +33,7 @@ Options:
 `;
 
 function fail(message: string): never {
-  process.stderr.write(`Error: ${message}\n`);
-  process.exit(1);
+  throw new Error(message);
 }
 
 function getArg(args: string[], flag: string): string | undefined {
@@ -47,64 +48,104 @@ function requireArg(args: string[], flag: string, label: string): string {
   return val;
 }
 
-async function main() {
-  const args = process.argv.slice(2);
+const HAI_COMMANDS = new Set([
+  'register',
+  'hello',
+  'benchmark',
+  'status',
+  'check-username',
+  'claim-username',
+  'send-email',
+  'list-messages',
+  'email-status',
+  'fetch-key',
+]);
 
-  if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
-    process.stdout.write(USAGE);
-    process.exit(0);
-  }
-
-  if (args.includes('--version') || args.includes('-v')) {
-    process.stdout.write('haisdk 0.1.0\n');
-    process.exit(0);
-  }
-
+/**
+ * Determine whether CLI args should be forwarded to `jacs`.
+ * - `haisdk jacs ...` forwards explicitly.
+ * - unknown top-level commands forward transparently.
+ */
+export function resolveJacsPassthroughArgs(args: string[]): string[] | null {
+  if (args.length === 0) return null;
   const command = args[0];
-  const cmdArgs = args.slice(1);
 
-  if (cmdArgs.includes('--help') || cmdArgs.includes('-h')) {
-    showCommandHelp(command);
-    process.exit(0);
+  if (command === 'jacs') {
+    return args.slice(1);
   }
+
+  if (!command.startsWith('-') && !HAI_COMMANDS.has(command)) {
+    return args;
+  }
+
+  return null;
+}
+
+export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
+  const args = argv;
 
   try {
+    const passthroughArgs = resolveJacsPassthroughArgs(args);
+    if (passthroughArgs) {
+      const result = runJacsCli(passthroughArgs, { stdio: 'inherit' });
+      return result.status ?? 1;
+    }
+
+    if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
+      process.stdout.write(USAGE);
+      return 0;
+    }
+
+    if (args.includes('--version') || args.includes('-v')) {
+      process.stdout.write('haisdk 0.1.0\n');
+      return 0;
+    }
+
+    const command = args[0];
+    const cmdArgs = args.slice(1);
+
+    if (cmdArgs.includes('--help') || cmdArgs.includes('-h')) {
+      showCommandHelp(command);
+      return 0;
+    }
+
     switch (command) {
       case 'register':
         await cmdRegister(cmdArgs);
-        break;
+        return 0;
       case 'hello':
         await cmdHello(cmdArgs);
-        break;
+        return 0;
       case 'benchmark':
         await cmdBenchmark(cmdArgs);
-        break;
-      case 'verify':
-        await cmdVerify(cmdArgs);
-        break;
+        return 0;
+      case 'status':
+        await cmdStatus(cmdArgs);
+        return 0;
       case 'check-username':
         await cmdCheckUsername(cmdArgs);
-        break;
+        return 0;
       case 'claim-username':
         await cmdClaimUsername(cmdArgs);
-        break;
+        return 0;
       case 'send-email':
         await cmdSendEmail(cmdArgs);
-        break;
+        return 0;
       case 'list-messages':
         await cmdListMessages(cmdArgs);
-        break;
+        return 0;
       case 'email-status':
         await cmdEmailStatus(cmdArgs);
-        break;
+        return 0;
       case 'fetch-key':
         await cmdFetchKey(cmdArgs);
-        break;
+        return 0;
       default:
         fail(`Unknown command: ${command}\n\n${USAGE}`);
     }
   } catch (e) {
-    fail((e as Error).message);
+    process.stderr.write(`Error: ${(e as Error).message}\n`);
+    return 1;
   }
 }
 
@@ -113,7 +154,7 @@ function showCommandHelp(command: string) {
     register: 'Usage: haisdk register --name <name> --description <text> --dns <domain> --owner-email <email> [--key-dir <path>] [--config-path <path>] [--url <api-url>]',
     hello: 'Usage: haisdk hello [--include-test] [--url <api-url>]',
     benchmark: 'Usage: haisdk benchmark [--tier free|dns_certified|fully_certified] [--url <api-url>]',
-    verify: 'Usage: haisdk verify [--jacs-id <id>] [--url <api-url>]',
+    status: 'Usage: haisdk status [--jacs-id <id>] [--url <api-url>]',
     'check-username': 'Usage: haisdk check-username --username <name> [--url <api-url>]',
     'claim-username': 'Usage: haisdk claim-username --username <name> --agent-id <id> [--url <api-url>]',
     'send-email': 'Usage: haisdk send-email --to <addr> --subject <subj> --body <body> [--url <api-url>]',
@@ -202,7 +243,7 @@ async function cmdBenchmark(args: string[]) {
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 }
 
-async function cmdVerify(args: string[]) {
+async function cmdStatus(args: string[]) {
   const client = await createClient(args);
   const jacsId = getArg(args, '--jacs-id');
   if (jacsId) {
@@ -263,4 +304,15 @@ async function cmdFetchKey(args: string[]) {
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 }
 
-main();
+const isMainModule = process.argv[1]
+  ? import.meta.url === pathToFileURL(process.argv[1]).href
+  : false;
+
+if (isMainModule) {
+  main()
+    .then((code) => process.exit(code))
+    .catch((e) => {
+      process.stderr.write(`Error: ${(e as Error).message}\n`);
+      process.exit(1);
+    });
+}
