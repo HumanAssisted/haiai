@@ -25,6 +25,10 @@ jobs:
         run: |
           cd node
           npm run build
+      - name: Smoke package
+        run: |
+          cd node
+          node ./scripts/smoke-package.cjs
       - name: Publish to npm
         run: |
           cd node

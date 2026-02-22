@@ -38,3 +38,19 @@ def test_haisdk_library_passthrough_maps_to_legacy_functions() -> None:
     payload = {"z": 1, "a": {"b": 2}}
     assert public_sign_response is legacy_sign_response
     assert public_canonicalize_json(payload) == legacy_canonicalize_json(payload)
+
+
+def test_haisdk_step2_modules_import() -> None:
+    import haisdk
+    from haisdk.agentsdk import agentsdk_tool_wrapper
+    from haisdk.crewai import crewai_guardrail
+    from haisdk.integrations import create_mcp_server
+    from haisdk.langgraph import langgraph_wrap_tool_call
+    from haisdk.mcp import mcp_tool
+
+    assert hasattr(haisdk, "integrations")
+    assert callable(agentsdk_tool_wrapper)
+    assert callable(crewai_guardrail)
+    assert callable(create_mcp_server)
+    assert callable(langgraph_wrap_tool_call)
+    assert callable(mcp_tool)

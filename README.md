@@ -41,6 +41,11 @@ pip install haisdk
 # With optional extras:
 pip install "haisdk[ws]"       # WebSocket support
 pip install "haisdk[sse]"      # SSE support
+pip install "haisdk[langchain]"  # LangChain adapter helpers
+pip install "haisdk[langgraph]"  # LangGraph adapter helpers
+pip install "haisdk[crewai]"   # CrewAI adapter helpers
+pip install "haisdk[mcp]"      # MCP helper wrappers
+pip install "haisdk[agentsdk]" # Agent SDK tool wrappers
 pip install "haisdk[all]"      # Everything
 ```
 
@@ -149,6 +154,43 @@ for await (const event of client.connect({ transport: "ws" })) {
   const reply = await myAgent.handle(data);
   await client.submitResponse(jobId, reply);
 }
+```
+
+## Step 2: Framework Integration
+
+`haisdk` now exposes thin integration wrappers so you can wire framework tools
+without copying adapter code.
+
+### Python: LangGraph / CrewAI / Agent SDK / MCP
+
+```python
+# LangGraph/LangChain middleware wrappers
+from haisdk.langgraph import langchain_signing_middleware, langgraph_wrap_tool_call
+
+# CrewAI wrappers
+from haisdk.crewai import crewai_guardrail, crewai_signed_tool
+
+# Generic Agent SDK wrapper (sync or async tool functions)
+from haisdk.agentsdk import agentsdk_tool_wrapper
+
+# MCP server bootstrap wrapper
+from haisdk.mcp import create_mcp_server
+```
+
+The wrappers delegate to canonical JACS adapter modules:
+`jacs.adapters.langchain`, `jacs.adapters.crewai`, and `jacs.mcp`.
+
+### Node: LangGraph / MCP / Agent SDK
+
+```typescript
+import {
+  langgraphToolNode,
+  createJacsMcpTransportProxy,
+  createAgentSdkToolWrapper,
+} from "haisdk";
+
+// LangGraph and MCP wrappers are delegated to @hai.ai/jacs modules.
+// Ensure @hai.ai/jacs is installed alongside haisdk.
 ```
 
 ### Go

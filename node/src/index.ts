@@ -21,6 +21,24 @@ export { generateVerifyLink, MAX_VERIFY_URL_LEN, MAX_VERIFY_DOCUMENT_BYTES } fro
 export { runJacsCli, resolveJacsCliBin } from './jacs.js';
 export type { RunJacsCliOptions } from './jacs.js';
 
+// Framework integrations (LangGraph/LangChain, MCP, Agent SDK wrapper)
+export {
+  langchainSignedTool,
+  langgraphWrapToolCall,
+  langgraphToolNode,
+  createJacsLangchainTools,
+  createJacsMcpTransportProxy,
+  getJacsMcpToolDefinitions,
+  registerJacsMcpTools,
+  createAgentSdkToolWrapper,
+  verifyAgentSdkPayload,
+} from './integrations.js';
+export type {
+  JacsModuleError,
+  AgentSdkSigningClient,
+  AgentSdkToolWrapperOptions,
+} from './integrations.js';
+
 // Config
 export { loadConfig, loadPrivateKey } from './config.js';
 

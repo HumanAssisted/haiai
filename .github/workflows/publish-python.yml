@@ -23,6 +23,12 @@ jobs:
         run: |
           cd python
           python -m build
+      - name: Smoke install wheel + CLI
+        run: |
+          cd python
+          pip install --force-reinstall dist/*.whl
+          python -c "import haisdk; import haisdk.integrations as i; assert hasattr(haisdk, 'HaiClient'); assert callable(i.langgraph_wrap_tool_call)"
+          haisdk --help > /dev/null
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:

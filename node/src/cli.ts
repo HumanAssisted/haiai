@@ -11,7 +11,6 @@ import { runJacsCli } from './jacs.js';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 const USAGE = `Usage: haisdk <command> [options]
 
@@ -304,9 +303,7 @@ async function cmdFetchKey(args: string[]) {
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 }
 
-const isMainModule = process.argv[1]
-  ? import.meta.url === pathToFileURL(process.argv[1]).href
-  : false;
+const isMainModule = Boolean(process.argv[1] && /(^|[\\/])cli(\.js)?$/.test(process.argv[1]));
 
 if (isMainModule) {
   main()

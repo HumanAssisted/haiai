@@ -29,7 +29,8 @@
     "vitest": "^1.2.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.cjs.json",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.cjs.json && node ./scripts/write-cjs-package.cjs",
+    "smoke:package": "npm run build && node ./scripts/smoke-package.cjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
