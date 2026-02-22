@@ -20,3 +20,21 @@ def test_haisdk_submodule_imports_work() -> None:
     assert HaiClient.__name__ == "HaiClient"
     assert AsyncHaiClient.__name__ == "AsyncHaiClient"
     assert callable(load)
+
+
+def test_haisdk_cli_reexports_legacy_main() -> None:
+    from haisdk.cli import main as public_main
+    from jacs.hai.cli import main as legacy_main
+
+    assert public_main is legacy_main
+
+
+def test_haisdk_library_passthrough_maps_to_legacy_functions() -> None:
+    from haisdk.crypt import canonicalize_json as public_canonicalize_json
+    from haisdk.signing import sign_response as public_sign_response
+    from jacs.hai.crypt import canonicalize_json as legacy_canonicalize_json
+    from jacs.hai.signing import sign_response as legacy_sign_response
+
+    payload = {"z": 1, "a": {"b": 2}}
+    assert public_sign_response is legacy_sign_response
+    assert public_canonicalize_json(payload) == legacy_canonicalize_json(payload)
