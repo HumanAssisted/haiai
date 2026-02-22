@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const spawnSyncMock = vi.fn();
+const { spawnSyncMock } = vi.hoisted(() => ({
+  spawnSyncMock: vi.fn(),
+}));
 
 vi.mock('node:child_process', () => ({
   spawnSync: spawnSyncMock,
@@ -36,7 +38,7 @@ describe('jacs passthrough library helpers', () => {
       expect(spawnSyncMock).toHaveBeenCalledOnce();
       expect(spawnSyncMock).toHaveBeenCalledWith('jacs', ['verify', 'signed.json'], {
         cwd: undefined,
-        env: process.env,
+        env: undefined,
         stdio: 'pipe',
         encoding: 'buffer',
       });
