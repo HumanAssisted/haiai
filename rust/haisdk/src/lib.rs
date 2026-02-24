@@ -12,7 +12,7 @@ pub mod jacs_local;
 pub mod types;
 pub mod verify;
 
-pub use client::{HaiClient, HaiClientOptions};
+pub use client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
 pub use config::{load_config, resolve_private_key_candidates, AgentConfig};
 pub use error::{HaiError, Result};
 pub use jacs::{JacsProvider, NoopJacsProvider, StaticJacsProvider};

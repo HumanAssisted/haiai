@@ -61,4 +61,21 @@ describe('generateVerifyLink', () => {
     expect(MAX_VERIFY_URL_LEN).toBe(2048);
     expect(MAX_VERIFY_DOCUMENT_BYTES).toBe(1515);
   });
+
+  it('generates hosted verify URL when hosted=true and jacsDocumentId is present', () => {
+    const doc = '{"jacsDocumentId":"doc-123","signed":true}';
+    const url = generateVerifyLink(doc, 'https://hai.ai', true);
+    expect(url).toBe('https://hai.ai/verify/doc-123');
+  });
+
+  it('generates hosted verify URL from document_id field', () => {
+    const doc = '{"document_id":"doc-abc"}';
+    const url = generateVerifyLink(doc, 'https://example.com', true);
+    expect(url).toBe('https://example.com/verify/doc-abc');
+  });
+
+  it('throws for hosted=true when no ID is present', () => {
+    const doc = '{"signed":true}';
+    expect(() => generateVerifyLink(doc, 'https://hai.ai', true)).toThrow(/document ID/i);
+  });
 });

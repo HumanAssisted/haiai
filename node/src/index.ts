@@ -84,6 +84,8 @@ export type {
   RegistrationEntry,
   CheckUsernameResult,
   ClaimUsernameResult,
+  UpdateUsernameResult,
+  DeleteUsernameResult,
   JobResponse,
   AgentCapability,
   ConnectOptions,
@@ -98,4 +100,9 @@ export type {
   PublicKeyInfo,
   BadgeLevel,
   VerificationResult,
+  DocumentVerificationResult,
+  AdvancedBadgeLevel,
+  AdvancedVerificationStatus,
+  AdvancedVerificationResult,
+  VerifyAgentDocumentOnHaiOptions,
 } from './types.js';

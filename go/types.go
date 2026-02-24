@@ -55,6 +55,44 @@ type PublicKeyInfo struct {
 	Version       string `json:"version"`
 }
 
+// DocumentVerificationResult is the response from POST /api/jacs/verify.
+type DocumentVerificationResult struct {
+	Valid             bool   `json:"valid"`
+	VerifiedAt        string `json:"verified_at"`
+	DocumentType      string `json:"document_type"`
+	IssuerVerified    bool   `json:"issuer_verified"`
+	SignatureVerified bool   `json:"signature_verified"`
+	SignerID          string `json:"signer_id"`
+	SignedAt          string `json:"signed_at"`
+	Error             string `json:"error,omitempty"`
+}
+
+// VerificationStatus describes 3-level verification for advanced trust endpoints.
+type VerificationStatus struct {
+	JacsValid     bool   `json:"jacs_valid"`
+	DNSValid      bool   `json:"dns_valid"`
+	HAIRegistered bool   `json:"hai_registered"`
+	Badge         string `json:"badge"`
+}
+
+// AgentVerificationResult is returned by:
+// - GET /api/v1/agents/{agent_id}/verification
+// - POST /api/v1/agents/verify
+type AgentVerificationResult struct {
+	AgentID       string             `json:"agent_id"`
+	Verification  VerificationStatus `json:"verification"`
+	HaiSignatures []string           `json:"hai_signatures,omitempty"`
+	VerifiedAt    string             `json:"verified_at"`
+	Errors        []string           `json:"errors,omitempty"`
+}
+
+// VerifyAgentDocumentRequest is the payload for POST /api/v1/agents/verify.
+type VerifyAgentDocumentRequest struct {
+	AgentJSON string `json:"agent_json"`
+	PublicKey string `json:"public_key,omitempty"`
+	Domain    string `json:"domain,omitempty"`
+}
+
 // BenchmarkResult contains the result of a benchmark run.
 type BenchmarkResult struct {
 	RunID       string                `json:"run_id"`
@@ -188,6 +226,20 @@ type ClaimUsernameResult struct {
 	Username string `json:"username"`
 	Email    string `json:"email"`
 	AgentID  string `json:"agent_id"`
+}
+
+// UpdateUsernameResult is the response from updating a claimed username.
+type UpdateUsernameResult struct {
+	Username         string `json:"username"`
+	Email            string `json:"email"`
+	PreviousUsername string `json:"previous_username"`
+}
+
+// DeleteUsernameResult is the response from deleting a claimed username.
+type DeleteUsernameResult struct {
+	ReleasedUsername string `json:"released_username"`
+	CooldownUntil    string `json:"cooldown_until"`
+	Message          string `json:"message"`
 }
 
 // RegisterNewAgentOptions configures RegisterNewAgent behavior.

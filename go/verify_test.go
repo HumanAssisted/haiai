@@ -96,3 +96,25 @@ func TestGenerateVerifyLinkConstants(t *testing.T) {
 		t.Errorf("expected MaxVerifyDocumentBytes 1515, got %d", MaxVerifyDocumentBytes)
 	}
 }
+
+func TestGenerateVerifyLinkHostedBasic(t *testing.T) {
+	doc := `{"jacsDocumentId":"doc-1","data":"ok"}`
+	link, err := GenerateVerifyLinkHosted(doc, "https://example.com/")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if link != "https://example.com/verify/doc-1" {
+		t.Fatalf("unexpected hosted link: %s", link)
+	}
+}
+
+func TestGenerateVerifyLinkHostedMissingID(t *testing.T) {
+	doc := `{"data":"missing id"}`
+	_, err := GenerateVerifyLinkHosted(doc, "")
+	if err == nil {
+		t.Fatal("expected error for missing document id")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "document id") {
+		t.Fatalf("expected document id error, got %v", err)
+	}
+}

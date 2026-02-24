@@ -222,6 +222,47 @@ func (c *Client) doPublicRequest(ctx context.Context, method, path string, resul
 	return nil
 }
 
+// doPublicJSONRequest performs an unauthenticated HTTP request with optional JSON body.
+func (c *Client) doPublicJSONRequest(ctx context.Context, method, path string, body interface{}, result interface{}) error {
+	url := c.endpoint + path
+
+	var bodyReader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return wrapError(ErrInvalidResponse, err, "failed to marshal request body")
+		}
+		bodyReader = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	if err != nil {
+		return wrapError(ErrConnection, err, "failed to create request")
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return wrapError(ErrConnection, err, "request failed")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return classifyHTTPError(resp.StatusCode, respBody)
+	}
+
+	if result != nil {
+		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+			return wrapError(ErrInvalidResponse, err, "failed to decode response")
+		}
+	}
+
+	return nil
+}
+
 // classifyHTTPError maps HTTP status codes to appropriate ErrorKind values.
 func classifyHTTPError(statusCode int, body []byte) *Error {
 	msg := fmt.Sprintf("status %d: %s", statusCode, string(body))
@@ -570,6 +611,66 @@ func (c *Client) VerifyAgent(ctx context.Context, agentID string) (*VerifyResult
 	return &result, nil
 }
 
+// VerifyDocument verifies a signed JACS document using HAI's public endpoint.
+// Calls POST /api/jacs/verify with {"document": "<json>"}.
+func (c *Client) VerifyDocument(ctx context.Context, document string) (*DocumentVerificationResult, error) {
+	url := c.endpoint + "/api/jacs/verify"
+	reqBody := struct {
+		Document string `json:"document"`
+	}{
+		Document: document,
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to encode verify payload")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "failed to create verify request")
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "verify request failed")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyHTTPError(resp.StatusCode, respBody)
+	}
+
+	var result DocumentVerificationResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode verify response")
+	}
+	return &result, nil
+}
+
+// GetVerification gets advanced 3-level verification status for an agent.
+// Calls GET /api/v1/agents/{agent_id}/verification (public endpoint).
+func (c *Client) GetVerification(ctx context.Context, agentID string) (*AgentVerificationResult, error) {
+	path := fmt.Sprintf("/api/v1/agents/%s/verification", neturl.PathEscape(agentID))
+	var result AgentVerificationResult
+	if err := c.doPublicRequest(ctx, http.MethodGet, path, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// VerifyAgentDocument verifies an agent document with HAI's advanced verifier.
+// Calls POST /api/v1/agents/verify (public endpoint).
+func (c *Client) VerifyAgentDocument(ctx context.Context, request VerifyAgentDocumentRequest) (*AgentVerificationResult, error) {
+	var result AgentVerificationResult
+	if err := c.doPublicJSONRequest(ctx, http.MethodPost, "/api/v1/agents/verify", request, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // CheckUsername checks if a username is available for @hai.ai email.
 // Calls GET /api/v1/agents/username/check?username={name}.
 func (c *Client) CheckUsername(ctx context.Context, username string) (*CheckUsernameResult, error) {
@@ -594,6 +695,33 @@ func (c *Client) ClaimUsername(ctx context.Context, agentID string, username str
 	}
 	var result ClaimUsernameResult
 	if err := c.doRequest(ctx, http.MethodPost, path, reqBody, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpdateUsername renames an existing username for an agent.
+// Calls PUT /api/v1/agents/{agentID}/username.
+func (c *Client) UpdateUsername(ctx context.Context, agentID string, username string) (*UpdateUsernameResult, error) {
+	path := fmt.Sprintf("/api/v1/agents/%s/username", neturl.PathEscape(agentID))
+	reqBody := struct {
+		Username string `json:"username"`
+	}{
+		Username: username,
+	}
+	var result UpdateUsernameResult
+	if err := c.doRequest(ctx, http.MethodPut, path, reqBody, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DeleteUsername releases an agent's claimed username.
+// Calls DELETE /api/v1/agents/{agentID}/username.
+func (c *Client) DeleteUsername(ctx context.Context, agentID string) (*DeleteUsernameResult, error) {
+	path := fmt.Sprintf("/api/v1/agents/%s/username", neturl.PathEscape(agentID))
+	var result DeleteUsernameResult
+	if err := c.doRequest(ctx, http.MethodDelete, path, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -910,27 +1038,51 @@ func FetchRemoteKeyFromURL(ctx context.Context, httpClient *http.Client, baseURL
 	}
 
 	var keyResp struct {
-		PublicKey     string `json:"public_key"`
-		Algorithm     string `json:"algorithm"`
-		PublicKeyHash string `json:"public_key_hash"`
-		AgentID       string `json:"agent_id"`
-		Version       string `json:"version"`
+		JacsID          string `json:"jacs_id"`
+		AgentID         string `json:"agent_id"`
+		Version         string `json:"version"`
+		PublicKey       string `json:"public_key"`
+		PublicKeyB64    string `json:"public_key_b64"`
+		PublicKeyRawB64 string `json:"public_key_raw_b64"`
+		Algorithm       string `json:"algorithm"`
+		PublicKeyHash   string `json:"public_key_hash"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&keyResp); err != nil {
 		return nil, wrapError(ErrInvalidResponse, err, "failed to decode key response")
 	}
 
-	publicKey, err := base64.StdEncoding.DecodeString(keyResp.PublicKey)
-	if err != nil {
-		return nil, wrapError(ErrInvalidResponse, err, "invalid public key encoding")
+	var publicKey []byte
+	switch {
+	case keyResp.PublicKeyRawB64 != "":
+		publicKey, err = base64.StdEncoding.DecodeString(keyResp.PublicKeyRawB64)
+		if err != nil {
+			return nil, wrapError(ErrInvalidResponse, err, "invalid public_key_raw_b64 encoding")
+		}
+	case keyResp.PublicKeyB64 != "":
+		publicKey, err = base64.StdEncoding.DecodeString(keyResp.PublicKeyB64)
+		if err != nil {
+			return nil, wrapError(ErrInvalidResponse, err, "invalid public_key_b64 encoding")
+		}
+	case strings.Contains(keyResp.PublicKey, "BEGIN PUBLIC KEY"):
+		publicKey = []byte(keyResp.PublicKey)
+	default:
+		publicKey, err = base64.StdEncoding.DecodeString(keyResp.PublicKey)
+		if err != nil {
+			return nil, wrapError(ErrInvalidResponse, err, "invalid public key encoding")
+		}
+	}
+
+	agentIDResp := keyResp.AgentID
+	if agentIDResp == "" {
+		agentIDResp = keyResp.JacsID
 	}
 
 	return &PublicKeyInfo{
 		PublicKey:     publicKey,
 		Algorithm:     keyResp.Algorithm,
 		PublicKeyHash: keyResp.PublicKeyHash,
-		AgentID:       keyResp.AgentID,
+		AgentID:       agentIDResp,
 		Version:       keyResp.Version,
 	}, nil
 }

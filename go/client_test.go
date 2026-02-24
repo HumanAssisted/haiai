@@ -166,3 +166,233 @@ func TestRegisterNewAgentWithEndpointBootstrapsWithoutAuthHeader(t *testing.T) {
 		t.Fatal("expected generated key material in result")
 	}
 }
+
+func TestUpdateUsernameEscapesAgentID(t *testing.T) {
+	agentID := "agent/with/slashes"
+	var requestURI string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestURI = r.RequestURI
+		if r.Method != http.MethodPut {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"username":"new","email":"new@hai.ai","previous_username":"old"}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	result, err := cl.UpdateUsername(context.Background(), agentID, "new")
+	if err != nil {
+		t.Fatalf("UpdateUsername: %v", err)
+	}
+	if result.Username != "new" || result.PreviousUsername != "old" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if !strings.Contains(requestURI, "/api/v1/agents/agent%2Fwith%2Fslashes/username") {
+		t.Fatalf("agent id should be escaped in request URI, got %q", requestURI)
+	}
+}
+
+func TestDeleteUsernameEscapesAgentID(t *testing.T) {
+	agentID := "agent/with/slashes"
+	var requestURI string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestURI = r.RequestURI
+		if r.Method != http.MethodDelete {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"released_username":"old","cooldown_until":"2026-03-01T00:00:00Z","message":"released"}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	result, err := cl.DeleteUsername(context.Background(), agentID)
+	if err != nil {
+		t.Fatalf("DeleteUsername: %v", err)
+	}
+	if result.ReleasedUsername != "old" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	if !strings.Contains(requestURI, "/api/v1/agents/agent%2Fwith%2Fslashes/username") {
+		t.Fatalf("agent id should be escaped in request URI, got %q", requestURI)
+	}
+}
+
+func TestVerifyDocumentUsesPublicEndpoint(t *testing.T) {
+	var gotAuth string
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/jacs/verify" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		gotAuth = r.Header.Get("Authorization")
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body: %v", err)
+		}
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("invalid request body: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"valid":true,"verified_at":"2026-01-01T00:00:00Z","document_type":"JacsDocument","issuer_verified":true,"signature_verified":true,"signer_id":"agent-1","signed_at":"2026-01-01T00:00:00Z"}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	result, err := cl.VerifyDocument(context.Background(), `{"jacsId":"agent-1"}`)
+	if err != nil {
+		t.Fatalf("VerifyDocument: %v", err)
+	}
+	if gotAuth != "" {
+		t.Fatalf("expected no auth header for public verify endpoint, got %q", gotAuth)
+	}
+	if gotBody["document"] != `{"jacsId":"agent-1"}` {
+		t.Fatalf("unexpected request payload: %#v", gotBody)
+	}
+	if !result.Valid {
+		t.Fatalf("expected valid=true response, got %#v", result)
+	}
+}
+
+func TestGetVerificationUsesPublicEndpointAndEscapesAgentID(t *testing.T) {
+	var gotAuth string
+	var gotPath string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.EscapedPath()
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"agent_id":"agent/with/slash",
+			"verification":{
+				"jacs_valid":true,
+				"dns_valid":true,
+				"hai_registered":false,
+				"badge":"domain"
+			},
+			"hai_signatures":["ed25519:abc..."],
+			"verified_at":"2026-01-02T00:00:00Z",
+			"errors":[]
+		}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	result, err := cl.GetVerification(context.Background(), "agent/with/slash")
+	if err != nil {
+		t.Fatalf("GetVerification: %v", err)
+	}
+	if gotAuth != "" {
+		t.Fatalf("expected no auth header for public verification endpoint, got %q", gotAuth)
+	}
+	if gotPath != "/api/v1/agents/agent%2Fwith%2Fslash/verification" {
+		t.Fatalf("unexpected path: %s", gotPath)
+	}
+	if result.AgentID != "agent/with/slash" {
+		t.Fatalf("unexpected agent id: %#v", result)
+	}
+	if result.Verification.Badge != "domain" {
+		t.Fatalf("unexpected badge: %#v", result.Verification)
+	}
+}
+
+func TestVerifyAgentDocumentUsesPublicEndpoint(t *testing.T) {
+	var gotAuth string
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/agents/verify" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		gotAuth = r.Header.Get("Authorization")
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body: %v", err)
+		}
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("invalid request body: %v", err)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"agent_id":"agent-1",
+			"verification":{
+				"jacs_valid":true,
+				"dns_valid":true,
+				"hai_registered":true,
+				"badge":"attested"
+			},
+			"hai_signatures":["ed25519:def..."],
+			"verified_at":"2026-01-02T00:00:00Z",
+			"errors":[]
+		}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	result, err := cl.VerifyAgentDocument(context.Background(), VerifyAgentDocumentRequest{
+		AgentJSON: `{"jacsId":"agent-1"}`,
+		Domain:    "example.com",
+	})
+	if err != nil {
+		t.Fatalf("VerifyAgentDocument: %v", err)
+	}
+	if gotAuth != "" {
+		t.Fatalf("expected no auth header for public verify endpoint, got %q", gotAuth)
+	}
+	if gotBody["agent_json"] != `{"jacsId":"agent-1"}` {
+		t.Fatalf("unexpected request payload: %#v", gotBody)
+	}
+	if gotBody["domain"] != "example.com" {
+		t.Fatalf("unexpected domain payload: %#v", gotBody)
+	}
+	if result.Verification.Badge != "attested" {
+		t.Fatalf("unexpected badge: %#v", result.Verification)
+	}
+}
+
+func TestFetchRemoteKeyParsesCurrentAPIResponseShape(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/jacs/v1/agents/agent-123/keys/latest" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"jacs_id":"agent-123",
+			"version":"latest",
+			"public_key":"-----BEGIN PUBLIC KEY-----\nZm9v\n-----END PUBLIC KEY-----\n",
+			"public_key_raw_b64":"Zm9v",
+			"algorithm":"ed25519",
+			"public_key_hash":"sha256:abc"
+		}`))
+	}))
+	defer srv.Close()
+
+	key, err := FetchRemoteKeyFromURL(context.Background(), nil, srv.URL, "agent-123", "latest")
+	if err != nil {
+		t.Fatalf("FetchRemoteKeyFromURL: %v", err)
+	}
+	if key.AgentID != "agent-123" {
+		t.Fatalf("expected jacs_id to populate AgentID, got %#v", key)
+	}
+	if string(key.PublicKey) != "foo" {
+		t.Fatalf("expected raw key bytes from public_key_raw_b64, got %q", string(key.PublicKey))
+	}
+}

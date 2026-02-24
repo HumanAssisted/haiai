@@ -13,6 +13,8 @@ import type {
   RegistrationEntry,
   CheckUsernameResult,
   ClaimUsernameResult,
+  UpdateUsernameResult,
+  DeleteUsernameResult,
   TranscriptMessage,
   ConnectionMode,
   ConnectOptions,
@@ -27,6 +29,9 @@ import type {
   EmailStatus,
   PublicKeyInfo,
   VerificationResult,
+  DocumentVerificationResult,
+  AdvancedVerificationResult,
+  VerifyAgentDocumentOnHaiOptions,
 } from './types.js';
 import {
   HaiError,
@@ -167,6 +172,11 @@ export class HaiClient {
 
   private encodePathSegment(segment: string): string {
     return encodeURIComponent(segment);
+  }
+
+  private usernameEndpoint(agentId: string): string {
+    const safeAgentId = this.encodePathSegment(agentId);
+    return this.makeUrl(`/api/v1/agents/${safeAgentId}/username`);
   }
 
   // ---------------------------------------------------------------------------
@@ -667,8 +677,7 @@ export class HaiClient {
    * @returns Claim result with the assigned email
    */
   async claimUsername(agentId: string, username: string): Promise<ClaimUsernameResult> {
-    const safeAgentId = this.encodePathSegment(agentId);
-    const url = this.makeUrl(`/api/v1/agents/${safeAgentId}/username`);
+    const url = this.usernameEndpoint(agentId);
 
     const response = await this.fetchWithRetry(url, {
       method: 'POST',
@@ -683,6 +692,150 @@ export class HaiClient {
       email: (data.email as string) || '',
       agentId: (data.agent_id as string) || (data.agentId as string) || agentId,
     };
+  }
+
+  /**
+   * Rename a claimed username for an agent. Requires JACS auth.
+   *
+   * @param agentId - The agent ID to update
+   * @param username - The new username
+   */
+  async updateUsername(agentId: string, username: string): Promise<UpdateUsernameResult> {
+    const url = this.usernameEndpoint(agentId);
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'PUT',
+      headers: this.buildAuthHeaders(),
+      body: JSON.stringify({ username }),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    return {
+      username: (data.username as string) || username,
+      email: (data.email as string) || '',
+      previousUsername: (data.previous_username as string) || '',
+    };
+  }
+
+  /**
+   * Delete a claimed username for an agent. Requires JACS auth.
+   *
+   * @param agentId - The agent ID to update
+   */
+  async deleteUsername(agentId: string): Promise<DeleteUsernameResult> {
+    const url = this.usernameEndpoint(agentId);
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'DELETE',
+      headers: this.buildAuthHeaders(),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    return {
+      releasedUsername: (data.released_username as string) || '',
+      cooldownUntil: (data.cooldown_until as string) || '',
+      message: (data.message as string) || '',
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // verifyDocument()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Verify a signed JACS document via HAI's public verification endpoint.
+   * This endpoint is public and does not require authentication.
+   *
+   * @param document - Signed JACS document JSON (object or string)
+   */
+  async verifyDocument(document: Record<string, unknown> | string): Promise<DocumentVerificationResult> {
+    const url = this.makeUrl('/api/jacs/verify');
+    const rawDocument = typeof document === 'string' ? document : JSON.stringify(document);
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ document: rawDocument }),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    return {
+      valid: (data.valid as boolean) ?? false,
+      verifiedAt: (data.verified_at as string) || '',
+      documentType: (data.document_type as string) || '',
+      issuerVerified: (data.issuer_verified as boolean) ?? false,
+      signatureVerified: (data.signature_verified as boolean) ?? false,
+      signerId: (data.signer_id as string) || '',
+      signedAt: (data.signed_at as string) || '',
+      error: (data.error as string) || undefined,
+    };
+  }
+
+  private parseAdvancedVerificationResult(
+    data: Record<string, unknown>,
+    fallbackAgentId: string = '',
+  ): AdvancedVerificationResult {
+    const verification = (data.verification as Record<string, unknown>) || {};
+    return {
+      agentId: (data.agent_id as string) || fallbackAgentId,
+      verification: {
+        jacsValid: (verification.jacs_valid as boolean) ?? false,
+        dnsValid: (verification.dns_valid as boolean) ?? false,
+        haiRegistered: (verification.hai_registered as boolean) ?? false,
+        badge: (verification.badge as 'none' | 'basic' | 'domain' | 'attested') || 'none',
+      },
+      haiSignatures: ((data.hai_signatures as unknown[]) || []).map(String),
+      verifiedAt: (data.verified_at as string) || '',
+      errors: ((data.errors as unknown[]) || []).map(String),
+      rawResponse: data,
+    };
+  }
+
+  /**
+   * Get advanced 3-level verification status for an agent (public endpoint).
+   *
+   * GET /api/v1/agents/{agent_id}/verification
+   */
+  async getVerification(agentId: string): Promise<AdvancedVerificationResult> {
+    const safeAgentId = this.encodePathSegment(agentId);
+    const url = this.makeUrl(`/api/v1/agents/${safeAgentId}/verification`);
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    return this.parseAdvancedVerificationResult(data, agentId);
+  }
+
+  /**
+   * Verify an agent document via HAI's advanced verification endpoint (public).
+   *
+   * POST /api/v1/agents/verify
+   */
+  async verifyAgentDocumentOnHai(
+    agentJson: Record<string, unknown> | string,
+    options?: VerifyAgentDocumentOnHaiOptions,
+  ): Promise<AdvancedVerificationResult> {
+    const url = this.makeUrl('/api/v1/agents/verify');
+    const payload: Record<string, unknown> = {
+      agent_json: typeof agentJson === 'string' ? agentJson : JSON.stringify(agentJson),
+    };
+    if (options?.publicKey) {
+      payload.public_key = options.publicKey;
+    }
+    if (options?.domain) {
+      payload.domain = options.domain;
+    }
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    return this.parseAdvancedVerificationResult(data);
   }
 
   // ---------------------------------------------------------------------------

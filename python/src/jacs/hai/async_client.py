@@ -629,6 +629,67 @@ class AsyncHaiClient:
             raise HaiError(f"Key lookup failed: {exc}")
 
     # ------------------------------------------------------------------
+    # advanced verification endpoints
+    # ------------------------------------------------------------------
+
+    async def get_verification(
+        self,
+        hai_url: str,
+        agent_id: str,
+    ) -> dict[str, Any]:
+        """Get advanced 3-level verification status for an agent."""
+        http = await self._get_http()
+        safe_agent_id = self._escape_path_segment(agent_id)
+        url = self._make_url(hai_url, f"/api/v1/agents/{safe_agent_id}/verification")
+
+        try:
+            resp = await http.get(url, timeout=self._timeout)
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Advanced verification failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return resp.json()
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Advanced verification failed: {exc}")
+
+    async def verify_agent_document(
+        self,
+        hai_url: str,
+        agent_json: str | dict[str, Any],
+        *,
+        public_key: str | None = None,
+        domain: str | None = None,
+    ) -> dict[str, Any]:
+        """Verify an agent document via HAI's advanced verification endpoint."""
+        http = await self._get_http()
+        url = self._make_url(hai_url, "/api/v1/agents/verify")
+        payload: dict[str, Any] = {
+            "agent_json": agent_json if isinstance(agent_json, str) else json.dumps(agent_json),
+        }
+        if public_key is not None:
+            payload["public_key"] = public_key
+        if domain is not None:
+            payload["domain"] = domain
+
+        try:
+            resp = await http.post(url, json=payload, timeout=self._timeout)
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Agent document verification failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return resp.json()
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Agent document verification failed: {exc}")
+
+    # ------------------------------------------------------------------
     # connect (SSE async streaming)
     # ------------------------------------------------------------------
 

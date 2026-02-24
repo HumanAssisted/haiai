@@ -30,4 +30,7 @@ pub enum HaiError {
 
     #[error("verify link hosted mode requires jacsDocumentId, document_id, or id")]
     MissingHostedDocumentId,
+
+    #[error("{0}")]
+    Message(String),
 }

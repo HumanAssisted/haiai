@@ -2,6 +2,7 @@ package haisdk
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -31,4 +32,34 @@ func GenerateVerifyLink(document string, baseUrl string) (string, error) {
 		)
 	}
 	return fullUrl, nil
+}
+
+// GenerateVerifyLinkHosted creates a hosted verification URL for a signed JACS document.
+// The document must contain one of: jacsDocumentId, document_id, or id.
+// If baseUrl is empty, "https://hai.ai" is used.
+func GenerateVerifyLinkHosted(document string, baseUrl string) (string, error) {
+	if baseUrl == "" {
+		baseUrl = "https://hai.ai"
+	}
+	base := strings.TrimRight(baseUrl, "/")
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(document), &parsed); err != nil {
+		return "", fmt.Errorf("cannot generate hosted verify link: no document ID found in document")
+	}
+
+	docID := ""
+	if value, ok := parsed["jacsDocumentId"].(string); ok && value != "" {
+		docID = value
+	} else if value, ok := parsed["document_id"].(string); ok && value != "" {
+		docID = value
+	} else if value, ok := parsed["id"].(string); ok && value != "" {
+		docID = value
+	}
+
+	if docID == "" {
+		return "", fmt.Errorf("cannot generate hosted verify link: no document ID found in document")
+	}
+
+	return base + "/verify/" + docID, nil
 }

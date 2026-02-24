@@ -247,6 +247,26 @@ export interface ClaimUsernameResult {
   agentId: string;
 }
 
+/** Result of updating (renaming) a username. */
+export interface UpdateUsernameResult {
+  /** The new username. */
+  username: string;
+  /** The resulting hai.ai email address. */
+  email: string;
+  /** Previous username before rename. */
+  previousUsername: string;
+}
+
+/** Result of deleting a username claim. */
+export interface DeleteUsernameResult {
+  /** Released username placed into cooldown. */
+  releasedUsername: string;
+  /** ISO 8601 timestamp when cooldown expires. */
+  cooldownUntil: string;
+  /** Human-readable server message. */
+  message: string;
+}
+
 /** Payload submitted to HAI for a benchmark job response. */
 export interface JobResponse {
   response: {
@@ -422,4 +442,63 @@ export interface VerificationResult {
   version: string;
   /** Any errors encountered during verification. */
   errors: string[];
+}
+
+/** Result of verifying a signed JACS document via HAI verify endpoint. */
+export interface DocumentVerificationResult {
+  /** Whether verification succeeded. */
+  valid: boolean;
+  /** ISO 8601 verification timestamp from HAI. */
+  verifiedAt: string;
+  /** Document type string from verifier. */
+  documentType: string;
+  /** Whether issuer trust checks passed. */
+  issuerVerified: boolean;
+  /** Whether signature checks passed. */
+  signatureVerified: boolean;
+  /** Signer identifier from verifier. */
+  signerId: string;
+  /** ISO 8601 signed-at timestamp from verifier. */
+  signedAt: string;
+  /** Optional error message. */
+  error?: string;
+}
+
+/** Advanced verification badge levels from /api/v1/agents/*/verification. */
+export type AdvancedBadgeLevel = 'none' | 'basic' | 'domain' | 'attested';
+
+/** Three-level verification status from advanced verification endpoints. */
+export interface AdvancedVerificationStatus {
+  /** Level 1 cryptographic JACS signature verification. */
+  jacsValid: boolean;
+  /** Level 2 DNS/domain verification. */
+  dnsValid: boolean;
+  /** Level 3 HAI registration/attestation. */
+  haiRegistered: boolean;
+  /** Computed trust badge level. */
+  badge: AdvancedBadgeLevel;
+}
+
+/** Result from GET /api/v1/agents/{agent_id}/verification and POST /api/v1/agents/verify. */
+export interface AdvancedVerificationResult {
+  /** Agent identifier that was verified. */
+  agentId: string;
+  /** Multi-level verification status. */
+  verification: AdvancedVerificationStatus;
+  /** Optional HAI signature summaries. */
+  haiSignatures: string[];
+  /** ISO 8601 verification timestamp. */
+  verifiedAt: string;
+  /** Errors/warnings produced during verification. */
+  errors: string[];
+  /** Full raw response payload. */
+  rawResponse: Record<string, unknown>;
+}
+
+/** Request payload options for POST /api/v1/agents/verify. */
+export interface VerifyAgentDocumentOnHaiOptions {
+  /** Optional public key PEM if not embedded in agent_json. */
+  publicKey?: string;
+  /** Optional domain override for DNS verification. */
+  domain?: string;
 }

@@ -1,5 +1,5 @@
 use haisdk::{HaiClient, HaiClientOptions, StaticJacsProvider};
-use httpmock::Method::{GET, POST};
+use httpmock::Method::{DELETE, GET, POST, PUT};
 use httpmock::MockServer;
 use serde_json::json;
 
@@ -104,6 +104,56 @@ async fn fetch_remote_key_escapes_jacs_id_and_version_segments() {
         .fetch_remote_key("agent/with/slash", "2026/01")
         .await
         .expect("fetch key");
+
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn update_username_escapes_agent_id_path_segment() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(PUT)
+                .path("/api/v1/agents/agent%2F..%2Fescape/username");
+            then.status(200).json_body(json!({
+                "username": "new-name",
+                "email": "new-name@hai.ai",
+                "previous_username": "old-name"
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url(), "agent/with/slash");
+    client
+        .update_username("agent/../escape", "new-name")
+        .await
+        .expect("update username");
+
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn delete_username_escapes_agent_id_path_segment() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(DELETE)
+                .path("/api/v1/agents/agent%2F..%2Fescape/username");
+            then.status(200).json_body(json!({
+                "released_username": "old-name",
+                "cooldown_until": "2026-03-01T00:00:00Z",
+                "message": "released"
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url(), "agent/with/slash");
+    client
+        .delete_username("agent/../escape")
+        .await
+        .expect("delete username");
 
     mock.assert_async().await;
 }

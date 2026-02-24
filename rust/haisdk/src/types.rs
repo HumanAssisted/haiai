@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -154,6 +156,26 @@ pub struct ClaimUsernameResult {
     pub agent_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UpdateUsernameResult {
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub previous_username: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DeleteUsernameResult {
+    #[serde(default)]
+    pub released_username: String,
+    #[serde(default)]
+    pub cooldown_until: String,
+    #[serde(default)]
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendEmailOptions {
     pub to: String,
@@ -237,8 +259,151 @@ pub struct PublicKeyInfo {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DocumentVerificationResult {
+    #[serde(default)]
+    pub valid: bool,
+    #[serde(default)]
+    pub verified_at: String,
+    #[serde(default)]
+    pub document_type: String,
+    #[serde(default)]
+    pub issuer_verified: bool,
+    #[serde(default)]
+    pub signature_verified: bool,
+    #[serde(default)]
+    pub signer_id: String,
+    #[serde(default)]
+    pub signed_at: String,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SignedPayload {
     pub signed_document: String,
     pub agent_jacs_id: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TransportType {
+    #[default]
+    Sse,
+    Ws,
+}
+
+impl TransportType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Sse => "sse",
+            Self::Ws => "ws",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DnsCertifiedRunOptions {
+    pub transport: TransportType,
+    pub poll_interval: Duration,
+    pub poll_timeout: Duration,
+}
+
+impl Default for DnsCertifiedRunOptions {
+    fn default() -> Self {
+        Self {
+            transport: TransportType::Sse,
+            poll_interval: Duration::from_secs(2),
+            poll_timeout: Duration::from_secs(300),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TranscriptMessage {
+    #[serde(default)]
+    pub role: String,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub timestamp: String,
+    #[serde(default)]
+    pub annotations: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FreeChaoticResult {
+    #[serde(default)]
+    pub success: bool,
+    #[serde(default)]
+    pub run_id: String,
+    #[serde(default)]
+    pub transcript: Vec<TranscriptMessage>,
+    #[serde(default)]
+    pub upsell_message: String,
+    #[serde(default)]
+    pub raw_response: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DnsCertifiedResult {
+    #[serde(default)]
+    pub success: bool,
+    #[serde(default)]
+    pub run_id: String,
+    #[serde(default)]
+    pub score: f64,
+    #[serde(default)]
+    pub transcript: Vec<TranscriptMessage>,
+    #[serde(default)]
+    pub payment_id: String,
+    #[serde(default)]
+    pub raw_response: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct VerificationStatus {
+    #[serde(default)]
+    pub jacs_valid: bool,
+    #[serde(default)]
+    pub dns_valid: bool,
+    #[serde(default)]
+    pub hai_registered: bool,
+    #[serde(default)]
+    pub badge: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AgentVerificationResult {
+    #[serde(default)]
+    pub agent_id: String,
+    #[serde(default)]
+    pub verification: VerificationStatus,
+    #[serde(default)]
+    pub hai_signatures: Vec<String>,
+    #[serde(default)]
+    pub verified_at: String,
+    #[serde(default)]
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct VerifyAgentDocumentRequest {
+    pub agent_json: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HaiEvent {
+    #[serde(default)]
+    pub event_type: String,
+    #[serde(default)]
+    pub data: Value,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub raw: String,
 }

@@ -725,6 +725,190 @@ class HaiClient:
         except Exception as exc:
             raise HaiError(f"Username claim failed: {exc}")
 
+    def update_username(
+        self, hai_url: str, agent_id: str, username: str
+    ) -> dict[str, Any]:
+        """Update (rename) a claimed username for an agent.
+
+        ``PUT /api/v1/agents/{agent_id}/username`` with body ``{username}``.
+        Requires JACS auth.
+        """
+        safe_agent_id = self._escape_path_segment(agent_id)
+        url = self._make_url(hai_url, f"/api/v1/agents/{safe_agent_id}/username")
+        headers = self._build_auth_headers()
+
+        try:
+            resp = httpx.put(
+                url,
+                headers=headers,
+                json={"username": username},
+                timeout=self._timeout,
+            )
+
+            if resp.status_code == 401:
+                raise HaiAuthError(
+                    "Username update auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Username update failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return resp.json()
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Username update failed: {exc}")
+
+    def delete_username(self, hai_url: str, agent_id: str) -> dict[str, Any]:
+        """Delete a claimed username for an agent.
+
+        ``DELETE /api/v1/agents/{agent_id}/username``.
+        Requires JACS auth.
+        """
+        safe_agent_id = self._escape_path_segment(agent_id)
+        url = self._make_url(hai_url, f"/api/v1/agents/{safe_agent_id}/username")
+        headers = self._build_auth_headers()
+
+        try:
+            resp = httpx.delete(
+                url,
+                headers=headers,
+                timeout=self._timeout,
+            )
+
+            if resp.status_code == 401:
+                raise HaiAuthError(
+                    "Username delete auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Username delete failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return resp.json()
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Username delete failed: {exc}")
+
+    def verify_document(
+        self,
+        hai_url: str,
+        document: Union[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Verify a signed JACS document via HAI's public verify endpoint.
+
+        ``POST /api/jacs/verify`` with body ``{"document": "<json string>"}``.
+        This endpoint is public and does not require authentication.
+        """
+        url = self._make_url(hai_url, "/api/jacs/verify")
+        raw_document = document if isinstance(document, str) else json.dumps(document)
+
+        try:
+            resp = httpx.post(
+                url,
+                json={"document": raw_document},
+                timeout=self._timeout,
+            )
+
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Document verification failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return resp.json()
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Document verification failed: {exc}")
+
+    def get_verification(
+        self,
+        hai_url: str,
+        agent_id: str,
+    ) -> dict[str, Any]:
+        """Get advanced 3-level verification status for an agent.
+
+        ``GET /api/v1/agents/{agent_id}/verification``.
+        This endpoint is public and does not require authentication.
+        """
+        safe_agent_id = self._escape_path_segment(agent_id)
+        url = self._make_url(hai_url, f"/api/v1/agents/{safe_agent_id}/verification")
+
+        try:
+            resp = httpx.get(url, timeout=self._timeout)
+
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Advanced verification failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return resp.json()
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Advanced verification failed: {exc}")
+
+    def verify_agent_document(
+        self,
+        hai_url: str,
+        agent_json: Union[str, dict[str, Any]],
+        *,
+        public_key: Optional[str] = None,
+        domain: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Verify an agent document via HAI's advanced verification endpoint.
+
+        ``POST /api/v1/agents/verify`` with ``{agent_json, public_key?, domain?}``.
+        This endpoint is public and does not require authentication.
+        """
+        url = self._make_url(hai_url, "/api/v1/agents/verify")
+        payload: dict[str, Any] = {
+            "agent_json": agent_json if isinstance(agent_json, str) else json.dumps(agent_json),
+        }
+        if public_key is not None:
+            payload["public_key"] = public_key
+        if domain is not None:
+            payload["domain"] = domain
+
+        try:
+            resp = httpx.post(
+                url,
+                json=payload,
+                timeout=self._timeout,
+            )
+
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Agent document verification failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return resp.json()
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Agent document verification failed: {exc}")
+
     # ------------------------------------------------------------------
     # benchmark
     # ------------------------------------------------------------------
@@ -1893,6 +2077,16 @@ def claim_username(hai_url: str, agent_id: str, username: str) -> dict[str, Any]
     return _get_client().claim_username(hai_url, agent_id, username)
 
 
+def update_username(hai_url: str, agent_id: str, username: str) -> dict[str, Any]:
+    """Update (rename) a claimed username for an agent."""
+    return _get_client().update_username(hai_url, agent_id, username)
+
+
+def delete_username(hai_url: str, agent_id: str) -> dict[str, Any]:
+    """Delete a claimed username for an agent."""
+    return _get_client().delete_username(hai_url, agent_id)
+
+
 def benchmark(
     hai_url: str,
     name: str = "mediator",
@@ -2006,6 +2200,35 @@ def fetch_remote_key(
 ) -> PublicKeyInfo:
     """Fetch another agent's public key from HAI."""
     return _get_client().fetch_remote_key(hai_url, jacs_id, version)
+
+
+def verify_document(
+    hai_url: str,
+    document: Union[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Verify a signed JACS document via HAI's public verify endpoint."""
+    return _get_client().verify_document(hai_url, document)
+
+
+def get_verification(hai_url: str, agent_id: str) -> dict[str, Any]:
+    """Get advanced 3-level verification status for an agent."""
+    return _get_client().get_verification(hai_url, agent_id)
+
+
+def verify_agent_document(
+    hai_url: str,
+    agent_json: Union[str, dict[str, Any]],
+    *,
+    public_key: Optional[str] = None,
+    domain: Optional[str] = None,
+) -> dict[str, Any]:
+    """Verify an agent document via HAI's advanced verification endpoint."""
+    return _get_client().verify_agent_document(
+        hai_url,
+        agent_json,
+        public_key=public_key,
+        domain=domain,
+    )
 
 
 # ---------------------------------------------------------------------------
