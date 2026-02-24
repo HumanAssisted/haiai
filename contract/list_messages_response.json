@@ -1,0 +1,21 @@
+{
+  "messages": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "direction": "inbound",
+      "from_address": "sender@hai.ai",
+      "to_address": "recipient@hai.ai",
+      "subject": "Test Subject",
+      "body_text": "Hello, this is a test email body.",
+      "message_id": "<550e8400@hai.ai>",
+      "in_reply_to": null,
+      "is_read": false,
+      "delivery_status": "delivered",
+      "created_at": "2026-02-24T12:00:00Z",
+      "read_at": null,
+      "jacs_verified": true
+    }
+  ],
+  "total": 1,
+  "unread": 1
+}

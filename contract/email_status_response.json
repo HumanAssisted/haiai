@@ -1,0 +1,11 @@
+{
+  "email": "testbot@hai.ai",
+  "status": "active",
+  "tier": "new",
+  "billing_tier": "free",
+  "messages_sent_24h": 5,
+  "daily_limit": 100,
+  "daily_used": 5,
+  "resets_at": "2026-02-25T00:00:00Z",
+  "messages_sent_total": 42
+}
