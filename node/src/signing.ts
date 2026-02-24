@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { signString, verifyString } from './crypt.js';
+import type { EmailVerificationResult } from './types.js';
 
 /** JACS document envelope wrapping data with metadata and jacsSignature. */
 export interface JacsDocument {
@@ -171,4 +172,133 @@ export function signResponse(
     signed_document: JSON.stringify(jacsDoc),
     agent_jacs_id: jacsId,
   };
+}
+
+const MAX_TIMESTAMP_AGE = 86400; // 24 hours
+const MAX_TIMESTAMP_FUTURE = 300; // 5 minutes
+
+/**
+ * Parse the X-JACS-Signature header into a map of key=value pairs.
+ *
+ * Format: `v=1; a=ed25519; id=agent-id; t=1740000000; s=base64sig`
+ */
+export function parseJacsSignatureHeader(header: string): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const part of header.split(';')) {
+    const trimmed = part.trim();
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    fields[trimmed.slice(0, eqIdx).trim()] = trimmed.slice(eqIdx + 1).trim();
+  }
+  return fields;
+}
+
+/**
+ * Verify an email's JACS signature.
+ *
+ * This is a standalone function -- no agent authentication required.
+ *
+ * @param headers - Email headers dict. Must contain `X-JACS-Signature`,
+ *   `X-JACS-Content-Hash`, and `From`.
+ * @param subject - Email subject line.
+ * @param body - Email body text.
+ * @param haiUrl - HAI server URL for public key lookup. Default: "https://hai.ai"
+ * @returns An `EmailVerificationResult` with `valid`, `jacsId`,
+ *   `reputationTier`, and `error` fields.
+ */
+export async function verifyEmailSignature(
+  headers: Record<string, string>,
+  subject: string,
+  body: string,
+  haiUrl: string = 'https://hai.ai',
+): Promise<EmailVerificationResult> {
+  // Step 1: Extract required headers
+  const sigHeader = headers['X-JACS-Signature'] || '';
+  const contentHashHeader = headers['X-JACS-Content-Hash'] || '';
+  const fromAddress = headers['From'] || '';
+
+  if (!sigHeader) {
+    return { valid: false, jacsId: '', reputationTier: '', error: 'Missing X-JACS-Signature header' };
+  }
+  if (!contentHashHeader) {
+    return { valid: false, jacsId: '', reputationTier: '', error: 'Missing X-JACS-Content-Hash header' };
+  }
+
+  // Step 2: Parse signature header fields
+  const fields = parseJacsSignatureHeader(sigHeader);
+  const jacsId = fields.id || '';
+  const timestampStr = fields.t || '';
+  const signatureB64 = fields.s || '';
+  const algorithm = fields.a || 'ed25519';
+
+  if (!jacsId || !timestampStr || !signatureB64) {
+    return {
+      valid: false, jacsId, reputationTier: '',
+      error: 'Incomplete X-JACS-Signature header (missing id, t, or s)',
+    };
+  }
+
+  if (algorithm !== 'ed25519') {
+    return { valid: false, jacsId, reputationTier: '', error: `Unsupported algorithm: ${algorithm}` };
+  }
+
+  const timestamp = parseInt(timestampStr, 10);
+  if (isNaN(timestamp)) {
+    return { valid: false, jacsId, reputationTier: '', error: `Invalid timestamp: ${timestampStr}` };
+  }
+
+  // Step 3: Recompute content hash
+  const computedHash = 'sha256:' + createHash('sha256')
+    .update(subject + '\n' + body, 'utf8')
+    .digest('hex');
+
+  // Step 4: Compare content hashes
+  if (computedHash !== contentHashHeader) {
+    return { valid: false, jacsId, reputationTier: '', error: 'Content hash mismatch' };
+  }
+
+  // Step 5: Fetch public key from registry
+  const registryUrl = `${haiUrl.replace(/\/+$/, '')}/api/agents/keys/${fromAddress}`;
+  let registryData: Record<string, unknown>;
+  try {
+    const resp = await fetch(registryUrl);
+    if (!resp.ok) {
+      return {
+        valid: false, jacsId, reputationTier: '',
+        error: `Registry returned HTTP ${resp.status}`,
+      };
+    }
+    registryData = (await resp.json()) as Record<string, unknown>;
+  } catch (err) {
+    return {
+      valid: false, jacsId, reputationTier: '',
+      error: `Failed to fetch public key: ${err}`,
+    };
+  }
+
+  const publicKeyPem = (registryData.public_key as string) || '';
+  const reputationTier = (registryData.reputation_tier as string) || '';
+
+  if (!publicKeyPem) {
+    return { valid: false, jacsId, reputationTier, error: 'No public key found in registry' };
+  }
+
+  // Step 6: Verify Ed25519 signature
+  const signInput = `${computedHash}:${timestamp}`;
+  const sigValid = verifyString(publicKeyPem, signInput, signatureB64);
+  if (!sigValid) {
+    return { valid: false, jacsId, reputationTier, error: 'Signature verification failed' };
+  }
+
+  // Step 7: Check timestamp freshness
+  const now = Math.floor(Date.now() / 1000);
+  const age = now - timestamp;
+  if (age > MAX_TIMESTAMP_AGE) {
+    return { valid: false, jacsId, reputationTier, error: 'Signature timestamp is too old (>24h)' };
+  }
+  if (age < -MAX_TIMESTAMP_FUTURE) {
+    return { valid: false, jacsId, reputationTier, error: 'Signature timestamp is too far in the future (>5min)' };
+  }
+
+  return { valid: true, jacsId, reputationTier, error: null };
 }

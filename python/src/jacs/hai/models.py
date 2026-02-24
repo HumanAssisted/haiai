@@ -313,6 +313,31 @@ class EmailStatus:
     daily_used: int
     resets_at: str
     messages_sent_total: int = 0
+    external_enabled: bool = False
+    external_sends_today: int = 0
+    last_tier_change: Optional[str] = None
+
+
+@dataclass
+class KeyRegistryResponse:
+    """Public key registry lookup response for email signature verification."""
+
+    email: str
+    jacs_id: str
+    public_key: str
+    algorithm: str
+    reputation_tier: str
+    registered_at: str
+
+
+@dataclass
+class EmailVerificationResult:
+    """Result of verifying an email's JACS signature."""
+
+    valid: bool
+    jacs_id: str
+    reputation_tier: str
+    error: Optional[str] = None
 
 
 @dataclass

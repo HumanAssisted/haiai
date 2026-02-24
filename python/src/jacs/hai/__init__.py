@@ -55,6 +55,7 @@ from jacs.hai.client import (
     verify_agent_document,
     verify_document,
 )
+from jacs.hai.signing import verify_email_signature
 from jacs.hai.errors import (
     AuthenticationError,
     BenchmarkError,
@@ -73,6 +74,7 @@ from jacs.hai.models import (
     BenchmarkResult,
     EmailMessage,
     EmailStatus,
+    EmailVerificationResult,
     FreeChaoticResult,
     HaiEvent,
     HaiRegistrationPreview,
@@ -80,6 +82,7 @@ from jacs.hai.models import (
     HaiStatusResult,
     HelloWorldResult,
     JobResponseResult,
+    KeyRegistryResponse,
     PublicKeyInfo,
     RegistrationResult,
     SendEmailResult,
@@ -109,6 +112,7 @@ __all__ = [
     "BenchmarkResult",
     "EmailMessage",
     "EmailStatus",
+    "EmailVerificationResult",
     "FreeChaoticResult",
     "HaiEvent",
     "HaiRegistrationPreview",
@@ -116,6 +120,7 @@ __all__ = [
     "HaiStatusResult",
     "HelloWorldResult",
     "JobResponseResult",
+    "KeyRegistryResponse",
     "PublicKeyInfo",
     "RegistrationResult",
     "SendEmailResult",
@@ -148,4 +153,5 @@ __all__ = [
     "fetch_remote_key",
     "connect",
     "disconnect",
+    "verify_email_signature",
 ]

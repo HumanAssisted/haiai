@@ -1165,6 +1165,7 @@ dependencies = [
  "jacs",
  "percent-encoding",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

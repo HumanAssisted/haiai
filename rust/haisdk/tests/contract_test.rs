@@ -5,7 +5,7 @@
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use haisdk::types::{EmailMessage, EmailStatus};
+use haisdk::types::{EmailMessage, EmailStatus, KeyRegistryResponse, EmailVerificationResult};
 
 /// Wrapper struct for the `list_messages_response.json` contract.
 /// The SDK client unpacks this internally, but the contract test validates
@@ -29,6 +29,10 @@ const EMAIL_STATUS_JSON: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/email_status_response.json"));
 const CONTENT_HASH_JSON: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/content_hash_example.json"));
+const KEY_REGISTRY_JSON: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/key_registry_response.json"));
+const VERIFICATION_RESULT_JSON: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/verification_result.json"));
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -80,10 +84,37 @@ fn contract_deserialize_email_status() {
     assert_eq!(status.tier, "new");
     assert_eq!(status.billing_tier, "free");
     assert_eq!(status.messages_sent_24h, 5);
-    assert_eq!(status.daily_limit, 100);
+    assert_eq!(status.daily_limit, 10);
     assert_eq!(status.daily_used, 5);
     assert_eq!(status.resets_at, "2026-02-25T00:00:00Z");
     assert_eq!(status.messages_sent_total, 42);
+    assert_eq!(status.external_enabled, false);
+    assert_eq!(status.external_sends_today, 0);
+    assert!(status.last_tier_change.is_none());
+}
+
+#[test]
+fn contract_deserialize_key_registry_response() {
+    let resp: KeyRegistryResponse =
+        serde_json::from_str(KEY_REGISTRY_JSON).expect("KeyRegistryResponse deserialization failed");
+
+    assert_eq!(resp.email, "testbot@hai.ai");
+    assert_eq!(resp.jacs_id, "test-agent-jacs-id");
+    assert_eq!(resp.public_key, "MCowBQYDK2VwAyEAExampleBase64PublicKeyData1234567890ABCDEF");
+    assert_eq!(resp.algorithm, "ed25519");
+    assert_eq!(resp.reputation_tier, "new");
+    assert_eq!(resp.registered_at, "2026-01-15T00:00:00Z");
+}
+
+#[test]
+fn contract_deserialize_verification_result() {
+    let result: EmailVerificationResult =
+        serde_json::from_str(VERIFICATION_RESULT_JSON).expect("EmailVerificationResult deserialization failed");
+
+    assert_eq!(result.valid, true);
+    assert_eq!(result.jacs_id, "test-agent-jacs-id");
+    assert_eq!(result.reputation_tier, "established");
+    assert!(result.error.is_none());
 }
 
 #[test]

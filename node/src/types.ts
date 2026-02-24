@@ -425,6 +425,40 @@ export interface EmailStatus {
   resetsAt: string;
   /** Total messages sent all time. */
   messagesSentTotal: number;
+  /** Whether external (non-hai.ai) email sending is enabled. */
+  externalEnabled: boolean;
+  /** Number of external emails sent today. */
+  externalSendsToday: number;
+  /** ISO 8601 timestamp of last tier change, or null. */
+  lastTierChange: string | null;
+}
+
+/** Response from the public key registry endpoint. */
+export interface KeyRegistryResponse {
+  /** The agent's email address. */
+  email: string;
+  /** The agent's JACS ID. */
+  jacsId: string;
+  /** Base64-encoded public key. */
+  publicKey: string;
+  /** Signature algorithm (e.g., "ed25519"). */
+  algorithm: string;
+  /** Agent's reputation tier. */
+  reputationTier: string;
+  /** ISO 8601 registration timestamp. */
+  registeredAt: string;
+}
+
+/** Result of verifying an email's JACS signature. */
+export interface EmailVerificationResult {
+  /** Whether the signature is valid. */
+  valid: boolean;
+  /** The signer's JACS ID. */
+  jacsId: string;
+  /** The signer's reputation tier. */
+  reputationTier: string;
+  /** Error message if verification failed, or null. */
+  error: string | null;
 }
 
 // =============================================================================

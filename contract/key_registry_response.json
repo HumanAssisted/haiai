@@ -1,0 +1,8 @@
+{
+  "email": "testbot@hai.ai",
+  "jacs_id": "test-agent-jacs-id",
+  "public_key": "MCowBQYDK2VwAyEAExampleBase64PublicKeyData1234567890ABCDEF",
+  "algorithm": "ed25519",
+  "reputation_tier": "new",
+  "registered_at": "2026-01-15T00:00:00Z"
+}

@@ -11,6 +11,8 @@ export {
   getServerKeys,
   clearServerKeysCache,
   canonicalJson,
+  verifyEmailSignature,
+  parseJacsSignatureHeader,
 } from './signing.js';
 export type { JacsDocument } from './signing.js';
 
@@ -124,6 +126,8 @@ export type {
   ListMessagesOptions,
   SearchOptions,
   EmailStatus,
+  KeyRegistryResponse,
+  EmailVerificationResult,
   PublicKeyInfo,
   BadgeLevel,
   VerificationResult,

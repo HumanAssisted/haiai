@@ -266,8 +266,8 @@ func TestContractDeserializeEmailStatus(t *testing.T) {
 	if status.MessagesSent24h != 5 {
 		t.Fatalf("MessagesSent24h = %d, want 5", status.MessagesSent24h)
 	}
-	if status.DailyLimit != 100 {
-		t.Fatalf("DailyLimit = %d, want 100", status.DailyLimit)
+	if status.DailyLimit != 10 {
+		t.Fatalf("DailyLimit = %d, want 10", status.DailyLimit)
 	}
 	if status.DailyUsed != 5 {
 		t.Fatalf("DailyUsed = %d, want 5", status.DailyUsed)
@@ -277,6 +277,71 @@ func TestContractDeserializeEmailStatus(t *testing.T) {
 	}
 	if status.MessagesSentTotal != 42 {
 		t.Fatalf("MessagesSentTotal = %d, want 42", status.MessagesSentTotal)
+	}
+	if status.ExternalEnabled != false {
+		t.Fatalf("ExternalEnabled = %v, want false", status.ExternalEnabled)
+	}
+	if status.ExternalSendsToday != 0 {
+		t.Fatalf("ExternalSendsToday = %d, want 0", status.ExternalSendsToday)
+	}
+	if status.LastTierChange != nil {
+		t.Fatalf("LastTierChange = %v, want nil", status.LastTierChange)
+	}
+}
+
+func TestContractDeserializeKeyRegistryResponse(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(contractDir(), "key_registry_response.json"))
+	if err != nil {
+		t.Fatalf("read key_registry_response.json: %v", err)
+	}
+
+	var resp KeyRegistryResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("unmarshal KeyRegistryResponse: %v", err)
+	}
+
+	if resp.Email != "testbot@hai.ai" {
+		t.Fatalf("Email = %q, want %q", resp.Email, "testbot@hai.ai")
+	}
+	if resp.JacsID != "test-agent-jacs-id" {
+		t.Fatalf("JacsID = %q, want %q", resp.JacsID, "test-agent-jacs-id")
+	}
+	if resp.PublicKey != "MCowBQYDK2VwAyEAExampleBase64PublicKeyData1234567890ABCDEF" {
+		t.Fatalf("PublicKey = %q, want %q", resp.PublicKey, "MCowBQYDK2VwAyEAExampleBase64PublicKeyData1234567890ABCDEF")
+	}
+	if resp.Algorithm != "ed25519" {
+		t.Fatalf("Algorithm = %q, want %q", resp.Algorithm, "ed25519")
+	}
+	if resp.ReputationTier != "new" {
+		t.Fatalf("ReputationTier = %q, want %q", resp.ReputationTier, "new")
+	}
+	if resp.RegisteredAt != "2026-01-15T00:00:00Z" {
+		t.Fatalf("RegisteredAt = %q, want %q", resp.RegisteredAt, "2026-01-15T00:00:00Z")
+	}
+}
+
+func TestContractDeserializeVerificationResult(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(contractDir(), "verification_result.json"))
+	if err != nil {
+		t.Fatalf("read verification_result.json: %v", err)
+	}
+
+	var result EmailVerificationResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatalf("unmarshal EmailVerificationResult: %v", err)
+	}
+
+	if result.Valid != true {
+		t.Fatalf("Valid = %v, want true", result.Valid)
+	}
+	if result.JacsID != "test-agent-jacs-id" {
+		t.Fatalf("JacsID = %q, want %q", result.JacsID, "test-agent-jacs-id")
+	}
+	if result.ReputationTier != "established" {
+		t.Fatalf("ReputationTier = %q, want %q", result.ReputationTier, "established")
+	}
+	if result.Error != nil {
+		t.Fatalf("Error = %v, want nil", result.Error)
 	}
 }
 

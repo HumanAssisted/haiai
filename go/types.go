@@ -332,15 +332,36 @@ type MarkReadResult struct {
 
 // EmailStatus describes the agent's email usage and limits.
 type EmailStatus struct {
-	Email             string `json:"email"`
-	Status            string `json:"status"`
-	Tier              string `json:"tier"`
-	BillingTier       string `json:"billing_tier"`
-	MessagesSent24h   int    `json:"messages_sent_24h"`
-	DailyLimit        int    `json:"daily_limit"`
-	DailyUsed         int    `json:"daily_used"`
-	ResetsAt          string `json:"resets_at"`
-	MessagesSentTotal int    `json:"messages_sent_total"`
+	Email              string  `json:"email"`
+	Status             string  `json:"status"`
+	Tier               string  `json:"tier"`
+	BillingTier        string  `json:"billing_tier"`
+	MessagesSent24h    int     `json:"messages_sent_24h"`
+	DailyLimit         int     `json:"daily_limit"`
+	DailyUsed          int     `json:"daily_used"`
+	ResetsAt           string  `json:"resets_at"`
+	MessagesSentTotal  int     `json:"messages_sent_total"`
+	ExternalEnabled    bool    `json:"external_enabled"`
+	ExternalSendsToday int     `json:"external_sends_today"`
+	LastTierChange     *string `json:"last_tier_change"`
+}
+
+// KeyRegistryResponse is the response from GET /api/agents/keys/{email}.
+type KeyRegistryResponse struct {
+	Email          string `json:"email"`
+	JacsID         string `json:"jacs_id"`
+	PublicKey      string `json:"public_key"`
+	Algorithm      string `json:"algorithm"`
+	ReputationTier string `json:"reputation_tier"`
+	RegisteredAt   string `json:"registered_at"`
+}
+
+// EmailVerificationResult is the result of verifying an email signature.
+type EmailVerificationResult struct {
+	Valid          bool    `json:"valid"`
+	JacsID         string  `json:"jacs_id"`
+	ReputationTier string  `json:"reputation_tier"`
+	Error          *string `json:"error"`
 }
 
 // HaiAPIError represents a structured error response from the HAI API.

@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HaiClient } from '../src/client.js';
 import { generateKeypair } from '../src/crypt.js';
-import type { EmailMessage, EmailStatus } from '../src/types.js';
+import type { EmailMessage, EmailStatus, KeyRegistryResponse, EmailVerificationResult } from '../src/types.js';
 
 interface EndpointContract {
   method: string;
@@ -171,6 +171,29 @@ function parseEmailStatus(data: Record<string, unknown>): EmailStatus {
     dailyUsed: (data.daily_used as number) || 0,
     resetsAt: (data.resets_at as string) || '',
     messagesSentTotal: (data.messages_sent_total as number) || 0,
+    externalEnabled: (data.external_enabled as boolean) ?? false,
+    externalSendsToday: (data.external_sends_today as number) ?? 0,
+    lastTierChange: (data.last_tier_change as string | null) ?? null,
+  };
+}
+
+function parseKeyRegistryResponse(data: Record<string, unknown>): KeyRegistryResponse {
+  return {
+    email: (data.email as string) || '',
+    jacsId: (data.jacs_id as string) || '',
+    publicKey: (data.public_key as string) || '',
+    algorithm: (data.algorithm as string) || '',
+    reputationTier: (data.reputation_tier as string) || '',
+    registeredAt: (data.registered_at as string) || '',
+  };
+}
+
+function parseEmailVerificationResult(data: Record<string, unknown>): EmailVerificationResult {
+  return {
+    valid: (data.valid as boolean) ?? false,
+    jacsId: (data.jacs_id as string) || '',
+    reputationTier: (data.reputation_tier as string) || '',
+    error: (data.error as string | null) ?? null,
   };
 }
 
@@ -226,10 +249,39 @@ describe('contract: deserialize email status', () => {
     expect(status.tier).toBe('new');
     expect(status.billingTier).toBe('free');
     expect(status.messagesSent24h).toBe(5);
-    expect(status.dailyLimit).toBe(100);
+    expect(status.dailyLimit).toBe(10);
     expect(status.dailyUsed).toBe(5);
     expect(status.resetsAt).toBe('2026-02-25T00:00:00Z');
     expect(status.messagesSentTotal).toBe(42);
+    expect(status.externalEnabled).toBe(false);
+    expect(status.externalSendsToday).toBe(0);
+    expect(status.lastTierChange).toBeNull();
+  });
+});
+
+describe('contract: deserialize key registry response', () => {
+  it('maps all snake_case API fields to camelCase KeyRegistryResponse', () => {
+    const raw = loadEmailContract('key_registry_response.json');
+    const resp = parseKeyRegistryResponse(raw);
+
+    expect(resp.email).toBe('testbot@hai.ai');
+    expect(resp.jacsId).toBe('test-agent-jacs-id');
+    expect(resp.publicKey).toBe('MCowBQYDK2VwAyEAExampleBase64PublicKeyData1234567890ABCDEF');
+    expect(resp.algorithm).toBe('ed25519');
+    expect(resp.reputationTier).toBe('new');
+    expect(resp.registeredAt).toBe('2026-01-15T00:00:00Z');
+  });
+});
+
+describe('contract: deserialize verification result', () => {
+  it('maps all fields correctly', () => {
+    const raw = loadEmailContract('verification_result.json');
+    const result = parseEmailVerificationResult(raw);
+
+    expect(result.valid).toBe(true);
+    expect(result.jacsId).toBe('test-agent-jacs-id');
+    expect(result.reputationTier).toBe('established');
+    expect(result.error).toBeNull();
   });
 });
 

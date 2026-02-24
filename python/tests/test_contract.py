@@ -13,7 +13,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from jacs.hai.models import EmailMessage, EmailStatus
+from jacs.hai.models import EmailMessage, EmailStatus, KeyRegistryResponse, EmailVerificationResult
 
 # ---------------------------------------------------------------------------
 # Fixture directory -- two levels up from tests/, then into contract/
@@ -65,6 +65,31 @@ def _email_status_from_dict(data: dict) -> EmailStatus:
         daily_used=int(data.get("daily_used", 0)),
         resets_at=data.get("resets_at", ""),
         messages_sent_total=int(data.get("messages_sent_total", 0)),
+        external_enabled=data.get("external_enabled", False),
+        external_sends_today=int(data.get("external_sends_today", 0)),
+        last_tier_change=data.get("last_tier_change"),
+    )
+
+
+def _key_registry_from_dict(data: dict) -> KeyRegistryResponse:
+    """Construct a KeyRegistryResponse from a dict."""
+    return KeyRegistryResponse(
+        email=data.get("email", ""),
+        jacs_id=data.get("jacs_id", ""),
+        public_key=data.get("public_key", ""),
+        algorithm=data.get("algorithm", ""),
+        reputation_tier=data.get("reputation_tier", ""),
+        registered_at=data.get("registered_at", ""),
+    )
+
+
+def _verification_result_from_dict(data: dict) -> EmailVerificationResult:
+    """Construct an EmailVerificationResult from a dict."""
+    return EmailVerificationResult(
+        valid=data.get("valid", False),
+        jacs_id=data.get("jacs_id", ""),
+        reputation_tier=data.get("reputation_tier", ""),
+        error=data.get("error"),
     )
 
 
@@ -128,7 +153,10 @@ class TestDeserializeEmailStatus:
         assert status.tier == "new"
         assert status.billing_tier == "free"
         assert status.messages_sent_24h == 5
-        assert status.daily_limit == 100
+        assert status.daily_limit == 10
+        assert status.external_enabled is False
+        assert status.external_sends_today == 0
+        assert status.last_tier_change is None
 
 
 class TestContentHashComputation:
@@ -168,3 +196,31 @@ class TestSignInputFormat:
         sign_input = f"{content_hash}:{timestamp}"
 
         assert sign_input == expected_sign_input
+
+
+class TestDeserializeKeyRegistryResponse:
+    """Validate key_registry_response.json deserialization."""
+
+    def test_deserialize_key_registry_response(self) -> None:
+        data = _load("key_registry_response.json")
+        resp = _key_registry_from_dict(data)
+
+        assert resp.email == "testbot@hai.ai"
+        assert resp.jacs_id == "test-agent-jacs-id"
+        assert resp.public_key == "MCowBQYDK2VwAyEAExampleBase64PublicKeyData1234567890ABCDEF"
+        assert resp.algorithm == "ed25519"
+        assert resp.reputation_tier == "new"
+        assert resp.registered_at == "2026-01-15T00:00:00Z"
+
+
+class TestDeserializeVerificationResult:
+    """Validate verification_result.json deserialization."""
+
+    def test_deserialize_verification_result(self) -> None:
+        data = _load("verification_result.json")
+        result = _verification_result_from_dict(data)
+
+        assert result.valid is True
+        assert result.jacs_id == "test-agent-jacs-id"
+        assert result.reputation_tier == "established"
+        assert result.error is None

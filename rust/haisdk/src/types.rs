@@ -273,6 +273,40 @@ pub struct EmailStatus {
     pub resets_at: String,
     #[serde(default)]
     pub messages_sent_total: i32,
+    #[serde(default)]
+    pub external_enabled: bool,
+    #[serde(default)]
+    pub external_sends_today: i32,
+    #[serde(default)]
+    pub last_tier_change: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyRegistryResponse {
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub jacs_id: String,
+    #[serde(default)]
+    pub public_key: String,
+    #[serde(default)]
+    pub algorithm: String,
+    #[serde(default)]
+    pub reputation_tier: String,
+    #[serde(default)]
+    pub registered_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailVerificationResult {
+    #[serde(default)]
+    pub valid: bool,
+    #[serde(default)]
+    pub jacs_id: String,
+    #[serde(default)]
+    pub reputation_tier: String,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -26,8 +26,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
 from jacs.hai.crypt import canonicalize_json, sign_string, verify_string
+from jacs.hai.models import EmailVerificationResult
 
 logger = logging.getLogger("jacs.hai.signing")
+
+_MAX_TIMESTAMP_AGE = 86400  # 24 hours
+_MAX_TIMESTAMP_FUTURE = 300  # 5 minutes
 
 
 # ---------------------------------------------------------------------------
@@ -247,3 +251,158 @@ def sign_response(
         "signed_document": json.dumps(jacs_doc, separators=(",", ":")),
         "agent_jacs_id": jacs_id,
     }
+
+
+# ---------------------------------------------------------------------------
+# Email signature verification
+# ---------------------------------------------------------------------------
+
+
+def _parse_jacs_signature_header(header: str) -> dict[str, str]:
+    """Parse the X-JACS-Signature header into a dict of key=value pairs.
+
+    Format: ``v=1; a=ed25519; id=agent-id; t=1740000000; s=base64sig``
+    """
+    fields: dict[str, str] = {}
+    for part in header.split(";"):
+        part = part.strip()
+        if "=" not in part:
+            continue
+        key, _, value = part.partition("=")
+        fields[key.strip()] = value.strip()
+    return fields
+
+
+def verify_email_signature(
+    headers: dict[str, str],
+    subject: str,
+    body: str,
+    hai_url: str = "https://hai.ai",
+) -> EmailVerificationResult:
+    """Verify an email's JACS signature.
+
+    This is a standalone function -- no agent authentication required.
+
+    Args:
+        headers: Email headers dict. Must contain ``X-JACS-Signature``,
+            ``X-JACS-Content-Hash``, and ``From``.
+        subject: Email subject line.
+        body: Email body text.
+        hai_url: HAI server URL for public key lookup.
+
+    Returns:
+        An :class:`EmailVerificationResult` with ``valid``, ``jacs_id``,
+        ``reputation_tier``, and ``error`` fields.
+    """
+    # Step 1: Extract required headers
+    sig_header = headers.get("X-JACS-Signature", "")
+    content_hash_header = headers.get("X-JACS-Content-Hash", "")
+    from_address = headers.get("From", "")
+
+    if not sig_header:
+        return EmailVerificationResult(
+            valid=False, jacs_id="", reputation_tier="", error="Missing X-JACS-Signature header"
+        )
+    if not content_hash_header:
+        return EmailVerificationResult(
+            valid=False, jacs_id="", reputation_tier="", error="Missing X-JACS-Content-Hash header"
+        )
+
+    # Step 2: Parse signature header fields
+    fields = _parse_jacs_signature_header(sig_header)
+    jacs_id = fields.get("id", "")
+    timestamp_str = fields.get("t", "")
+    signature_b64 = fields.get("s", "")
+    algorithm = fields.get("a", "ed25519")
+
+    if not jacs_id or not timestamp_str or not signature_b64:
+        return EmailVerificationResult(
+            valid=False, jacs_id=jacs_id, reputation_tier="",
+            error="Incomplete X-JACS-Signature header (missing id, t, or s)",
+        )
+
+    if algorithm != "ed25519":
+        return EmailVerificationResult(
+            valid=False, jacs_id=jacs_id, reputation_tier="",
+            error=f"Unsupported algorithm: {algorithm}",
+        )
+
+    try:
+        timestamp = int(timestamp_str)
+    except ValueError:
+        return EmailVerificationResult(
+            valid=False, jacs_id=jacs_id, reputation_tier="",
+            error=f"Invalid timestamp: {timestamp_str}",
+        )
+
+    # Step 3: Recompute content hash
+    computed_hash = "sha256:" + hashlib.sha256(
+        (subject + "\n" + body).encode("utf-8")
+    ).hexdigest()
+
+    # Step 4: Compare content hashes
+    if computed_hash != content_hash_header:
+        return EmailVerificationResult(
+            valid=False, jacs_id=jacs_id, reputation_tier="",
+            error="Content hash mismatch",
+        )
+
+    # Step 5: Fetch public key from registry
+    registry_url = f"{hai_url.rstrip('/')}/api/agents/keys/{from_address}"
+    try:
+        resp = httpx.get(registry_url, timeout=10.0)
+        resp.raise_for_status()
+        registry_data = resp.json()
+    except Exception as exc:
+        return EmailVerificationResult(
+            valid=False, jacs_id=jacs_id, reputation_tier="",
+            error=f"Failed to fetch public key: {exc}",
+        )
+
+    public_key_pem = registry_data.get("public_key", "")
+    reputation_tier = registry_data.get("reputation_tier", "")
+
+    if not public_key_pem:
+        return EmailVerificationResult(
+            valid=False, jacs_id=jacs_id, reputation_tier=reputation_tier,
+            error="No public key found in registry",
+        )
+
+    try:
+        loaded_key = load_pem_public_key(public_key_pem.encode())
+        if not isinstance(loaded_key, Ed25519PublicKey):
+            return EmailVerificationResult(
+                valid=False, jacs_id=jacs_id, reputation_tier=reputation_tier,
+                error="Registry key is not Ed25519",
+            )
+    except Exception as exc:
+        return EmailVerificationResult(
+            valid=False, jacs_id=jacs_id, reputation_tier=reputation_tier,
+            error=f"Invalid public key format: {exc}",
+        )
+
+    # Step 6: Verify Ed25519 signature
+    sign_input = f"{computed_hash}:{timestamp}"
+    if not verify_string(loaded_key, sign_input, signature_b64):
+        return EmailVerificationResult(
+            valid=False, jacs_id=jacs_id, reputation_tier=reputation_tier,
+            error="Signature verification failed",
+        )
+
+    # Step 7: Check timestamp freshness
+    now = int(time.time())
+    age = now - timestamp
+    if age > _MAX_TIMESTAMP_AGE:
+        return EmailVerificationResult(
+            valid=False, jacs_id=jacs_id, reputation_tier=reputation_tier,
+            error="Signature timestamp is too old (>24h)",
+        )
+    if age < -_MAX_TIMESTAMP_FUTURE:
+        return EmailVerificationResult(
+            valid=False, jacs_id=jacs_id, reputation_tier=reputation_tier,
+            error="Signature timestamp is too far in the future (>5min)",
+        )
+
+    return EmailVerificationResult(
+        valid=True, jacs_id=jacs_id, reputation_tier=reputation_tier, error=None,
+    )

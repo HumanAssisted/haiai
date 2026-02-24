@@ -27,6 +27,6 @@ pub use jacs::{JacsProvider, NoopJacsProvider, StaticJacsProvider};
 pub use jacs_local::LocalJacsProvider;
 pub use types::*;
 pub use verify::{
-    generate_verify_link, generate_verify_link_hosted, MAX_VERIFY_DOCUMENT_BYTES,
-    MAX_VERIFY_URL_LEN,
+    generate_verify_link, generate_verify_link_hosted, parse_jacs_signature_header,
+    verify_email_signature, MAX_VERIFY_DOCUMENT_BYTES, MAX_VERIFY_URL_LEN,
 };
