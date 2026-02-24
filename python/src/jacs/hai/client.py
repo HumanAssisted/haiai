@@ -10,6 +10,7 @@ Ports every public method from the JACS monolith (jacs.hai) with:
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -26,12 +27,17 @@ from jacs.hai._sse import flatten_benchmark_job, parse_sse_lines
 from jacs.hai.crypt import canonicalize_json, create_agent_document, sign_string
 from jacs.hai.errors import (
     BenchmarkError,
+    BodyTooLarge,
+    EmailNotActive,
     HaiApiError,
     HaiAuthError,
     HaiConnectionError,
     HaiError,
+    RateLimited,
+    RecipientNotFound,
     RegistrationError,
     SSEError,
+    SubjectTooLong,
     WebSocketError,
 )
 from jacs.hai.models import (
@@ -1484,10 +1490,22 @@ class HaiClient:
         headers = self._build_auth_headers()
         headers["Content-Type"] = "application/json"
 
+        # JACS content signing: hash(subject + "\n" + body), then sign
+        from jacs.hai.config import get_private_key
+
+        content_hash = "sha256:" + hashlib.sha256(
+            (subject + "\n" + body).encode("utf-8")
+        ).hexdigest()
+        jacs_timestamp = int(time.time())
+        sign_input = f"{content_hash}:{jacs_timestamp}"
+        jacs_signature = sign_string(get_private_key(), sign_input)
+
         payload: dict[str, Any] = {
             "to": to,
             "subject": subject,
             "body": body,
+            "jacs_signature": jacs_signature,
+            "jacs_timestamp": jacs_timestamp,
         }
         if in_reply_to is not None:
             payload["in_reply_to"] = in_reply_to
@@ -1495,6 +1513,12 @@ class HaiClient:
         try:
             resp = httpx.post(url, json=payload, headers=headers, timeout=self._timeout)
 
+            if resp.status_code == 403 and "allocated" in resp.text.lower():
+                raise EmailNotActive(
+                    "Agent email is not active",
+                    status_code=403,
+                    body=resp.text,
+                )
             if resp.status_code in (401, 403):
                 raise HaiAuthError(
                     "Email send auth failed",
@@ -1502,11 +1526,37 @@ class HaiClient:
                     body=resp.text,
                 )
             if resp.status_code == 429:
-                raise HaiApiError(
+                resets_at = ""
+                try:
+                    resets_at = resp.json().get("resets_at", "")
+                except Exception:
+                    pass
+                raise RateLimited(
                     f"Email rate limited: {resp.text}",
                     status_code=429,
                     body=resp.text,
+                    resets_at=resets_at,
                 )
+            if resp.status_code == 400:
+                body_lower = resp.text.lower()
+                if "recipient" in body_lower:
+                    raise RecipientNotFound(
+                        f"Recipient not found: {resp.text}",
+                        status_code=400,
+                        body=resp.text,
+                    )
+                if "subject" in body_lower:
+                    raise SubjectTooLong(
+                        f"Subject too long: {resp.text}",
+                        status_code=400,
+                        body=resp.text,
+                    )
+                if "body" in body_lower:
+                    raise BodyTooLarge(
+                        f"Body too large: {resp.text}",
+                        status_code=400,
+                        body=resp.text,
+                    )
             if resp.status_code not in (200, 201):
                 raise HaiApiError(
                     f"Email send failed: HTTP {resp.status_code}",
@@ -1532,7 +1582,7 @@ class HaiClient:
         hai_url: str,
         limit: int = 20,
         offset: int = 0,
-        folder: str = "inbox",
+        direction: Optional[str] = None,
     ) -> list[EmailMessage]:
         """List email messages for this agent.
 
@@ -1540,7 +1590,7 @@ class HaiClient:
             hai_url: Base URL of the HAI server.
             limit: Max messages to return.
             offset: Pagination offset.
-            folder: Folder to list ("inbox", "sent").
+            direction: Filter by direction ("inbound" or "outbound").
 
         Returns:
             List of EmailMessage objects.
@@ -1550,10 +1600,14 @@ class HaiClient:
         url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/messages")
         headers = self._build_auth_headers()
 
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if direction is not None:
+            params["direction"] = direction
+
         try:
             resp = httpx.get(
                 url,
-                params={"limit": limit, "offset": offset, "folder": folder},
+                params=params,
                 headers=headers,
                 timeout=self._timeout,
             )
@@ -1579,10 +1633,15 @@ class HaiClient:
                     from_address=m.get("from_address", m.get("from", "")),
                     to_address=m.get("to_address", m.get("to", "")),
                     subject=m.get("subject", ""),
-                    body=m.get("body", ""),
-                    sent_at=m.get("sent_at", ""),
+                    body_text=m.get("body_text", ""),
+                    created_at=m.get("created_at", ""),
+                    direction=m.get("direction", ""),
+                    message_id=m.get("message_id", ""),
+                    in_reply_to=m.get("in_reply_to"),
+                    is_read=m.get("is_read", False),
+                    delivery_status=m.get("delivery_status", ""),
                     read_at=m.get("read_at"),
-                    thread_id=m.get("thread_id"),
+                    jacs_verified=m.get("jacs_verified"),
                 )
                 for m in messages
             ]
@@ -1669,11 +1728,15 @@ class HaiClient:
 
             data = resp.json()
             return EmailStatus(
+                email=data.get("email", ""),
+                status=data.get("status", ""),
+                tier=data.get("tier", ""),
+                billing_tier=data.get("billing_tier", ""),
+                messages_sent_24h=int(data.get("messages_sent_24h", 0)),
                 daily_limit=int(data.get("daily_limit", 0)),
                 daily_used=int(data.get("daily_used", 0)),
                 resets_at=data.get("resets_at", ""),
-                reputation_tier=data.get("reputation_tier", ""),
-                current_tier=data.get("current_tier", ""),
+                messages_sent_total=int(data.get("messages_sent_total", 0)),
             )
 
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
@@ -1682,6 +1745,327 @@ class HaiClient:
             raise
         except Exception as exc:
             raise HaiError(f"Email status failed: {exc}")
+
+    def get_message(self, hai_url: str, message_id: str) -> EmailMessage:
+        """Get a single email message by ID.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            message_id: ID of the message to retrieve.
+
+        Returns:
+            EmailMessage object.
+        """
+        jacs_id = self._get_jacs_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        safe_message_id = self._escape_path_segment(message_id)
+        url = self._make_url(
+            hai_url,
+            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}",
+        )
+        headers = self._build_auth_headers()
+
+        try:
+            resp = httpx.get(url, headers=headers, timeout=self._timeout)
+
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email get_message auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code == 404:
+                raise HaiApiError(
+                    f"Message not found: {message_id}",
+                    status_code=404,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Email get_message failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            m = resp.json()
+            return EmailMessage(
+                id=m.get("id", ""),
+                from_address=m.get("from_address", m.get("from", "")),
+                to_address=m.get("to_address", m.get("to", "")),
+                subject=m.get("subject", ""),
+                body_text=m.get("body_text", ""),
+                created_at=m.get("created_at", ""),
+                direction=m.get("direction", ""),
+                message_id=m.get("message_id", ""),
+                in_reply_to=m.get("in_reply_to"),
+                is_read=m.get("is_read", False),
+                delivery_status=m.get("delivery_status", ""),
+                read_at=m.get("read_at"),
+                jacs_verified=m.get("jacs_verified"),
+            )
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email get_message failed: {exc}")
+
+    def delete_message(self, hai_url: str, message_id: str) -> bool:
+        """Delete an email message.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            message_id: ID of the message to delete.
+
+        Returns:
+            True if successful (204).
+        """
+        jacs_id = self._get_jacs_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        safe_message_id = self._escape_path_segment(message_id)
+        url = self._make_url(
+            hai_url,
+            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}",
+        )
+        headers = self._build_auth_headers()
+
+        try:
+            resp = httpx.delete(url, headers=headers, timeout=self._timeout)
+
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email delete_message auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code == 404:
+                raise HaiApiError(
+                    f"Message not found: {message_id}",
+                    status_code=404,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 204):
+                raise HaiApiError(
+                    f"Email delete_message failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return True
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email delete_message failed: {exc}")
+
+    def mark_unread(self, hai_url: str, message_id: str) -> bool:
+        """Mark an email message as unread.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            message_id: ID of the message to mark as unread.
+
+        Returns:
+            True if successful.
+        """
+        jacs_id = self._get_jacs_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        safe_message_id = self._escape_path_segment(message_id)
+        url = self._make_url(
+            hai_url,
+            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/unread",
+        )
+        headers = self._build_auth_headers()
+
+        try:
+            resp = httpx.post(url, headers=headers, timeout=self._timeout)
+
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email mark_unread auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201, 204):
+                raise HaiApiError(
+                    f"Email mark_unread failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return True
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email mark_unread failed: {exc}")
+
+    def search_messages(
+        self,
+        hai_url: str,
+        q: Optional[str] = None,
+        direction: Optional[str] = None,
+        from_address: Optional[str] = None,
+        to_address: Optional[str] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[EmailMessage]:
+        """Search email messages.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            q: Free-text search query.
+            direction: Filter by direction ("inbound" or "outbound").
+            from_address: Filter by sender address.
+            to_address: Filter by recipient address.
+            since: ISO 8601 start date filter.
+            until: ISO 8601 end date filter.
+            limit: Max messages to return.
+            offset: Pagination offset.
+
+        Returns:
+            List of matching EmailMessage objects.
+        """
+        jacs_id = self._get_jacs_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/search")
+        headers = self._build_auth_headers()
+
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        if q is not None:
+            params["q"] = q
+        if direction is not None:
+            params["direction"] = direction
+        if from_address is not None:
+            params["from_address"] = from_address
+        if to_address is not None:
+            params["to_address"] = to_address
+        if since is not None:
+            params["since"] = since
+        if until is not None:
+            params["until"] = until
+
+        try:
+            resp = httpx.get(
+                url, params=params, headers=headers, timeout=self._timeout,
+            )
+
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email search auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Email search failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            data = resp.json()
+            messages = data if isinstance(data, list) else data.get("messages", [])
+            return [
+                EmailMessage(
+                    id=m.get("id", ""),
+                    from_address=m.get("from_address", m.get("from", "")),
+                    to_address=m.get("to_address", m.get("to", "")),
+                    subject=m.get("subject", ""),
+                    body_text=m.get("body_text", ""),
+                    created_at=m.get("created_at", ""),
+                    direction=m.get("direction", ""),
+                    message_id=m.get("message_id", ""),
+                    in_reply_to=m.get("in_reply_to"),
+                    is_read=m.get("is_read", False),
+                    delivery_status=m.get("delivery_status", ""),
+                    read_at=m.get("read_at"),
+                    jacs_verified=m.get("jacs_verified"),
+                )
+                for m in messages
+            ]
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email search failed: {exc}")
+
+    def get_unread_count(self, hai_url: str) -> int:
+        """Get the number of unread email messages.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+
+        Returns:
+            Number of unread messages.
+        """
+        jacs_id = self._get_jacs_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/unread-count")
+        headers = self._build_auth_headers()
+
+        try:
+            resp = httpx.get(url, headers=headers, timeout=self._timeout)
+
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email unread_count auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Email unread_count failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            data = resp.json()
+            return int(data.get("count", 0))
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email unread_count failed: {exc}")
+
+    def reply(
+        self,
+        hai_url: str,
+        message_id: str,
+        body: str,
+        subject: Optional[str] = None,
+    ) -> SendEmailResult:
+        """Reply to an email message.
+
+        Fetches the original message, then sends a reply with appropriate
+        threading headers.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            message_id: ID of the message to reply to.
+            body: Reply body text.
+            subject: Override subject (defaults to "Re: <original subject>").
+
+        Returns:
+            SendEmailResult with message_id and status.
+        """
+        original = self.get_message(hai_url, message_id)
+        reply_subject = subject if subject is not None else f"Re: {original.subject}"
+        return self.send_email(
+            hai_url,
+            to=original.from_address,
+            subject=reply_subject,
+            body=body,
+            in_reply_to=original.id,
+        )
 
     # ------------------------------------------------------------------
     # fetch_remote_key
@@ -2177,10 +2561,10 @@ def list_messages(
     hai_url: str,
     limit: int = 20,
     offset: int = 0,
-    folder: str = "inbox",
+    direction: Optional[str] = None,
 ) -> list[EmailMessage]:
     """List email messages for this agent."""
-    return _get_client().list_messages(hai_url, limit, offset, folder)
+    return _get_client().list_messages(hai_url, limit, offset, direction)
 
 
 def mark_read(hai_url: str, message_id: str) -> bool:
@@ -2191,6 +2575,54 @@ def mark_read(hai_url: str, message_id: str) -> bool:
 def get_email_status(hai_url: str) -> EmailStatus:
     """Get email rate-limit and reputation status."""
     return _get_client().get_email_status(hai_url)
+
+
+def get_message(hai_url: str, message_id: str) -> EmailMessage:
+    """Get a single email message by ID."""
+    return _get_client().get_message(hai_url, message_id)
+
+
+def delete_message(hai_url: str, message_id: str) -> bool:
+    """Delete an email message."""
+    return _get_client().delete_message(hai_url, message_id)
+
+
+def mark_unread(hai_url: str, message_id: str) -> bool:
+    """Mark an email message as unread."""
+    return _get_client().mark_unread(hai_url, message_id)
+
+
+def search_messages(
+    hai_url: str,
+    q: Optional[str] = None,
+    direction: Optional[str] = None,
+    from_address: Optional[str] = None,
+    to_address: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> list[EmailMessage]:
+    """Search email messages."""
+    return _get_client().search_messages(
+        hai_url, q=q, direction=direction, from_address=from_address,
+        to_address=to_address, since=since, until=until, limit=limit, offset=offset,
+    )
+
+
+def get_unread_count(hai_url: str) -> int:
+    """Get the number of unread email messages."""
+    return _get_client().get_unread_count(hai_url)
+
+
+def reply(
+    hai_url: str,
+    message_id: str,
+    body: str,
+    subject: Optional[str] = None,
+) -> SendEmailResult:
+    """Reply to an email message."""
+    return _get_client().reply(hai_url, message_id, body, subject)
 
 
 def fetch_remote_key(

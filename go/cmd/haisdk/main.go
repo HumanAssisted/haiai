@@ -341,14 +341,14 @@ func cmdListMessages(args []string) {
 	fs := flag.NewFlagSet("list-messages", flag.ExitOnError)
 	limit := fs.Int("limit", 20, "Maximum messages to return")
 	offset := fs.Int("offset", 0, "Messages to skip")
-	folder := fs.String("folder", "inbox", "Folder: inbox, outbox, all")
+	direction := fs.String("direction", "inbound", "Direction: inbound, outbound")
 	fs.Parse(args)
 
 	cl := newClient()
 	messages, err := cl.ListMessages(context.Background(), haisdk.ListMessagesOptions{
-		Limit:  *limit,
-		Offset: *offset,
-		Folder: *folder,
+		Limit:     *limit,
+		Offset:    *offset,
+		Direction: *direction,
 	})
 	if err != nil {
 		fatal("list-messages failed", err)

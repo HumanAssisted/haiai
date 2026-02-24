@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { mergeAgentJsonWithAgentCard } from '../src/a2a.js';
 
 function loadFixture(name: string): Record<string, unknown> {
   const file = join(process.cwd(), '..', 'fixtures', 'a2a', name);
@@ -33,5 +34,37 @@ describe('a2a fixtures', () => {
     const cases = trustCases.cases as Array<Record<string, unknown>>;
     expect(Array.isArray(cases)).toBe(true);
     expect(cases.length).toBeGreaterThan(0);
+  });
+
+  it('loads golden profile and chain fixtures', () => {
+    const profiles = loadFixture('golden_profile_normalization.json');
+    const chain = loadFixture('golden_chain_of_custody.json');
+
+    const profileCases = profiles.cases as Array<Record<string, unknown>>;
+    expect(Array.isArray(profileCases)).toBe(true);
+    expect(profileCases.length).toBeGreaterThan(0);
+    expect(profileCases[0].expected).toBeTruthy();
+
+    const expected = chain.expected as Record<string, unknown>;
+    const entries = expected.entries as Array<Record<string, unknown>>;
+    expect(expected.totalArtifacts).toBe(2);
+    expect(entries.length).toBe(2);
+    expect(entries[0].artifactType).toBe('a2a-task');
+  });
+
+  it('applies golden profile normalization cases', () => {
+    const profiles = loadFixture('golden_profile_normalization.json');
+    const cases = profiles.cases as Array<Record<string, unknown>>;
+
+    for (const testCase of cases) {
+      const mergedJson = mergeAgentJsonWithAgentCard(
+        testCase.agentJson as Record<string, unknown>,
+        testCase.card as Record<string, unknown>,
+      );
+      const merged = JSON.parse(mergedJson) as Record<string, unknown>;
+      const expected = testCase.expected as Record<string, unknown>;
+      const metadata = merged.metadata as Record<string, unknown>;
+      expect(metadata.a2aProfile).toBe(expected.a2aProfile);
+    }
   });
 });

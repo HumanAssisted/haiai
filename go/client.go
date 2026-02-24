@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -733,7 +734,17 @@ func (c *Client) SendEmail(ctx context.Context, to, subject, body string) (*Send
 }
 
 // SendEmailWithOptions sends an email with full options (e.g. threading).
+// Automatically computes JACS content signature over subject+body.
 func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions) (*SendEmailResult, error) {
+	// Compute JACS content signature: sha256(subject + "\n" + body), then sign contentHash:timestamp.
+	h := sha256.Sum256([]byte(opts.Subject + "\n" + opts.Body))
+	contentHash := "sha256:" + hex.EncodeToString(h[:])
+	timestamp := time.Now().Unix()
+	signInput := fmt.Sprintf("%s:%d", contentHash, timestamp)
+	sig := Sign(c.privateKey, []byte(signInput))
+	opts.JacsSignature = base64.StdEncoding.EncodeToString(sig)
+	opts.JacsTimestamp = timestamp
+
 	path := fmt.Sprintf("/api/agents/%s/email/send", neturl.PathEscape(c.jacsID))
 	var result SendEmailResult
 	if err := c.doRequest(ctx, http.MethodPost, path, opts, &result); err != nil {
@@ -747,15 +758,15 @@ func (c *Client) ListMessages(ctx context.Context, opts ListMessagesOptions) ([]
 	query := neturl.Values{}
 	query.Set("limit", fmt.Sprintf("%d", opts.Limit))
 	query.Set("offset", fmt.Sprintf("%d", opts.Offset))
-	if opts.Folder != "" {
-		query.Set("folder", opts.Folder)
+	if opts.Direction != "" {
+		query.Set("direction", opts.Direction)
 	}
 	path := fmt.Sprintf("/api/agents/%s/email/messages?%s", neturl.PathEscape(c.jacsID), query.Encode())
-	var messages []EmailMessage
-	if err := c.doRequest(ctx, http.MethodGet, path, nil, &messages); err != nil {
+	var wrapper ListMessagesResponse
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &wrapper); err != nil {
 		return nil, err
 	}
-	return messages, nil
+	return wrapper.Messages, nil
 }
 
 // MarkRead marks a message as read.
@@ -776,6 +787,103 @@ func (c *Client) GetEmailStatus(ctx context.Context) (*EmailStatus, error) {
 		return nil, err
 	}
 	return &status, nil
+}
+
+// GetMessage retrieves a single email message by ID.
+func (c *Client) GetMessage(ctx context.Context, messageID string) (*EmailMessage, error) {
+	path := fmt.Sprintf(
+		"/api/agents/%s/email/messages/%s",
+		neturl.PathEscape(c.jacsID),
+		neturl.PathEscape(messageID),
+	)
+	var msg EmailMessage
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &msg); err != nil {
+		return nil, err
+	}
+	return &msg, nil
+}
+
+// DeleteMessage deletes an email message by ID.
+func (c *Client) DeleteMessage(ctx context.Context, messageID string) error {
+	path := fmt.Sprintf(
+		"/api/agents/%s/email/messages/%s",
+		neturl.PathEscape(c.jacsID),
+		neturl.PathEscape(messageID),
+	)
+	return c.doRequest(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// MarkUnread marks a message as unread.
+func (c *Client) MarkUnread(ctx context.Context, messageID string) error {
+	path := fmt.Sprintf(
+		"/api/agents/%s/email/messages/%s/unread",
+		neturl.PathEscape(c.jacsID),
+		neturl.PathEscape(messageID),
+	)
+	return c.doRequest(ctx, http.MethodPost, path, nil, nil)
+}
+
+// SearchMessages searches the agent's mailbox.
+func (c *Client) SearchMessages(ctx context.Context, opts SearchOptions) ([]EmailMessage, error) {
+	query := neturl.Values{}
+	if opts.Q != "" {
+		query.Set("q", opts.Q)
+	}
+	if opts.Direction != "" {
+		query.Set("direction", opts.Direction)
+	}
+	if opts.FromAddress != "" {
+		query.Set("from_address", opts.FromAddress)
+	}
+	if opts.ToAddress != "" {
+		query.Set("to_address", opts.ToAddress)
+	}
+	if opts.Limit > 0 {
+		query.Set("limit", fmt.Sprintf("%d", opts.Limit))
+	}
+	if opts.Offset > 0 {
+		query.Set("offset", fmt.Sprintf("%d", opts.Offset))
+	}
+	path := fmt.Sprintf("/api/agents/%s/email/search?%s", neturl.PathEscape(c.jacsID), query.Encode())
+	var wrapper ListMessagesResponse
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &wrapper); err != nil {
+		return nil, err
+	}
+	return wrapper.Messages, nil
+}
+
+// GetUnreadCount returns the number of unread messages in the agent's inbox.
+func (c *Client) GetUnreadCount(ctx context.Context) (int, error) {
+	path := fmt.Sprintf("/api/agents/%s/email/unread-count", neturl.PathEscape(c.jacsID))
+	var result UnreadCountResult
+	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
+		return 0, err
+	}
+	return result.Count, nil
+}
+
+// Reply sends a reply to an existing message. If subjectOverride is empty,
+// the original message's subject is fetched and prefixed with "Re: ".
+func (c *Client) Reply(ctx context.Context, messageID, body, subjectOverride string) (*SendEmailResult, error) {
+	original, err := c.GetMessage(ctx, messageID)
+	if err != nil {
+		return nil, err
+	}
+
+	subject := subjectOverride
+	if subject == "" {
+		subject = original.Subject
+		if !strings.HasPrefix(strings.ToLower(subject), "re: ") {
+			subject = "Re: " + subject
+		}
+	}
+
+	return c.SendEmailWithOptions(ctx, SendEmailOptions{
+		To:        original.FromAddress,
+		Subject:   subject,
+		Body:      body,
+		InReplyTo: messageID,
+	})
 }
 
 // RegisterNewAgent generates a new Ed25519 keypair, creates a flat JACS agent
@@ -863,10 +971,14 @@ func (c *Client) RegisterNewAgent(ctx context.Context, agentName string, opts *R
 		return nil, err
 	}
 
-	// Encode keys as PEM for local storage.
+	// Encode keys as PEM for local storage (PKCS#8 DER for private key).
+	pkcs8Bytes, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal private key: %w", err)
+	}
 	privPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "PRIVATE KEY",
-		Bytes: priv.Seed(),
+		Bytes: pkcs8Bytes,
 	})
 	pubPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "PUBLIC KEY",

@@ -36,7 +36,7 @@ func TestCheckUsernameEncodesQuery(t *testing.T) {
 }
 
 func TestListMessagesEncodesQuery(t *testing.T) {
-	folder := "inbox & sent/ops"
+	direction := "inbound"
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/agents/test-agent-id/email/messages" {
@@ -45,23 +45,23 @@ func TestListMessagesEncodesQuery(t *testing.T) {
 		if r.URL.Query().Get("limit") != "25" || r.URL.Query().Get("offset") != "5" {
 			t.Fatalf("unexpected pagination query: %s", r.URL.RawQuery)
 		}
-		if got := r.URL.Query().Get("folder"); got != folder {
-			t.Fatalf("folder query not preserved; got %q", got)
+		if got := r.URL.Query().Get("direction"); got != direction {
+			t.Fatalf("direction query not preserved; got %q", got)
 		}
 		if strings.Contains(r.URL.RawQuery, " ") {
 			t.Fatalf("raw query should be URL-encoded, got %q", r.URL.RawQuery)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`[{"id":"m1"}]`))
+		_, _ = w.Write([]byte(`{"messages":[{"id":"m1"}],"total":1,"unread":0}`))
 	}))
 	defer srv.Close()
 
 	cl, _ := newTestClient(t, srv.URL)
 	_, err := cl.ListMessages(context.Background(), ListMessagesOptions{
-		Limit:  25,
-		Offset: 5,
-		Folder: folder,
+		Limit:     25,
+		Offset:    5,
+		Direction: direction,
 	})
 	if err != nil {
 		t.Fatalf("ListMessages: %v", err)

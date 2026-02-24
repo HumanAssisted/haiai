@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::future::Future;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -168,6 +169,9 @@ pub struct A2AMediatedJobOptions {
     pub transport: TransportType,
     pub notify_email: Option<String>,
     pub email_subject: Option<String>,
+    pub verify_inbound_artifact: bool,
+    pub enforce_trust_policy: bool,
+    pub max_reconnect_attempts: usize,
 }
 
 impl Default for A2AMediatedJobOptions {
@@ -176,6 +180,9 @@ impl Default for A2AMediatedJobOptions {
             transport: TransportType::Sse,
             notify_email: None,
             email_subject: None,
+            verify_inbound_artifact: false,
+            enforce_trust_policy: false,
+            max_reconnect_attempts: 0,
         }
     }
 }
@@ -534,69 +541,135 @@ impl<'a, P: JacsProvider> A2AIntegration<'a, P> {
         let handler = Arc::new(tokio::sync::Mutex::new(handler));
         let notify_email = options.notify_email.clone();
         let email_subject = options.email_subject.clone();
+        let verify_inbound_artifact = options.verify_inbound_artifact;
+        let enforce_trust_policy = options.enforce_trust_policy;
+        let max_reconnect_attempts = options.max_reconnect_attempts;
+        let transport = options.transport;
+        let mut reconnect_attempts = 0usize;
 
-        self.client
-            .on_benchmark_job(options.transport, move |event_data| {
-                let handler = Arc::clone(&handler);
-                let notify_email = notify_email.clone();
-                let email_subject = email_subject.clone();
-                async move {
-                    let job_id = value_string(&event_data, &["jobId", "job_id"]);
-                    if job_id.is_empty() {
-                        return Err(HaiError::Message(
-                            "benchmark job event missing jobId".to_string(),
-                        ));
-                    }
+        loop {
+            let handled_jobs = Arc::new(AtomicUsize::new(0));
+            let handled_jobs_for_handler = Arc::clone(&handled_jobs);
+            let handler = Arc::clone(&handler);
+            let notify_email = notify_email.clone();
+            let email_subject = email_subject.clone();
 
-                    let task_payload = json!({
-                        "type": event_data.get("type").cloned().unwrap_or(Value::String("benchmark_job".to_string())),
-                        "jobId": job_id,
-                        "scenarioId": event_data.get("scenarioId").cloned().unwrap_or(Value::Null),
-                        "config": event_data.get("config").cloned().unwrap_or(Value::Null),
-                    });
-                    let task_artifact = self.sign_artifact(task_payload, "task", None)?;
-                    let result_payload = {
-                        let mut locked_handler = handler.lock().await;
-                        (*locked_handler)(task_artifact.clone()).await?
-                    };
+            let result = self
+                .client
+                .on_benchmark_job(transport, move |event_data| {
+                    let handler = Arc::clone(&handler);
+                    let handled_jobs_for_handler = Arc::clone(&handled_jobs_for_handler);
+                    let notify_email = notify_email.clone();
+                    let email_subject = email_subject.clone();
+                    async move {
+                        handled_jobs_for_handler.fetch_add(1, Ordering::SeqCst);
 
-                    let parent = serde_json::to_value(&task_artifact)?;
-                    let result_artifact = self.sign_artifact(
-                        result_payload.clone(),
-                        "task-result",
-                        Some(vec![parent]),
-                    )?;
+                        let job_id = value_string(&event_data, &["jobId", "job_id"]);
+                        if job_id.is_empty() {
+                            return Err(HaiError::Message(
+                                "benchmark job event missing jobId".to_string(),
+                            ));
+                        }
 
-                    let message = result_payload
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .map(ToString::to_string)
-                        .unwrap_or_else(|| result_payload.to_string());
+                        if enforce_trust_policy {
+                            let card_json = extract_remote_agent_card_json(&event_data)?.ok_or_else(|| {
+                                HaiError::Message(
+                                    "remote agent card required when trust enforcement is enabled".to_string(),
+                                )
+                            })?;
+                            let trust = self.assess_remote_agent(&card_json, None)?;
+                            if !trust.allowed {
+                                return Err(HaiError::Message(format!(
+                                    "trust policy rejected remote agent: {}",
+                                    trust.reason
+                                )));
+                            }
+                        }
 
-                    self.client
-                        .submit_response(
-                            &job_id,
-                            &message,
-                            Some(json!({
-                                "a2aTask": task_artifact,
-                                "a2aResult": result_artifact.clone()
-                            })),
-                            0,
-                        )
-                        .await?;
+                        if verify_inbound_artifact {
+                            let inbound = extract_inbound_a2a_task(&event_data)?.ok_or_else(|| {
+                                HaiError::Message(
+                                    "inbound a2a task required when signature verification is enabled".to_string(),
+                                )
+                            })?;
+                            let verify = self.verify_artifact(&inbound)?;
+                            if !verify.valid {
+                                return Err(HaiError::Message(format!(
+                                    "inbound a2a task signature invalid: {}",
+                                    verify.error.unwrap_or_else(|| "unknown verification failure".to_string())
+                                )));
+                            }
+                        }
 
-                    if let Some(email) = notify_email {
-                        let subject = email_subject.unwrap_or_else(|| {
-                            format!("A2A mediated result for job {job_id}")
+                        let task_payload = json!({
+                            "type": event_data.get("type").cloned().unwrap_or(Value::String("benchmark_job".to_string())),
+                            "jobId": job_id,
+                            "scenarioId": event_data.get("scenarioId").cloned().unwrap_or(Value::Null),
+                            "config": event_data.get("config").cloned().unwrap_or(Value::Null),
                         });
-                        self.send_signed_artifact_email(&email, &subject, &result_artifact)
-                            .await?;
-                    }
+                        let task_artifact = self.sign_artifact(task_payload, "task", None)?;
+                        let result_payload = {
+                            let mut locked_handler = handler.lock().await;
+                            (*locked_handler)(task_artifact.clone()).await?
+                        };
 
-                    Ok(())
+                        let parent = serde_json::to_value(&task_artifact)?;
+                        let result_artifact = self.sign_artifact(
+                            result_payload.clone(),
+                            "task-result",
+                            Some(vec![parent]),
+                        )?;
+
+                        let message = result_payload
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string)
+                            .unwrap_or_else(|| result_payload.to_string());
+
+                        self.client
+                            .submit_response(
+                                &job_id,
+                                &message,
+                                Some(json!({
+                                    "a2aTask": task_artifact,
+                                    "a2aResult": result_artifact.clone()
+                                })),
+                                0,
+                            )
+                            .await?;
+
+                        if let Some(email) = notify_email {
+                            let subject = email_subject
+                                .unwrap_or_else(|| format!("A2A mediated result for job {job_id}"));
+                            self.send_signed_artifact_email(&email, &subject, &result_artifact)
+                                .await?;
+                        }
+
+                        Ok(())
+                    }
+                })
+                .await;
+
+            match result {
+                Ok(()) => {
+                    // If a stream ended without processing work, retry when configured.
+                    if handled_jobs.load(Ordering::SeqCst) == 0
+                        && reconnect_attempts < max_reconnect_attempts
+                    {
+                        reconnect_attempts += 1;
+                        continue;
+                    }
+                    return Ok(());
                 }
-            })
-            .await
+                Err(err) => {
+                    if reconnect_attempts < max_reconnect_attempts {
+                        reconnect_attempts += 1;
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
+        }
     }
 }
 
@@ -687,6 +760,38 @@ fn extract_card_agent_id(card: &Value) -> Option<String> {
         .and_then(|meta| meta.get("jacsId"))
         .and_then(Value::as_str)
         .map(ToString::to_string)
+}
+
+fn extract_remote_agent_card_json(event: &Value) -> Result<Option<String>> {
+    for key in ["remoteAgentCard", "agentCard"] {
+        let Some(card) = event.get(key) else {
+            continue;
+        };
+        return match card {
+            Value::String(raw) => Ok(Some(raw.clone())),
+            Value::Object(_) => Ok(Some(serde_json::to_string(card)?)),
+            _ => Err(HaiError::Message(format!(
+                "{key} must be a JSON object or string"
+            ))),
+        };
+    }
+    Ok(None)
+}
+
+fn extract_inbound_a2a_task(event: &Value) -> Result<Option<A2AWrappedArtifact>> {
+    for key in ["a2aTask", "a2a_task"] {
+        let Some(task) = event.get(key) else {
+            continue;
+        };
+        return match task {
+            Value::String(raw) => Ok(Some(serde_json::from_str(raw)?)),
+            Value::Object(_) => Ok(Some(serde_json::from_value(task.clone())?)),
+            _ => Err(HaiError::Message(format!(
+                "{key} must be a JSON object or string"
+            ))),
+        };
+    }
+    Ok(None)
 }
 
 fn merge_agent_json_with_card(agent_json: &str, card: &A2AAgentCard) -> Result<String> {
@@ -857,5 +962,45 @@ mod tests {
         assert!(merged_json.get("a2aAgentCard").is_some());
         assert_eq!(merged_json["metadata"]["a2aProfile"], "1.0");
         assert_eq!(merged_json["metadata"]["a2aSkillsCount"], 1);
+    }
+
+    #[test]
+    fn extract_inbound_task_from_object() {
+        let event = json!({
+            "a2aTask": {
+                "jacsId": "task-1",
+                "jacsVersion": "1.0.0",
+                "jacsType": "a2a-task",
+                "jacsLevel": "artifact",
+                "jacsVersionDate": "2026-02-24T00:00:00Z",
+                "a2aArtifact": {"k":"v"},
+                "jacsSignature": {
+                    "agentID": "demo-agent",
+                    "date": "2026-02-24T00:00:00Z",
+                    "signature": "sig"
+                }
+            }
+        });
+
+        let task = extract_inbound_a2a_task(&event)
+            .expect("extract")
+            .expect("task");
+        assert_eq!(task.jacs_type, "a2a-task");
+    }
+
+    #[test]
+    fn extract_remote_card_from_object() {
+        let event = json!({
+            "remoteAgentCard": {
+                "name": "remote",
+                "metadata": {"jacsId":"remote-agent"}
+            }
+        });
+
+        let raw = extract_remote_agent_card_json(&event)
+            .expect("extract")
+            .expect("card");
+        let card: Value = serde_json::from_str(&raw).expect("decode");
+        assert_eq!(card["metadata"]["jacsId"], "remote-agent");
     }
 }

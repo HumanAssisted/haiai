@@ -289,21 +289,30 @@ class EmailMessage:
     from_address: str
     to_address: str
     subject: str
-    body: str
-    sent_at: str
+    body_text: str
+    created_at: str
+    direction: str = ""
+    message_id: str = ""
+    in_reply_to: Optional[str] = None
+    is_read: bool = False
+    delivery_status: str = ""
     read_at: Optional[str] = None
-    thread_id: Optional[str] = None
+    jacs_verified: Optional[bool] = None
 
 
 @dataclass
 class EmailStatus:
     """Email rate-limit and reputation status for the current agent."""
 
+    email: str
+    status: str
+    tier: str
+    billing_tier: str
+    messages_sent_24h: int
     daily_limit: int
     daily_used: int
     resets_at: str
-    reputation_tier: str
-    current_tier: str
+    messages_sent_total: int = 0
 
 
 @dataclass

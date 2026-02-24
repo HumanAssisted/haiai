@@ -157,7 +157,7 @@ function showCommandHelp(command: string) {
     'check-username': 'Usage: haisdk check-username --username <name> [--url <api-url>]',
     'claim-username': 'Usage: haisdk claim-username --username <name> --agent-id <id> [--url <api-url>]',
     'send-email': 'Usage: haisdk send-email --to <addr> --subject <subj> --body <body> [--url <api-url>]',
-    'list-messages': 'Usage: haisdk list-messages [--limit <n>] [--folder inbox|outbox|all] [--url <api-url>]',
+    'list-messages': 'Usage: haisdk list-messages [--limit <n>] [--direction inbound|outbound] [--url <api-url>]',
     'email-status': 'Usage: haisdk email-status [--url <api-url>]',
     'fetch-key': 'Usage: haisdk fetch-key --jacs-id <id> [--version <ver>] [--url <api-url>]',
   };
@@ -281,10 +281,10 @@ async function cmdSendEmail(args: string[]) {
 async function cmdListMessages(args: string[]) {
   const client = await createClient(args);
   const limit = getArg(args, '--limit');
-  const folder = getArg(args, '--folder') as 'inbox' | 'outbox' | 'all' | undefined;
+  const direction = getArg(args, '--direction') as 'inbound' | 'outbound' | undefined;
   const result = await client.listMessages({
     limit: limit ? parseInt(limit, 10) : undefined,
-    folder,
+    direction,
   });
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
 }

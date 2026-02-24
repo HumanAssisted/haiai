@@ -392,9 +392,35 @@ Completed in this pass:
    - Rust: `rust/haisdk/tests/a2a_facade.rs` (shared fixture contracts + facade behavior parity)
 8. Phase 4 example migration started:
    - replaced `go/examples/a2a/main.go` duplicated protocol logic with facade-first usage (`GetA2A`, `SignArtifact`, `VerifyArtifact`, `CreateChainOfCustody`, `GenerateWellKnownDocuments`, register-option merge)
+9. Phase 4 Node/Python quickstart migration:
+   - replaced `node/examples/a2a_quickstart.ts` duplicated protocol structs/helpers with facade-first usage (`exportAgentCard`, `signArtifact`, `verifyArtifact`, `createChainOfCustody`, `generateWellKnownDocuments`)
+   - replaced `python/examples/a2a_quickstart.py` duplicated protocol structs/helpers with facade-first usage (`export_agent_card`, `sign_artifact`, `verify_artifact`, `create_chain_of_custody`, `generate_well_known_documents`)
+10. Phase 3 mediated workflow coverage:
+   - added `rust/haisdk/tests/a2a_mediated_flow.rs` for mediated SSE/WS flow coverage, including trust-policy rejection, invalid inbound signature rejection, and reconnect behavior
+   - added runtime options for mediated flow hardening in `A2AMediatedJobOptions`:
+     - `verify_inbound_artifact`
+     - `enforce_trust_policy`
+     - `max_reconnect_attempts`
+11. Node/Python register + mediated helper parity:
+   - Node:
+     - added `registerWithAgentCard(...)`
+     - added `mergeAgentJsonWithAgentCard(...)`
+     - added `onMediatedBenchmarkJob(...)`
+   - Python:
+     - added `register_with_agent_card(...)`
+     - added `merge_agent_json_with_agent_card(...)`
+     - added `on_mediated_benchmark_job(...)`
+   - tests added for helper behavior/delegation in:
+     - `node/tests/a2a.test.ts`
+     - `python/tests/test_a2a.py`
+12. Cross-language golden fixtures + tests:
+   - added shared fixtures:
+     - `fixtures/a2a/golden_profile_normalization.json`
+     - `fixtures/a2a/golden_chain_of_custody.json`
+   - added Go golden tests in `go/a2a_test.go`
+   - added Rust golden tests in `rust/haisdk/tests/a2a_facade.rs`
+   - added fixture-availability checks in Node/Python fixture tests
 
 Remaining roadmap work:
 
-1. Phase 3 end-to-end mediated workflow tests (mocked SSE/WS streams + signature/trust failure paths)
-2. Phase 4 full quickstart migration in Node/Python examples to facade-first usage (remove duplicated protocol structs/helpers)
-3. Cross-language golden tests for chain-of-custody and mixed-profile (`v0.4.0`/`v1.0`) interop normalization
+1. Expand mediated flow tests from language-local coverage to full cross-language parity harnesses where environment supports local socket binding in CI.

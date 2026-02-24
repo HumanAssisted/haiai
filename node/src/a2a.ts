@@ -11,6 +11,29 @@ export interface GetA2AIntegrationOptions {
   trustPolicy?: A2ATrustPolicy;
 }
 
+export interface RegisterWithAgentCardOptions extends GetA2AIntegrationOptions {
+  ownerEmail?: string;
+  domain?: string;
+  description?: string;
+  agentJson?: string | Record<string, unknown>;
+  publicKeyPem?: string;
+}
+
+export interface RegisterWithAgentCardResult {
+  registration: unknown;
+  agentCard: Record<string, unknown>;
+  agentJson: string;
+}
+
+export interface A2AMediatedJobOptions extends GetA2AIntegrationOptions {
+  transport?: 'sse' | 'ws';
+  verifyInboundArtifact?: boolean;
+  enforceTrustPolicy?: boolean;
+  maxReconnectAttempts?: number;
+  notifyEmail?: string;
+  emailSubject?: string;
+}
+
 function isMissingModuleError(error: unknown, moduleName: string): boolean {
   if (!error || typeof error !== 'object') {
     return false;
@@ -88,6 +111,63 @@ async function callIntegrationMethod(
     );
   }
   return (method as AnyFunction).apply(integration, args);
+}
+
+function asRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new JacsModuleError(`${label} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function stringifyAgentJson(agentJson: string | Record<string, unknown>): string {
+  if (typeof agentJson === 'string') {
+    return agentJson;
+  }
+  return JSON.stringify(agentJson);
+}
+
+function resolveCardProfile(agentCard: Record<string, unknown>): string {
+  const metadata = agentCard.metadata;
+  if (metadata && typeof metadata === 'object') {
+    const profile = (metadata as Record<string, unknown>).a2aProfile;
+    if (typeof profile === 'string' && profile.trim() !== '') {
+      return profile;
+    }
+  }
+
+  const protocolVersions = agentCard.protocolVersions;
+  if (Array.isArray(protocolVersions) && typeof protocolVersions[0] === 'string' && protocolVersions[0].trim() !== '') {
+    return protocolVersions[0];
+  }
+
+  const supportedInterfaces = agentCard.supportedInterfaces;
+  if (Array.isArray(supportedInterfaces)) {
+    for (const entry of supportedInterfaces) {
+      if (!entry || typeof entry !== 'object') continue;
+      const version = (entry as Record<string, unknown>).protocolVersion;
+      if (typeof version === 'string' && version.trim() !== '') {
+        return version;
+      }
+    }
+  }
+
+  return '0.4.0';
+}
+
+function valueAsString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function mergeOptions<T extends Record<string, unknown>>(value: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (v !== undefined) {
+      out[k] = v;
+    }
+  }
+  return out as T;
 }
 
 /**
@@ -184,4 +264,178 @@ export async function trustA2AAgent(
 ): Promise<unknown> {
   const integration = await getA2AIntegration(jacsClient, options) as Record<string, unknown>;
   return callIntegrationMethod(integration, 'trustA2AAgent', [agentCardJson]);
+}
+
+export function mergeAgentJsonWithAgentCard(
+  agentJson: string | Record<string, unknown>,
+  agentCard: Record<string, unknown>,
+): string {
+  const base = typeof agentJson === 'string'
+    ? JSON.parse(agentJson) as Record<string, unknown>
+    : { ...agentJson };
+  const card = asRecord(agentCard, 'agentCard');
+
+  base.a2aAgentCard = card;
+  if (base.skills === undefined && Array.isArray(card.skills)) {
+    base.skills = card.skills;
+  }
+  if (base.capabilities === undefined && card.capabilities && typeof card.capabilities === 'object') {
+    base.capabilities = card.capabilities;
+  }
+
+  const metadata = (base.metadata && typeof base.metadata === 'object')
+    ? { ...(base.metadata as Record<string, unknown>) }
+    : {};
+  metadata.a2aProfile = resolveCardProfile(card);
+  metadata.a2aSkillsCount = Array.isArray(card.skills) ? card.skills.length : 0;
+  base.metadata = metadata;
+
+  return JSON.stringify(base);
+}
+
+export async function registerWithAgentCard(
+  haiClient: unknown,
+  jacsClient: unknown,
+  agentData: Record<string, unknown>,
+  options: RegisterWithAgentCardOptions = {},
+): Promise<RegisterWithAgentCardResult> {
+  const clientRecord = asRecord(haiClient, 'haiClient');
+  const register = getRequiredFunction('HaiClient', clientRecord, 'register');
+  const exportKeys = clientRecord.exportKeys;
+
+  const cardRaw = await exportAgentCard(jacsClient, agentData, options);
+  const agentCard = asRecord(cardRaw, 'agentCard');
+
+  let baseAgentJson: string | Record<string, unknown>;
+  if (options.agentJson !== undefined) {
+    baseAgentJson = options.agentJson;
+  } else {
+    baseAgentJson = {
+      jacsId: valueAsString(agentData, 'jacsId') || valueAsString(clientRecord, 'jacsId'),
+      name: valueAsString(agentData, 'jacsName') || valueAsString(clientRecord, 'agentName'),
+      jacsVersion: valueAsString(agentData, 'jacsVersion') || '1.0.0',
+    };
+  }
+  const mergedAgentJson = mergeAgentJsonWithAgentCard(baseAgentJson, agentCard);
+
+  let publicKeyPem = options.publicKeyPem;
+  if (!publicKeyPem && typeof exportKeys === 'function') {
+    const exported = exportKeys.apply(clientRecord);
+    if (exported && typeof exported === 'object') {
+      const candidate = (exported as Record<string, unknown>).publicKeyPem;
+      if (typeof candidate === 'string' && candidate.length > 0) {
+        publicKeyPem = candidate;
+      }
+    }
+  }
+
+  const registration = await register.apply(clientRecord, [mergeOptions({
+    ownerEmail: options.ownerEmail,
+    domain: options.domain,
+    description: options.description,
+    agentJson: mergedAgentJson,
+    publicKeyPem,
+  })]);
+
+  return {
+    registration,
+    agentCard,
+    agentJson: mergedAgentJson,
+  };
+}
+
+export async function onMediatedBenchmarkJob(
+  haiClient: unknown,
+  jacsClient: unknown,
+  handler: (taskArtifact: Record<string, unknown>) => Promise<Record<string, unknown>>,
+  options: A2AMediatedJobOptions = {},
+): Promise<void> {
+  const clientRecord = asRecord(haiClient, 'haiClient');
+  const onBenchmarkJob = getRequiredFunction('HaiClient', clientRecord, 'onBenchmarkJob');
+  const submitResponse = getRequiredFunction('HaiClient', clientRecord, 'submitResponse');
+  const sendEmail = clientRecord.sendEmail;
+
+  const verifyInboundArtifact = options.verifyInboundArtifact ?? false;
+  const enforceTrustPolicy = options.enforceTrustPolicy ?? false;
+  const maxReconnectAttempts = options.maxReconnectAttempts ?? 0;
+  const transport = options.transport ?? 'sse';
+
+  let attempts = 0;
+  while (true) {
+    try {
+      await onBenchmarkJob.apply(clientRecord, [async (job: Record<string, unknown>) => {
+        const data = asRecord(job.data ?? {}, 'benchmark job data');
+        const jobId = valueAsString(data, 'job_id') || valueAsString(data, 'run_id') || valueAsString(job, 'runId');
+        if (!jobId) {
+          throw new JacsModuleError('benchmark job missing job_id/run_id');
+        }
+
+        if (enforceTrustPolicy) {
+          const remoteCard = data.remoteAgentCard ?? data.remote_agent_card ?? data.agentCard;
+          if (!remoteCard) {
+            throw new JacsModuleError('remote agent card required when trust enforcement is enabled');
+          }
+          const trust = await assessRemoteAgent(jacsClient, remoteCard as string | Record<string, unknown>, options) as Record<string, unknown>;
+          if (trust.allowed !== true) {
+            const reason = typeof trust.reason === 'string' ? trust.reason : 'unknown reason';
+            throw new JacsModuleError(`trust policy rejected remote agent: ${reason}`);
+          }
+        }
+
+        if (verifyInboundArtifact) {
+          const inbound = data.a2aTask ?? data.a2a_task;
+          if (!inbound) {
+            throw new JacsModuleError('inbound a2a task required when signature verification is enabled');
+          }
+          const verification = await verifyArtifact(jacsClient, inbound as string | Record<string, unknown>, options) as Record<string, unknown>;
+          if (verification.valid !== true) {
+            const err = typeof verification.error === 'string' ? verification.error : 'unknown verification failure';
+            throw new JacsModuleError(`inbound a2a task signature invalid: ${err}`);
+          }
+        }
+
+        const taskPayload: Record<string, unknown> = {
+          type: 'benchmark_job',
+          jobId,
+          scenarioId: data.scenario_id ?? data.scenarioId ?? null,
+          config: data.config ?? null,
+        };
+        const taskArtifact = await signArtifact(jacsClient, taskPayload, 'task', null, options) as Record<string, unknown>;
+        const resultPayload = await handler(taskArtifact);
+        const resultArtifact = await signArtifact(
+          jacsClient,
+          resultPayload,
+          'task-result',
+          [taskArtifact],
+          options,
+        ) as Record<string, unknown>;
+
+        const messageValue = resultPayload.message;
+        const message = typeof messageValue === 'string' ? messageValue : JSON.stringify(resultPayload);
+
+        await submitResponse.apply(clientRecord, [jobId, message, {
+          metadata: {
+            a2aTask: taskArtifact,
+            a2aResult: resultArtifact,
+          },
+          processingTimeMs: 0,
+        }]);
+
+        if (options.notifyEmail && typeof sendEmail === 'function') {
+          const subject = options.emailSubject ?? `A2A mediated result for job ${jobId}`;
+          await (sendEmail as AnyFunction).apply(clientRecord, [{
+            to: options.notifyEmail,
+            subject,
+            body: `Signed A2A artifact:\n\n${JSON.stringify(resultArtifact, null, 2)}`,
+          }]);
+        }
+      }, { transport }]);
+      return;
+    } catch (error) {
+      if (attempts >= maxReconnectAttempts) {
+        throw error;
+      }
+      attempts += 1;
+    }
+  }
 }

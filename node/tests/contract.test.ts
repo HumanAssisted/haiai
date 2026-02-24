@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HaiClient } from '../src/client.js';
 import { generateKeypair } from '../src/crypt.js';
+import type { EmailMessage, EmailStatus } from '../src/types.js';
 
 interface EndpointContract {
   method: string;
@@ -120,5 +122,141 @@ describe('mock API contract (node)', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await client.submitResponse(jobId, 'response body');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Email contract JSON helpers
+// ---------------------------------------------------------------------------
+
+function loadEmailContract(filename: string): Record<string, unknown> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const contractPath = resolve(here, '../../contract', filename);
+  return JSON.parse(readFileSync(contractPath, 'utf-8')) as Record<string, unknown>;
+}
+
+/**
+ * Replicates the private `HaiClient.parseEmailMessage` field mapping so we
+ * can validate contract JSON deserialization without needing a live client.
+ */
+function parseEmailMessage(m: Record<string, unknown>): EmailMessage {
+  return {
+    id: (m.id as string) || '',
+    direction: (m.direction as string) || '',
+    fromAddress: (m.from_address as string) || '',
+    toAddress: (m.to_address as string) || '',
+    subject: (m.subject as string) || '',
+    bodyText: (m.body_text as string) || '',
+    messageId: (m.message_id as string) || '',
+    inReplyTo: (m.in_reply_to as string | null) ?? null,
+    isRead: (m.is_read as boolean) ?? false,
+    deliveryStatus: (m.delivery_status as string) || '',
+    createdAt: (m.created_at as string) || '',
+    readAt: (m.read_at as string | null) ?? null,
+    jacsVerified: (m.jacs_verified as boolean) ?? false,
+  };
+}
+
+/**
+ * Replicates the `getEmailStatus` response mapping from HaiClient.
+ */
+function parseEmailStatus(data: Record<string, unknown>): EmailStatus {
+  return {
+    email: (data.email as string) || '',
+    status: (data.status as string) || '',
+    tier: (data.tier as string) || '',
+    billingTier: (data.billing_tier as string) || '',
+    messagesSent24h: (data.messages_sent_24h as number) || 0,
+    dailyLimit: (data.daily_limit as number) || 0,
+    dailyUsed: (data.daily_used as number) || 0,
+    resetsAt: (data.resets_at as string) || '',
+    messagesSentTotal: (data.messages_sent_total as number) || 0,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Email contract deserialization tests
+// ---------------------------------------------------------------------------
+
+describe('contract: deserialize email message', () => {
+  it('maps all snake_case API fields to camelCase SDK fields', () => {
+    const raw = loadEmailContract('email_message.json');
+    const msg = parseEmailMessage(raw);
+
+    expect(msg.id).toBe('550e8400-e29b-41d4-a716-446655440000');
+    expect(msg.direction).toBe('inbound');
+    expect(msg.fromAddress).toBe('sender@hai.ai');
+    expect(msg.toAddress).toBe('recipient@hai.ai');
+    expect(msg.subject).toBe('Test Subject');
+    expect(msg.bodyText).toBe('Hello, this is a test email body.');
+    expect(msg.messageId).toBe('<550e8400@hai.ai>');
+    expect(msg.inReplyTo).toBeNull();
+    expect(msg.isRead).toBe(false);
+    expect(msg.deliveryStatus).toBe('delivered');
+    expect(msg.createdAt).toBe('2026-02-24T12:00:00Z');
+    expect(msg.readAt).toBeNull();
+    expect(msg.jacsVerified).toBe(true);
+  });
+});
+
+describe('contract: deserialize list messages response', () => {
+  it('parses messages array, total, and unread from envelope', () => {
+    const raw = loadEmailContract('list_messages_response.json');
+    const messagesRaw = raw.messages as Array<Record<string, unknown>>;
+    const messages = messagesRaw.map((m) => parseEmailMessage(m));
+
+    expect(messages).toHaveLength(1);
+    expect(raw.total).toBe(1);
+    expect(raw.unread).toBe(1);
+
+    // Verify the nested message was deserialized correctly
+    expect(messages[0].id).toBe('550e8400-e29b-41d4-a716-446655440000');
+    expect(messages[0].fromAddress).toBe('sender@hai.ai');
+    expect(messages[0].jacsVerified).toBe(true);
+  });
+});
+
+describe('contract: deserialize email status', () => {
+  it('maps all snake_case API fields to camelCase EmailStatus', () => {
+    const raw = loadEmailContract('email_status_response.json');
+    const status = parseEmailStatus(raw);
+
+    expect(status.email).toBe('testbot@hai.ai');
+    expect(status.status).toBe('active');
+    expect(status.tier).toBe('new');
+    expect(status.billingTier).toBe('free');
+    expect(status.messagesSent24h).toBe(5);
+    expect(status.dailyLimit).toBe(100);
+    expect(status.dailyUsed).toBe(5);
+    expect(status.resetsAt).toBe('2026-02-25T00:00:00Z');
+    expect(status.messagesSentTotal).toBe(42);
+  });
+});
+
+describe('contract: content hash computation', () => {
+  it('computes the same sha256 hash as the contract fixture', () => {
+    const fixture = loadEmailContract('content_hash_example.json');
+    const subject = fixture.subject as string;
+    const body = fixture.body as string;
+    const expectedHash = fixture.expected_hash as string;
+
+    const computed = 'sha256:' + createHash('sha256')
+      .update(subject + '\n' + body, 'utf8')
+      .digest('hex');
+
+    expect(computed).toBe(expectedHash);
+  });
+});
+
+describe('contract: sign input format', () => {
+  it('produces the correct sign_input from content hash and timestamp', () => {
+    const fixture = loadEmailContract('content_hash_example.json');
+    const expectedHash = fixture.expected_hash as string;
+    const timestamp = fixture.timestamp as number;
+    const expectedSignInput = fixture.sign_input_example as string;
+
+    const signInput = `${expectedHash}:${timestamp}`;
+
+    expect(signInput).toBe(expectedSignInput);
   });
 });

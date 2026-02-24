@@ -5,6 +5,7 @@ use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::{Response, StatusCode};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -18,9 +19,9 @@ use crate::types::{
     AgentVerificationResult, CheckUsernameResult, ClaimUsernameResult, DeleteUsernameResult,
     DnsCertifiedResult, DnsCertifiedRunOptions, DocumentVerificationResult, EmailMessage,
     EmailStatus, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult, ListMessagesOptions,
-    PublicKeyInfo, RegisterAgentOptions, RegistrationResult, SendEmailOptions, SendEmailResult,
-    TranscriptMessage, TransportType, UpdateUsernameResult, VerifyAgentDocumentRequest,
-    VerifyAgentResult,
+    PublicKeyInfo, RegisterAgentOptions, RegistrationResult, SearchOptions, SendEmailOptions,
+    SendEmailResult, TranscriptMessage, TransportType, UpdateUsernameResult,
+    VerifyAgentDocumentRequest, VerifyAgentResult,
 };
 
 const DEFAULT_BASE_URL: &str = "https://hai.ai";
@@ -363,12 +364,36 @@ impl<P: JacsProvider> HaiClient<P> {
         let safe_jacs_id = encode_path_segment(self.jacs.jacs_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/send"));
 
+        let timestamp = OffsetDateTime::now_utc().unix_timestamp();
+
+        let content_hash = {
+            let mut hasher = Sha256::new();
+            hasher.update(options.subject.as_bytes());
+            hasher.update(b"\n");
+            hasher.update(options.body.as_bytes());
+            format!("sha256:{:x}", hasher.finalize())
+        };
+
+        let sign_input = format!("{content_hash}:{timestamp}");
+        let jacs_signature = self.jacs.sign_string(&sign_input)?;
+
+        let mut payload = json!({
+            "to": options.to,
+            "subject": options.subject,
+            "body": options.body,
+            "jacs_signature": jacs_signature,
+            "jacs_timestamp": timestamp,
+        });
+        if let Some(ref in_reply_to) = options.in_reply_to {
+            payload["in_reply_to"] = Value::String(in_reply_to.clone());
+        }
+
         let response = self
             .http
             .post(url)
             .header("Authorization", self.build_auth_header()?)
             .header("Content-Type", "application/json")
-            .json(options)
+            .json(&payload)
             .send()
             .await?;
 
@@ -394,16 +419,12 @@ impl<P: JacsProvider> HaiClient<P> {
         if let Some(offset) = options.offset {
             request = request.query(&[("offset", offset)]);
         }
-        if let Some(folder) = options.folder.as_deref() {
-            request = request.query(&[("folder", folder)]);
+        if let Some(direction) = options.direction.as_deref() {
+            request = request.query(&[("direction", direction)]);
         }
 
         let response = request.send().await?;
         let data = response_json(response).await?;
-
-        if data.is_array() {
-            return Ok(serde_json::from_value(data)?);
-        }
 
         let messages = data
             .get("messages")
@@ -445,6 +466,157 @@ impl<P: JacsProvider> HaiClient<P> {
 
         let data = response_json(response).await?;
         Ok(serde_json::from_value(data)?)
+    }
+
+    pub async fn get_message(&self, message_id: &str) -> Result<EmailMessage> {
+        let safe_jacs_id = encode_path_segment(self.jacs.jacs_id());
+        let safe_message_id = encode_path_segment(message_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}"
+        ));
+
+        let response = self
+            .http
+            .get(url)
+            .header("Authorization", self.build_auth_header()?)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        Ok(serde_json::from_value(data)?)
+    }
+
+    pub async fn delete_message(&self, message_id: &str) -> Result<()> {
+        let safe_jacs_id = encode_path_segment(self.jacs.jacs_id());
+        let safe_message_id = encode_path_segment(message_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}"
+        ));
+
+        let response = self
+            .http
+            .delete(url)
+            .header("Authorization", self.build_auth_header()?)
+            .send()
+            .await?;
+
+        match response.status() {
+            StatusCode::OK | StatusCode::NO_CONTENT => Ok(()),
+            _ => Err(response_error(response).await),
+        }
+    }
+
+    pub async fn mark_unread(&self, message_id: &str) -> Result<()> {
+        let safe_jacs_id = encode_path_segment(self.jacs.jacs_id());
+        let safe_message_id = encode_path_segment(message_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/unread"
+        ));
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .send()
+            .await?;
+
+        match response.status() {
+            StatusCode::OK | StatusCode::CREATED | StatusCode::NO_CONTENT => Ok(()),
+            _ => Err(response_error(response).await),
+        }
+    }
+
+    pub async fn search_messages(&self, options: &SearchOptions) -> Result<Vec<EmailMessage>> {
+        let safe_jacs_id = encode_path_segment(self.jacs.jacs_id());
+        let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/search"));
+
+        let mut request = self
+            .http
+            .get(url)
+            .header("Authorization", self.build_auth_header()?);
+
+        if let Some(ref q) = options.q {
+            request = request.query(&[("q", q.as_str())]);
+        }
+        if let Some(ref direction) = options.direction {
+            request = request.query(&[("direction", direction.as_str())]);
+        }
+        if let Some(ref from_address) = options.from_address {
+            request = request.query(&[("from_address", from_address.as_str())]);
+        }
+        if let Some(ref to_address) = options.to_address {
+            request = request.query(&[("to_address", to_address.as_str())]);
+        }
+        if let Some(ref since) = options.since {
+            request = request.query(&[("since", since.as_str())]);
+        }
+        if let Some(ref until) = options.until {
+            request = request.query(&[("until", until.as_str())]);
+        }
+        if let Some(limit) = options.limit {
+            request = request.query(&[("limit", &limit.to_string())]);
+        }
+        if let Some(offset) = options.offset {
+            request = request.query(&[("offset", &offset.to_string())]);
+        }
+
+        let response = request.send().await?;
+        let data = response_json(response).await?;
+
+        let messages = data
+            .get("messages")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new()));
+        Ok(serde_json::from_value(messages)?)
+    }
+
+    pub async fn get_unread_count(&self) -> Result<u64> {
+        let safe_jacs_id = encode_path_segment(self.jacs.jacs_id());
+        let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/unread-count"));
+
+        let response = self
+            .http
+            .get(url)
+            .header("Authorization", self.build_auth_header()?)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        let count = data
+            .get("count")
+            .and_then(Value::as_u64)
+            .or_else(|| data.as_u64())
+            .unwrap_or(0);
+        Ok(count)
+    }
+
+    pub async fn reply(
+        &self,
+        message_id: &str,
+        body: &str,
+        subject_override: Option<&str>,
+    ) -> Result<SendEmailResult> {
+        let original = self.get_message(message_id).await?;
+
+        let subject = match subject_override {
+            Some(s) => s.to_string(),
+            None => {
+                if original.subject.starts_with("Re: ") {
+                    original.subject.clone()
+                } else {
+                    format!("Re: {}", original.subject)
+                }
+            }
+        };
+
+        let options = SendEmailOptions {
+            to: original.from_address,
+            subject,
+            body: body.to_string(),
+            in_reply_to: Some(original.id),
+        };
+
+        self.send_email(&options).await
     }
 
     pub async fn fetch_remote_key(&self, jacs_id: &str, version: &str) -> Result<PublicKeyInfo> {

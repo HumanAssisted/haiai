@@ -50,8 +50,17 @@ export {
   generateWellKnownDocuments,
   assessRemoteAgent,
   trustA2AAgent,
+  mergeAgentJsonWithAgentCard,
+  registerWithAgentCard,
+  onMediatedBenchmarkJob,
 } from './a2a.js';
-export type { A2ATrustPolicy, GetA2AIntegrationOptions } from './a2a.js';
+export type {
+  A2ATrustPolicy,
+  GetA2AIntegrationOptions,
+  RegisterWithAgentCardOptions,
+  RegisterWithAgentCardResult,
+  A2AMediatedJobOptions,
+} from './a2a.js';
 
 // Config
 export { loadConfig, loadPrivateKey } from './config.js';
@@ -110,6 +119,7 @@ export type {
   SendEmailResult,
   EmailMessage,
   ListMessagesOptions,
+  SearchOptions,
   EmailStatus,
   PublicKeyInfo,
   BadgeLevel,

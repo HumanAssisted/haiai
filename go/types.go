@@ -261,10 +261,27 @@ type RegisterResult struct {
 
 // SendEmailOptions configures an email send request.
 type SendEmailOptions struct {
-	To        string `json:"to"`
-	Subject   string `json:"subject"`
-	Body      string `json:"body"`
-	InReplyTo string `json:"in_reply_to,omitempty"`
+	To            string `json:"to"`
+	Subject       string `json:"subject"`
+	Body          string `json:"body"`
+	InReplyTo     string `json:"in_reply_to,omitempty"`
+	JacsSignature string `json:"jacs_signature,omitempty"`
+	JacsTimestamp int64  `json:"jacs_timestamp,omitempty"`
+}
+
+// SearchOptions configures a message search request.
+type SearchOptions struct {
+	Q          string `json:"q,omitempty"`
+	Direction  string `json:"direction,omitempty"`
+	FromAddress string `json:"from_address,omitempty"`
+	ToAddress  string `json:"to_address,omitempty"`
+	Limit      int    `json:"limit,omitempty"`
+	Offset     int    `json:"offset,omitempty"`
+}
+
+// UnreadCountResult is the response from the unread count endpoint.
+type UnreadCountResult struct {
+	Count int `json:"count"`
 }
 
 // SendEmailResult is the response from sending an email.
@@ -275,21 +292,33 @@ type SendEmailResult struct {
 
 // EmailMessage represents an email message in the agent's mailbox.
 type EmailMessage struct {
-	ID          string  `json:"id"`
-	FromAddress string  `json:"from_address"`
-	ToAddress   string  `json:"to_address"`
-	Subject     string  `json:"subject"`
-	Body        string  `json:"body"`
-	SentAt      string  `json:"sent_at"`
-	ReadAt      *string `json:"read_at"`
-	ThreadID    *string `json:"thread_id"`
+	ID             string  `json:"id"`
+	Direction      string  `json:"direction"`
+	FromAddress    string  `json:"from_address"`
+	ToAddress      string  `json:"to_address"`
+	Subject        string  `json:"subject"`
+	BodyText       string  `json:"body_text"`
+	MessageID      string  `json:"message_id,omitempty"`
+	InReplyTo      string  `json:"in_reply_to,omitempty"`
+	IsRead         bool    `json:"is_read"`
+	DeliveryStatus string  `json:"delivery_status"`
+	CreatedAt      string  `json:"created_at"`
+	ReadAt         *string `json:"read_at"`
+	JacsVerified   *bool   `json:"jacs_verified"`
+}
+
+// ListMessagesResponse is the wrapper returned by the list messages API.
+type ListMessagesResponse struct {
+	Messages []EmailMessage `json:"messages"`
+	Total    int            `json:"total"`
+	Unread   int            `json:"unread"`
 }
 
 // ListMessagesOptions configures a list messages request.
 type ListMessagesOptions struct {
-	Limit  int    // Maximum number of messages to return.
-	Offset int    // Number of messages to skip.
-	Folder string // "inbox", "outbox", or "all".
+	Limit     int    // Maximum number of messages to return.
+	Offset    int    // Number of messages to skip.
+	Direction string // "inbound" or "outbound".
 }
 
 // MarkReadResult is the response from marking a message as read.
@@ -299,9 +328,13 @@ type MarkReadResult struct {
 
 // EmailStatus describes the agent's email usage and limits.
 type EmailStatus struct {
-	DailyLimit     int    `json:"daily_limit"`
-	DailyUsed      int    `json:"daily_used"`
-	ResetsAt       string `json:"resets_at"`
-	ReputationTier string `json:"reputation_tier"`
-	CurrentTier    string `json:"current_tier"`
+	Email             string `json:"email"`
+	Status            string `json:"status"`
+	Tier              string `json:"tier"`
+	BillingTier       string `json:"billing_tier"`
+	MessagesSent24h   int    `json:"messages_sent_24h"`
+	DailyLimit        int    `json:"daily_limit"`
+	DailyUsed         int    `json:"daily_used"`
+	ResetsAt          string `json:"resets_at"`
+	MessagesSentTotal int    `json:"messages_sent_total"`
 }

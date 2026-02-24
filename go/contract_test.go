@@ -2,10 +2,14 @@ package haisdk
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -135,5 +139,202 @@ func TestSubmitResponseContract(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("SubmitResponse: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Contract tests: deserialization of shared JSON fixtures
+// ---------------------------------------------------------------------------
+
+// contractDir returns the absolute path to the shared contract fixtures directory.
+func contractDir() string {
+	return filepath.Join("..", "contract")
+}
+
+func TestContractDeserializeEmailMessage(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(contractDir(), "email_message.json"))
+	if err != nil {
+		t.Fatalf("read email_message.json: %v", err)
+	}
+
+	var msg EmailMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		t.Fatalf("unmarshal EmailMessage: %v", err)
+	}
+
+	if msg.ID != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Fatalf("ID = %q, want %q", msg.ID, "550e8400-e29b-41d4-a716-446655440000")
+	}
+	if msg.Direction != "inbound" {
+		t.Fatalf("Direction = %q, want %q", msg.Direction, "inbound")
+	}
+	if msg.FromAddress != "sender@hai.ai" {
+		t.Fatalf("FromAddress = %q, want %q", msg.FromAddress, "sender@hai.ai")
+	}
+	if msg.ToAddress != "recipient@hai.ai" {
+		t.Fatalf("ToAddress = %q, want %q", msg.ToAddress, "recipient@hai.ai")
+	}
+	if msg.Subject != "Test Subject" {
+		t.Fatalf("Subject = %q, want %q", msg.Subject, "Test Subject")
+	}
+	if msg.BodyText != "Hello, this is a test email body." {
+		t.Fatalf("BodyText = %q, want %q", msg.BodyText, "Hello, this is a test email body.")
+	}
+	if msg.MessageID != "<550e8400@hai.ai>" {
+		t.Fatalf("MessageID = %q, want %q", msg.MessageID, "<550e8400@hai.ai>")
+	}
+	if msg.InReplyTo != "" {
+		t.Fatalf("InReplyTo = %q, want empty (null in JSON)", msg.InReplyTo)
+	}
+	if msg.IsRead != false {
+		t.Fatalf("IsRead = %v, want false", msg.IsRead)
+	}
+	if msg.DeliveryStatus != "delivered" {
+		t.Fatalf("DeliveryStatus = %q, want %q", msg.DeliveryStatus, "delivered")
+	}
+	if msg.CreatedAt != "2026-02-24T12:00:00Z" {
+		t.Fatalf("CreatedAt = %q, want %q", msg.CreatedAt, "2026-02-24T12:00:00Z")
+	}
+	if msg.ReadAt != nil {
+		t.Fatalf("ReadAt = %v, want nil (null in JSON)", msg.ReadAt)
+	}
+	if msg.JacsVerified == nil {
+		t.Fatal("JacsVerified should not be nil")
+	}
+	if *msg.JacsVerified != true {
+		t.Fatalf("JacsVerified = %v, want true", *msg.JacsVerified)
+	}
+}
+
+func TestContractDeserializeListMessagesResponse(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(contractDir(), "list_messages_response.json"))
+	if err != nil {
+		t.Fatalf("read list_messages_response.json: %v", err)
+	}
+
+	var resp ListMessagesResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("unmarshal ListMessagesResponse: %v", err)
+	}
+
+	if len(resp.Messages) != 1 {
+		t.Fatalf("len(Messages) = %d, want 1", len(resp.Messages))
+	}
+	if resp.Total != 1 {
+		t.Fatalf("Total = %d, want 1", resp.Total)
+	}
+	if resp.Unread != 1 {
+		t.Fatalf("Unread = %d, want 1", resp.Unread)
+	}
+
+	// Verify the nested message matches the same contract values.
+	msg := resp.Messages[0]
+	if msg.ID != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Fatalf("Messages[0].ID = %q, want %q", msg.ID, "550e8400-e29b-41d4-a716-446655440000")
+	}
+	if msg.Subject != "Test Subject" {
+		t.Fatalf("Messages[0].Subject = %q, want %q", msg.Subject, "Test Subject")
+	}
+	if msg.Direction != "inbound" {
+		t.Fatalf("Messages[0].Direction = %q, want %q", msg.Direction, "inbound")
+	}
+}
+
+func TestContractDeserializeEmailStatus(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(contractDir(), "email_status_response.json"))
+	if err != nil {
+		t.Fatalf("read email_status_response.json: %v", err)
+	}
+
+	var status EmailStatus
+	if err := json.Unmarshal(data, &status); err != nil {
+		t.Fatalf("unmarshal EmailStatus: %v", err)
+	}
+
+	if status.Email != "testbot@hai.ai" {
+		t.Fatalf("Email = %q, want %q", status.Email, "testbot@hai.ai")
+	}
+	if status.Status != "active" {
+		t.Fatalf("Status = %q, want %q", status.Status, "active")
+	}
+	if status.Tier != "new" {
+		t.Fatalf("Tier = %q, want %q", status.Tier, "new")
+	}
+	if status.BillingTier != "free" {
+		t.Fatalf("BillingTier = %q, want %q", status.BillingTier, "free")
+	}
+	if status.MessagesSent24h != 5 {
+		t.Fatalf("MessagesSent24h = %d, want 5", status.MessagesSent24h)
+	}
+	if status.DailyLimit != 100 {
+		t.Fatalf("DailyLimit = %d, want 100", status.DailyLimit)
+	}
+	if status.DailyUsed != 5 {
+		t.Fatalf("DailyUsed = %d, want 5", status.DailyUsed)
+	}
+	if status.ResetsAt != "2026-02-25T00:00:00Z" {
+		t.Fatalf("ResetsAt = %q, want %q", status.ResetsAt, "2026-02-25T00:00:00Z")
+	}
+	if status.MessagesSentTotal != 42 {
+		t.Fatalf("MessagesSentTotal = %d, want 42", status.MessagesSentTotal)
+	}
+}
+
+// contentHashFixture mirrors the JSON structure in content_hash_example.json.
+type contentHashFixture struct {
+	Subject          string `json:"subject"`
+	Body             string `json:"body"`
+	CanonicalInput   string `json:"canonical_input"`
+	ExpectedHash     string `json:"expected_hash"`
+	Timestamp        int64  `json:"timestamp"`
+	SignInputFormat  string `json:"sign_input_format"`
+	SignInputExample string `json:"sign_input_example"`
+}
+
+func TestContractContentHashComputation(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(contractDir(), "content_hash_example.json"))
+	if err != nil {
+		t.Fatalf("read content_hash_example.json: %v", err)
+	}
+
+	var fixture contentHashFixture
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatalf("unmarshal content_hash_example: %v", err)
+	}
+
+	// Verify the canonical input is subject + "\n" + body.
+	canonicalInput := fixture.Subject + "\n" + fixture.Body
+	if canonicalInput != fixture.CanonicalInput {
+		t.Fatalf("canonical input mismatch:\n  got:  %q\n  want: %q", canonicalInput, fixture.CanonicalInput)
+	}
+
+	// Compute sha256 of the canonical input and prepend "sha256:".
+	h := sha256.Sum256([]byte(canonicalInput))
+	contentHash := "sha256:" + hex.EncodeToString(h[:])
+
+	if contentHash != fixture.ExpectedHash {
+		t.Fatalf("content hash mismatch:\n  got:  %q\n  want: %q", contentHash, fixture.ExpectedHash)
+	}
+}
+
+func TestContractSignInputFormat(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(contractDir(), "content_hash_example.json"))
+	if err != nil {
+		t.Fatalf("read content_hash_example.json: %v", err)
+	}
+
+	var fixture contentHashFixture
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatalf("unmarshal content_hash_example: %v", err)
+	}
+
+	// Recompute the content hash from subject + body (same as TestContractContentHashComputation).
+	h := sha256.Sum256([]byte(fixture.Subject + "\n" + fixture.Body))
+	contentHash := "sha256:" + hex.EncodeToString(h[:])
+
+	// Verify sign_input matches "{content_hash}:{timestamp}".
+	signInput := fmt.Sprintf("%s:%d", contentHash, fixture.Timestamp)
+	if signInput != fixture.SignInputExample {
+		t.Fatalf("sign_input mismatch:\n  got:  %q\n  want: %q", signInput, fixture.SignInputExample)
 	}
 }

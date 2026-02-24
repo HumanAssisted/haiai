@@ -26,6 +26,7 @@ import type {
   SendEmailResult,
   EmailMessage,
   ListMessagesOptions,
+  SearchOptions,
   EmailStatus,
   PublicKeyInfo,
   VerificationResult,
@@ -271,36 +272,47 @@ export class HaiClient {
    *
    * @param options - Optional registration parameters
    */
-  async register(options?: { ownerEmail?: string; description?: string; domain?: string }): Promise<RegistrationResult> {
-    const { publicKeyPem } = this.exportKeys();
+  async register(options?: {
+    ownerEmail?: string;
+    description?: string;
+    domain?: string;
+    agentJson?: string;
+    publicKeyPem?: string;
+  }): Promise<RegistrationResult> {
+    const derived = this.exportKeys();
+    const publicKeyPem = options?.publicKeyPem ?? derived.publicKeyPem;
+    let agentJson = options?.agentJson;
 
-    // Build JACS agent document
-    const agentDoc: Record<string, unknown> = {
-      jacsId: this.jacsId,
-      jacsVersion: '1.0.0',
-      jacsSignature: {
-        agentID: this.jacsId,
-        date: new Date().toISOString(),
-      },
-      jacsPublicKey: publicKeyPem,
-      name: this.config.jacsAgentName,
-      description: options?.description ?? 'Agent registered via Node SDK',
-      capabilities: ['mediation'],
-      version: this.config.jacsAgentVersion,
-    };
-    if (options?.domain) {
-      agentDoc.domain = options.domain;
+    if (!agentJson) {
+      // Build JACS agent document
+      const agentDoc: Record<string, unknown> = {
+        jacsId: this.jacsId,
+        jacsVersion: '1.0.0',
+        jacsSignature: {
+          agentID: this.jacsId,
+          date: new Date().toISOString(),
+        },
+        jacsPublicKey: publicKeyPem,
+        name: this.config.jacsAgentName,
+        description: options?.description ?? 'Agent registered via Node SDK',
+        capabilities: ['mediation'],
+        version: this.config.jacsAgentVersion,
+      };
+      if (options?.domain) {
+        agentDoc.domain = options.domain;
+      }
+
+      // Sign canonical JSON
+      const canonical = canonicalJson(agentDoc);
+      const signature = signString(this.privateKeyPem, canonical, this.privateKeyPassphrase);
+      (agentDoc.jacsSignature as Record<string, string>).signature = signature;
+      agentJson = JSON.stringify(agentDoc);
     }
-
-    // Sign canonical JSON
-    const canonical = canonicalJson(agentDoc);
-    const signature = signString(this.privateKeyPem, canonical, this.privateKeyPassphrase);
-    (agentDoc.jacsSignature as Record<string, string>).signature = signature;
 
     const url = this.makeUrl('/api/v1/agents/register');
     const publicKeyB64 = Buffer.from(publicKeyPem, 'utf-8').toString('base64');
     const body: Record<string, unknown> = {
-      agent_json: JSON.stringify(agentDoc),
+      agent_json: agentJson,
       public_key: publicKeyB64,
     };
     if (options?.ownerEmail) {
@@ -1184,6 +1196,24 @@ export class HaiClient {
   // Transcript parsing
   // ---------------------------------------------------------------------------
 
+  private parseEmailMessage(m: Record<string, unknown>): EmailMessage {
+    return {
+      id: (m.id as string) || '',
+      direction: (m.direction as string) || '',
+      fromAddress: (m.from_address as string) || '',
+      toAddress: (m.to_address as string) || '',
+      subject: (m.subject as string) || '',
+      bodyText: (m.body_text as string) || '',
+      messageId: (m.message_id as string) || '',
+      inReplyTo: (m.in_reply_to as string | null) ?? null,
+      isRead: (m.is_read as boolean) ?? false,
+      deliveryStatus: (m.delivery_status as string) || '',
+      createdAt: (m.created_at as string) || '',
+      readAt: (m.read_at as string | null) ?? null,
+      jacsVerified: (m.jacs_verified as boolean) ?? false,
+    };
+  }
+
   private parseTranscript(raw: unknown[]): TranscriptMessage[] {
     return (raw || []).map((msg: unknown) => {
       const m = msg as Record<string, unknown>;
@@ -1300,6 +1330,15 @@ export class HaiClient {
   async sendEmail(options: SendEmailOptions): Promise<SendEmailResult> {
     const safeJacsId = this.encodePathSegment(this.jacsId);
     const url = this.makeUrl(`/api/agents/${safeJacsId}/email/send`);
+
+    // JACS content signing: hash subject+body, sign with agent key
+    const contentHash = 'sha256:' + createHash('sha256')
+      .update(options.subject + '\n' + options.body, 'utf8')
+      .digest('hex');
+    const jacsTimestamp = Math.floor(Date.now() / 1000);
+    const signInput = `${contentHash}:${jacsTimestamp}`;
+    const jacsSignature = signString(this.privateKeyPem, signInput, this.privateKeyPassphrase);
+
     const response = await this.fetchWithRetry(url, {
       method: 'POST',
       headers: this.buildAuthHeaders(),
@@ -1308,6 +1347,8 @@ export class HaiClient {
         subject: options.subject,
         body: options.body,
         in_reply_to: options.inReplyTo,
+        jacs_signature: jacsSignature,
+        jacs_timestamp: jacsTimestamp,
       }),
     });
 
@@ -1321,14 +1362,14 @@ export class HaiClient {
   /**
    * List email messages for this agent.
    *
-   * @param options - Pagination and folder filter options
+   * @param options - Pagination and direction filter options
    * @returns Array of email messages
    */
   async listMessages(options?: ListMessagesOptions): Promise<EmailMessage[]> {
     const params = new URLSearchParams();
     if (options?.limit != null) params.set('limit', String(options.limit));
     if (options?.offset != null) params.set('offset', String(options.offset));
-    if (options?.folder) params.set('folder', options.folder);
+    if (options?.direction) params.set('direction', options.direction);
 
     const qs = params.toString();
     const safeJacsId = this.encodePathSegment(this.jacsId);
@@ -1341,16 +1382,7 @@ export class HaiClient {
 
     const data = await response.json() as Record<string, unknown>;
     const messages = (data.messages as Array<Record<string, unknown>>) || [];
-    return messages.map((m) => ({
-      id: (m.id as string) || '',
-      fromAddress: (m.from_address as string) || '',
-      toAddress: (m.to_address as string) || '',
-      subject: (m.subject as string) || '',
-      body: (m.body as string) || '',
-      sentAt: (m.sent_at as string) || '',
-      readAt: (m.read_at as string | null) ?? null,
-      threadId: (m.thread_id as string | null) ?? null,
-    }));
+    return messages.map((m) => this.parseEmailMessage(m));
   }
 
   /**
@@ -1383,12 +1415,131 @@ export class HaiClient {
 
     const data = await response.json() as Record<string, unknown>;
     return {
+      email: (data.email as string) || '',
+      status: (data.status as string) || '',
+      tier: (data.tier as string) || '',
+      billingTier: (data.billing_tier as string) || '',
+      messagesSent24h: (data.messages_sent_24h as number) || 0,
       dailyLimit: (data.daily_limit as number) || 0,
       dailyUsed: (data.daily_used as number) || 0,
       resetsAt: (data.resets_at as string) || '',
-      reputationTier: (data.reputation_tier as string) || '',
-      currentTier: (data.current_tier as string) || '',
+      messagesSentTotal: (data.messages_sent_total as number) || 0,
     };
+  }
+
+  /**
+   * Get a single email message by ID.
+   *
+   * @param messageId - The message ID to retrieve
+   * @returns The email message
+   */
+  async getMessage(messageId: string): Promise<EmailMessage> {
+    const safeJacsId = this.encodePathSegment(this.jacsId);
+    const safeMessageId = this.encodePathSegment(messageId);
+    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/messages/${safeMessageId}`);
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: this.buildAuthHeaders(),
+    });
+
+    const m = await response.json() as Record<string, unknown>;
+    return this.parseEmailMessage(m);
+  }
+
+  /**
+   * Delete an email message.
+   *
+   * @param messageId - The message ID to delete
+   */
+  async deleteMessage(messageId: string): Promise<void> {
+    const safeJacsId = this.encodePathSegment(this.jacsId);
+    const safeMessageId = this.encodePathSegment(messageId);
+    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/messages/${safeMessageId}`);
+    await this.fetchWithRetry(url, {
+      method: 'DELETE',
+      headers: this.buildAuthHeaders(),
+    });
+  }
+
+  /**
+   * Mark an email message as unread.
+   *
+   * @param messageId - The message ID to mark as unread
+   */
+  async markUnread(messageId: string): Promise<void> {
+    const safeJacsId = this.encodePathSegment(this.jacsId);
+    const safeMessageId = this.encodePathSegment(messageId);
+    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/messages/${safeMessageId}/unread`);
+    await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: this.buildAuthHeaders(),
+    });
+  }
+
+  /**
+   * Search email messages.
+   *
+   * @param options - Search query and pagination options
+   * @returns Array of matching email messages
+   */
+  async searchMessages(options: SearchOptions): Promise<EmailMessage[]> {
+    const params = new URLSearchParams();
+    params.set('q', options.query);
+    if (options.limit != null) params.set('limit', String(options.limit));
+    if (options.offset != null) params.set('offset', String(options.offset));
+    if (options.direction) params.set('direction', options.direction);
+    if (options.fromAddress) params.set('from_address', options.fromAddress);
+    if (options.toAddress) params.set('to_address', options.toAddress);
+
+    const safeJacsId = this.encodePathSegment(this.jacsId);
+    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/search?${params.toString()}`);
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: this.buildAuthHeaders(),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    const messages = (data.messages as Array<Record<string, unknown>>) || [];
+    return messages.map((m) => this.parseEmailMessage(m));
+  }
+
+  /**
+   * Get the count of unread messages.
+   *
+   * @returns The number of unread messages
+   */
+  async getUnreadCount(): Promise<number> {
+    const safeJacsId = this.encodePathSegment(this.jacsId);
+    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/unread-count`);
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: this.buildAuthHeaders(),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    return (data.count as number) || 0;
+  }
+
+  /**
+   * Reply to an email message.
+   *
+   * Convenience method that fetches the original message to get the sender
+   * and subject, then sends a reply with proper threading.
+   *
+   * @param messageId - The message ID to reply to
+   * @param body - Reply body text
+   * @param subjectOverride - Optional subject override (defaults to "Re: <original subject>")
+   * @returns Send result with message ID and status
+   */
+  async reply(messageId: string, body: string, subjectOverride?: string): Promise<SendEmailResult> {
+    const original = await this.getMessage(messageId);
+    const subject = subjectOverride ?? (original.subject?.startsWith('Re: ') ? original.subject : `Re: ${original.subject}`);
+    return this.sendEmail({
+      to: original.fromAddress,
+      subject,
+      body,
+      inReplyTo: messageId,
+    });
   }
 
   // ---------------------------------------------------------------------------

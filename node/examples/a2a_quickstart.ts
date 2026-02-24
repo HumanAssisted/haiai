@@ -1,261 +1,75 @@
 /**
- * A2A (Agent-to-Agent) Quickstart using HAISDK Node/TypeScript.
+ * A2A (Agent-to-Agent) quickstart using HAISDK facade APIs.
  *
- * Demonstrates how to use haisdk with the A2A protocol (v0.4.0):
- *   1. Register a JACS agent with HAI
- *   2. Export the agent as an A2A Agent Card
- *   3. Wrap an artifact with JACS provenance signature
- *   4. Verify a wrapped artifact
- *   5. Create a chain of custody for multi-agent workflows
- *   6. Publish .well-known documents
+ * Demonstrates:
+ *   1. Initialize a JACS client + HAI client
+ *   2. Export an A2A agent card via haisdk facade
+ *   3. Sign and verify A2A task artifacts
+ *   4. Build chain-of-custody output
+ *   5. Generate .well-known discovery documents
  *
  * Prerequisites:
- *     npm install @humanassisted/haisdk
+ *   npm install haisdk @hai.ai/jacs
  *
  * Usage:
- *     npx tsx examples/a2a_quickstart.ts
+ *   npx tsx examples/a2a_quickstart.ts
  */
 
-import { HaiClient } from '../src/client.js';
-import { generateKeypair, signString } from '../src/crypt.js';
-import { canonicalJson } from '../src/signing.js';
-import { randomUUID } from 'node:crypto';
+import { JacsClient } from '@hai.ai/jacs/client';
+import {
+  createChainOfCustody,
+  generateWellKnownDocuments,
+  HaiClient,
+  registerWithAgentCard,
+  signArtifact,
+  verifyArtifact,
+} from '../src/index.js';
 
 const HAI_URL = 'https://hai.ai';
-
-// ---------------------------------------------------------------------------
-// A2A v0.4.0 Types
-// ---------------------------------------------------------------------------
-
-interface A2AAgentInterface {
-  url: string;
-  protocolBinding: string;
-}
-
-interface A2AAgentSkill {
-  id: string;
-  name: string;
-  description: string;
-  tags: string[];
-  examples?: string[];
-}
-
-interface A2AAgentExtension {
-  uri: string;
-  description?: string;
-  required?: boolean;
-}
-
-interface A2AAgentCapabilities {
-  streaming?: boolean;
-  pushNotifications?: boolean;
-  extensions?: A2AAgentExtension[];
-}
-
-interface A2AAgentCard {
-  name: string;
-  description: string;
-  version: string;
-  protocolVersions: string[];
-  supportedInterfaces: A2AAgentInterface[];
-  defaultInputModes: string[];
-  defaultOutputModes: string[];
-  capabilities: A2AAgentCapabilities;
-  skills: A2AAgentSkill[];
-  metadata?: Record<string, unknown>;
-}
-
-interface WrappedArtifact {
-  jacsId: string;
-  jacsVersion: string;
-  jacsType: string;
-  jacsLevel: string;
-  jacsVersionDate: string;
-  a2aArtifact: Record<string, unknown>;
-  jacsParentSignatures?: Record<string, unknown>[];
-  jacsSignature?: {
-    agentID: string;
-    date: string;
-    signature: string;
-  };
-}
-
-// ---------------------------------------------------------------------------
-// A2A Helper Functions
-// ---------------------------------------------------------------------------
-
-/**
- * Export a JACS agent as an A2A Agent Card (v0.4.0).
- *
- * The Agent Card is published at /.well-known/agent-card.json for
- * zero-config discovery by other A2A agents.
- */
-function exportAgentCard(jacsId: string, agentName: string, domain?: string): A2AAgentCard {
-  const baseUrl = domain
-    ? `https://${domain}/agent/${jacsId}`
-    : `https://hai.ai/agent/${jacsId}`;
-
-  return {
-    name: agentName,
-    description: `HAI-registered JACS agent: ${agentName}`,
-    version: '1.0.0',
-    protocolVersions: ['0.4.0'],
-    supportedInterfaces: [
-      { url: baseUrl, protocolBinding: 'jsonrpc' },
-    ],
-    defaultInputModes: ['text/plain', 'application/json'],
-    defaultOutputModes: ['text/plain', 'application/json'],
-    capabilities: {
-      extensions: [
-        {
-          uri: 'urn:jacs:provenance-v1',
-          description: 'JACS cryptographic document signing and verification',
-          required: false,
-        },
-      ],
-    },
-    skills: [
-      {
-        id: 'mediation',
-        name: 'conflict_mediation',
-        description: 'Mediate conflicts between parties using de-escalation techniques',
-        tags: ['jacs', 'mediation', 'conflict-resolution'],
-        examples: ['Mediate a workplace dispute', 'Help resolve a disagreement'],
-      },
-    ],
-    metadata: {
-      jacsId,
-      registeredWith: 'hai.ai',
-    },
-  };
-}
-
-/**
- * Wrap an A2A artifact with a JACS provenance signature.
- *
- * Signs the artifact using the agent's private key, creating a
- * verifiable record for multi-agent workflows.
- */
-function wrapArtifactWithProvenance(
-  privateKeyPem: string,
-  jacsId: string,
-  artifact: Record<string, unknown>,
-  artifactType: string,
-  parentSignatures?: Record<string, unknown>[],
-): WrappedArtifact {
-  const wrapped: WrappedArtifact = {
-    jacsId: randomUUID(),
-    jacsVersion: '1.0.0',
-    jacsType: `a2a-${artifactType}`,
-    jacsLevel: 'artifact',
-    jacsVersionDate: new Date().toISOString(),
-    a2aArtifact: artifact,
-  };
-
-  if (parentSignatures) {
-    wrapped.jacsParentSignatures = parentSignatures;
-  }
-
-  // Sign canonical JSON of the document (without jacsSignature)
-  const canonical = canonicalJson(wrapped as unknown as Record<string, unknown>);
-  const signature = signString(privateKeyPem, canonical);
-
-  wrapped.jacsSignature = {
-    agentID: jacsId,
-    date: new Date().toISOString(),
-    signature,
-  };
-
-  return wrapped;
-}
-
-/**
- * Verify a JACS-wrapped A2A artifact.
- */
-function verifyWrappedArtifact(wrapped: WrappedArtifact): Record<string, unknown> {
-  const signatureInfo = wrapped.jacsSignature;
-  if (!signatureInfo?.signature) {
-    return { valid: false, error: 'No signature found' };
-  }
-
-  // For full verification you would fetch the signer's public key
-  // from HAI and use verifyString(). Here we show the structure:
-  return {
-    valid: true,
-    signerId: signatureInfo.agentID,
-    artifactType: wrapped.jacsType,
-    timestamp: wrapped.jacsVersionDate,
-    originalArtifact: wrapped.a2aArtifact,
-  };
-}
-
-/**
- * Create a chain of custody document for multi-agent workflows.
- */
-function createChainOfCustody(artifacts: WrappedArtifact[]): Record<string, unknown> {
-  const chain = artifacts.map((a) => ({
-    artifactId: a.jacsId,
-    artifactType: a.jacsType,
-    timestamp: a.jacsVersionDate,
-    agentId: a.jacsSignature?.agentID ?? 'unknown',
-    signaturePresent: Boolean(a.jacsSignature?.signature),
-  }));
-
-  return {
-    chainOfCustody: chain,
-    created: new Date().toISOString(),
-    totalArtifacts: chain.length,
-  };
-}
-
-/**
- * Generate .well-known documents for A2A discovery.
- */
-function generateWellKnownDocuments(
-  agentCard: A2AAgentCard,
-  jacsId: string,
-): Record<string, Record<string, unknown>> {
-  return {
-    '/.well-known/agent-card.json': agentCard as unknown as Record<string, unknown>,
-    '/.well-known/jacs-agent.json': {
-      jacsVersion: '1.0',
-      agentId: jacsId,
-      registeredWith: 'hai.ai',
-      capabilities: { signing: true, verification: true },
-      endpoints: { verify: '/jacs/verify', sign: '/jacs/sign' },
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
+const A2A_OPTIONS = { trustPolicy: 'verified' as const };
 
 async function main(): Promise<void> {
-  // --- Step 1: Register agent with HAI ---
-  console.log('=== Step 1: Register a JACS agent with HAI ===');
-  const keypair = generateKeypair();
-  const client = HaiClient.fromCredentials(
-    'a2a-demo-agent',
-    keypair.privateKeyPem,
-    { url: HAI_URL },
+  console.log('=== Step 1: Initialize JACS + HAI clients ===');
+  const jacs = await JacsClient.quickstart();
+  const hai = await HaiClient.create({ url: HAI_URL });
+
+  console.log('\n=== Step 2: Register with embedded A2A agent card metadata ===');
+  const localJacsId = hai.jacsId;
+  const agentData = {
+    jacsId: localJacsId,
+    jacsName: 'a2a-demo-agent',
+    jacsVersion: '1.0.0',
+    jacsAgentDomain: 'demo.example.com',
+    a2aProfile: '1.0',
+    jacsServices: [
+      {
+        name: 'conflict_mediation',
+        serviceDescription: 'Mediate disputes with signed provenance artifacts.',
+      },
+    ],
+  } as Record<string, unknown>;
+
+  const registered = await registerWithAgentCard(
+    hai,
+    jacs,
+    agentData,
+    {
+      ownerEmail: 'you@example.com',
+      description: 'A2A facade quickstart agent',
+      agentJson: {
+        jacsId: localJacsId,
+        name: 'a2a-demo-agent',
+      },
+      ...A2A_OPTIONS,
+    },
   );
-  const reg = await client.register({
-    ownerEmail: 'you@example.com',
-  });
-  const jacsId = reg.jacsId || client.jacsId;
+  const registration = registered.registration as Record<string, unknown>;
+  const jacsId = (registration.jacsId as string) || (registration.jacs_id as string) || localJacsId;
+  const agentCard = registered.agentCard;
   console.log(`Agent registered with ID: ${jacsId}`);
-
-  // Use the in-memory keypair for signing artifacts in this quickstart flow.
-  const privateKeyPem = keypair.privateKeyPem;
-
-  // --- Step 2: Export as A2A Agent Card ---
-  console.log('\n=== Step 2: Export A2A Agent Card (v0.4.0) ===');
-  const agentCard = exportAgentCard(jacsId, 'a2a-demo-agent', 'demo.example.com');
   console.log(JSON.stringify(agentCard, null, 2));
 
-  // --- Step 3: Wrap artifact with JACS provenance ---
-  console.log('\n=== Step 3: Wrap artifact with JACS provenance ===');
+  console.log('\n=== Step 3: Sign and verify task artifact ===');
   const taskArtifact = {
     taskId: 'task-001',
     operation: 'mediate_conflict',
@@ -263,54 +77,57 @@ async function main(): Promise<void> {
       parties: ['Alice', 'Bob'],
       topic: 'Resource allocation disagreement',
     },
-  };
-  const wrapped = wrapArtifactWithProvenance(
-    privateKeyPem,
-    jacsId,
-    taskArtifact,
-    'task',
-  );
-  console.log(`Wrapped artifact ID: ${wrapped.jacsId}`);
-  console.log(`Artifact type: ${wrapped.jacsType}`);
-  console.log(`Signed by: ${wrapped.jacsSignature?.agentID}`);
+  } as Record<string, unknown>;
 
-  // --- Step 4: Verify the wrapped artifact ---
-  console.log('\n=== Step 4: Verify wrapped artifact ===');
-  const verification = verifyWrappedArtifact(wrapped);
-  console.log(`Valid: ${verification.valid}`);
-  console.log(`Signer: ${verification.signerId}`);
-  console.log(`Type: ${verification.artifactType}`);
+  const wrappedTask = await signArtifact(jacs, taskArtifact, 'task', null, A2A_OPTIONS) as Record<string, unknown>;
+  const verification = await verifyArtifact(jacs, wrappedTask, A2A_OPTIONS) as Record<string, unknown>;
+  console.log(`Valid: ${String(verification.valid)}`);
+  console.log(`Signer: ${String(verification.signerId ?? '')}`);
+  console.log(`Type: ${String(verification.artifactType ?? '')}`);
 
-  // --- Step 5: Chain of custody (multi-agent workflow) ---
-  console.log('\n=== Step 5: Chain of custody ===');
+  console.log('\n=== Step 4: Chain of custody ===');
   const resultArtifact = {
     taskId: 'task-001',
-    result: 'Mediation successful -- both parties agreed to shared schedule',
-  };
-  const wrappedResult = wrapArtifactWithProvenance(
-    privateKeyPem,
-    jacsId,
+    result: 'Mediation successful -- both parties agreed to a shared schedule.',
+  } as Record<string, unknown>;
+
+  const wrappedResult = await signArtifact(
+    jacs,
     resultArtifact,
     'task-result',
-    wrapped.jacsSignature ? [wrapped.jacsSignature as unknown as Record<string, unknown>] : [],
-  );
+    [wrappedTask],
+    A2A_OPTIONS,
+  ) as Record<string, unknown>;
 
-  const chain = createChainOfCustody([wrapped, wrappedResult]);
-  console.log(`Chain length: ${(chain.totalArtifacts as number)}`);
-  for (const entry of chain.chainOfCustody as Array<Record<string, unknown>>) {
-    console.log(`  [${entry.artifactType}] by ${entry.agentId} at ${entry.timestamp}`);
-  }
+  const chain = await createChainOfCustody(
+    jacs,
+    [wrappedTask, wrappedResult],
+    A2A_OPTIONS,
+  ) as Record<string, unknown>;
+  console.log(JSON.stringify(chain, null, 2));
 
-  // --- Step 6: Generate .well-known documents ---
-  console.log('\n=== Step 6: .well-known documents ===');
-  const wellKnown = generateWellKnownDocuments(agentCard, jacsId);
+  console.log('\n=== Step 5: .well-known document bundle ===');
+  const { publicKeyPem } = hai.exportKeys();
+  const publicKeyB64 = Buffer.from(publicKeyPem, 'utf-8').toString('base64url');
+  const wellKnown = await generateWellKnownDocuments(
+    jacs,
+    agentCard,
+    '',
+    publicKeyB64,
+    agentData,
+    A2A_OPTIONS,
+  ) as Record<string, unknown>;
+
   for (const [path, doc] of Object.entries(wellKnown)) {
+    const preview = JSON.stringify(doc, null, 2);
     console.log(`\n${path}:`);
-    console.log(JSON.stringify(doc, null, 2).slice(0, 200) + '...');
+    console.log(preview.length > 220 ? `${preview.slice(0, 220)}...` : preview);
   }
 
-  console.log('\nA2A quickstart complete!');
-  console.log('Serve the .well-known documents at your agent\'s domain for A2A discovery.');
+  console.log('\nA2A quickstart complete.');
 }
 
-main().catch(console.error);
+main().catch((err) => {
+  console.error(err);
+  process.exitCode = 1;
+});

@@ -353,6 +353,8 @@ export interface SendEmailResult {
 export interface EmailMessage {
   /** Unique message ID. */
   id: string;
+  /** Direction: "inbound" or "outbound". */
+  direction: string;
   /** Sender email address. */
   fromAddress: string;
   /** Recipient email address. */
@@ -360,13 +362,21 @@ export interface EmailMessage {
   /** Email subject. */
   subject: string;
   /** Email body text. */
-  body: string;
-  /** ISO 8601 timestamp when the message was sent. */
-  sentAt: string;
+  bodyText: string;
+  /** RFC 2822 Message-ID. */
+  messageId: string;
+  /** Message-ID of the parent message (for threading), or null. */
+  inReplyTo: string | null;
+  /** Whether the message has been read. */
+  isRead: boolean;
+  /** Delivery status (e.g., "queued", "delivered", "failed"). */
+  deliveryStatus: string;
+  /** ISO 8601 timestamp when the message was created. */
+  createdAt: string;
   /** ISO 8601 timestamp when the message was read, or null. */
   readAt: string | null;
-  /** Thread ID for grouping replies. */
-  threadId: string | null;
+  /** Whether the JACS signature on this message was verified. */
+  jacsVerified: boolean;
 }
 
 /** Options for listing email messages. */
@@ -375,22 +385,46 @@ export interface ListMessagesOptions {
   limit?: number;
   /** Offset for pagination. */
   offset?: number;
-  /** Folder to list from. */
-  folder?: 'inbox' | 'outbox' | 'all';
+  /** Filter by direction: "inbound" or "outbound". */
+  direction?: 'inbound' | 'outbound';
+}
+
+/** Options for searching email messages. */
+export interface SearchOptions {
+  /** Search query string. */
+  query: string;
+  /** Max number of results. */
+  limit?: number;
+  /** Offset for pagination. */
+  offset?: number;
+  /** Filter by direction: "inbound" or "outbound". */
+  direction?: 'inbound' | 'outbound';
+  /** Filter by sender address. */
+  fromAddress?: string;
+  /** Filter by recipient address. */
+  toAddress?: string;
 }
 
 /** Email rate limit and status info. */
 export interface EmailStatus {
+  /** The agent's email address. */
+  email: string;
+  /** Email provisioning status. */
+  status: string;
+  /** Agent's reputation tier. */
+  tier: string;
+  /** Current billing tier. */
+  billingTier: string;
+  /** Messages sent in the last 24 hours. */
+  messagesSent24h: number;
   /** Maximum emails per day for current tier. */
   dailyLimit: number;
   /** Emails sent today. */
   dailyUsed: number;
   /** ISO 8601 timestamp when the daily counter resets. */
   resetsAt: string;
-  /** Agent's reputation tier. */
-  reputationTier: string;
-  /** Current billing tier. */
-  currentTier: string;
+  /** Total messages sent all time. */
+  messagesSentTotal: number;
 }
 
 // =============================================================================

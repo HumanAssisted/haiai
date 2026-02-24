@@ -200,7 +200,7 @@ pub struct ListMessagesOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offset: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub folder: Option<String>,
+    pub direction: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -208,33 +208,71 @@ pub struct EmailMessage {
     #[serde(default)]
     pub id: String,
     #[serde(default)]
+    pub direction: String,
+    #[serde(default)]
     pub from_address: String,
     #[serde(default)]
     pub to_address: String,
     #[serde(default)]
     pub subject: String,
     #[serde(default)]
-    pub body: String,
+    pub body_text: String,
     #[serde(default)]
-    pub sent_at: String,
+    pub message_id: Option<String>,
+    #[serde(default)]
+    pub in_reply_to: Option<String>,
+    #[serde(default)]
+    pub is_read: bool,
+    #[serde(default)]
+    pub delivery_status: String,
+    #[serde(default)]
+    pub created_at: String,
     #[serde(default)]
     pub read_at: Option<String>,
     #[serde(default)]
-    pub thread_id: Option<String>,
+    pub jacs_verified: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SearchOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub direction: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmailStatus {
     #[serde(default)]
-    pub daily_limit: u32,
+    pub email: String,
     #[serde(default)]
-    pub daily_used: u32,
+    pub status: String,
+    #[serde(default)]
+    pub tier: String,
+    #[serde(default)]
+    pub billing_tier: String,
+    #[serde(default)]
+    pub messages_sent_24h: i32,
+    #[serde(default)]
+    pub daily_limit: i32,
+    #[serde(default)]
+    pub daily_used: i32,
     #[serde(default)]
     pub resets_at: String,
     #[serde(default)]
-    pub reputation_tier: String,
-    #[serde(default)]
-    pub current_tier: String,
+    pub messages_sent_total: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

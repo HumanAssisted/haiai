@@ -96,5 +96,36 @@ class WebSocketError(HaiError):
     """Error with WebSocket connection."""
 
 
+class EmailNotActive(HaiApiError):
+    """Agent email is allocated but not yet active (403)."""
+
+
+class RecipientNotFound(HaiApiError):
+    """Recipient address does not exist (400)."""
+
+
+class RateLimited(HaiApiError):
+    """Too many requests (429).
+
+    Attributes:
+        resets_at: ISO 8601 timestamp when the rate limit resets.
+    """
+
+    def __init__(
+        self, message: str, status_code: int = 429, body: str = "",
+        resets_at: str = "",
+    ) -> None:
+        super().__init__(message, status_code=status_code, body=body)
+        self.resets_at = resets_at
+
+
+class SubjectTooLong(HaiApiError):
+    """Email subject exceeds the maximum length (400)."""
+
+
+class BodyTooLarge(HaiApiError):
+    """Email body exceeds the maximum size (400)."""
+
+
 # Backward-compatibility aliases matching the JACS monolith names
 AuthenticationError = HaiAuthError

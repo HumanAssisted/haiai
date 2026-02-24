@@ -2,8 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use haisdk::{
-    A2AAgentCard, A2ATrustPolicy, HaiClient, HaiClientOptions, RegisterAgentOptions,
-    StaticJacsProvider,
+    A2AAgentCard, A2ATrustPolicy, A2AWrappedArtifact, HaiClient, HaiClientOptions,
+    RegisterAgentOptions, StaticJacsProvider,
 };
 use serde_json::{json, Value};
 
@@ -109,5 +109,66 @@ fn assesses_trust_cases_fixture() {
             )
             .expect("assess");
         assert_eq!(assessment.allowed, expected, "policy={policy}");
+    }
+}
+
+#[test]
+fn golden_profile_normalization_cases() {
+    let client = make_client();
+    let a2a = client.get_a2a(None);
+    let cases = load_fixture_json("golden_profile_normalization.json")["cases"]
+        .as_array()
+        .expect("cases array")
+        .clone();
+
+    for case in cases {
+        let case_name = case["name"].as_str().unwrap_or("unnamed");
+        let card: A2AAgentCard = serde_json::from_value(case["card"].clone()).expect("card");
+        let expected_profile = case["expected"]["a2aProfile"]
+            .as_str()
+            .expect("expected profile");
+
+        let opts = RegisterAgentOptions {
+            agent_json: serde_json::to_string(&case["agentJson"]).expect("agent json"),
+            ..RegisterAgentOptions::default()
+        };
+        let merged = a2a
+            .register_options_with_agent_card(opts, &card)
+            .expect("merge options");
+        let merged_json: Value = serde_json::from_str(&merged.agent_json).expect("decode merged");
+
+        assert_eq!(
+            merged_json["metadata"]["a2aProfile"], expected_profile,
+            "case={case_name}"
+        );
+    }
+}
+
+#[test]
+fn golden_chain_of_custody_output() {
+    let client = make_client();
+    let a2a = client.get_a2a(None);
+    let fixture = load_fixture_json("golden_chain_of_custody.json");
+
+    let artifacts: Vec<A2AWrappedArtifact> =
+        serde_json::from_value(fixture["artifacts"].clone()).expect("artifacts");
+    let chain = a2a.create_chain_of_custody(&artifacts);
+
+    assert_eq!(chain.total_artifacts, fixture["expected"]["totalArtifacts"]);
+    let expected_entries = fixture["expected"]["entries"]
+        .as_array()
+        .expect("expected entries");
+    assert_eq!(chain.chain_of_custody.len(), expected_entries.len());
+
+    for (index, expected) in expected_entries.iter().enumerate() {
+        let got = &chain.chain_of_custody[index];
+        assert_eq!(got.artifact_id, expected["artifactId"], "entry={index}");
+        assert_eq!(got.artifact_type, expected["artifactType"], "entry={index}");
+        assert_eq!(got.timestamp, expected["timestamp"], "entry={index}");
+        assert_eq!(got.agent_id, expected["agentId"], "entry={index}");
+        assert_eq!(
+            got.signature_present, expected["signaturePresent"],
+            "entry={index}"
+        );
     }
 }
