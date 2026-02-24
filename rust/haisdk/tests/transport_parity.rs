@@ -54,7 +54,10 @@ async fn connect_sse_streams_connected_and_benchmark_events() {
         .expect("second event timeout")
         .expect("second event");
     assert_eq!(second.event_type, "benchmark_job");
-    assert_eq!(second.data.get("job_id").and_then(|v| v.as_str()), Some("job-1"));
+    assert_eq!(
+        second.data.get("job_id").and_then(|v| v.as_str()),
+        Some("job-1")
+    );
 
     conn.close().await;
     mock.assert_async().await;
@@ -116,7 +119,10 @@ async fn connect_ws_streams_connected_and_benchmark_events() {
         .expect("second event timeout")
         .expect("second event");
     assert_eq!(second.event_type, "benchmark_job");
-    assert_eq!(second.data.get("job_id").and_then(|v| v.as_str()), Some("job-1"));
+    assert_eq!(
+        second.data.get("job_id").and_then(|v| v.as_str()),
+        Some("job-1")
+    );
 
     conn.close().await;
 }

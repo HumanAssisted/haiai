@@ -260,6 +260,62 @@ verified = verify_artifact(jacs, signed)
 print(verified)
 ```
 
+### Go
+
+```go
+ctx := context.Background()
+client, _ := hai.NewClient()
+a2a := client.GetA2A(hai.A2ATrustPolicyVerified)
+
+card := a2a.ExportAgentCard(map[string]interface{}{
+	"jacsId": "demo-agent",
+	"jacsName": "Demo Agent",
+	"a2aProfile": hai.A2AProtocolVersion10,
+})
+
+wrapped, _ := a2a.SignArtifact(map[string]interface{}{
+	"taskId": "t-1",
+	"input": "hello",
+}, "task", nil)
+verified, _ := a2a.VerifyArtifact(wrapped)
+fmt.Println(verified.Valid)
+
+_ = ctx // used if calling RegisterWithAgentCard / OnMediatedBenchmarkJob
+```
+
+### Rust
+
+```rust
+use haisdk::{
+    A2ATrustPolicy, HaiClient, HaiClientOptions, RegisterAgentOptions, StaticJacsProvider,
+};
+use serde_json::json;
+
+let client = HaiClient::new(
+    StaticJacsProvider::new("demo-agent"),
+    HaiClientOptions::default(),
+)?;
+let a2a = client.get_a2a(Some(A2ATrustPolicy::Verified));
+
+let card = a2a.export_agent_card(&json!({
+    "jacsId": "demo-agent",
+    "jacsName": "Demo Agent",
+    "a2aProfile": "1.0"
+}))?;
+
+let wrapped = a2a.sign_artifact(json!({"taskId":"t-1","input":"hello"}), "task", None)?;
+let verified = a2a.verify_artifact(&wrapped)?;
+println!("{}", verified.valid);
+
+let _merged = a2a.register_options_with_agent_card(
+    RegisterAgentOptions {
+        agent_json: "{\"jacsId\":\"demo-agent\"}".to_string(),
+        ..RegisterAgentOptions::default()
+    },
+    &card,
+)?;
+```
+
 ## Repository Structure
 
 ```

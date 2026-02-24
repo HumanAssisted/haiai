@@ -17,9 +17,9 @@ use crate::jacs::JacsProvider;
 use crate::types::{
     AgentVerificationResult, CheckUsernameResult, ClaimUsernameResult, DeleteUsernameResult,
     DnsCertifiedResult, DnsCertifiedRunOptions, DocumentVerificationResult, EmailMessage,
-    EmailStatus, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult,
-    ListMessagesOptions, PublicKeyInfo, RegisterAgentOptions, RegistrationResult, SendEmailOptions,
-    SendEmailResult, TranscriptMessage, TransportType, UpdateUsernameResult, VerifyAgentDocumentRequest,
+    EmailStatus, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult, ListMessagesOptions,
+    PublicKeyInfo, RegisterAgentOptions, RegistrationResult, SendEmailOptions, SendEmailResult,
+    TranscriptMessage, TransportType, UpdateUsernameResult, VerifyAgentDocumentRequest,
     VerifyAgentResult,
 };
 
@@ -122,6 +122,14 @@ impl<P: JacsProvider> HaiClient<P> {
         let message = format!("{}:{ts}", self.jacs.jacs_id());
         let signature = self.jacs.sign_string(&message)?;
         Ok(format!("JACS {}:{ts}:{signature}", self.jacs.jacs_id()))
+    }
+
+    pub fn sign_message(&self, message: &str) -> Result<String> {
+        self.jacs.sign_string(message)
+    }
+
+    pub fn canonical_json(&self, value: &Value) -> Result<String> {
+        self.jacs.canonical_json(value)
     }
 
     pub async fn hello(&self, include_test: bool) -> Result<HelloResult> {
@@ -575,9 +583,7 @@ impl<P: JacsProvider> HaiClient<P> {
 
         let start = std::time::Instant::now();
         let safe_payment_id = encode_path_segment(&payment_id);
-        let status_url = self.url(&format!(
-            "/api/benchmark/payments/{safe_payment_id}/status"
-        ));
+        let status_url = self.url(&format!("/api/benchmark/payments/{safe_payment_id}/status"));
 
         loop {
             if start.elapsed() >= options.poll_timeout {
@@ -601,9 +607,7 @@ impl<P: JacsProvider> HaiClient<P> {
                 }
                 if status == "failed" || status == "expired" || status == "cancelled" {
                     let detail = value_string(&status_data, &["message"]);
-                    return Err(HaiError::Message(format!(
-                        "payment {status}: {detail}"
-                    )));
+                    return Err(HaiError::Message(format!("payment {status}: {detail}")));
                 }
             }
 
@@ -724,9 +728,9 @@ impl<P: JacsProvider> HaiClient<P> {
 
     pub async fn connect_ws(&self) -> Result<WsConnection> {
         let ws_url = build_ws_url(&self.base_url, "/ws/agent/connect");
-        let mut request = ws_url
-            .into_client_request()
-            .map_err(|err| HaiError::Message(format!("failed to build websocket request: {err}")))?;
+        let mut request = ws_url.into_client_request().map_err(|err| {
+            HaiError::Message(format!("failed to build websocket request: {err}"))
+        })?;
         let auth_header = tungstenite::http::HeaderValue::from_str(&self.build_auth_header()?)
             .map_err(|err| HaiError::Message(format!("invalid auth header: {err}")))?;
         request.headers_mut().insert("Authorization", auth_header);
@@ -906,7 +910,8 @@ fn parse_transcript(data: &Value) -> Vec<TranscriptMessage> {
 }
 
 fn parse_sse_event_payload(event_type: &str, id: Option<String>, raw: &str) -> HaiEvent {
-    let data = serde_json::from_str::<Value>(raw).unwrap_or_else(|_| Value::String(raw.to_string()));
+    let data =
+        serde_json::from_str::<Value>(raw).unwrap_or_else(|_| Value::String(raw.to_string()));
     let inferred = data
         .get("type")
         .and_then(Value::as_str)

@@ -10,6 +10,7 @@ JACS integration via `JacsProvider`. It owns HAI-specific concerns such as:
 - URL/path escaping rules
 - benchmark/email/verification API workflows
 - verify-link generation
+- A2A facade composition (`client.get_a2a(...)`) on top of JACS-backed signing
 
 ## Status
 
@@ -19,3 +20,12 @@ Initial scaffold for parity with existing Python/Node/Go SDK contracts.
 
 Do not implement runtime crypto primitives in this crate. Use `JacsProvider`
 implementations backed by JACS.
+
+## A2A facade
+
+`haisdk` exposes first-class A2A wrappers that stay at the SDK layer while
+delegating cryptographic signing/canonicalization to your `JacsProvider`.
+
+Key entrypoint:
+
+1. `HaiClient::get_a2a(...)`

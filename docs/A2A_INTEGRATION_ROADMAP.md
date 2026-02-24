@@ -377,9 +377,24 @@ Completed in this pass:
 4. TDD coverage added:
    - Node delegation + fixture tests
    - Python delegation + fixture tests
+5. Phase 2 Go facade implementation:
+   - added `go/a2a.go` first-class A2A facade on `Client.GetA2A(...)`
+   - added register helper parity: `RegisterOptionsWithAgentCard(...)` + `RegisterWithAgentCard(...)`
+   - added mediated/email helpers: `OnMediatedBenchmarkJob(...)` + `SendSignedArtifactEmail(...)`
+6. Phase 2 Rust facade implementation:
+   - added `rust/haisdk/src/a2a.rs` with facade methods and trust-policy handling
+   - exported A2A facade/types from `rust/haisdk/src/lib.rs`
+   - added `HaiClient::get_a2a(...)` facade constructor
+   - added register helper parity: `register_options_with_agent_card(...)` + `register_with_agent_card(...)`
+   - added mediated/email helpers: `on_mediated_benchmark_job(...)` + `send_signed_artifact_email(...)`
+7. Phase 2 TDD coverage added:
+   - Go: `go/a2a_test.go` (roundtrip signing/verification, fixture contracts, trust-policy cases, register-helper merge behavior)
+   - Rust: `rust/haisdk/tests/a2a_facade.rs` (shared fixture contracts + facade behavior parity)
+8. Phase 4 example migration started:
+   - replaced `go/examples/a2a/main.go` duplicated protocol logic with facade-first usage (`GetA2A`, `SignArtifact`, `VerifyArtifact`, `CreateChainOfCustody`, `GenerateWellKnownDocuments`, register-option merge)
 
 Remaining roadmap work:
 
-1. Phase 2 Go/Rust first-class facade parity
-2. Phase 3 mediated runtime + email integrated A2A workflows
-3. Phase 4 full example/doc migration to facade-first usage
+1. Phase 3 end-to-end mediated workflow tests (mocked SSE/WS streams + signature/trust failure paths)
+2. Phase 4 full quickstart migration in Node/Python examples to facade-first usage (remove duplicated protocol structs/helpers)
+3. Cross-language golden tests for chain-of-custody and mixed-profile (`v0.4.0`/`v1.0`) interop normalization
