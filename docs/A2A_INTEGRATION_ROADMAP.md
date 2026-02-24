@@ -215,6 +215,142 @@ Use these fixtures in all language SDK tests.
 5. `a2a_mediated_hai_flow`: SSE/WS benchmark job handling with signed artifacts.
 6. `a2a_email_dispatch`: send signed task/result links and verify on receipt.
 
+## Production Use Cases
+
+This section defines the highest-frequency real-world A2A scenarios that must be
+explicitly supported by `haisdk` (via JACS-backed facades and HAI composition).
+
+### P0: Identity + Discovery
+
+1. Register agent with HAI using JACS identity.
+2. Publish and maintain `.well-known` documents and agent card.
+3. Keep card metadata aligned with registered `agent_json`.
+
+Required capabilities:
+
+1. `registerWithAgentCard(...)` facade helper.
+2. `exportAgentCard(...)` + `generateWellKnownDocuments(...)`.
+3. Update/re-register flow when card metadata changes.
+
+Acceptance checks:
+
+1. Cross-language fixture parity for card and well-known document output.
+2. Integration tests proving HAI registration recognizes embedded A2A metadata.
+
+### P0: Signed Task/Result Exchange
+
+1. Agent A sends signed task artifact to Agent B.
+2. Agent B verifies task, produces signed result, returns result artifact.
+3. Both sides can independently verify provenance and integrity.
+
+Required capabilities:
+
+1. `signArtifact(...)` and `verifyArtifact(...)`.
+2. Standardized artifact envelope structure across languages.
+3. Parent-signature support for chained workflows.
+
+Acceptance checks:
+
+1. Roundtrip tests for task -> result across all SDKs.
+2. Negative tests for tampered artifacts and unknown signers.
+
+### P0: Trust Gating In Execution Paths
+
+1. Runtime policy gate before accepting/processing remote A2A artifacts.
+2. Support `open`, `verified`, and `strict` policy modes.
+3. Trust store integration for strict mode.
+
+Required capabilities:
+
+1. `assessRemoteAgent(...)` and `trustA2AAgent(...)`.
+2. Runtime policy hooks in mediated transport processing.
+
+Acceptance checks:
+
+1. Policy matrix tests (`open`/`verified`/`strict`) across SDKs.
+2. Tests proving strict mode rejects untrusted agents.
+
+### P1: Mediated Runtime Over HAI Transport
+
+1. Receive jobs over SSE/WS.
+2. Sign inbound/outbound task payloads.
+3. Submit responses to HAI with preserved provenance.
+
+Required capabilities:
+
+1. Transport handlers that optionally enforce trust policy + artifact verification.
+2. Benchmark orchestration helpers that preserve A2A metadata/signatures.
+
+Acceptance checks:
+
+1. End-to-end mocked transport tests with signature/trust assertions.
+2. Retry/reconnect tests preserving verification state.
+
+### P1: Key Rotation + Revocation
+
+1. Rotate agent keys without breaking downstream verification.
+2. Distinguish active/stale keys in verification and trust workflows.
+3. Handle key revocation and rejected signatures safely.
+
+Required capabilities:
+
+1. Public-key refresh and cache invalidation strategy in SDKs.
+2. Verification path that reports stale/revoked key outcomes clearly.
+
+Acceptance checks:
+
+1. Rotation tests: old signatures remain auditable; new signatures verify on new key.
+2. Revocation tests: revoked/stale keys fail policy where required.
+
+### P1: Replay, Idempotency, and Task Lifecycle
+
+1. Prevent duplicate processing/replay of signed artifacts.
+2. Support long-running tasks (progress updates, cancellation, retry semantics).
+3. Preserve signed audit trail through lifecycle transitions.
+
+Required capabilities:
+
+1. Artifact IDs + timestamp/window validation guidance.
+2. Idempotency hooks for job/task handlers.
+3. Lifecycle envelope conventions for progress/cancel/retry events.
+
+Acceptance checks:
+
+1. Replay attack simulation tests.
+2. Idempotent re-delivery tests over SSE/WS reconnect scenarios.
+3. Lifecycle state-transition tests with signed envelopes.
+
+### P1: OAuth Coexistence (When User Delegation Is Needed)
+
+1. Use A2A+JACS for agent trust and provenance.
+2. Use OAuth/OIDC where user consent/scoped delegation is required.
+3. Ensure both models can coexist in one request pipeline.
+
+Required capabilities:
+
+1. Clear endpoint-level guidance on when OAuth is required.
+2. Examples combining OAuth-protected resource access with signed A2A artifacts.
+
+Acceptance checks:
+
+1. Docs + examples validated in CI for mixed-auth workflows.
+2. Tests ensuring A2A verification remains independent of OAuth token validity.
+
+### P1: Version Interop (A2A v0.4.0 and v1.0)
+
+1. Consume and emit compatible artifacts/cards across profile versions.
+2. Provide explicit profile selection and normalized internal shape.
+
+Required capabilities:
+
+1. Profile enum in each SDK.
+2. Compatibility transformers or adapters where required.
+
+Acceptance checks:
+
+1. Fixture conformance tests for v0.4.0 and v1.0.
+2. Interop tests for mixed-version producer/consumer pairs.
+
 ## Implementation Order (Recommended)
 
 1. Phase 1 (Node/Python facades + tests)
