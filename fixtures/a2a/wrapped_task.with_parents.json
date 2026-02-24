@@ -1,0 +1,30 @@
+{
+  "jacsId": "22222222-2222-4222-8222-222222222222",
+  "jacsVersion": "1.0.0",
+  "jacsType": "a2a-task-result",
+  "jacsLevel": "artifact",
+  "jacsVersionDate": "2026-02-24T00:05:00Z",
+  "a2aArtifact": {
+    "taskId": "task-001",
+    "status": "completed",
+    "result": {
+      "label": "greeting"
+    }
+  },
+  "jacsParentSignatures": [
+    {
+      "jacsId": "11111111-1111-4111-8111-111111111111",
+      "jacsType": "a2a-task",
+      "jacsSignature": {
+        "agentID": "demo-agent",
+        "date": "2026-02-24T00:00:00Z",
+        "signature": "BASE64_PARENT_SIGNATURE_PLACEHOLDER"
+      }
+    }
+  ],
+  "jacsSignature": {
+    "agentID": "downstream-agent",
+    "date": "2026-02-24T00:05:00Z",
+    "signature": "BASE64_SIGNATURE_PLACEHOLDER"
+  }
+}

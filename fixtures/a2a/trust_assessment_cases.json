@@ -1,0 +1,45 @@
+{
+  "cases": [
+    {
+      "name": "open_allows_plain_a2a",
+      "policy": "open",
+      "card": {
+        "name": "Plain A2A Agent",
+        "capabilities": {}
+      },
+      "expected": {
+        "allowed": true
+      }
+    },
+    {
+      "name": "verified_requires_jacs_extension",
+      "policy": "verified",
+      "card": {
+        "name": "JACS A2A Agent",
+        "capabilities": {
+          "extensions": [
+            {
+              "uri": "urn:jacs:provenance-v1"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "allowed": true
+      }
+    },
+    {
+      "name": "strict_requires_trust_store",
+      "policy": "strict",
+      "card": {
+        "name": "Untrusted JACS Agent",
+        "metadata": {
+          "jacsId": "unknown-agent"
+        }
+      },
+      "expected": {
+        "allowed": false
+      }
+    }
+  ]
+}

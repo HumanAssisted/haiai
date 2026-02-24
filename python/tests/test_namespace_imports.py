@@ -42,6 +42,7 @@ def test_haisdk_library_passthrough_maps_to_legacy_functions() -> None:
 
 def test_haisdk_step2_modules_import() -> None:
     import haisdk
+    from haisdk import a2a
     from haisdk.agentsdk import agentsdk_tool_wrapper
     from haisdk.crewai import crewai_guardrail
     from haisdk.integrations import create_mcp_server
@@ -49,6 +50,8 @@ def test_haisdk_step2_modules_import() -> None:
     from haisdk.mcp import mcp_tool
 
     assert hasattr(haisdk, "integrations")
+    assert hasattr(haisdk, "a2a")
+    assert callable(a2a.get_a2a_integration)
     assert callable(agentsdk_tool_wrapper)
     assert callable(crewai_guardrail)
     assert callable(create_mcp_server)

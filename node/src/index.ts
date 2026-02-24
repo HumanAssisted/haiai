@@ -39,6 +39,20 @@ export type {
   AgentSdkToolWrapperOptions,
 } from './integrations.js';
 
+// A2A integration wrappers (delegates to @hai.ai/jacs/a2a)
+export {
+  getA2AIntegration,
+  quickstartA2A,
+  exportAgentCard,
+  signArtifact,
+  verifyArtifact,
+  createChainOfCustody,
+  generateWellKnownDocuments,
+  assessRemoteAgent,
+  trustA2AAgent,
+} from './a2a.js';
+export type { A2ATrustPolicy, GetA2AIntegrationOptions } from './a2a.js';
+
 // Config
 export { loadConfig, loadPrivateKey } from './config.js';
 

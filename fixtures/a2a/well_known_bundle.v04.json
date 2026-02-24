@@ -1,0 +1,33 @@
+{
+  "/.well-known/agent-card.json": {
+    "name": "HAISDK Demo Agent",
+    "protocolVersions": ["0.4.0"],
+    "metadata": {
+      "jacsId": "demo-agent"
+    }
+  },
+  "/.well-known/jwks.json": {
+    "keys": [
+      {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "kid": "demo-agent",
+        "use": "sig",
+        "alg": "EdDSA",
+        "x": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      }
+    ]
+  },
+  "/.well-known/jacs-agent.json": {
+    "jacsVersion": "1.0",
+    "agentId": "demo-agent",
+    "capabilities": {
+      "signing": true,
+      "verification": true
+    }
+  },
+  "/.well-known/jacs-extension.json": {
+    "uri": "urn:jacs:provenance-v1",
+    "version": "1.0"
+  }
+}

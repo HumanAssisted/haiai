@@ -359,3 +359,27 @@ Acceptance checks:
 4. Phase 4 (docs/examples consolidation)
 
 This sequence gives immediate developer value while controlling risk and keeping the implementation DRY.
+
+## Execution Status
+
+Status snapshot date: **February 24, 2026**.
+
+Completed in this pass:
+
+1. Phase 1 Node facade scaffolding:
+   - added `node/src/a2a.ts` wrappers delegating to `@hai.ai/jacs/a2a`
+   - exported A2A facade APIs from `node/src/index.ts`
+2. Phase 1 Python facade scaffolding:
+   - added `python/src/haisdk/a2a.py` wrappers delegating to `jacs.a2a`
+   - exported `haisdk.a2a` in `python/src/haisdk/__init__.py`
+3. Shared fixture baseline:
+   - added `fixtures/a2a/` fixture set (cards, wrapped artifacts, well-known bundles, trust cases)
+4. TDD coverage added:
+   - Node delegation + fixture tests
+   - Python delegation + fixture tests
+
+Remaining roadmap work:
+
+1. Phase 2 Go/Rust first-class facade parity
+2. Phase 3 mediated runtime + email integrated A2A workflows
+3. Phase 4 full example/doc migration to facade-first usage

@@ -464,7 +464,7 @@ export interface DocumentVerificationResult {
   error?: string;
 }
 
-/** Advanced verification badge levels from /api/v1/agents/*/verification. */
+/** Advanced verification badge levels from /api/v1/agents/{agent_id}/verification. */
 export type AdvancedBadgeLevel = 'none' | 'basic' | 'domain' | 'attested';
 
 /** Three-level verification status from advanced verification endpoints. */

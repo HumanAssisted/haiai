@@ -227,6 +227,39 @@ func main() {
 
 When using `JACS_PASSWORD_FILE`, configure exactly one source and keep file permissions owner-only (for example `chmod 600 /secure/path/password.txt` on Unix-like systems).
 
+## Step 3: A2A Integration
+
+`haisdk` exposes A2A wrappers that delegate to canonical JACS A2A modules.
+This keeps A2A implementation in JACS while giving a single `haisdk` API layer.
+
+### Node
+
+```typescript
+import { getA2AIntegration, signArtifact, verifyArtifact } from "haisdk";
+import { JacsClient } from "@hai.ai/jacs/client";
+
+const jacs = await JacsClient.quickstart();
+const a2a = await getA2AIntegration(jacs, { trustPolicy: "verified" });
+
+const signed = await signArtifact(jacs, { taskId: "t-1", input: "hello" }, "task");
+const verified = await verifyArtifact(jacs, signed as Record<string, unknown>);
+console.log(verified);
+```
+
+### Python
+
+```python
+from haisdk.a2a import get_a2a_integration, sign_artifact, verify_artifact
+from jacs.client import JacsClient
+
+jacs = JacsClient.quickstart()
+a2a = get_a2a_integration(jacs, trust_policy="verified")
+
+signed = sign_artifact(jacs, {"taskId": "t-1", "input": "hello"}, "task")
+verified = verify_artifact(jacs, signed)
+print(verified)
+```
+
 ## Repository Structure
 
 ```
