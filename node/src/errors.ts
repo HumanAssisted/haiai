@@ -61,8 +61,39 @@ export class SSEError extends HaiError {
 
 /** General API error (non-auth, non-connection). */
 export class HaiApiError extends HaiError {
-  constructor(message: string, statusCode?: number, responseData?: Record<string, unknown>) {
+  /** Structured error code from the API (e.g., 'EMAIL_NOT_ACTIVE'). */
+  errorCode: string;
+  /** Raw response body text. */
+  body: string;
+
+  constructor(message: string, statusCode?: number, responseData?: Record<string, unknown>, errorCode: string = '', body: string = '') {
     super(message, statusCode, responseData);
     this.name = 'HaiApiError';
+    this.errorCode = errorCode;
+    this.body = body;
+  }
+}
+
+/** Thrown when the agent's email is not yet active (status is "allocated"). */
+export class EmailNotActiveError extends HaiApiError {
+  constructor(message: string, statusCode: number = 403, body: string = '') {
+    super(message, statusCode, undefined, 'EMAIL_NOT_ACTIVE', body);
+    this.name = 'EmailNotActiveError';
+  }
+}
+
+/** Thrown when the recipient address cannot be resolved. */
+export class RecipientNotFoundError extends HaiApiError {
+  constructor(message: string, statusCode: number = 400, body: string = '') {
+    super(message, statusCode, undefined, 'RECIPIENT_NOT_FOUND', body);
+    this.name = 'RecipientNotFoundError';
+  }
+}
+
+/** Thrown when the agent has exceeded its email rate limit. */
+export class RateLimitedError extends HaiApiError {
+  constructor(message: string, statusCode: number = 429, body: string = '') {
+    super(message, statusCode, undefined, 'RATE_LIMITED', body);
+    this.name = 'RateLimitedError';
   }
 }

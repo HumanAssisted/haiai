@@ -38,6 +38,10 @@ import {
   HaiError,
   AuthenticationError,
   HaiConnectionError,
+  HaiApiError,
+  EmailNotActiveError,
+  RecipientNotFoundError,
+  RateLimitedError,
 } from './errors.js';
 import {
   createHash,
@@ -1339,18 +1343,57 @@ export class HaiClient {
     const signInput = `${contentHash}:${jacsTimestamp}`;
     const jacsSignature = signString(this.privateKeyPem, signInput, this.privateKeyPassphrase);
 
-    const response = await this.fetchWithRetry(url, {
-      method: 'POST',
-      headers: this.buildAuthHeaders(),
-      body: JSON.stringify({
-        to: options.to,
-        subject: options.subject,
-        body: options.body,
-        in_reply_to: options.inReplyTo,
-        jacs_signature: jacsSignature,
-        jacs_timestamp: jacsTimestamp,
-      }),
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: this.buildAuthHeaders(),
+        body: JSON.stringify({
+          to: options.to,
+          subject: options.subject,
+          body: options.body,
+          in_reply_to: options.inReplyTo,
+          jacs_signature: jacsSignature,
+          jacs_timestamp: jacsTimestamp,
+        }),
+        signal: controller.signal,
+      });
+    } catch (e) {
+      clearTimeout(timeoutId);
+      if (e instanceof Error && e.name === 'AbortError') {
+        throw new HaiConnectionError(`Request timed out after ${this.timeout}ms`);
+      }
+      throw e;
+    }
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const text = await response.text();
+      let errCode = '';
+      let errMsg = text;
+      try {
+        const errData = JSON.parse(text) as Record<string, unknown>;
+        errCode = (errData.error_code as string) || '';
+        errMsg = (errData.message as string) || (errData.error as string) || text;
+      } catch { /* non-JSON body */ }
+
+      if (response.status === 401) {
+        throw new AuthenticationError('JACS signature rejected by HAI', 401);
+      }
+      if (response.status === 403 && (errCode === 'EMAIL_NOT_ACTIVE' || text.toLowerCase().includes('allocated'))) {
+        throw new EmailNotActiveError(errMsg, response.status, text);
+      }
+      if (response.status === 400 && (errCode === 'RECIPIENT_NOT_FOUND' || text.includes('Invalid recipient'))) {
+        throw new RecipientNotFoundError(errMsg, response.status, text);
+      }
+      if (response.status === 429) {
+        throw new RateLimitedError(errMsg, response.status, text);
+      }
+      throw new HaiApiError(errMsg, response.status, undefined, errCode, text);
+    }
 
     const data = await response.json() as Record<string, unknown>;
     return {
@@ -1538,7 +1581,7 @@ export class HaiClient {
       to: original.fromAddress,
       subject,
       body,
-      inReplyTo: messageId,
+      inReplyTo: original.messageId ?? messageId,
     });
   }
 

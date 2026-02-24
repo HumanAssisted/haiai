@@ -735,6 +735,11 @@ func (c *Client) SendEmail(ctx context.Context, to, subject, body string) (*Send
 
 // SendEmailWithOptions sends an email with full options (e.g. threading).
 // Automatically computes JACS content signature over subject+body.
+//
+// Returns typed sentinel errors that callers can check with errors.Is:
+//   - ErrEmailNotActive: agent email is not provisioned or active
+//   - ErrRecipientNotFound: the recipient address does not exist
+//   - ErrEmailRateLimited: sending rate limit exceeded
 func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions) (*SendEmailResult, error) {
 	// Compute JACS content signature: sha256(subject + "\n" + body), then sign contentHash:timestamp.
 	h := sha256.Sum256([]byte(opts.Subject + "\n" + opts.Body))
@@ -745,12 +750,56 @@ func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions
 	opts.JacsSignature = base64.StdEncoding.EncodeToString(sig)
 	opts.JacsTimestamp = timestamp
 
-	path := fmt.Sprintf("/api/agents/%s/email/send", neturl.PathEscape(c.jacsID))
+	url := c.endpoint + fmt.Sprintf("/api/agents/%s/email/send", neturl.PathEscape(c.jacsID))
+
+	data, err := json.Marshal(opts)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal send email request")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "failed to create request")
+	}
+	SetAuthHeaders(req, c.jacsID, c.privateKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "request failed")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyEmailError(resp.StatusCode, respBody)
+	}
+
 	var result SendEmailResult
-	if err := c.doRequest(ctx, http.MethodPost, path, opts, &result); err != nil {
-		return nil, err
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode response")
 	}
 	return &result, nil
+}
+
+// classifyEmailError attempts to parse a structured API error response with
+// an error_code field and maps known codes to sentinel errors. Falls back to
+// the generic classifyHTTPError for unstructured responses.
+func classifyEmailError(statusCode int, body []byte) error {
+	var apiErr HaiAPIError
+	if err := json.Unmarshal(body, &apiErr); err == nil && apiErr.ErrorCode != "" {
+		apiErr.Status = statusCode
+		switch apiErr.ErrorCode {
+		case "EMAIL_NOT_ACTIVE":
+			return fmt.Errorf("%w: %s", ErrEmailNotActive, apiErr.Message)
+		case "RECIPIENT_NOT_FOUND":
+			return fmt.Errorf("%w: %s", ErrRecipientNotFound, apiErr.Message)
+		case "RATE_LIMITED":
+			return fmt.Errorf("%w: %s", ErrEmailRateLimited, apiErr.Message)
+		default:
+			return &apiErr
+		}
+	}
+	return classifyHTTPError(statusCode, body)
 }
 
 // ListMessages retrieves messages from the agent's mailbox.
@@ -878,11 +927,18 @@ func (c *Client) Reply(ctx context.Context, messageID, body, subjectOverride str
 		}
 	}
 
+	// Use the RFC 5322 Message-ID from the original message for threading,
+	// falling back to the database UUID if the original has no Message-ID.
+	inReplyTo := messageID
+	if original.MessageID != "" {
+		inReplyTo = original.MessageID
+	}
+
 	return c.SendEmailWithOptions(ctx, SendEmailOptions{
 		To:        original.FromAddress,
 		Subject:   subject,
 		Body:      body,
-		InReplyTo: messageID,
+		InReplyTo: inReplyTo,
 	})
 }
 

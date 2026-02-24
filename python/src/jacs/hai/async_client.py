@@ -504,17 +504,42 @@ class AsyncHaiClient:
 
         try:
             resp = await http.post(url, json=payload, headers=headers)
-            if resp.status_code == 403 and "allocated" in resp.text.lower():
-                raise EmailNotActive("Agent email is not active", status_code=403, body=resp.text)
+            # Parse structured error code if available
+            try:
+                err_data = resp.json()
+                err_code = err_data.get("error_code", "")
+            except (ValueError, KeyError):
+                err_data = {}
+                err_code = ""
+
+            if resp.status_code == 403 and (err_code == "EMAIL_NOT_ACTIVE" or "allocated" in resp.text.lower()):
+                raise EmailNotActive(
+                    err_data.get("message", "Agent email is not active (status: allocated)"),
+                    status_code=403, body=resp.text,
+                )
             if resp.status_code in (401, 403):
                 raise HaiAuthError("Email send auth failed", status_code=resp.status_code, body=resp.text)
+            if resp.status_code == 400 and (err_code == "RECIPIENT_NOT_FOUND" or "Invalid recipient" in resp.text):
+                raise RecipientNotFound(
+                    err_data.get("message", "Recipient not found"),
+                    status_code=400, body=resp.text,
+                )
+            if resp.status_code == 400 and err_code == "SUBJECT_TOO_LONG":
+                raise SubjectTooLong(
+                    err_data.get("message", "Subject too long"),
+                    status_code=400, body=resp.text,
+                )
+            if resp.status_code == 400 and err_code == "BODY_TOO_LARGE":
+                raise BodyTooLarge(
+                    err_data.get("message", "Body too large"),
+                    status_code=400, body=resp.text,
+                )
             if resp.status_code == 429:
-                resets_at = ""
-                try:
-                    resets_at = resp.json().get("resets_at", "")
-                except Exception:
-                    pass
-                raise RateLimited(f"Email rate limited: {resp.text}", status_code=429, body=resp.text, resets_at=resets_at)
+                raise RateLimited(
+                    err_data.get("message", "Rate limited"),
+                    status_code=429, body=resp.text,
+                    resets_at=err_data.get("resets_at", ""),
+                )
             if resp.status_code == 400:
                 body_lower = resp.text.lower()
                 if "recipient" in body_lower:
@@ -825,7 +850,7 @@ class AsyncHaiClient:
             to=original.from_address,
             subject=reply_subject,
             body=body,
-            in_reply_to=original.id,
+            in_reply_to=original.message_id,
         )
 
     # ------------------------------------------------------------------

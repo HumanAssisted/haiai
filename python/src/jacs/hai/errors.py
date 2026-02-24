@@ -40,6 +40,7 @@ class HaiError(Exception):
         self.message = message
         self.status_code = status_code
         self.response_data = response_data or {}
+        self.error_code = ""  # populated from API error_code field when available
 
     def __str__(self) -> str:
         if self.status_code:
@@ -59,7 +60,9 @@ class HaiError(Exception):
             data = {}
 
         status_code = getattr(response, "status_code", None)
-        return cls(message, status_code, data)
+        err = cls(message, status_code, data)
+        err.error_code = data.get("error_code", "")
+        return err
 
 
 class HaiApiError(HaiError):

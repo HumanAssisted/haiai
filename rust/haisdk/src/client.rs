@@ -613,7 +613,7 @@ impl<P: JacsProvider> HaiClient<P> {
             to: original.from_address,
             subject,
             body: body.to_string(),
-            in_reply_to: Some(original.id),
+            in_reply_to: original.message_id.clone().or(Some(original.id)),
         };
 
         self.send_email(&options).await

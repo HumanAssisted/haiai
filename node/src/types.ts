@@ -529,6 +529,30 @@ export interface AdvancedVerificationResult {
   rawResponse: Record<string, unknown>;
 }
 
+// =============================================================================
+// API error types
+// =============================================================================
+
+/** Structured error codes returned by the HAI API. */
+export type HaiErrorCode =
+  | 'EMAIL_NOT_ACTIVE'
+  | 'RECIPIENT_NOT_FOUND'
+  | 'SUBJECT_TOO_LONG'
+  | 'BODY_TOO_LARGE'
+  | 'EXTERNAL_RECIPIENT'
+  | 'RATE_LIMITED'
+  | 'MESSAGE_NOT_FOUND'
+  | 'SIGNATURE_INVALID';
+
+/** API error response shape. */
+export interface ApiErrorResponse {
+  error: string;
+  message: string;
+  status: number;
+  request_id?: string;
+  error_code?: HaiErrorCode;
+}
+
 /** Request payload options for POST /api/v1/agents/verify. */
 export interface VerifyAgentDocumentOnHaiOptions {
   /** Optional public key PEM if not embedded in agent_json. */

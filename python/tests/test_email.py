@@ -534,7 +534,7 @@ class TestReply:
         assert post_payload["to"] == "alice@hai.ai"
         assert post_payload["subject"] == "Re: Question"
         assert post_payload["body"] == "The answer is 4."
-        assert post_payload["in_reply_to"] == "msg-orig"
+        assert post_payload["in_reply_to"] == "<msg-orig@hai.ai>"
 
     def test_reply_with_custom_subject(
         self,
@@ -647,3 +647,199 @@ class TestEmailUrlConstruction:
 
         HaiClient().get_unread_count(BASE_URL)
         assert captured["url"] == f"{BASE_URL}/api/agents/{JACS_ID}/email/unread-count"
+
+
+# ---------------------------------------------------------------
+# reply — threading uses message_id not id
+# ---------------------------------------------------------------
+
+
+class TestReplyThreading:
+    """Verify reply() uses original.message_id (RFC 5322) for in_reply_to."""
+
+    def test_reply_uses_message_id_not_id_for_threading(
+        self,
+        loaded_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """reply() must set in_reply_to to original.message_id, NOT original.id."""
+        captured: dict[str, Any] = {}
+
+        original_msg = {
+            "id": "db-uuid-123",
+            "from_address": "alice@hai.ai",
+            "to_address": "bob@hai.ai",
+            "subject": "Hello",
+            "body_text": "Hi there",
+            "created_at": "2026-02-24T00:00:00Z",
+            "direction": "inbound",
+            "message_id": "<db-uuid-123.bot@hai.ai>",
+            "is_read": False,
+            "delivery_status": "delivered",
+        }
+
+        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
+            return _FakeResponse(200, original_msg)
+
+        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
+            captured["json"] = kwargs.get("json", {})
+            return _FakeResponse(200, {"message_id": "msg-reply", "status": "sent"})
+
+        import httpx
+        monkeypatch.setattr(httpx, "get", fake_get)
+        monkeypatch.setattr(httpx, "post", fake_post)
+
+        HaiClient().reply(BASE_URL, "db-uuid-123", "Thanks!")
+
+        payload = captured["json"]
+        # Must use the RFC 5322 message_id, NOT the database id
+        assert payload["in_reply_to"] == "<db-uuid-123.bot@hai.ai>"
+        assert payload["in_reply_to"] != "db-uuid-123"
+
+    def test_reply_omits_in_reply_to_when_message_id_is_none(
+        self,
+        loaded_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When original.message_id is None, in_reply_to should not be in payload."""
+        captured: dict[str, Any] = {}
+
+        original_msg = {
+            "id": "db-uuid-456",
+            "from_address": "alice@hai.ai",
+            "to_address": "bob@hai.ai",
+            "subject": "Hello",
+            "body_text": "Hi there",
+            "created_at": "2026-02-24T00:00:00Z",
+            "direction": "inbound",
+            "message_id": None,
+            "is_read": False,
+            "delivery_status": "delivered",
+        }
+
+        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
+            return _FakeResponse(200, original_msg)
+
+        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
+            captured["json"] = kwargs.get("json", {})
+            return _FakeResponse(200, {"message_id": "msg-reply", "status": "sent"})
+
+        import httpx
+        monkeypatch.setattr(httpx, "get", fake_get)
+        monkeypatch.setattr(httpx, "post", fake_post)
+
+        HaiClient().reply(BASE_URL, "db-uuid-456", "Thanks!")
+
+        payload = captured["json"]
+        # message_id was None -> send_email skips in_reply_to entirely
+        assert "in_reply_to" not in payload
+
+
+# ---------------------------------------------------------------
+# send_email — error_code-based typed errors
+# ---------------------------------------------------------------
+
+
+class TestSendEmailErrorCodeParsing:
+    """Verify that send_email maps error_code to typed exception classes."""
+
+    def test_email_not_active_from_error_code(
+        self,
+        loaded_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """error_code=EMAIL_NOT_ACTIVE on 403 must raise EmailNotActive."""
+        error_body = {
+            "error": "Agent email is allocated and cannot send messages",
+            "error_code": "EMAIL_NOT_ACTIVE",
+            "status": 403,
+        }
+
+        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
+            return _FakeResponse(403, payload=error_body)
+
+        import httpx
+        monkeypatch.setattr(httpx, "post", fake_post)
+
+        with pytest.raises(EmailNotActive) as exc_info:
+            HaiClient().send_email(BASE_URL, "bob@hai.ai", "Sub", "Body")
+
+        assert exc_info.value.status_code == 403
+
+    def test_recipient_not_found_from_error_code(
+        self,
+        loaded_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """error_code=RECIPIENT_NOT_FOUND on 400 must raise RecipientNotFound."""
+        error_body = {
+            "error": "Invalid recipient",
+            "error_code": "RECIPIENT_NOT_FOUND",
+            "status": 400,
+        }
+
+        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
+            return _FakeResponse(400, payload=error_body)
+
+        import httpx
+        monkeypatch.setattr(httpx, "post", fake_post)
+
+        with pytest.raises(RecipientNotFound) as exc_info:
+            HaiClient().send_email(BASE_URL, "nobody@hai.ai", "Sub", "Body")
+
+        assert exc_info.value.status_code == 400
+
+    def test_rate_limited_from_error_code(
+        self,
+        loaded_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """error_code=RATE_LIMITED on 429 must raise RateLimited."""
+        error_body = {
+            "error": "Daily limit reached",
+            "error_code": "RATE_LIMITED",
+            "status": 429,
+        }
+
+        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
+            return _FakeResponse(429, payload=error_body)
+
+        import httpx
+        monkeypatch.setattr(httpx, "post", fake_post)
+
+        with pytest.raises(RateLimited) as exc_info:
+            HaiClient().send_email(BASE_URL, "bob@hai.ai", "Sub", "Body")
+
+        assert exc_info.value.status_code == 429
+
+
+# ---------------------------------------------------------------
+# HaiError.from_response — error_code capture
+# ---------------------------------------------------------------
+
+
+class TestHaiErrorFromResponseErrorCode:
+    """Verify HaiError.from_response captures the error_code field."""
+
+    def test_from_response_captures_error_code(self) -> None:
+        """error_code from JSON body must be stored on the exception."""
+        from jacs.hai.errors import HaiError
+
+        fake_resp = _FakeResponse(
+            403,
+            payload={"error": "test failure", "error_code": "EMAIL_NOT_ACTIVE"},
+        )
+
+        err = HaiError.from_response(fake_resp)
+        assert err.error_code == "EMAIL_NOT_ACTIVE"
+        assert err.status_code == 403
+        assert "test failure" in str(err)
+
+    def test_from_response_defaults_error_code_to_empty(self) -> None:
+        """When error_code is absent, it defaults to empty string."""
+        from jacs.hai.errors import HaiError
+
+        fake_resp = _FakeResponse(500, payload={"error": "internal"})
+
+        err = HaiError.from_response(fake_resp)
+        assert err.error_code == ""

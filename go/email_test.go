@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -392,6 +393,48 @@ func TestReplyUsesSubjectOverride(t *testing.T) {
 	}
 }
 
+func TestReplyUsesRFC5322MessageIDForThreading(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			// Original message has an RFC 5322 Message-ID.
+			_, _ = w.Write([]byte(`{
+				"id":"db-uuid-123",
+				"direction":"inbound",
+				"from_address":"alice@hai.ai",
+				"to_address":"bob@hai.ai",
+				"subject":"Thread test",
+				"body_text":"body",
+				"message_id":"<abc123.alice@hai.ai>",
+				"is_read":false,
+				"delivery_status":"delivered",
+				"created_at":"2026-02-24T00:00:00Z"
+			}`))
+		case r.Method == http.MethodPost:
+			body, _ := io.ReadAll(r.Body)
+			var payload map[string]interface{}
+			_ = json.Unmarshal(body, &payload)
+			// Should use the RFC 5322 Message-ID, not the database UUID.
+			if payload["in_reply_to"] != "<abc123.alice@hai.ai>" {
+				t.Fatalf("in_reply_to should use RFC 5322 Message-ID, got %v", payload["in_reply_to"])
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"message_id":"msg-reply","status":"sent"}`))
+		}
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	result, err := cl.Reply(context.Background(), "db-uuid-123", "Reply body", "")
+	if err != nil {
+		t.Fatalf("Reply: %v", err)
+	}
+	if result.MessageID != "msg-reply" {
+		t.Fatalf("unexpected message_id: %s", result.MessageID)
+	}
+}
+
 func TestReplyDoesNotDoublePrefixRe(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -415,5 +458,106 @@ func TestReplyDoesNotDoublePrefixRe(t *testing.T) {
 	_, err := cl.Reply(context.Background(), "msg-1", "body", "")
 	if err != nil {
 		t.Fatalf("Reply: %v", err)
+	}
+}
+
+func TestSendEmailReturnsErrEmailNotActive(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"Email not provisioned for this agent","error_code":"EMAIL_NOT_ACTIVE"}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	_, err := cl.SendEmail(context.Background(), "bob@hai.ai", "Hi", "Hello")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrEmailNotActive) {
+		t.Fatalf("expected ErrEmailNotActive, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Email not provisioned") {
+		t.Fatalf("error should contain API message, got: %v", err)
+	}
+}
+
+func TestSendEmailReturnsErrRecipientNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"No agent found with email unknown@hai.ai","error_code":"RECIPIENT_NOT_FOUND"}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	_, err := cl.SendEmail(context.Background(), "unknown@hai.ai", "Hi", "Hello")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrRecipientNotFound) {
+		t.Fatalf("expected ErrRecipientNotFound, got: %v", err)
+	}
+}
+
+func TestSendEmailReturnsErrEmailRateLimited(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"message":"Daily send limit exceeded","error_code":"RATE_LIMITED"}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	_, err := cl.SendEmail(context.Background(), "bob@hai.ai", "Hi", "Hello")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrEmailRateLimited) {
+		t.Fatalf("expected ErrEmailRateLimited, got: %v", err)
+	}
+}
+
+func TestSendEmailReturnsHaiAPIErrorForUnknownCode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"Something weird happened","error_code":"UNKNOWN_CODE"}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	_, err := cl.SendEmail(context.Background(), "bob@hai.ai", "Hi", "Hello")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var apiErr *HaiAPIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected *HaiAPIError, got: %T %v", err, err)
+	}
+	if apiErr.ErrorCode != "UNKNOWN_CODE" {
+		t.Fatalf("unexpected error code: %s", apiErr.ErrorCode)
+	}
+	if apiErr.Status != http.StatusBadRequest {
+		t.Fatalf("unexpected status: %d", apiErr.Status)
+	}
+}
+
+func TestSendEmailFallsBackToGenericErrorForUnstructuredResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`Internal Server Error`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	_, err := cl.SendEmail(context.Background(), "bob@hai.ai", "Hi", "Hello")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	// Should fall back to classifyHTTPError, returning *Error.
+	var sdkErr *Error
+	if !errors.As(err, &sdkErr) {
+		t.Fatalf("expected *Error for unstructured response, got: %T %v", err, err)
 	}
 }

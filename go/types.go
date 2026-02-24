@@ -1,6 +1,10 @@
 package haisdk
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+)
 
 // TransportType specifies the real-time transport protocol.
 type TransportType string
@@ -338,3 +342,26 @@ type EmailStatus struct {
 	ResetsAt          string `json:"resets_at"`
 	MessagesSentTotal int    `json:"messages_sent_total"`
 }
+
+// HaiAPIError represents a structured error response from the HAI API.
+type HaiAPIError struct {
+	Message   string `json:"message"`
+	ErrorCode string `json:"error_code"`
+	Status    int    `json:"status"`
+	RequestID string `json:"request_id"`
+}
+
+// Error implements the error interface.
+func (e *HaiAPIError) Error() string {
+	if e.ErrorCode != "" {
+		return fmt.Sprintf("%s (code: %s, HTTP %d)", e.Message, e.ErrorCode, e.Status)
+	}
+	return fmt.Sprintf("%s (HTTP %d)", e.Message, e.Status)
+}
+
+// Sentinel error types for email-related API errors.
+var (
+	ErrEmailNotActive    = errors.New("agent email is not active")
+	ErrRecipientNotFound = errors.New("recipient not found")
+	ErrEmailRateLimited  = errors.New("email rate limited")
+)

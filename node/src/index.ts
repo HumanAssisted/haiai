@@ -82,6 +82,9 @@ export {
   BenchmarkError,
   SSEError,
   HaiApiError,
+  EmailNotActiveError,
+  RecipientNotFoundError,
+  RateLimitedError,
 } from './errors.js';
 
 // Types
@@ -129,4 +132,6 @@ export type {
   AdvancedVerificationStatus,
   AdvancedVerificationResult,
   VerifyAgentDocumentOnHaiOptions,
+  HaiErrorCode,
+  ApiErrorResponse,
 } from './types.js';

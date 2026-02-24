@@ -2,6 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
 import { generateKeypair, verifyString } from '../src/crypt.js';
 import { createHash } from 'node:crypto';
+import {
+  HaiApiError,
+  EmailNotActiveError,
+  RecipientNotFoundError,
+  RateLimitedError,
+} from '../src/errors.js';
 
 function makeClient(jacsId: string = 'test-agent-001'): HaiClient {
   const keypair = generateKeypair();
@@ -296,7 +302,7 @@ describe('reply', () => {
       expect(body.to).toBe('alice@hai.ai');
       expect(body.subject).toBe('Re: Original Subject');
       expect(body.body).toBe('Thanks!');
-      expect(body.in_reply_to).toBe('msg-orig');
+      expect(body.in_reply_to).toBe('<msg-orig@hai.ai>');
       expect(body.jacs_signature).toBeDefined();
       expect(body.jacs_timestamp).toBeDefined();
       return jsonResponse({ message_id: 'msg-reply', status: 'queued' });
@@ -374,5 +380,106 @@ describe('email method path escaping', () => {
 
     await client.getMessage('msg/../hack');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('sendEmail error codes', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('throws EmailNotActiveError when error_code is EMAIL_NOT_ACTIVE', async () => {
+    const client = makeClient();
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          error: 'Agent email is allocated and cannot send messages',
+          error_code: 'EMAIL_NOT_ACTIVE',
+          status: 403,
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      client.sendEmail({ to: 'bob@hai.ai', subject: 'Hi', body: 'test' }),
+    ).rejects.toThrow(EmailNotActiveError);
+
+    try {
+      await client.sendEmail({ to: 'bob@hai.ai', subject: 'Hi', body: 'test' });
+    } catch (err) {
+      expect(err).toBeInstanceOf(EmailNotActiveError);
+      expect((err as EmailNotActiveError).errorCode).toBe('EMAIL_NOT_ACTIVE');
+    }
+  });
+
+  it('throws RecipientNotFoundError when error_code is RECIPIENT_NOT_FOUND', async () => {
+    const client = makeClient();
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          error: 'Invalid recipient',
+          error_code: 'RECIPIENT_NOT_FOUND',
+          status: 400,
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      client.sendEmail({ to: 'bob@hai.ai', subject: 'Hi', body: 'test' }),
+    ).rejects.toThrow(RecipientNotFoundError);
+  });
+
+  it('throws RateLimitedError when error_code is RATE_LIMITED', async () => {
+    const client = makeClient();
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          error: 'Daily limit reached',
+          error_code: 'RATE_LIMITED',
+          status: 429,
+        }),
+        { status: 429, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      client.sendEmail({ to: 'bob@hai.ai', subject: 'Hi', body: 'test' }),
+    ).rejects.toThrow(RateLimitedError);
+  });
+
+  it('throws HaiApiError for unknown error_code', async () => {
+    const client = makeClient();
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          error: 'Something else',
+          error_code: 'UNKNOWN_CODE',
+          status: 400,
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      client.sendEmail({ to: 'bob@hai.ai', subject: 'Hi', body: 'test' }),
+    ).rejects.toThrow(HaiApiError);
+
+    try {
+      await client.sendEmail({ to: 'bob@hai.ai', subject: 'Hi', body: 'test' });
+    } catch (err) {
+      expect(err).toBeInstanceOf(HaiApiError);
+      // Ensure it's not a specific subclass
+      expect(err).not.toBeInstanceOf(EmailNotActiveError);
+      expect(err).not.toBeInstanceOf(RecipientNotFoundError);
+      expect(err).not.toBeInstanceOf(RateLimitedError);
+      expect((err as HaiApiError).errorCode).toBe('UNKNOWN_CODE');
+    }
   });
 });
