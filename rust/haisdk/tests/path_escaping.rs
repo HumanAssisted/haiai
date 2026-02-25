@@ -31,7 +31,7 @@ async fn claim_username_escapes_agent_id_path_segment() {
         })
         .await;
 
-    let client = make_client(&server.base_url(), "agent/with/slash");
+    let mut client = make_client(&server.base_url(), "agent/with/slash");
     client
         .claim_username("agent/../escape", "agent")
         .await

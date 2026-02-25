@@ -769,24 +769,21 @@ func (c *Client) SendEmail(ctx context.Context, to, subject, body string) (*Send
 	return c.SendEmailWithOptions(ctx, SendEmailOptions{To: to, Subject: subject, Body: body})
 }
 
-// SendEmailWithOptions sends an email with full options (e.g. threading).
-// Automatically computes JACS content signature over subject+body.
+// computeContentHash computes the JACS content hash for email signing.
 //
-// Returns typed sentinel errors that callers can check with errors.Is:
-//   - ErrEmailNotActive: agent email is not provisioned or active
-//   - ErrRecipientNotFound: the recipient address does not exist
-//   - ErrEmailRateLimited: sending rate limit exceeded
-func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions) (*SendEmailResult, error) {
-	if c.agentEmail == "" {
-		return nil, fmt.Errorf("%w: agent email not set — call ClaimUsername first", ErrEmailNotActive)
-	}
-	// Compute JACS content hash: sha256(subject + "\n" + body [+ "\n" + sorted_att_hashes...])
+// The hash covers the email subject, body, and any attachments:
+//
+//	sha256(subject + "\n" + body [+ "\n" + sorted_att_hashes...])
+//
+// Each attachment hash is: hex(sha256(filename + ":" + content_type + ":" + raw_data)).
+// Attachment hashes are sorted lexicographically before appending to ensure
+// order-independent results.
+func computeContentHash(subject, body string, attachments []EmailAttachment) string {
 	hasher := sha256.New()
-	hasher.Write([]byte(opts.Subject + "\n" + opts.Body))
-	// Include attachment hashes (sorted) for v2
-	if len(opts.Attachments) > 0 {
-		attHashes := make([]string, len(opts.Attachments))
-		for i, att := range opts.Attachments {
+	hasher.Write([]byte(subject + "\n" + body))
+	if len(attachments) > 0 {
+		attHashes := make([]string, len(attachments))
+		for i, att := range attachments {
 			ah := sha256.New()
 			ah.Write([]byte(att.Filename))
 			ah.Write([]byte(":"))
@@ -801,7 +798,21 @@ func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions
 			hasher.Write([]byte(ah))
 		}
 	}
-	contentHash := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+	return "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+}
+
+// SendEmailWithOptions sends an email with full options (e.g. threading).
+// Automatically computes JACS content signature over subject+body.
+//
+// Returns typed sentinel errors that callers can check with errors.Is:
+//   - ErrEmailNotActive: agent email is not provisioned or active
+//   - ErrRecipientNotFound: the recipient address does not exist
+//   - ErrEmailRateLimited: sending rate limit exceeded
+func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions) (*SendEmailResult, error) {
+	if c.agentEmail == "" {
+		return nil, fmt.Errorf("%w: agent email not set — call ClaimUsername first", ErrEmailNotActive)
+	}
+	contentHash := computeContentHash(opts.Subject, opts.Body, opts.Attachments)
 	timestamp := time.Now().Unix()
 	// v2 signing: "{content_hash}:{from_email}:{timestamp}"
 	signInput := fmt.Sprintf("%s:%s:%d", contentHash, c.agentEmail, timestamp)

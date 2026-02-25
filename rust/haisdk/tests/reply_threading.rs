@@ -11,14 +11,16 @@ use serde_json::json;
 
 fn make_client(base_url: &str) -> HaiClient<StaticJacsProvider> {
     let provider = StaticJacsProvider::new("test-agent-001");
-    HaiClient::new(
+    let mut client = HaiClient::new(
         provider,
         HaiClientOptions {
             base_url: base_url.to_string(),
             ..HaiClientOptions::default()
         },
     )
-    .expect("client")
+    .expect("client");
+    client.set_agent_email("test-agent-001@hai.ai".to_string());
+    client
 }
 
 /// When the original message has a populated `message_id` field, `reply()`

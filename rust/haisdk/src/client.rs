@@ -327,7 +327,7 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     pub async fn claim_username(
-        &self,
+        &mut self,
         agent_id: &str,
         username: &str,
     ) -> Result<ClaimUsernameResult> {
@@ -344,11 +344,19 @@ impl<P: JacsProvider> HaiClient<P> {
             .await?;
 
         let data = response_json(response).await?;
-        Ok(ClaimUsernameResult {
+        let result = ClaimUsernameResult {
             username: value_string(&data, &["username"]).if_empty_then(username),
             email: value_string(&data, &["email"]),
             agent_id: value_string(&data, &["agent_id", "agentId"]).if_empty_then(agent_id),
-        })
+        };
+
+        // Auto-store the email so subsequent send_email calls work without
+        // a separate set_agent_email call.
+        if !result.email.is_empty() {
+            self.agent_email = Some(result.email.clone());
+        }
+
+        Ok(result)
     }
 
     pub async fn update_username(
@@ -396,30 +404,11 @@ impl<P: JacsProvider> HaiClient<P> {
 
         let timestamp = OffsetDateTime::now_utc().unix_timestamp();
 
-        let content_hash = {
-            let mut hasher = Sha256::new();
-            hasher.update(options.subject.as_bytes());
-            hasher.update(b"\n");
-            hasher.update(options.body.as_bytes());
-            // Include attachment hashes (sorted) for v2
-            if !options.attachments.is_empty() {
-                let mut att_hashes: Vec<String> = options.attachments.iter().map(|att| {
-                    let mut ah = Sha256::new();
-                    ah.update(att.filename.as_bytes());
-                    ah.update(b":");
-                    ah.update(att.content_type.as_bytes());
-                    ah.update(b":");
-                    ah.update(&att.data);
-                    format!("{:x}", ah.finalize())
-                }).collect();
-                att_hashes.sort();
-                for h in &att_hashes {
-                    hasher.update(b"\n");
-                    hasher.update(h.as_bytes());
-                }
-            }
-            format!("sha256:{:x}", hasher.finalize())
-        };
+        let content_hash = compute_content_hash_v2(
+            &options.subject,
+            &options.body,
+            &options.attachments,
+        );
 
         // v2 signing: "{content_hash}:{from_email}:{timestamp}"
         let sign_input = format!("{content_hash}:{agent_email}:{timestamp}");
@@ -1226,5 +1215,285 @@ impl EmptyFallback for String {
         } else {
             self
         }
+    }
+}
+
+/// Compute the v2 content hash for an email (subject + body + sorted attachment hashes).
+///
+/// This is extracted from `send_email` for testability and cross-SDK compatibility.
+///
+/// Formula:
+/// - For each attachment: `sha256(filename:content_type:raw_data)` (hex, lowercase)
+/// - Sort attachment hashes lexicographically
+/// - Final hash: `sha256(subject + "\n" + body + "\n" + att_hash_1 + "\n" + att_hash_2 + ...)`
+/// - Returns: `"sha256:" + hex`
+///
+/// When `data` is empty but `data_base64` is set, decodes base64 as a fallback.
+pub fn compute_content_hash_v2(
+    subject: &str,
+    body: &str,
+    attachments: &[crate::types::EmailAttachment],
+) -> String {
+    use crate::types::EmailAttachment;
+
+    let mut hasher = Sha256::new();
+    hasher.update(subject.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(body.as_bytes());
+
+    if !attachments.is_empty() {
+        let mut att_hashes: Vec<String> = attachments
+            .iter()
+            .map(|att: &EmailAttachment| {
+                let raw = att.effective_data();
+                let mut ah = Sha256::new();
+                ah.update(att.filename.as_bytes());
+                ah.update(b":");
+                ah.update(att.content_type.as_bytes());
+                ah.update(b":");
+                ah.update(&raw);
+                format!("{:x}", ah.finalize())
+            })
+            .collect();
+        att_hashes.sort();
+        for h in &att_hashes {
+            hasher.update(b"\n");
+            hasher.update(h.as_bytes());
+        }
+    }
+
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::jacs::StaticJacsProvider;
+    use crate::types::EmailAttachment;
+
+    // ── Issue 8: Content hash tests ──────────────────────────────────────
+
+    #[test]
+    fn test_content_hash_no_attachments() {
+        let hash = compute_content_hash_v2("Subject", "Body", &[]);
+        // Expected: sha256("Subject\nBody") as hex
+        let mut hasher = Sha256::new();
+        hasher.update(b"Subject\nBody");
+        let expected = format!("sha256:{:x}", hasher.finalize());
+        assert_eq!(hash, expected);
+    }
+
+    #[test]
+    fn test_content_hash_with_attachments() {
+        // Golden values for cross-SDK compat
+        let att = EmailAttachment::new(
+            "a.txt".to_string(),
+            "text/plain".to_string(),
+            b"hello".to_vec(),
+        );
+        let hash = compute_content_hash_v2("Test", "Hello", &[att]);
+
+        // att_hash = sha256("a.txt:text/plain:hello") as hex
+        let mut ah = Sha256::new();
+        ah.update(b"a.txt:text/plain:hello");
+        let att_hash = format!("{:x}", ah.finalize());
+
+        // final = sha256("Test\nHello\n" + att_hash)
+        let mut fh = Sha256::new();
+        fh.update(format!("Test\nHello\n{att_hash}").as_bytes());
+        let expected = format!("sha256:{:x}", fh.finalize());
+
+        assert_eq!(hash, expected);
+    }
+
+    #[test]
+    fn test_content_hash_attachment_order_independent() {
+        let att_a = EmailAttachment::new(
+            "a.txt".to_string(),
+            "text/plain".to_string(),
+            b"alpha".to_vec(),
+        );
+        let att_b = EmailAttachment::new(
+            "b.txt".to_string(),
+            "text/plain".to_string(),
+            b"beta".to_vec(),
+        );
+
+        let hash_ab = compute_content_hash_v2("Sub", "Body", &[att_a.clone(), att_b.clone()]);
+        let hash_ba = compute_content_hash_v2("Sub", "Body", &[att_b, att_a]);
+
+        assert_eq!(hash_ab, hash_ba, "attachment order must not affect content hash");
+    }
+
+    #[test]
+    fn test_content_hash_attachment_tamper_detected() {
+        let att_ok = EmailAttachment::new(
+            "a.txt".to_string(),
+            "text/plain".to_string(),
+            b"hello".to_vec(),
+        );
+        let att_tampered = EmailAttachment::new(
+            "a.txt".to_string(),
+            "text/plain".to_string(),
+            b"HELLO".to_vec(),
+        );
+
+        let hash_ok = compute_content_hash_v2("Sub", "Body", &[att_ok]);
+        let hash_tampered = compute_content_hash_v2("Sub", "Body", &[att_tampered]);
+
+        assert_ne!(hash_ok, hash_tampered, "changed attachment data must produce different hash");
+    }
+
+    #[test]
+    fn test_v2_signing_payload_format() {
+        // The v2 signing payload is: "{content_hash}:{from_email}:{timestamp}"
+        use crate::verify::build_signing_payload;
+
+        let payload = build_signing_payload(2, "sha256:abcdef", "agent@hai.ai", 1740000000);
+        assert_eq!(payload, "sha256:abcdef:agent@hai.ai:1740000000");
+
+        // v1 for comparison
+        let payload_v1 = build_signing_payload(1, "sha256:abcdef", "agent@hai.ai", 1740000000);
+        assert_eq!(payload_v1, "sha256:abcdef:1740000000");
+    }
+
+    // ── Issue 14: data/data_base64 desync fix ────────────────────────────
+
+    #[test]
+    fn test_content_hash_uses_data_base64_when_data_empty() {
+        // Simulate a caller who sets data_base64 but leaves data empty
+        let att = EmailAttachment {
+            filename: "a.txt".to_string(),
+            content_type: "text/plain".to_string(),
+            data: Vec::new(), // empty!
+            data_base64: Some(base64::engine::general_purpose::STANDARD.encode(b"hello")),
+        };
+
+        // Should produce the same hash as if data was b"hello"
+        let att_ref = EmailAttachment::new(
+            "a.txt".to_string(),
+            "text/plain".to_string(),
+            b"hello".to_vec(),
+        );
+
+        let hash_b64 = compute_content_hash_v2("Test", "Hello", &[att]);
+        let hash_data = compute_content_hash_v2("Test", "Hello", &[att_ref]);
+
+        assert_eq!(hash_b64, hash_data, "data_base64 fallback should produce identical hash");
+    }
+
+    #[test]
+    fn test_effective_data_prefers_data_over_data_base64() {
+        let att = EmailAttachment {
+            filename: "x.bin".to_string(),
+            content_type: "application/octet-stream".to_string(),
+            data: b"real".to_vec(),
+            data_base64: Some(base64::engine::general_purpose::STANDARD.encode(b"stale")),
+        };
+
+        assert_eq!(att.effective_data(), b"real");
+    }
+
+    #[test]
+    fn test_effective_data_decodes_base64_when_data_empty() {
+        let att = EmailAttachment {
+            filename: "x.bin".to_string(),
+            content_type: "application/octet-stream".to_string(),
+            data: Vec::new(),
+            data_base64: Some(base64::engine::general_purpose::STANDARD.encode(b"decoded")),
+        };
+
+        assert_eq!(att.effective_data(), b"decoded");
+    }
+
+    #[test]
+    fn test_effective_data_returns_empty_when_both_missing() {
+        let att = EmailAttachment {
+            filename: "x.bin".to_string(),
+            content_type: "application/octet-stream".to_string(),
+            data: Vec::new(),
+            data_base64: None,
+        };
+
+        assert!(att.effective_data().is_empty());
+    }
+
+    #[test]
+    fn test_email_attachment_constructor() {
+        let att = EmailAttachment::new(
+            "doc.pdf".to_string(),
+            "application/pdf".to_string(),
+            b"pdf-bytes".to_vec(),
+        );
+
+        assert_eq!(att.filename, "doc.pdf");
+        assert_eq!(att.content_type, "application/pdf");
+        assert_eq!(att.data, b"pdf-bytes");
+        assert!(att.data_base64.is_none());
+    }
+
+    // ── Issue 13: claim_username stores email ────────────────────────────
+
+    #[tokio::test]
+    async fn test_claim_username_stores_agent_email() {
+        // We need httpmock for this, which is a dev-dependency
+        // Use a mock server to simulate the claim_username response
+        let server = httpmock::MockServer::start_async().await;
+
+        // Mock the claim_username endpoint
+        server.mock_async(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/api/v1/agents/test-agent-001/username");
+            then.status(200).json_body(serde_json::json!({
+                "username": "myagent",
+                "email": "myagent@hai.ai",
+                "agent_id": "test-agent-001"
+            }));
+        }).await;
+
+        let provider = StaticJacsProvider::new("test-agent-001");
+        let mut client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: server.base_url(),
+                ..HaiClientOptions::default()
+            },
+        ).expect("client");
+
+        // Before claim_username, agent_email should be None
+        assert!(client.agent_email().is_none());
+
+        let result = client.claim_username("test-agent-001", "myagent").await.expect("claim");
+        assert_eq!(result.email, "myagent@hai.ai");
+
+        // After claim_username, agent_email should be auto-stored
+        assert_eq!(client.agent_email(), Some("myagent@hai.ai"));
+    }
+
+    #[tokio::test]
+    async fn test_claim_username_does_not_store_empty_email() {
+        let server = httpmock::MockServer::start_async().await;
+
+        server.mock_async(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/api/v1/agents/test-agent-001/username");
+            then.status(200).json_body(serde_json::json!({
+                "username": "myagent",
+                "email": "",
+                "agent_id": "test-agent-001"
+            }));
+        }).await;
+
+        let provider = StaticJacsProvider::new("test-agent-001");
+        let mut client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: server.base_url(),
+                ..HaiClientOptions::default()
+            },
+        ).expect("client");
+
+        let _result = client.claim_username("test-agent-001", "myagent").await.expect("claim");
+        assert!(client.agent_email().is_none(), "empty email should not be stored");
     }
 }

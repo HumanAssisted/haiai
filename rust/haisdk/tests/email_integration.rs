@@ -115,6 +115,7 @@ async fn email_integration_lifecycle() {
             subject: subject.clone(),
             body: body.to_string(),
             in_reply_to: None,
+            attachments: Vec::new(),
         })
         .await
         .expect("send_email");

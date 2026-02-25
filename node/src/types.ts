@@ -329,6 +329,16 @@ export interface FreeChaoticRunOptions {
 // Email types
 // =============================================================================
 
+/** An email attachment. */
+export interface EmailAttachment {
+  /** Attachment file name. */
+  filename: string;
+  /** MIME content type. */
+  contentType: string;
+  /** Raw attachment data. */
+  data: Buffer;
+}
+
 /** Options for sending an email. */
 export interface SendEmailOptions {
   /** Recipient email address. */
@@ -340,14 +350,7 @@ export interface SendEmailOptions {
   /** Message ID to reply to (for threading). */
   inReplyTo?: string;
   /** File attachments to include with the email. */
-  attachments?: Array<{
-    /** Attachment file name. */
-    filename: string;
-    /** MIME content type (e.g., "application/pdf"). */
-    contentType: string;
-    /** Raw attachment data. */
-    data: Buffer;
-  }>;
+  attachments?: EmailAttachment[];
 }
 
 /** Result of sending an email. */

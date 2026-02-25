@@ -13,6 +13,7 @@ export {
   canonicalJson,
   verifyEmailSignature,
   parseJacsSignatureHeader,
+  computeContentHash,
 } from './signing.js';
 export type { JacsDocument } from './signing.js';
 
@@ -120,6 +121,7 @@ export type {
   OnBenchmarkJobOptions,
   DnsCertifiedRunOptions,
   FreeChaoticRunOptions,
+  EmailAttachment,
   SendEmailOptions,
   SendEmailResult,
   EmailMessage,

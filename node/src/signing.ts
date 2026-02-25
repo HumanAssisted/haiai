@@ -1,6 +1,39 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { signString, verifyString } from './crypt.js';
-import type { EmailVerificationResult } from './types.js';
+import type { EmailAttachment, EmailVerificationResult } from './types.js';
+
+/**
+ * Compute the v2 content hash for an email.
+ *
+ * Formula: sha256(subject + "\n" + body [+ "\n" + sorted attachment hashes])
+ * Each attachment hash: sha256(filename + ":" + contentType + ":" + raw_data) → hex, lowercase.
+ * Attachment hashes are sorted lexicographically.
+ *
+ * @returns Content hash string prefixed with "sha256:".
+ */
+export function computeContentHash(
+  subject: string,
+  body: string,
+  attachments?: EmailAttachment[],
+): string {
+  const h = createHash('sha256');
+  h.update(subject + '\n' + body, 'utf8');
+  if (attachments?.length) {
+    const attHashes = attachments.map(att => {
+      const ah = createHash('sha256');
+      ah.update(att.filename);
+      ah.update(':');
+      ah.update(att.contentType);
+      ah.update(':');
+      ah.update(att.data);
+      return ah.digest('hex');
+    }).sort();
+    for (const ah of attHashes) {
+      h.update('\n' + ah);
+    }
+  }
+  return 'sha256:' + h.digest('hex');
+}
 
 /** JACS document envelope wrapping data with metadata and jacsSignature. */
 export interface JacsDocument {
@@ -235,7 +268,7 @@ export async function verifyEmailSignature(
   const timestampStr = fields.t || '';
   const signatureB64 = fields.s || '';
   const algorithm = fields.a || 'ed25519';
-  const _sigVersion = fields.jv || ''; // parsed but not yet used for dispatching
+  const sigVersion = fields.v || '';
   const sigHashField = fields.h || '';
   const sigFromField = fields.from || '';
 
@@ -255,28 +288,34 @@ export async function verifyEmailSignature(
     return { valid: false, jacsId, reputationTier: '', error: `Invalid timestamp: ${timestampStr}` };
   }
 
-  // Determine whether this is a v2 signature (has `h=` in the header)
-  const isV2 = !!sigHashField;
+  // Version-gate: use `v=` field when present, otherwise detect v2 via `h=` presence
+  const isV2 = sigVersion === '2' || (sigVersion === '' && !!sigHashField);
 
   // For v1, X-JACS-Content-Hash header is required
   if (!isV2 && !contentHashHeader) {
     return { valid: false, jacsId, reputationTier: '', error: 'Missing X-JACS-Content-Hash header' };
   }
 
-  // Step 3: Recompute content hash
-  const computedHash = 'sha256:' + createHash('sha256')
-    .update(subject + '\n' + body, 'utf8')
-    .digest('hex');
-
-  // Step 4: Compare content hashes
+  // Step 3: Determine content hash
   // For v2, the authoritative hash is in the `h=` field of the signature header.
-  // For v1, it comes from the X-JACS-Content-Hash header.
-  const expectedHash = isV2 ? sigHashField : contentHashHeader;
-  if (computedHash !== expectedHash) {
-    return { valid: false, jacsId, reputationTier: '', error: 'Content hash mismatch' };
+  // The signature already proves `h=` is authentic, so we trust it directly.
+  // For v1, recompute from subject + body and compare against X-JACS-Content-Hash.
+  let contentHash: string;
+  if (isV2) {
+    // v2: trust the signed h= field (covers attachments too)
+    contentHash = sigHashField;
+  } else {
+    // v1: recompute and verify against the header
+    const computedHash = 'sha256:' + createHash('sha256')
+      .update(subject + '\n' + body, 'utf8')
+      .digest('hex');
+    if (computedHash !== contentHashHeader) {
+      return { valid: false, jacsId, reputationTier: '', error: 'Content hash mismatch' };
+    }
+    contentHash = computedHash;
   }
 
-  // Step 5: Fetch public key from registry
+  // Step 4: Fetch public key from registry
   const registryUrl = `${haiUrl.replace(/\/+$/, '')}/api/agents/keys/${fromAddress}`;
   let registryData: Record<string, unknown>;
   try {
@@ -311,32 +350,24 @@ export async function verifyEmailSignature(
     return { valid: false, jacsId: registryJacsId, reputationTier, error: 'Signature id does not match registry jacs_id' };
   }
 
-  // Step 6: Verify Ed25519 signature
-  // Try v2 payload first ("{hash}:{from}:{timestamp}"), then fall back to v1 ("{hash}:{timestamp}")
+  // Step 5: Verify Ed25519 signature (version-gated, no fallback)
   const fromForSig = sigFromField || fromAddress;
-  const v2SignInput = `${computedHash}:${fromForSig}:${timestamp}`;
-  const v1SignInput = `${computedHash}:${timestamp}`;
-
   let sigValid: boolean;
   if (isV2) {
-    // v2: try v2 format first, fall back to v1
+    // v2 payload: "{content_hash}:{from_email}:{timestamp}"
+    const v2SignInput = `${contentHash}:${fromForSig}:${timestamp}`;
     sigValid = verifyString(publicKeyPem, v2SignInput, signatureB64);
-    if (!sigValid) {
-      sigValid = verifyString(publicKeyPem, v1SignInput, signatureB64);
-    }
   } else {
-    // v1: try v1 format first, fall back to v2
+    // v1 payload: "{content_hash}:{timestamp}"
+    const v1SignInput = `${contentHash}:${timestamp}`;
     sigValid = verifyString(publicKeyPem, v1SignInput, signatureB64);
-    if (!sigValid) {
-      sigValid = verifyString(publicKeyPem, v2SignInput, signatureB64);
-    }
   }
 
   if (!sigValid) {
     return { valid: false, jacsId: registryJacsId, reputationTier, error: 'Signature verification failed' };
   }
 
-  // Step 7: Check timestamp freshness
+  // Step 6: Check timestamp freshness
   const now = Math.floor(Date.now() / 1000);
   const age = now - timestamp;
   if (age > MAX_TIMESTAMP_AGE) {

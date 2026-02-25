@@ -62,10 +62,10 @@ func TestSendEmailWithOptionsIncludesJACSSignature(t *testing.T) {
 	}
 	timestamp := int64(tsFloat)
 
-	// Verify the signature is valid using the public key.
+	// Verify the signature is valid using the public key (v2 format includes email).
 	h := sha256.Sum256([]byte("Hello\nWorld"))
 	contentHash := "sha256:" + hex.EncodeToString(h[:])
-	signInput := fmt.Sprintf("%s:%d", contentHash, timestamp)
+	signInput := fmt.Sprintf("%s:%s:%d", contentHash, testAgentEmail, timestamp)
 
 	sigBytes, err := base64.StdEncoding.DecodeString(sigB64)
 	if err != nil {
@@ -559,5 +559,307 @@ func TestSendEmailFallsBackToGenericErrorForUnstructuredResponse(t *testing.T) {
 	var sdkErr *Error
 	if !errors.As(err, &sdkErr) {
 		t.Fatalf("expected *Error for unstructured response, got: %T %v", err, err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Content hash tests — exercise the extracted computeContentHash function
+// ---------------------------------------------------------------------------
+
+func TestContentHashNoAttachments(t *testing.T) {
+	got := computeContentHash("Subject", "Body", nil)
+	// sha256("Subject\nBody")
+	want := "sha256:ee0c09adcdb487b1c64d7e63dfeaf7eabc1fe5ffc7f6182b0541061e2610bb25"
+	if got != want {
+		t.Fatalf("content hash mismatch:\n  got:  %s\n  want: %s", got, want)
+	}
+}
+
+func TestContentHashWithOneAttachment(t *testing.T) {
+	att := EmailAttachment{
+		Filename:    "a.txt",
+		ContentType: "text/plain",
+		Data:        []byte("hello"),
+	}
+	got := computeContentHash("Test", "Hello", []EmailAttachment{att})
+	// att_hash = sha256("a.txt:text/plain:hello")
+	// expected = sha256("Test\nHello\n" + att_hash)
+	want := "sha256:4160c4723a01eb96bd05f707b78790deb16fd92f1ad0362bf5d4881d5ba2f0c7"
+	if got != want {
+		t.Fatalf("content hash mismatch:\n  got:  %s\n  want: %s", got, want)
+	}
+}
+
+func TestContentHashAttachmentOrderIndependent(t *testing.T) {
+	a := EmailAttachment{Filename: "a.txt", ContentType: "text/plain", Data: []byte("alpha")}
+	b := EmailAttachment{Filename: "b.txt", ContentType: "text/plain", Data: []byte("beta")}
+
+	hashAB := computeContentHash("Subject", "Body", []EmailAttachment{a, b})
+	hashBA := computeContentHash("Subject", "Body", []EmailAttachment{b, a})
+
+	if hashAB != hashBA {
+		t.Fatalf("attachment order should not affect hash:\n  [a,b]: %s\n  [b,a]: %s", hashAB, hashBA)
+	}
+
+	// Also verify against the known golden value.
+	want := "sha256:0ee8bf6bd5490c7a907d748e4012453226dea38583767e0126b2a26376ea9568"
+	if hashAB != want {
+		t.Fatalf("content hash mismatch:\n  got:  %s\n  want: %s", hashAB, want)
+	}
+}
+
+func TestContentHashWithThreeAttachments(t *testing.T) {
+	a := EmailAttachment{Filename: "a.txt", ContentType: "text/plain", Data: []byte("alpha")}
+	b := EmailAttachment{Filename: "b.txt", ContentType: "text/plain", Data: []byte("beta")}
+	c := EmailAttachment{Filename: "c.txt", ContentType: "text/plain", Data: []byte("gamma")}
+
+	got := computeContentHash("Subject", "Body", []EmailAttachment{a, b, c})
+	want := "sha256:8a2933b3b884212fb47655c51fd1d0490ebaa941ece2d2bde6cdc8423921a67a"
+	if got != want {
+		t.Fatalf("content hash mismatch:\n  got:  %s\n  want: %s", got, want)
+	}
+
+	// Order permutation should produce the same hash.
+	got2 := computeContentHash("Subject", "Body", []EmailAttachment{c, a, b})
+	if got != got2 {
+		t.Fatalf("three-attachment hash should be order-independent:\n  [a,b,c]: %s\n  [c,a,b]: %s", got, got2)
+	}
+}
+
+func TestContentHashAttachmentTamperDetected(t *testing.T) {
+	original := EmailAttachment{Filename: "a.txt", ContentType: "text/plain", Data: []byte("alpha")}
+	tampered := EmailAttachment{Filename: "a.txt", ContentType: "text/plain", Data: []byte("TAMPERED")}
+
+	hashOriginal := computeContentHash("Subject", "Body", []EmailAttachment{original})
+	hashTampered := computeContentHash("Subject", "Body", []EmailAttachment{tampered})
+
+	if hashOriginal == hashTampered {
+		t.Fatal("changing attachment data MUST produce a different hash")
+	}
+}
+
+func TestContentHashContentTypeChange(t *testing.T) {
+	plain := EmailAttachment{Filename: "a.txt", ContentType: "text/plain", Data: []byte("alpha")}
+	octet := EmailAttachment{Filename: "a.txt", ContentType: "application/octet-stream", Data: []byte("alpha")}
+
+	hashPlain := computeContentHash("Subject", "Body", []EmailAttachment{plain})
+	hashOctet := computeContentHash("Subject", "Body", []EmailAttachment{octet})
+
+	if hashPlain == hashOctet {
+		t.Fatal("changing content_type MUST produce a different hash")
+	}
+}
+
+func TestContentHashEmptyAttachmentData(t *testing.T) {
+	att := EmailAttachment{Filename: "empty.txt", ContentType: "text/plain", Data: []byte{}}
+	hashWithEmpty := computeContentHash("Subject", "Body", []EmailAttachment{att})
+	hashNoAtt := computeContentHash("Subject", "Body", nil)
+
+	// An empty attachment is still an attachment; the hash must differ from no-attachment.
+	if hashWithEmpty == hashNoAtt {
+		t.Fatal("empty-data attachment should produce a different hash than no attachments")
+	}
+
+	// Verify against golden value.
+	want := "sha256:a51415d203b1f74ce4eb2e00edca52fec0c4371ceab2530bf6a53a0ba1f24718"
+	if hashWithEmpty != want {
+		t.Fatalf("content hash mismatch:\n  got:  %s\n  want: %s", hashWithEmpty, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Signing payload format tests
+// ---------------------------------------------------------------------------
+
+func TestV2SigningPayloadFormat(t *testing.T) {
+	// v2 format: "{contentHash}:{email}:{timestamp}"
+	contentHash := computeContentHash("Hello", "World", nil)
+	email := "agent@hai.ai"
+	timestamp := int64(1700000000)
+
+	signInput := fmt.Sprintf("%s:%s:%d", contentHash, email, timestamp)
+
+	// Verify all three components are present and correctly ordered.
+	parts := strings.SplitN(signInput, ":", 4)
+	// parts: ["sha256", "<hex>", "<email>", "<timestamp>"]
+	// But the content hash itself contains "sha256:", so split on last two colons.
+	if !strings.HasPrefix(signInput, "sha256:") {
+		t.Fatalf("sign input should start with 'sha256:', got %q", signInput)
+	}
+	if !strings.Contains(signInput, ":"+email+":") {
+		t.Fatalf("sign input should contain ':%s:', got %q", email, signInput)
+	}
+	if !strings.HasSuffix(signInput, ":1700000000") {
+		t.Fatalf("sign input should end with ':1700000000', got %q", signInput)
+	}
+
+	// Verify exact expected format.
+	want := contentHash + ":" + email + ":1700000000"
+	if signInput != want {
+		t.Fatalf("v2 sign input mismatch:\n  got:  %s\n  want: %s", signInput, want)
+	}
+
+	// Verify it has exactly the format with 4 colon separators total:
+	// sha256:<hex>:<email>:<timestamp>
+	if len(parts) != 4 {
+		t.Fatalf("expected 4 colon-delimited parts, got %d: %v", len(parts), parts)
+	}
+}
+
+func TestV1SigningPayloadFormat(t *testing.T) {
+	// v1 format (legacy): "{contentHash}:{timestamp}" — no email component.
+	contentHash := computeContentHash("Hello", "World", nil)
+	timestamp := int64(1700000000)
+
+	signInput := fmt.Sprintf("%s:%d", contentHash, timestamp)
+
+	want := contentHash + ":1700000000"
+	if signInput != want {
+		t.Fatalf("v1 sign input mismatch:\n  got:  %s\n  want: %s", signInput, want)
+	}
+
+	// v1 should have exactly 3 colon-delimited parts: sha256, hex, timestamp.
+	parts := strings.SplitN(signInput, ":", 4)
+	if len(parts) != 3 {
+		t.Fatalf("v1 should have 3 colon-delimited parts, got %d: %v", len(parts), parts)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Guard tests
+// ---------------------------------------------------------------------------
+
+func TestSendEmailErrorsWhenAgentEmailEmpty(t *testing.T) {
+	pub, priv, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
+	}
+	_ = pub
+
+	cl, err := NewClient(
+		WithEndpoint("http://localhost:9999"),
+		WithJACSID("test-agent-id"),
+		WithPrivateKey(priv),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	// Do NOT set agentEmail.
+
+	_, sendErr := cl.SendEmailWithOptions(context.Background(), SendEmailOptions{
+		To:      "bob@hai.ai",
+		Subject: "Hi",
+		Body:    "Hello",
+	})
+	if sendErr == nil {
+		t.Fatal("expected error when agentEmail is empty")
+	}
+	if !strings.Contains(sendErr.Error(), "agent email not set") {
+		t.Fatalf("error should mention 'agent email not set', got: %v", sendErr)
+	}
+	if !errors.Is(sendErr, ErrEmailNotActive) {
+		t.Fatalf("error should wrap ErrEmailNotActive, got: %v", sendErr)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Serialization tests
+// ---------------------------------------------------------------------------
+
+func TestAttachmentDataExcludedFromJSON(t *testing.T) {
+	att := EmailAttachment{
+		Filename:    "doc.pdf",
+		ContentType: "application/pdf",
+		Data:        []byte("secret-binary-data"),
+	}
+
+	data, err := json.Marshal(att)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	jsonStr := string(data)
+
+	// The raw Data field has json:"-" so it must not appear.
+	if strings.Contains(jsonStr, "secret-binary-data") {
+		t.Fatalf("raw Data bytes should not appear in JSON, got: %s", jsonStr)
+	}
+
+	// DataBase64 was empty, so with omitempty it should also be absent.
+	if strings.Contains(jsonStr, "data_base64") {
+		t.Fatalf("data_base64 should be omitted when empty, got: %s", jsonStr)
+	}
+
+	// Filename and content_type should be present.
+	if !strings.Contains(jsonStr, `"filename":"doc.pdf"`) {
+		t.Fatalf("filename should be in JSON, got: %s", jsonStr)
+	}
+	if !strings.Contains(jsonStr, `"content_type":"application/pdf"`) {
+		t.Fatalf("content_type should be in JSON, got: %s", jsonStr)
+	}
+}
+
+func TestAttachmentDataBase64InJSON(t *testing.T) {
+	att := EmailAttachment{
+		Filename:    "doc.pdf",
+		ContentType: "application/pdf",
+		DataBase64:  "cGRmLWNvbnRlbnQ=",
+	}
+
+	data, err := json.Marshal(att)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	jsonStr := string(data)
+
+	if !strings.Contains(jsonStr, `"data_base64":"cGRmLWNvbnRlbnQ="`) {
+		t.Fatalf("data_base64 should appear in JSON when set, got: %s", jsonStr)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cross-SDK golden value test
+// ---------------------------------------------------------------------------
+
+func TestCrossSDKGoldenHash(t *testing.T) {
+	// Fixed inputs shared across all SDK implementations.
+	subject := "Cross-SDK Test"
+	body := "Verify me"
+	attachments := []EmailAttachment{
+		{Filename: "doc.pdf", ContentType: "application/pdf", Data: []byte("pdf-content")},
+		{Filename: "img.png", ContentType: "image/png", Data: []byte("png-content")},
+	}
+
+	got := computeContentHash(subject, body, attachments)
+
+	// Golden value computed independently:
+	//   att1_hash = sha256("doc.pdf:application/pdf:pdf-content")
+	//            = 529fcac3033bb5ced0ae558dafac6b1dc4b87818ac08dc16d877f000dceb608d
+	//   att2_hash = sha256("img.png:image/png:png-content")
+	//            = 64eb9ccbf4de85131d75c1a6d79cafee46684bec3f0ba4c8c044feb8aa43c706
+	//   sorted:  [att1_hash, att2_hash]  (att1 < att2 lexicographically)
+	//   content  = "Cross-SDK Test\nVerify me\n" + att1_hash + "\n" + att2_hash
+	//   hash     = sha256(content)
+	want := "sha256:a0222afb5f569cb89efd21f2bebdcf84e97c4c98cb31cb5ff54e6e4a2b88c8a1"
+
+	if got != want {
+		t.Fatalf("cross-SDK golden hash mismatch:\n  got:  %s\n  want: %s\n\n"+
+			"If this test fails after code changes, the content hash algorithm\n"+
+			"has diverged from other SDKs (Python, Node, Rust). All SDKs must\n"+
+			"produce identical hashes for the same inputs.", got, want)
+	}
+
+	// Verify the individual attachment hashes for debuggability.
+	h1 := sha256.Sum256([]byte("doc.pdf:application/pdf:pdf-content"))
+	att1Hash := hex.EncodeToString(h1[:])
+	if att1Hash != "529fcac3033bb5ced0ae558dafac6b1dc4b87818ac08dc16d877f000dceb608d" {
+		t.Fatalf("doc.pdf attachment hash mismatch: %s", att1Hash)
+	}
+
+	h2 := sha256.Sum256([]byte("img.png:image/png:png-content"))
+	att2Hash := hex.EncodeToString(h2[:])
+	if att2Hash != "64eb9ccbf4de85131d75c1a6d79cafee46684bec3f0ba4c8c044feb8aa43c706" {
+		t.Fatalf("img.png attachment hash mismatch: %s", att2Hash)
 	}
 }

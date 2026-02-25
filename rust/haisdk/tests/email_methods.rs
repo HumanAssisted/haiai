@@ -6,14 +6,16 @@ use sha2::{Digest, Sha256};
 
 fn make_client(base_url: &str) -> HaiClient<StaticJacsProvider> {
     let provider = StaticJacsProvider::new("test-agent-001");
-    HaiClient::new(
+    let mut client = HaiClient::new(
         provider,
         HaiClientOptions {
             base_url: base_url.to_string(),
             ..HaiClientOptions::default()
         },
     )
-    .expect("client")
+    .expect("client");
+    client.set_agent_email("test-agent-001@hai.ai".to_string());
+    client
 }
 
 // --- Task #38: JACS content signing in send_email ---
@@ -44,6 +46,7 @@ async fn send_email_includes_jacs_signature_and_timestamp() {
             subject: "Hello".to_string(),
             body: "World".to_string(),
             in_reply_to: None,
+            attachments: Vec::new(),
         })
         .await
         .expect("send_email");
@@ -75,6 +78,7 @@ async fn send_email_signature_uses_correct_hash_format() {
             subject: "Test Subject".to_string(),
             body: "Test Body".to_string(),
             in_reply_to: None,
+            attachments: Vec::new(),
         })
         .await
         .expect("send_email");
@@ -114,6 +118,7 @@ async fn send_email_includes_in_reply_to_when_set() {
             subject: "Re: Original".to_string(),
             body: "Reply body".to_string(),
             in_reply_to: Some("orig-msg-id".to_string()),
+            attachments: Vec::new(),
         })
         .await
         .expect("send_email with in_reply_to");

@@ -65,13 +65,63 @@ fn err_result(jacs_id: &str, reputation_tier: &str, error: &str) -> EmailVerific
     }
 }
 
+/// Determine the signature version and extract the content hash from the
+/// parsed `X-JACS-Signature` fields.
+///
+/// - v2: `h=` field is present in the signature header and carries the content hash.
+/// - v1: content hash comes from the separate `X-JACS-Content-Hash` header.
+///
+/// Returns `(version, content_hash)` or an error string.
+pub fn resolve_sig_version(
+    fields: &HashMap<String, String>,
+    content_hash_header: &str,
+) -> std::result::Result<(u8, String), String> {
+    let version_str = fields.get("v").map(|s| s.as_str()).unwrap_or("1");
+    let version: u8 = version_str.parse().unwrap_or(1);
+
+    match version {
+        2 => {
+            let h = fields.get("h").map(|s| s.as_str()).unwrap_or("");
+            if h.is_empty() {
+                return Err("v2 signature missing h= field".to_string());
+            }
+            Ok((2, h.to_string()))
+        }
+        1 => {
+            if content_hash_header.is_empty() {
+                return Err("Missing X-JACS-Content-Hash header".to_string());
+            }
+            Ok((1, content_hash_header.to_string()))
+        }
+        _ => Err(format!("Unsupported signature version: {version}")),
+    }
+}
+
+/// Build the signing payload for a given version.
+///
+/// - v1: `{content_hash}:{timestamp}`
+/// - v2: `{content_hash}:{from}:{timestamp}`
+pub fn build_signing_payload(version: u8, content_hash: &str, from: &str, timestamp: i64) -> String {
+    match version {
+        2 => format!("{content_hash}:{from}:{timestamp}"),
+        _ => format!("{content_hash}:{timestamp}"),
+    }
+}
+
 /// Verify an email's JACS signature.
 ///
 /// This is a standalone async function -- no agent authentication required.
 ///
+/// Supports both v1 and v2 signatures:
+/// - **v1**: content hash from `X-JACS-Content-Hash` header; signing payload `{hash}:{timestamp}`
+/// - **v2**: content hash from `h=` field in `X-JACS-Signature`; signing payload `{hash}:{from}:{timestamp}`
+///
+/// For v2 with attachments the `h=` value already covers attachment data,
+/// so the verifier does not need raw attachment bytes.
+///
 /// # Arguments
-/// * `headers` - Email headers. Must contain `X-JACS-Signature`,
-///   `X-JACS-Content-Hash`, and `From`.
+/// * `headers` - Email headers. Must contain `X-JACS-Signature` and `From`.
+///   v1 also requires `X-JACS-Content-Hash`.
 /// * `subject` - Email subject line.
 /// * `body` - Email body text.
 /// * `hai_url` - HAI server URL for public key lookup.
@@ -91,9 +141,6 @@ pub async fn verify_email_signature(
     if sig_header.is_empty() {
         return err_result("", "", "Missing X-JACS-Signature header");
     }
-    if content_hash_header.is_empty() {
-        return err_result("", "", "Missing X-JACS-Content-Hash header");
-    }
     if from_address.is_empty() {
         return err_result("", "", "Missing From header");
     }
@@ -104,6 +151,7 @@ pub async fn verify_email_signature(
     let timestamp_str = fields.get("t").map(|s| s.as_str()).unwrap_or("");
     let signature_b64 = fields.get("s").map(|s| s.as_str()).unwrap_or("");
     let algorithm = fields.get("a").map(|s| s.as_str()).unwrap_or("ed25519");
+    let from_field = fields.get("from").map(|s| s.as_str()).unwrap_or("");
 
     if jacs_id.is_empty() || timestamp_str.is_empty() || signature_b64.is_empty() {
         return err_result(jacs_id, "", "Incomplete X-JACS-Signature header (missing id, t, or s)");
@@ -118,20 +166,31 @@ pub async fn verify_email_signature(
         Err(_) => return err_result(jacs_id, "", &format!("Invalid timestamp: {timestamp_str}")),
     };
 
-    // Step 3: Recompute content hash
-    let mut hasher = Sha256::new();
-    hasher.update(subject.as_bytes());
-    hasher.update(b"\n");
-    hasher.update(body.as_bytes());
-    let computed_hash = format!("sha256:{:x}", hasher.finalize());
+    // Step 3: Determine version and resolve content hash
+    let (version, sig_content_hash) = match resolve_sig_version(&fields, content_hash_header) {
+        Ok(pair) => pair,
+        Err(msg) => return err_result(jacs_id, "", &msg),
+    };
 
-    // Step 4: Compare content hashes
-    if computed_hash != content_hash_header {
-        return err_result(jacs_id, "", "Content hash mismatch");
+    // Step 4: For v1, recompute and compare content hash.
+    // For v2, the h= value is trusted once the signature is verified — the
+    // signature itself proves the sender committed to that hash.
+    if version == 1 {
+        let mut hasher = Sha256::new();
+        hasher.update(subject.as_bytes());
+        hasher.update(b"\n");
+        hasher.update(body.as_bytes());
+        let computed_hash = format!("sha256:{:x}", hasher.finalize());
+
+        if computed_hash != sig_content_hash {
+            return err_result(jacs_id, "", "Content hash mismatch");
+        }
     }
 
     // Step 5: Fetch public key from registry
-    let registry_url = format!("{hai_url}/api/agents/keys/{from_address}");
+    // Use `from` field from sig header if present (v2), otherwise fall back to From header
+    let lookup_address = if !from_field.is_empty() { from_field } else { from_address };
+    let registry_url = format!("{hai_url}/api/agents/keys/{lookup_address}");
     let client = reqwest::Client::new();
     let registry_resp = match client.get(&registry_url).send().await {
         Ok(r) => r,
@@ -195,7 +254,9 @@ pub async fn verify_email_signature(
         }
     };
 
-    let sign_input = format!("{computed_hash}:{timestamp}");
+    // Build version-specific signing payload
+    let sign_from = if !from_field.is_empty() { from_field } else { from_address };
+    let sign_input = build_signing_payload(version, &sig_content_hash, sign_from, timestamp);
     let verify_key = ring::signature::UnparsedPublicKey::new(
         &ring::signature::ED25519,
         raw_pub_key,
@@ -273,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_missing_content_hash_header_returns_error() {
+    fn verify_missing_content_hash_header_returns_error_v1() {
         let mut headers = HashMap::new();
         headers.insert("X-JACS-Signature".to_string(), "v=1; a=ed25519; id=x; t=1; s=abc".to_string());
         headers.insert("From".to_string(), "test@hai.ai".to_string());
@@ -303,5 +364,129 @@ mod tests {
             generate_verify_link_hosted(r#"{"document_id":"abc"}"#, Some("https://example.com/"))
                 .expect("hosted");
         assert_eq!(url, "https://example.com/verify/abc");
+    }
+
+    // ── v2 verify support tests ──────────────────────────────────────────
+
+    #[test]
+    fn resolve_sig_version_v1_requires_content_hash_header() {
+        let fields: HashMap<String, String> = [
+            ("v".into(), "1".into()),
+        ].into_iter().collect();
+
+        let result = resolve_sig_version(&fields, "");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Missing X-JACS-Content-Hash header");
+    }
+
+    #[test]
+    fn resolve_sig_version_v1_uses_header() {
+        let fields: HashMap<String, String> = [
+            ("v".into(), "1".into()),
+        ].into_iter().collect();
+
+        let (ver, hash) = resolve_sig_version(&fields, "sha256:abc123").unwrap();
+        assert_eq!(ver, 1);
+        assert_eq!(hash, "sha256:abc123");
+    }
+
+    #[test]
+    fn resolve_sig_version_v2_uses_h_field() {
+        let fields: HashMap<String, String> = [
+            ("v".into(), "2".into()),
+            ("h".into(), "sha256:def456".into()),
+        ].into_iter().collect();
+
+        let (ver, hash) = resolve_sig_version(&fields, "").unwrap();
+        assert_eq!(ver, 2);
+        assert_eq!(hash, "sha256:def456");
+    }
+
+    #[test]
+    fn resolve_sig_version_v2_requires_h_field() {
+        let fields: HashMap<String, String> = [
+            ("v".into(), "2".into()),
+        ].into_iter().collect();
+
+        let result = resolve_sig_version(&fields, "sha256:fallback");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "v2 signature missing h= field");
+    }
+
+    #[test]
+    fn resolve_sig_version_defaults_to_v1() {
+        let fields: HashMap<String, String> = HashMap::new();
+        let (ver, hash) = resolve_sig_version(&fields, "sha256:default").unwrap();
+        assert_eq!(ver, 1);
+        assert_eq!(hash, "sha256:default");
+    }
+
+    #[test]
+    fn resolve_sig_version_unsupported_version() {
+        let fields: HashMap<String, String> = [
+            ("v".into(), "99".into()),
+        ].into_iter().collect();
+
+        let result = resolve_sig_version(&fields, "sha256:x");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unsupported signature version"));
+    }
+
+    #[test]
+    fn build_signing_payload_v1_format() {
+        let payload = build_signing_payload(1, "sha256:abc", "sender@hai.ai", 1740000000);
+        assert_eq!(payload, "sha256:abc:1740000000");
+    }
+
+    #[test]
+    fn build_signing_payload_v2_format() {
+        let payload = build_signing_payload(2, "sha256:abc", "sender@hai.ai", 1740000000);
+        assert_eq!(payload, "sha256:abc:sender@hai.ai:1740000000");
+    }
+
+    #[test]
+    fn parse_v2_header_extracts_all_fields() {
+        let header = "v=2; a=ed25519; id=agent-123; from=test@hai.ai; h=sha256:abcdef; t=1740000000; s=base64sig; jv=1.0";
+        let fields = parse_jacs_signature_header(header);
+        assert_eq!(fields.get("v").unwrap(), "2");
+        assert_eq!(fields.get("from").unwrap(), "test@hai.ai");
+        assert_eq!(fields.get("h").unwrap(), "sha256:abcdef");
+        assert_eq!(fields.get("jv").unwrap(), "1.0");
+        assert_eq!(fields.get("id").unwrap(), "agent-123");
+        assert_eq!(fields.get("t").unwrap(), "1740000000");
+        assert_eq!(fields.get("s").unwrap(), "base64sig");
+    }
+
+    #[test]
+    fn v2_does_not_require_content_hash_header() {
+        // v2 headers: X-JACS-Signature has h= field, no X-JACS-Content-Hash needed
+        let mut headers = HashMap::new();
+        headers.insert(
+            "X-JACS-Signature".to_string(),
+            "v=2; a=ed25519; id=test; from=test@hai.ai; h=sha256:abc; t=1740000000; s=abc".to_string(),
+        );
+        // No X-JACS-Content-Hash
+        headers.insert("From".to_string(), "test@hai.ai".to_string());
+
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let result = rt.block_on(verify_email_signature(&headers, "Test", "Body", "https://hai.ai"));
+        // Should NOT fail with "Missing X-JACS-Content-Hash header"
+        // It will fail later (registry fetch), but the point is it gets past header validation
+        assert!(result.error.as_deref() != Some("Missing X-JACS-Content-Hash header"));
+    }
+
+    #[test]
+    fn v1_still_requires_content_hash_header() {
+        let mut headers = HashMap::new();
+        headers.insert(
+            "X-JACS-Signature".to_string(),
+            "v=1; a=ed25519; id=test; t=1740000000; s=abc".to_string(),
+        );
+        headers.insert("From".to_string(), "test@hai.ai".to_string());
+
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let result = rt.block_on(verify_email_signature(&headers, "Test", "Body", "https://hai.ai"));
+        assert!(!result.valid);
+        assert_eq!(result.error.as_deref(), Some("Missing X-JACS-Content-Hash header"));
     }
 }

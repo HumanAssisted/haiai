@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import time
@@ -10,13 +11,14 @@ from unittest.mock import patch
 
 import pytest
 
-from jacs.hai.client import HaiClient
+from jacs.hai.client import HaiClient, _compute_content_hash
 from jacs.hai.crypt import sign_string, verify_string
 from jacs.hai.errors import (
     BodyTooLarge,
     EmailNotActive,
     HaiApiError,
     HaiAuthError,
+    HaiError,
     RateLimited,
     RecipientNotFound,
     SubjectTooLong,
@@ -168,6 +170,138 @@ class TestSendEmailJacsSigning:
         HaiClient().send_email(BASE_URL, "bob@hai.ai", "Re: Hello", "Reply body", in_reply_to="orig-id")
 
         assert captured["json"]["in_reply_to"] == "orig-id"
+
+    def test_send_email_with_attachments_includes_attachment_data(
+        self,
+        loaded_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """send_email with attachments must include attachments array in payload."""
+        captured: dict[str, Any] = {}
+
+        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
+            captured["json"] = kwargs.get("json", {})
+            return _FakeResponse(200, {"message_id": "msg-att", "status": "sent"})
+
+        import httpx
+        monkeypatch.setattr(httpx, "post", fake_post)
+
+        attachments = [
+            {
+                "filename": "hello.txt",
+                "content_type": "text/plain",
+                "data": b"Hello, world!",
+            },
+            {
+                "filename": "image.png",
+                "content_type": "image/png",
+                "data": b"\x89PNG\r\n\x1a\nfakedata",
+            },
+        ]
+        HaiClient().send_email(
+            BASE_URL, "bob@hai.ai", "With attachments", "Body", attachments=attachments,
+        )
+
+        payload = captured["json"]
+        assert "attachments" in payload
+        assert len(payload["attachments"]) == 2
+
+        att0 = payload["attachments"][0]
+        assert "data_base64" in att0
+        assert att0["filename"] == "hello.txt"
+        assert att0["content_type"] == "text/plain"
+        # Verify base64 round-trips correctly
+        assert base64.b64decode(att0["data_base64"]) == b"Hello, world!"
+
+        att1 = payload["attachments"][1]
+        assert att1["filename"] == "image.png"
+        assert att1["content_type"] == "image/png"
+
+    def test_send_email_attachment_hash_verifiable(
+        self,
+        loaded_config: None,
+        ed25519_keypair: tuple,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Content hash for attachments must match the v2 formula."""
+        captured: dict[str, Any] = {}
+        private_key, _ = ed25519_keypair
+
+        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
+            captured["json"] = kwargs.get("json", {})
+            return _FakeResponse(200, {"message_id": "msg-att-v", "status": "sent"})
+
+        import httpx
+        monkeypatch.setattr(httpx, "post", fake_post)
+
+        subject = "Attachment Test"
+        body = "Body with attachments"
+        att1_data = b"file-one-content"
+        att2_data = b"file-two-content"
+        attachments = [
+            {"filename": "one.txt", "content_type": "text/plain", "data": att1_data},
+            {"filename": "two.bin", "content_type": "application/octet-stream", "data": att2_data},
+        ]
+
+        HaiClient().send_email(
+            BASE_URL, "bob@hai.ai", subject, body, attachments=attachments,
+        )
+
+        # Recompute expected content hash using _compute_content_hash
+        expected_hash = _compute_content_hash(subject, body, attachments)
+
+        payload = captured["json"]
+        sign_input = f"{expected_hash}:{TEST_AGENT_EMAIL}:{payload['jacs_timestamp']}"
+        pub_key = private_key.public_key()
+        assert verify_string(pub_key, sign_input, payload["jacs_signature"])
+
+    def test_send_email_attachment_order_independent(
+        self,
+        loaded_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Attachment order must not affect the content hash."""
+        captures: list[dict[str, Any]] = []
+
+        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
+            captures.append(kwargs.get("json", {}))
+            return _FakeResponse(200, {"message_id": "msg-ord", "status": "sent"})
+
+        import httpx
+        monkeypatch.setattr(httpx, "post", fake_post)
+
+        att_a = {"filename": "a.txt", "content_type": "text/plain", "data": b"aaa"}
+        att_b = {"filename": "b.txt", "content_type": "text/plain", "data": b"bbb"}
+
+        HaiClient().send_email(
+            BASE_URL, "bob@hai.ai", "Order test", "Body",
+            attachments=[att_a, att_b],
+        )
+        HaiClient().send_email(
+            BASE_URL, "bob@hai.ai", "Order test", "Body",
+            attachments=[att_b, att_a],
+        )
+
+        # Both should produce the same content hash (extracted from the
+        # standalone function for independent verification)
+        hash_ab = _compute_content_hash("Order test", "Body", [att_a, att_b])
+        hash_ba = _compute_content_hash("Order test", "Body", [att_b, att_a])
+        assert hash_ab == hash_ba
+
+    def test_send_email_no_agent_email_raises(
+        self,
+        loaded_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """send_email without agent_email must raise HaiError."""
+        # Create a client without the autouse fixture's email override
+        client = HaiClient.__new__(HaiClient)
+        _original_init(client)
+        # Explicitly clear agent_email
+        client._agent_email = None  # type: ignore[attr-defined]
+
+        with pytest.raises(HaiError, match="agent email not set"):
+            client.send_email(BASE_URL, "bob@hai.ai", "Sub", "Body")
 
 
 # ---------------------------------------------------------------

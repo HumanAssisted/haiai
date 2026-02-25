@@ -19,7 +19,7 @@ pub use a2a::{
     A2AIntegration, A2AMediatedJobOptions, A2ATrustAssessment, A2ATrustPolicy, A2AWrappedArtifact,
     A2A_JACS_EXTENSION_URI, A2A_PROTOCOL_VERSION_04, A2A_PROTOCOL_VERSION_10,
 };
-pub use client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
+pub use client::{compute_content_hash_v2, HaiClient, HaiClientOptions, SseConnection, WsConnection};
 pub use config::{load_config, resolve_private_key_candidates, AgentConfig};
 pub use error::{HaiError, Result};
 pub use jacs::{JacsProvider, NoopJacsProvider, StaticJacsProvider};
@@ -27,6 +27,7 @@ pub use jacs::{JacsProvider, NoopJacsProvider, StaticJacsProvider};
 pub use jacs_local::LocalJacsProvider;
 pub use types::*;
 pub use verify::{
-    generate_verify_link, generate_verify_link_hosted, parse_jacs_signature_header,
-    verify_email_signature, MAX_VERIFY_DOCUMENT_BYTES, MAX_VERIFY_URL_LEN,
+    build_signing_payload, generate_verify_link, generate_verify_link_hosted,
+    parse_jacs_signature_header, resolve_sig_version, verify_email_signature,
+    MAX_VERIFY_DOCUMENT_BYTES, MAX_VERIFY_URL_LEN,
 };

@@ -50,7 +50,7 @@ import {
   verify as verifySignature,
 } from 'node:crypto';
 import { signString, verifyString, generateKeypair } from './crypt.js';
-import { signResponse, canonicalJson, getServerKeys, unwrapSignedEvent } from './signing.js';
+import { signResponse, canonicalJson, getServerKeys, unwrapSignedEvent, computeContentHash } from './signing.js';
 import { loadConfig, loadPrivateKey, loadPrivateKeyPassphrase } from './config.js';
 import { parseSseStream } from './sse.js';
 import { openWebSocket, wsEventStream } from './ws.js';
@@ -1369,25 +1369,7 @@ export class HaiClient {
     }
 
     // v2 content hash: sha256(subject + "\n" + body [+ sorted attachment hashes])
-    const contentHash = (() => {
-      const h = createHash('sha256');
-      h.update(options.subject + '\n' + options.body, 'utf8');
-      if (options.attachments?.length) {
-        const attHashes = options.attachments.map(att => {
-          const ah = createHash('sha256');
-          ah.update(att.filename);
-          ah.update(':');
-          ah.update(att.contentType);
-          ah.update(':');
-          ah.update(att.data);
-          return ah.digest('hex');
-        }).sort();
-        for (const ah of attHashes) {
-          h.update('\n' + ah);
-        }
-      }
-      return 'sha256:' + h.digest('hex');
-    })();
+    const contentHash = computeContentHash(options.subject, options.body, options.attachments);
 
     // v2 signing: "{content_hash}:{from_email}:{timestamp}"
     const jacsTimestamp = Math.floor(Date.now() / 1000);

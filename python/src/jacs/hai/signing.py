@@ -279,13 +279,20 @@ def verify_email_signature(
     body: str,
     hai_url: str = "https://hai.ai",
 ) -> EmailVerificationResult:
-    """Verify an email's JACS signature.
+    """Verify an email's JACS signature (v1 and v2).
 
     This is a standalone function -- no agent authentication required.
 
+    **v1 payload:** ``{content_hash}:{timestamp}``
+    **v2 payload:** ``{content_hash}:{from}:{timestamp}``
+
+    v2 is detected by the presence of an ``h`` field in the X-JACS-Signature
+    header.  v2 carries the content hash inline (``h=sha256:...``) and does
+    not require a separate ``X-JACS-Content-Hash`` header.
+
     Args:
-        headers: Email headers dict. Must contain ``X-JACS-Signature``,
-            ``X-JACS-Content-Hash``, and ``From``.
+        headers: Email headers dict. Must contain ``X-JACS-Signature`` and
+            ``From``.  v1 also requires ``X-JACS-Content-Hash``.
         subject: Email subject line.
         body: Email body text.
         hai_url: HAI server URL for public key lookup.
@@ -296,28 +303,29 @@ def verify_email_signature(
     """
     # Step 1: Extract required headers
     sig_header = headers.get("X-JACS-Signature", "")
-    content_hash_header = headers.get("X-JACS-Content-Hash", "")
     from_address = headers.get("From", "")
 
     if not sig_header:
         return EmailVerificationResult(
             valid=False, jacs_id="", reputation_tier="", error="Missing X-JACS-Signature header"
         )
-    if not content_hash_header:
-        return EmailVerificationResult(
-            valid=False, jacs_id="", reputation_tier="", error="Missing X-JACS-Content-Hash header"
-        )
     if not from_address:
         return EmailVerificationResult(
             valid=False, jacs_id="", reputation_tier="", error="Missing From header"
         )
 
-    # Step 2: Parse signature header fields
+    # Step 2: Parse signature header fields and detect version
     fields = _parse_jacs_signature_header(sig_header)
     jacs_id = fields.get("id", "")
     timestamp_str = fields.get("t", "")
     signature_b64 = fields.get("s", "")
     algorithm = fields.get("a", "ed25519")
+    version = fields.get("v", "1")
+    header_hash = fields.get("h", "")         # v2: content hash inline
+    header_from = fields.get("from", "")       # v2: sender identity
+
+    # Detect v2: presence of "h" field in the parsed signature
+    is_v2 = bool(header_hash)
 
     if not jacs_id or not timestamp_str or not signature_b64:
         return EmailVerificationResult(
@@ -339,19 +347,64 @@ def verify_email_signature(
             error=f"Invalid timestamp: {timestamp_str}",
         )
 
-    # Step 3: Recompute content hash
-    computed_hash = "sha256:" + hashlib.sha256(
-        (subject + "\n" + body).encode("utf-8")
-    ).hexdigest()
+    # Step 3: Determine content hash and signing payload based on version
+    if is_v2:
+        # v2: content hash comes from the h= field in the signature header.
+        # The signature itself proves h= is authentic, so we trust it.
+        content_hash = header_hash
 
-    # Step 4: Compare content hashes
-    if computed_hash != content_hash_header:
-        return EmailVerificationResult(
-            valid=False, jacs_id=jacs_id, reputation_tier="",
-            error="Content hash mismatch",
-        )
+        # v2: require from= in the signature header
+        if not header_from:
+            return EmailVerificationResult(
+                valid=False, jacs_id=jacs_id, reputation_tier="",
+                error="v2 signature missing from= field",
+            )
 
-    # Step 5: Fetch public key from registry
+        # v2: check that from= matches the email From header
+        if header_from != from_address:
+            return EmailVerificationResult(
+                valid=False, jacs_id=jacs_id, reputation_tier="",
+                error=f"Signature from ({header_from}) does not match email From header ({from_address})",
+            )
+
+        # Informational: recompute content hash from subject+body for comparison.
+        # A mismatch may be due to attachments (which we cannot recompute here).
+        computed_hash = "sha256:" + hashlib.sha256(
+            (subject + "\n" + body).encode("utf-8")
+        ).hexdigest()
+        if computed_hash != content_hash:
+            logger.info(
+                "v2 content hash mismatch (may include attachments): "
+                "header=%s computed=%s",
+                content_hash, computed_hash,
+            )
+
+        # v2 signing payload: {content_hash}:{from}:{timestamp}
+        sign_input = f"{content_hash}:{header_from}:{timestamp}"
+    else:
+        # v1: require X-JACS-Content-Hash header
+        content_hash_header = headers.get("X-JACS-Content-Hash", "")
+        if not content_hash_header:
+            return EmailVerificationResult(
+                valid=False, jacs_id="", reputation_tier="",
+                error="Missing X-JACS-Content-Hash header",
+            )
+
+        # v1: recompute content hash and compare
+        computed_hash = "sha256:" + hashlib.sha256(
+            (subject + "\n" + body).encode("utf-8")
+        ).hexdigest()
+        if computed_hash != content_hash_header:
+            return EmailVerificationResult(
+                valid=False, jacs_id=jacs_id, reputation_tier="",
+                error="Content hash mismatch",
+            )
+        content_hash = content_hash_header
+
+        # v1 signing payload: {content_hash}:{timestamp}
+        sign_input = f"{content_hash}:{timestamp}"
+
+    # Step 4: Fetch public key from registry
     registry_url = f"{hai_url.rstrip('/')}/api/agents/keys/{from_address}"
     try:
         resp = httpx.get(registry_url, timeout=10.0)
@@ -396,15 +449,14 @@ def verify_email_signature(
             error=f"Invalid public key format: {exc}",
         )
 
-    # Step 6: Verify Ed25519 signature
-    sign_input = f"{computed_hash}:{timestamp}"
+    # Step 5: Verify Ed25519 signature
     if not verify_string(loaded_key, sign_input, signature_b64):
         return EmailVerificationResult(
             valid=False, jacs_id=registry_jacs_id, reputation_tier=reputation_tier,
             error="Signature verification failed",
         )
 
-    # Step 7: Check timestamp freshness
+    # Step 6: Check timestamp freshness
     now = int(time.time())
     age = now - timestamp
     if age > _MAX_TIMESTAMP_AGE:

@@ -69,6 +69,52 @@ MAX_VERIFY_DOCUMENT_BYTES = 1515
 
 
 # ---------------------------------------------------------------------------
+# Content hash computation (standalone, shared with verify side)
+# ---------------------------------------------------------------------------
+
+
+def _compute_content_hash(
+    subject: str,
+    body: str,
+    attachments: Optional[list[dict[str, Any]]] = None,
+) -> str:
+    """Compute the JACS v2 content hash for email signing.
+
+    Formula:
+        - Per attachment: sha256(filename:content_type:raw_data) -> hex lowercase
+        - Sort the hex hashes alphabetically
+        - canonical = subject + "\\n" + body + "\\n" + "\\n".join(sorted_hashes)
+          (or just subject + "\\n" + body when no attachments)
+        - content_hash = "sha256:" + sha256(canonical)
+
+    Args:
+        subject: Email subject line.
+        body: Email body text.
+        attachments: Optional list of dicts with ``filename`` (str),
+            ``content_type`` (str), and ``data`` (bytes).
+
+    Returns:
+        Content hash string prefixed with ``sha256:``.
+    """
+    if attachments:
+        att_hashes = sorted(
+            hashlib.sha256(
+                att["filename"].encode("utf-8")
+                + b":"
+                + att["content_type"].encode("utf-8")
+                + b":"
+                + att["data"]  # raw bytes
+            ).hexdigest()
+            for att in attachments
+        )
+        canonical = subject + "\n" + body + "\n" + "\n".join(att_hashes)
+    else:
+        canonical = subject + "\n" + body
+
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------------------
 # HaiClient
 # ---------------------------------------------------------------------------
 
@@ -1524,24 +1570,7 @@ class HaiClient:
         # JACS content signing v2: hash includes attachments and email
         from jacs.hai.config import get_private_key
 
-        if attachments:
-            att_hashes = sorted(
-                hashlib.sha256(
-                    att["filename"].encode("utf-8")
-                    + b":"
-                    + att["content_type"].encode("utf-8")
-                    + b":"
-                    + att["data"]  # raw bytes
-                ).hexdigest()
-                for att in attachments
-            )
-            canonical = subject + "\n" + body + "\n" + "\n".join(att_hashes)
-        else:
-            canonical = subject + "\n" + body
-
-        content_hash = "sha256:" + hashlib.sha256(
-            canonical.encode("utf-8")
-        ).hexdigest()
+        content_hash = _compute_content_hash(subject, body, attachments)
         jacs_timestamp = int(time.time())
         sign_input = f"{content_hash}:{self._agent_email}:{jacs_timestamp}"
         jacs_signature = sign_string(get_private_key(), sign_input)

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
 import { generateKeypair, verifyString } from '../src/crypt.js';
+import { computeContentHash } from '../src/signing.js';
 import { createHash } from 'node:crypto';
 import {
   HaiApiError,
@@ -486,5 +487,131 @@ describe('sendEmail error codes', () => {
       expect(err).not.toBeInstanceOf(RateLimitedError);
       expect((err as HaiApiError).errorCode).toBe('UNKNOWN_CODE');
     }
+  });
+});
+
+describe('sendEmail with attachments', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('includes sorted attachment hashes in content hash', async () => {
+    const keypair = generateKeypair();
+    const client = HaiClient.fromCredentials('att-agent', keypair.privateKeyPem, {
+      url: 'https://hai.example',
+    });
+    client.setAgentEmail('att-agent@hai.ai');
+    let capturedBody: Record<string, unknown> | null = null;
+
+    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      capturedBody = JSON.parse(init?.body as string);
+      return jsonResponse({ message_id: 'msg-att-1', status: 'queued' });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const attachments = [
+      { filename: 'b.txt', contentType: 'text/plain', data: Buffer.from('bravo') },
+      { filename: 'a.txt', contentType: 'text/plain', data: Buffer.from('alpha') },
+    ];
+
+    await client.sendEmail({
+      to: 'bob@hai.ai',
+      subject: 'With Attachments',
+      body: 'See attached',
+      attachments,
+    });
+
+    expect(capturedBody).not.toBeNull();
+    // Verify attachments array present with data_base64
+    const payloadAtts = capturedBody!.attachments as Array<Record<string, string>>;
+    expect(payloadAtts).toHaveLength(2);
+    expect(payloadAtts[0].data_base64).toBeDefined();
+    expect(payloadAtts[1].data_base64).toBeDefined();
+
+    // Recompute expected v2 content hash and verify signature
+    const expectedHash = computeContentHash('With Attachments', 'See attached', attachments);
+    const signInput = `${expectedHash}:att-agent@hai.ai:${capturedBody!.jacs_timestamp}`;
+    const valid = verifyString(keypair.publicKeyPem, signInput, capturedBody!.jacs_signature as string);
+    expect(valid).toBe(true);
+  });
+
+  it('attachment order does not affect signature', async () => {
+    const keypair = generateKeypair();
+    const client = HaiClient.fromCredentials('order-agent', keypair.privateKeyPem, {
+      url: 'https://hai.example',
+    });
+    client.setAgentEmail('order-agent@hai.ai');
+
+    const captured: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      captured.push(JSON.parse(init?.body as string));
+      return jsonResponse({ message_id: `msg-ord-${captured.length}`, status: 'queued' });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const attA = { filename: 'a.txt', contentType: 'text/plain', data: Buffer.from('alpha') };
+    const attB = { filename: 'b.txt', contentType: 'text/plain', data: Buffer.from('bravo') };
+
+    // Send in order [a, b]
+    await client.sendEmail({
+      to: 'bob@hai.ai', subject: 'Order Test', body: 'body',
+      attachments: [attA, attB],
+    });
+    // Send in order [b, a]
+    await client.sendEmail({
+      to: 'bob@hai.ai', subject: 'Order Test', body: 'body',
+      attachments: [attB, attA],
+    });
+
+    // Both signatures should verify with the same expected hash
+    const expectedHash = computeContentHash('Order Test', 'body', [attA, attB]);
+    for (const body of captured) {
+      const signInput = `${expectedHash}:order-agent@hai.ai:${body.jacs_timestamp}`;
+      const valid = verifyString(keypair.publicKeyPem, signInput, body.jacs_signature as string);
+      expect(valid).toBe(true);
+    }
+  });
+
+  it('attachment data is base64 encoded in payload', async () => {
+    const client = makeClient();
+    let capturedBody: Record<string, unknown> | null = null;
+
+    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      capturedBody = JSON.parse(init?.body as string);
+      return jsonResponse({ message_id: 'msg-b64', status: 'queued' });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const attachments = [
+      { filename: 'hello.txt', contentType: 'text/plain', data: Buffer.from('Hello World') },
+      { filename: 'binary.bin', contentType: 'application/octet-stream', data: Buffer.from([0x00, 0x01, 0xff]) },
+    ];
+
+    await client.sendEmail({
+      to: 'bob@hai.ai', subject: 'B64 Test', body: 'body',
+      attachments,
+    });
+
+    const payloadAtts = capturedBody!.attachments as Array<Record<string, string>>;
+    expect(payloadAtts).toHaveLength(2);
+
+    // Verify each attachment decodes back to original data
+    for (let i = 0; i < attachments.length; i++) {
+      const decoded = Buffer.from(payloadAtts[i].data_base64, 'base64');
+      expect(decoded).toEqual(attachments[i].data);
+    }
+  });
+
+  it('throws when agentEmail not set', async () => {
+    const keypair = generateKeypair();
+    const client = HaiClient.fromCredentials('no-email-agent', keypair.privateKeyPem, {
+      url: 'https://hai.example',
+    });
+    // Do NOT call setAgentEmail
+
+    await expect(
+      client.sendEmail({ to: 'bob@hai.ai', subject: 'Hi', body: 'test' }),
+    ).rejects.toThrow('agent email not set');
   });
 });

@@ -5,7 +5,11 @@ import (
 	"testing"
 )
 
+// testAgentEmail is the default agent email used by test clients.
+const testAgentEmail = "testagent@hai.ai"
+
 // newTestClient creates a Client pointing at a test server with a generated key pair.
+// The client's agentEmail is set to testAgentEmail so that email-sending methods work.
 func newTestClient(t *testing.T, serverURL string) (*Client, ed25519.PublicKey) {
 	t.Helper()
 	pub, priv, err := GenerateKeyPair()
@@ -21,5 +25,6 @@ func newTestClient(t *testing.T, serverURL string) (*Client, ed25519.PublicKey) 
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
+	cl.SetAgentEmail(testAgentEmail)
 	return cl, pub
 }

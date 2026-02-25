@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -187,6 +188,35 @@ pub struct EmailAttachment {
     /// Base64-encoded data sent to the API.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_base64: Option<String>,
+}
+
+impl EmailAttachment {
+    /// Create a new attachment from raw bytes.
+    ///
+    /// `data_base64` is left as `None` and will be computed automatically
+    /// during `send_email`.
+    pub fn new(filename: String, content_type: String, data: Vec<u8>) -> Self {
+        Self {
+            filename,
+            content_type,
+            data,
+            data_base64: None,
+        }
+    }
+
+    /// Return the raw attachment bytes, falling back to decoding `data_base64`
+    /// when `data` is empty.
+    pub fn effective_data(&self) -> Vec<u8> {
+        if !self.data.is_empty() {
+            return self.data.clone();
+        }
+        if let Some(ref b64) = self.data_base64 {
+            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(b64) {
+                return decoded;
+            }
+        }
+        Vec::new()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
