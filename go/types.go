@@ -264,13 +264,22 @@ type RegisterResult struct {
 }
 
 // SendEmailOptions configures an email send request.
+// EmailAttachment represents a file attachment for an email.
+type EmailAttachment struct {
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+	Data        []byte `json:"-"`                          // Raw bytes (not sent in JSON)
+	DataBase64  string `json:"data_base64,omitempty"`       // Base64-encoded data for API
+}
+
 type SendEmailOptions struct {
-	To            string `json:"to"`
-	Subject       string `json:"subject"`
-	Body          string `json:"body"`
-	InReplyTo     string `json:"in_reply_to,omitempty"`
-	JacsSignature string `json:"jacs_signature,omitempty"`
-	JacsTimestamp int64  `json:"jacs_timestamp,omitempty"`
+	To            string            `json:"to"`
+	Subject       string            `json:"subject"`
+	Body          string            `json:"body"`
+	InReplyTo     string            `json:"in_reply_to,omitempty"`
+	Attachments   []EmailAttachment `json:"attachments,omitempty"`
+	JacsSignature string            `json:"jacs_signature,omitempty"`
+	JacsTimestamp int64             `json:"jacs_timestamp,omitempty"`
 }
 
 // SearchOptions configures a message search request.

@@ -108,6 +108,16 @@ class HaiClient:
         self._hai_url: Optional[str] = None
         self._last_event_id: Optional[str] = None
         self._hai_agent_id: Optional[str] = None
+        self._agent_email: Optional[str] = None
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def agent_email(self) -> Optional[str]:
+        """The agent's ``@hai.ai`` email address, set after ``claim_username``."""
+        return self._agent_email
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -733,7 +743,9 @@ class HaiClient:
                     body=resp.text,
                 )
 
-            return resp.json()
+            data = resp.json()
+            self._agent_email = data.get("email")
+            return data
 
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
             raise HaiConnectionError(f"Connection failed: {exc}")
@@ -1482,6 +1494,7 @@ class HaiClient:
         subject: str,
         body: str,
         in_reply_to: Optional[str] = None,
+        attachments: Optional[list[dict[str, Any]]] = None,
     ) -> SendEmailResult:
         """Send an email from this agent's @hai.ai address.
 
@@ -1491,24 +1504,46 @@ class HaiClient:
             subject: Email subject line.
             body: Plain text email body.
             in_reply_to: Optional Message-ID for threading.
+            attachments: Optional list of attachment dicts, each with keys
+                ``filename`` (str), ``content_type`` (str), and ``data``
+                (bytes).  Included in the content hash and sent as
+                base64-encoded payloads.
 
         Returns:
             SendEmailResult with message_id and status.
         """
+        if self._agent_email is None:
+            raise HaiError("agent email not set -- call claim_username first")
+
         jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/send")
         headers = self._build_auth_headers()
         headers["Content-Type"] = "application/json"
 
-        # JACS content signing: hash(subject + "\n" + body), then sign
+        # JACS content signing v2: hash includes attachments and email
         from jacs.hai.config import get_private_key
 
+        if attachments:
+            att_hashes = sorted(
+                hashlib.sha256(
+                    att["filename"].encode("utf-8")
+                    + b":"
+                    + att["content_type"].encode("utf-8")
+                    + b":"
+                    + att["data"]  # raw bytes
+                ).hexdigest()
+                for att in attachments
+            )
+            canonical = subject + "\n" + body + "\n" + "\n".join(att_hashes)
+        else:
+            canonical = subject + "\n" + body
+
         content_hash = "sha256:" + hashlib.sha256(
-            (subject + "\n" + body).encode("utf-8")
+            canonical.encode("utf-8")
         ).hexdigest()
         jacs_timestamp = int(time.time())
-        sign_input = f"{content_hash}:{jacs_timestamp}"
+        sign_input = f"{content_hash}:{self._agent_email}:{jacs_timestamp}"
         jacs_signature = sign_string(get_private_key(), sign_input)
 
         payload: dict[str, Any] = {
@@ -1520,6 +1555,15 @@ class HaiClient:
         }
         if in_reply_to is not None:
             payload["in_reply_to"] = in_reply_to
+        if attachments:
+            payload["attachments"] = [
+                {
+                    "filename": a["filename"],
+                    "content_type": a["content_type"],
+                    "data_base64": base64.b64encode(a["data"]).decode(),
+                }
+                for a in attachments
+            ]
 
         try:
             resp = httpx.post(url, json=payload, headers=headers, timeout=self._timeout)
@@ -2584,9 +2628,12 @@ def send_email(
     subject: str,
     body: str,
     in_reply_to: Optional[str] = None,
+    attachments: Optional[list[dict[str, Any]]] = None,
 ) -> SendEmailResult:
     """Send an email from this agent's @hai.ai address."""
-    return _get_client().send_email(hai_url, to, subject, body, in_reply_to)
+    return _get_client().send_email(
+        hai_url, to, subject, body, in_reply_to, attachments=attachments,
+    )
 
 
 def list_messages(

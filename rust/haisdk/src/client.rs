@@ -92,6 +92,8 @@ pub struct HaiClient<P: JacsProvider> {
     jacs: P,
     /// HAI-assigned agent UUID for email URL paths (set after registration).
     hai_agent_id: Option<String>,
+    /// Agent's @hai.ai email address (set after claim_username).
+    agent_email: Option<String>,
 }
 
 impl<P: JacsProvider> HaiClient<P> {
@@ -106,6 +108,7 @@ impl<P: JacsProvider> HaiClient<P> {
             max_retries: options.max_retries.max(1),
             jacs,
             hai_agent_id: None,
+            agent_email: None,
         })
     }
 
@@ -130,6 +133,16 @@ impl<P: JacsProvider> HaiClient<P> {
     /// Set the HAI-assigned agent UUID (from registration response).
     pub fn set_hai_agent_id(&mut self, id: String) {
         self.hai_agent_id = Some(id);
+    }
+
+    /// Get the agent's @hai.ai email address (set after claim_username).
+    pub fn agent_email(&self) -> Option<&str> {
+        self.agent_email.as_deref()
+    }
+
+    /// Set the agent's @hai.ai email address.
+    pub fn set_agent_email(&mut self, email: String) {
+        self.agent_email = Some(email);
     }
 
     pub fn build_auth_header(&self) -> Result<String> {
@@ -375,6 +388,9 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     pub async fn send_email(&self, options: &SendEmailOptions) -> Result<SendEmailResult> {
+        let agent_email = self.agent_email.as_deref().ok_or_else(|| {
+            HaiError::Message("agent email not set — call claim_username first".into())
+        })?;
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/send"));
 
@@ -385,10 +401,28 @@ impl<P: JacsProvider> HaiClient<P> {
             hasher.update(options.subject.as_bytes());
             hasher.update(b"\n");
             hasher.update(options.body.as_bytes());
+            // Include attachment hashes (sorted) for v2
+            if !options.attachments.is_empty() {
+                let mut att_hashes: Vec<String> = options.attachments.iter().map(|att| {
+                    let mut ah = Sha256::new();
+                    ah.update(att.filename.as_bytes());
+                    ah.update(b":");
+                    ah.update(att.content_type.as_bytes());
+                    ah.update(b":");
+                    ah.update(&att.data);
+                    format!("{:x}", ah.finalize())
+                }).collect();
+                att_hashes.sort();
+                for h in &att_hashes {
+                    hasher.update(b"\n");
+                    hasher.update(h.as_bytes());
+                }
+            }
             format!("sha256:{:x}", hasher.finalize())
         };
 
-        let sign_input = format!("{content_hash}:{timestamp}");
+        // v2 signing: "{content_hash}:{from_email}:{timestamp}"
+        let sign_input = format!("{content_hash}:{agent_email}:{timestamp}");
         let jacs_signature = self.jacs.sign_string(&sign_input)?;
 
         let mut payload = json!({
@@ -400,6 +434,19 @@ impl<P: JacsProvider> HaiClient<P> {
         });
         if let Some(ref in_reply_to) = options.in_reply_to {
             payload["in_reply_to"] = Value::String(in_reply_to.clone());
+        }
+        if !options.attachments.is_empty() {
+            use base64::Engine;
+            let att_json: Vec<Value> = options.attachments.iter().map(|att| {
+                json!({
+                    "filename": att.filename,
+                    "content_type": att.content_type,
+                    "data_base64": att.data_base64.clone().unwrap_or_else(|| {
+                        base64::engine::general_purpose::STANDARD.encode(&att.data)
+                    }),
+                })
+            }).collect();
+            payload["attachments"] = Value::Array(att_json);
         }
 
         let response = self
@@ -628,6 +675,7 @@ impl<P: JacsProvider> HaiClient<P> {
             subject,
             body: body.to_string(),
             in_reply_to: original.message_id.clone().or(Some(original.id)),
+            attachments: Vec::new(),
         };
 
         self.send_email(&options).await

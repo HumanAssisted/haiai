@@ -196,10 +196,15 @@ export function parseJacsSignatureHeader(header: string): Record<string, string>
 /**
  * Verify an email's JACS signature.
  *
+ * Supports both v1 and v2 signature formats:
+ * - v1: sign_input = "{content_hash}:{timestamp}", content hash in X-JACS-Content-Hash header
+ * - v2: sign_input = "{content_hash}:{from_email}:{timestamp}", content hash in `h=` field of
+ *   X-JACS-Signature header; `from=` field carries the sender email; `jv=2` marks the version
+ *
  * This is a standalone function -- no agent authentication required.
  *
- * @param headers - Email headers dict. Must contain `X-JACS-Signature`,
- *   `X-JACS-Content-Hash`, and `From`.
+ * @param headers - Email headers dict. Must contain `X-JACS-Signature` and `From`.
+ *   `X-JACS-Content-Hash` is required for v1 but optional for v2 (when `h=` is present).
  * @param subject - Email subject line.
  * @param body - Email body text.
  * @param haiUrl - HAI server URL for public key lookup. Default: "https://hai.ai"
@@ -220,9 +225,6 @@ export async function verifyEmailSignature(
   if (!sigHeader) {
     return { valid: false, jacsId: '', reputationTier: '', error: 'Missing X-JACS-Signature header' };
   }
-  if (!contentHashHeader) {
-    return { valid: false, jacsId: '', reputationTier: '', error: 'Missing X-JACS-Content-Hash header' };
-  }
   if (!fromAddress) {
     return { valid: false, jacsId: '', reputationTier: '', error: 'Missing From header' };
   }
@@ -233,6 +235,9 @@ export async function verifyEmailSignature(
   const timestampStr = fields.t || '';
   const signatureB64 = fields.s || '';
   const algorithm = fields.a || 'ed25519';
+  const _sigVersion = fields.jv || ''; // parsed but not yet used for dispatching
+  const sigHashField = fields.h || '';
+  const sigFromField = fields.from || '';
 
   if (!jacsId || !timestampStr || !signatureB64) {
     return {
@@ -250,13 +255,24 @@ export async function verifyEmailSignature(
     return { valid: false, jacsId, reputationTier: '', error: `Invalid timestamp: ${timestampStr}` };
   }
 
+  // Determine whether this is a v2 signature (has `h=` in the header)
+  const isV2 = !!sigHashField;
+
+  // For v1, X-JACS-Content-Hash header is required
+  if (!isV2 && !contentHashHeader) {
+    return { valid: false, jacsId, reputationTier: '', error: 'Missing X-JACS-Content-Hash header' };
+  }
+
   // Step 3: Recompute content hash
   const computedHash = 'sha256:' + createHash('sha256')
     .update(subject + '\n' + body, 'utf8')
     .digest('hex');
 
   // Step 4: Compare content hashes
-  if (computedHash !== contentHashHeader) {
+  // For v2, the authoritative hash is in the `h=` field of the signature header.
+  // For v1, it comes from the X-JACS-Content-Hash header.
+  const expectedHash = isV2 ? sigHashField : contentHashHeader;
+  if (computedHash !== expectedHash) {
     return { valid: false, jacsId, reputationTier: '', error: 'Content hash mismatch' };
   }
 
@@ -296,8 +312,26 @@ export async function verifyEmailSignature(
   }
 
   // Step 6: Verify Ed25519 signature
-  const signInput = `${computedHash}:${timestamp}`;
-  const sigValid = verifyString(publicKeyPem, signInput, signatureB64);
+  // Try v2 payload first ("{hash}:{from}:{timestamp}"), then fall back to v1 ("{hash}:{timestamp}")
+  const fromForSig = sigFromField || fromAddress;
+  const v2SignInput = `${computedHash}:${fromForSig}:${timestamp}`;
+  const v1SignInput = `${computedHash}:${timestamp}`;
+
+  let sigValid: boolean;
+  if (isV2) {
+    // v2: try v2 format first, fall back to v1
+    sigValid = verifyString(publicKeyPem, v2SignInput, signatureB64);
+    if (!sigValid) {
+      sigValid = verifyString(publicKeyPem, v1SignInput, signatureB64);
+    }
+  } else {
+    // v1: try v1 format first, fall back to v2
+    sigValid = verifyString(publicKeyPem, v1SignInput, signatureB64);
+    if (!sigValid) {
+      sigValid = verifyString(publicKeyPem, v2SignInput, signatureB64);
+    }
+  }
+
   if (!sigValid) {
     return { valid: false, jacsId: registryJacsId, reputationTier, error: 'Signature verification failed' };
   }

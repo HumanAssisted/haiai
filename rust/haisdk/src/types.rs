@@ -176,6 +176,19 @@ pub struct DeleteUsernameResult {
     pub message: String,
 }
 
+/// An email attachment with raw data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailAttachment {
+    pub filename: String,
+    pub content_type: String,
+    /// Raw attachment bytes. Serialized as base64 `data_base64` for the API.
+    #[serde(skip)]
+    pub data: Vec<u8>,
+    /// Base64-encoded data sent to the API.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_base64: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendEmailOptions {
     pub to: String,
@@ -183,6 +196,8 @@ pub struct SendEmailOptions {
     pub body: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub in_reply_to: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<EmailAttachment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

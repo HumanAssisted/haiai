@@ -11,7 +11,9 @@ import {
 
 function makeClient(jacsId: string = 'test-agent-001'): HaiClient {
   const keypair = generateKeypair();
-  return HaiClient.fromCredentials(jacsId, keypair.privateKeyPem, { url: 'https://hai.example' });
+  const client = HaiClient.fromCredentials(jacsId, keypair.privateKeyPem, { url: 'https://hai.example' });
+  client.setAgentEmail(`${jacsId}@hai.ai`);
+  return client;
 }
 
 function jsonResponse(body: Record<string, unknown>, status = 200): Response {
@@ -52,6 +54,7 @@ describe('sendEmail JACS content signing', () => {
     const client = HaiClient.fromCredentials('test-agent', keypair.privateKeyPem, {
       url: 'https://hai.example',
     });
+    client.setAgentEmail('test-agent@hai.ai');
     let capturedBody: Record<string, unknown> | null = null;
 
     const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
@@ -67,7 +70,8 @@ describe('sendEmail JACS content signing', () => {
     const expectedHash = 'sha256:' + createHash('sha256')
       .update(subject + '\n' + body, 'utf8')
       .digest('hex');
-    const signInput = `${expectedHash}:${capturedBody!.jacs_timestamp}`;
+    // v2 signing payload includes from email
+    const signInput = `${expectedHash}:test-agent@hai.ai:${capturedBody!.jacs_timestamp}`;
 
     const valid = verifyString(
       keypair.publicKeyPem,
@@ -82,6 +86,7 @@ describe('sendEmail JACS content signing', () => {
     const client = HaiClient.fromCredentials('test-agent', keypair.privateKeyPem, {
       url: 'https://hai.example',
     });
+    client.setAgentEmail('test-agent@hai.ai');
     let capturedBody: Record<string, unknown> | null = null;
 
     const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {

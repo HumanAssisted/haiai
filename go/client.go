@@ -31,6 +31,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -48,6 +49,7 @@ type Client struct {
 	endpoint   string
 	jacsID     string
 	haiAgentID string // HAI-assigned agent UUID for email URL paths (set after registration)
+	agentEmail string // Agent's @hai.ai email address (set after ClaimUsername)
 	privateKey ed25519.PrivateKey
 	httpClient *http.Client
 }
@@ -719,7 +721,20 @@ func (c *Client) ClaimUsername(ctx context.Context, agentID string, username str
 	if err := c.doRequest(ctx, http.MethodPost, path, reqBody, &result); err != nil {
 		return nil, err
 	}
+	if result.Email != "" {
+		c.agentEmail = result.Email
+	}
 	return &result, nil
+}
+
+// AgentEmail returns the agent's @hai.ai email address (set after ClaimUsername).
+func (c *Client) AgentEmail() string {
+	return c.agentEmail
+}
+
+// SetAgentEmail sets the agent's @hai.ai email address manually.
+func (c *Client) SetAgentEmail(email string) {
+	c.agentEmail = email
 }
 
 // UpdateUsername renames an existing username for an agent.
@@ -762,14 +777,44 @@ func (c *Client) SendEmail(ctx context.Context, to, subject, body string) (*Send
 //   - ErrRecipientNotFound: the recipient address does not exist
 //   - ErrEmailRateLimited: sending rate limit exceeded
 func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions) (*SendEmailResult, error) {
-	// Compute JACS content signature: sha256(subject + "\n" + body), then sign contentHash:timestamp.
-	h := sha256.Sum256([]byte(opts.Subject + "\n" + opts.Body))
-	contentHash := "sha256:" + hex.EncodeToString(h[:])
+	if c.agentEmail == "" {
+		return nil, fmt.Errorf("%w: agent email not set — call ClaimUsername first", ErrEmailNotActive)
+	}
+	// Compute JACS content hash: sha256(subject + "\n" + body [+ "\n" + sorted_att_hashes...])
+	hasher := sha256.New()
+	hasher.Write([]byte(opts.Subject + "\n" + opts.Body))
+	// Include attachment hashes (sorted) for v2
+	if len(opts.Attachments) > 0 {
+		attHashes := make([]string, len(opts.Attachments))
+		for i, att := range opts.Attachments {
+			ah := sha256.New()
+			ah.Write([]byte(att.Filename))
+			ah.Write([]byte(":"))
+			ah.Write([]byte(att.ContentType))
+			ah.Write([]byte(":"))
+			ah.Write(att.Data)
+			attHashes[i] = hex.EncodeToString(ah.Sum(nil))
+		}
+		sort.Strings(attHashes)
+		for _, ah := range attHashes {
+			hasher.Write([]byte("\n"))
+			hasher.Write([]byte(ah))
+		}
+	}
+	contentHash := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
 	timestamp := time.Now().Unix()
-	signInput := fmt.Sprintf("%s:%d", contentHash, timestamp)
+	// v2 signing: "{content_hash}:{from_email}:{timestamp}"
+	signInput := fmt.Sprintf("%s:%s:%d", contentHash, c.agentEmail, timestamp)
 	sig := Sign(c.privateKey, []byte(signInput))
 	opts.JacsSignature = base64.StdEncoding.EncodeToString(sig)
 	opts.JacsTimestamp = timestamp
+
+	// Encode attachment data to base64 for JSON serialization
+	for i := range opts.Attachments {
+		if opts.Attachments[i].DataBase64 == "" && len(opts.Attachments[i].Data) > 0 {
+			opts.Attachments[i].DataBase64 = base64.StdEncoding.EncodeToString(opts.Attachments[i].Data)
+		}
+	}
 
 	url := c.endpoint + fmt.Sprintf("/api/agents/%s/email/send", neturl.PathEscape(c.HaiAgentID()))
 

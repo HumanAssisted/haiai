@@ -5,7 +5,7 @@
 //
 // Run:
 //
-//	HAI_LIVE_TEST=1 HAI_URL=http://localhost:3000 go test -run TestEmailIntegration -v
+//	HAI_LIVE_TEST=1 HAI_URL=http://localhost:3000 go test -run TestEmailIntegration -v -count=1
 
 package haisdk
 
@@ -16,6 +16,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -33,7 +34,7 @@ func TestEmailIntegration(t *testing.T) {
 	ctx := context.Background()
 	agentName := fmt.Sprintf("go-integ-%d", time.Now().UnixMilli())
 
-	// ── Setup: register a fresh agent ─────────────────────────────────────
+	// ── Setup: register a fresh JACS agent ────────────────────────────────
 	ownerEmail := os.Getenv("HAI_OWNER_EMAIL")
 	if ownerEmail == "" {
 		ownerEmail = "jonathan@hai.io"
@@ -70,7 +71,8 @@ func TestEmailIntegration(t *testing.T) {
 	}
 
 	// Build client with explicit credentials.
-	// jacsID is used for auth headers; haiAgentID (the UUID) is used for email URL paths.
+	// jacsID is used for auth headers; haiAgentID (the HAI-assigned UUID) is
+	// used for email URL paths.
 	client, err := NewClient(
 		WithEndpoint(apiURL),
 		WithJACSID(jacsID),
@@ -81,7 +83,7 @@ func TestEmailIntegration(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	// ── 0. Claim username (provisions email address) ─────────────────────
+	// ── 0. Claim username (provisions the @hai.ai email address) ─────────
 	claimResult, err := client.ClaimUsername(ctx, haiAgentID, agentName)
 	if err != nil {
 		t.Fatalf("ClaimUsername: %v", err)
@@ -90,38 +92,52 @@ func TestEmailIntegration(t *testing.T) {
 
 	subject := fmt.Sprintf("go-integ-test-%d", time.Now().UnixMilli())
 	body := "Hello from Go integration test!"
+	selfAddr := fmt.Sprintf("%s@hai.ai", agentName)
+
+	// sentMessageID holds the database UUID returned by SendEmail.
+	// It is set in the SendEmail subtest and consumed by later subtests.
 	var sentMessageID string
 
 	// ── 1. Send email ─────────────────────────────────────────────────────
 	t.Run("SendEmail", func(t *testing.T) {
-		result, err := client.SendEmail(ctx, fmt.Sprintf("%s@hai.ai", agentName), subject, body)
+		result, err := client.SendEmail(ctx, selfAddr, subject, body)
 		if err != nil {
 			t.Fatalf("SendEmail: %v", err)
 		}
+		if result.MessageID == "" {
+			t.Fatal("expected non-empty message_id")
+		}
 		sentMessageID = result.MessageID
 		t.Logf("Sent email: message_id=%s", sentMessageID)
-		if sentMessageID == "" {
-			t.Fatal("message_id should not be empty")
-		}
 	})
 
-	// Small delay for async delivery.
+	// Small delay for async delivery through Stalwart.
 	time.Sleep(2 * time.Second)
 
 	// ── 2. List messages ──────────────────────────────────────────────────
 	t.Run("ListMessages", func(t *testing.T) {
-		messages, err := client.ListMessages(ctx, ListMessagesOptions{Limit: 10})
+		messages, err := client.ListMessages(ctx, ListMessagesOptions{Limit: 20})
 		if err != nil {
 			t.Fatalf("ListMessages: %v", err)
 		}
 		t.Logf("Listed %d messages", len(messages))
 		if len(messages) == 0 {
-			t.Fatal("should have at least one message")
+			t.Fatal("expected at least one message after send")
+		}
+		// Verify the sent message appears in the listing.
+		found := false
+		for _, m := range messages {
+			if m.Subject == subject {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("sent message with subject %q not found in listing", subject)
 		}
 	})
 
 	// ── 3. Get message ────────────────────────────────────────────────────
-	var rfcMessageID string
 	t.Run("GetMessage", func(t *testing.T) {
 		msg, err := client.GetMessage(ctx, sentMessageID)
 		if err != nil {
@@ -133,11 +149,10 @@ func TestEmailIntegration(t *testing.T) {
 		if msg.BodyText == "" {
 			t.Fatal("body_text should not be empty")
 		}
-		rfcMessageID = msg.MessageID
-		if rfcMessageID == "" {
-			rfcMessageID = sentMessageID
+		if !strings.Contains(msg.BodyText, body) {
+			t.Fatalf("body_text should contain sent body: got %q, want substring %q", msg.BodyText, body)
 		}
-		t.Logf("Got message: subject=%s", msg.Subject)
+		t.Logf("Got message: id=%s, subject=%s, body_len=%d", msg.ID, msg.Subject, len(msg.BodyText))
 	})
 
 	// ── 4. Mark read ──────────────────────────────────────────────────────
@@ -145,7 +160,7 @@ func TestEmailIntegration(t *testing.T) {
 		if err := client.MarkRead(ctx, sentMessageID); err != nil {
 			t.Fatalf("MarkRead: %v", err)
 		}
-		t.Log("Marked read")
+		t.Log("Marked read -- no error")
 	})
 
 	// ── 5. Mark unread ────────────────────────────────────────────────────
@@ -153,7 +168,7 @@ func TestEmailIntegration(t *testing.T) {
 		if err := client.MarkUnread(ctx, sentMessageID); err != nil {
 			t.Fatalf("MarkUnread: %v", err)
 		}
-		t.Log("Marked unread")
+		t.Log("Marked unread -- no error")
 	})
 
 	// ── 6. Search messages ────────────────────────────────────────────────
@@ -162,9 +177,19 @@ func TestEmailIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("SearchMessages: %v", err)
 		}
-		t.Logf("Search found %d results", len(results))
+		t.Logf("Search for %q found %d results", subject, len(results))
 		if len(results) == 0 {
 			t.Fatal("search should find the sent message")
+		}
+		found := false
+		for _, m := range results {
+			if m.Subject == subject {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatal("search results should contain the sent message by subject")
 		}
 	})
 
@@ -174,8 +199,10 @@ func TestEmailIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetUnreadCount: %v", err)
 		}
+		if count < 0 {
+			t.Fatalf("unread count should be non-negative, got %d", count)
+		}
 		t.Logf("Unread count: %d", count)
-		// Just verify it returns without error; count >= 0 always true.
 	})
 
 	// ── 8. Email status ───────────────────────────────────────────────────
@@ -184,22 +211,28 @@ func TestEmailIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetEmailStatus: %v", err)
 		}
-		t.Logf("Email status: email=%s, tier=%s", status.Email, status.Tier)
 		if status.Email == "" {
-			t.Fatal("status should include email")
+			t.Fatal("email status should include an email address")
 		}
+		if status.Status == "" {
+			t.Fatal("email status should include a status string")
+		}
+		t.Logf("Email status: email=%s, status=%s, tier=%s", status.Email, status.Status, status.Tier)
 	})
 
 	// ── 9. Reply ──────────────────────────────────────────────────────────
 	t.Run("Reply", func(t *testing.T) {
-		result, err := client.Reply(ctx, rfcMessageID, "Reply from Go integration test!", "")
+		// Pass the database UUID (sentMessageID), not the RFC 5322 Message-ID.
+		// Reply() internally calls GetMessage to fetch the original, then sends
+		// to original.FromAddress with an In-Reply-To header for threading.
+		result, err := client.Reply(ctx, sentMessageID, "Reply from Go integration test!", "")
 		if err != nil {
 			t.Fatalf("Reply: %v", err)
 		}
-		t.Logf("Reply sent: message_id=%s", result.MessageID)
 		if result.MessageID == "" {
 			t.Fatal("reply message_id should not be empty")
 		}
+		t.Logf("Reply sent: message_id=%s", result.MessageID)
 	})
 
 	// ── 10. Delete ────────────────────────────────────────────────────────
@@ -207,15 +240,15 @@ func TestEmailIntegration(t *testing.T) {
 		if err := client.DeleteMessage(ctx, sentMessageID); err != nil {
 			t.Fatalf("DeleteMessage: %v", err)
 		}
-		t.Log("Deleted message")
+		t.Log("Deleted message -- no error")
 	})
 
-	// ── 11. Verify deleted ────────────────────────────────────────────────
-	t.Run("VerifyDeleted", func(t *testing.T) {
+	// ── 11. Get deleted ──────────────────────────────────────────────────
+	t.Run("GetDeletedMessage", func(t *testing.T) {
 		_, err := client.GetMessage(ctx, sentMessageID)
 		if err == nil {
-			t.Fatal("GetMessage on deleted message should return error")
+			t.Fatal("GetMessage on deleted message should return an error")
 		}
-		t.Log("Verified deleted message returns error")
+		t.Logf("Verified deleted message returns error: %v", err)
 	})
 }

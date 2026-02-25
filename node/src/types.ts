@@ -339,6 +339,15 @@ export interface SendEmailOptions {
   body: string;
   /** Message ID to reply to (for threading). */
   inReplyTo?: string;
+  /** File attachments to include with the email. */
+  attachments?: Array<{
+    /** Attachment file name. */
+    filename: string;
+    /** MIME content type (e.g., "application/pdf"). */
+    contentType: string;
+    /** Raw attachment data. */
+    data: Buffer;
+  }>;
 }
 
 /** Result of sending an email. */

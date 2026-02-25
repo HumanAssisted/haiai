@@ -82,6 +82,8 @@ export class HaiClient {
   private serverPublicKeys: Record<string, string> = {};
   /** HAI-assigned agent UUID, set after register(). Used for email URL paths. */
   private _haiAgentId: string | null = null;
+  /** Agent's @hai.ai email address, set after claimUsername(). */
+  private agentEmail?: string;
 
   private constructor(options?: HaiClientOptions) {
     this.baseUrl = (options?.url ?? 'https://hai.ai').replace(/\/+$/, '');
@@ -144,6 +146,16 @@ export class HaiClient {
   /** Whether the client is currently connected to an event stream. */
   get isConnected(): boolean {
     return this._connected;
+  }
+
+  /** Get the agent's @hai.ai email address (set after claimUsername). */
+  getAgentEmail(): string | undefined {
+    return this.agentEmail;
+  }
+
+  /** Set the agent's @hai.ai email address manually. */
+  setAgentEmail(email: string): void {
+    this.agentEmail = email;
   }
 
   // ---------------------------------------------------------------------------
@@ -717,6 +729,8 @@ export class HaiClient {
     });
 
     const data = await response.json() as Record<string, unknown>;
+
+    this.agentEmail = (data.email as string) || '';
 
     return {
       username: (data.username as string) || username,
@@ -1350,12 +1364,34 @@ export class HaiClient {
     const safeAgentId = this.encodePathSegment(this.haiAgentId);
     const url = this.makeUrl(`/api/agents/${safeAgentId}/email/send`);
 
-    // JACS content signing: hash subject+body, sign with agent key
-    const contentHash = 'sha256:' + createHash('sha256')
-      .update(options.subject + '\n' + options.body, 'utf8')
-      .digest('hex');
+    if (!this.agentEmail) {
+      throw new Error('agent email not set — call claimUsername first');
+    }
+
+    // v2 content hash: sha256(subject + "\n" + body [+ sorted attachment hashes])
+    const contentHash = (() => {
+      const h = createHash('sha256');
+      h.update(options.subject + '\n' + options.body, 'utf8');
+      if (options.attachments?.length) {
+        const attHashes = options.attachments.map(att => {
+          const ah = createHash('sha256');
+          ah.update(att.filename);
+          ah.update(':');
+          ah.update(att.contentType);
+          ah.update(':');
+          ah.update(att.data);
+          return ah.digest('hex');
+        }).sort();
+        for (const ah of attHashes) {
+          h.update('\n' + ah);
+        }
+      }
+      return 'sha256:' + h.digest('hex');
+    })();
+
+    // v2 signing: "{content_hash}:{from_email}:{timestamp}"
     const jacsTimestamp = Math.floor(Date.now() / 1000);
-    const signInput = `${contentHash}:${jacsTimestamp}`;
+    const signInput = `${contentHash}:${this.agentEmail}:${jacsTimestamp}`;
     const jacsSignature = signString(this.privateKeyPem, signInput, this.privateKeyPassphrase);
 
     const controller = new AbortController();
@@ -1373,6 +1409,11 @@ export class HaiClient {
           in_reply_to: options.inReplyTo,
           jacs_signature: jacsSignature,
           jacs_timestamp: jacsTimestamp,
+          attachments: options.attachments?.map(a => ({
+            filename: a.filename,
+            content_type: a.contentType,
+            data_base64: a.data.toString('base64'),
+          })),
         }),
         signal: controller.signal,
       });
@@ -1482,6 +1523,9 @@ export class HaiClient {
       dailyUsed: (data.daily_used as number) || 0,
       resetsAt: (data.resets_at as string) || '',
       messagesSentTotal: (data.messages_sent_total as number) || 0,
+      externalEnabled: (data.external_enabled as boolean) || false,
+      externalSendsToday: (data.external_sends_today as number) || 0,
+      lastTierChange: (data.last_tier_change as string) || null,
     };
   }
 

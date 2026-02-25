@@ -26,6 +26,20 @@ from jacs.hai.models import EmailMessage, SendEmailResult
 
 BASE_URL = "https://test.hai.ai"
 JACS_ID = "test-jacs-id-1234"
+TEST_AGENT_EMAIL = f"{JACS_ID}@hai.ai"
+
+_original_init = HaiClient.__init__
+
+
+@pytest.fixture(autouse=True)
+def _set_agent_email(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure every HaiClient created in tests has agent_email set (v2 signing)."""
+
+    def patched_init(self: HaiClient, *args: Any, **kwargs: Any) -> None:
+        _original_init(self, *args, **kwargs)
+        self._agent_email = TEST_AGENT_EMAIL  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(HaiClient, "__init__", patched_init)
 
 
 class _FakeResponse:
@@ -107,7 +121,8 @@ class TestSendEmailJacsSigning:
         content_hash = "sha256:" + hashlib.sha256(
             (subject + "\n" + body).encode("utf-8")
         ).hexdigest()
-        sign_input = f"{content_hash}:{payload['jacs_timestamp']}"
+        # v2 signing payload includes agent email
+        sign_input = f"{content_hash}:{TEST_AGENT_EMAIL}:{payload['jacs_timestamp']}"
 
         # Verify signature with the public key
         pub_key = private_key.public_key()

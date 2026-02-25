@@ -525,6 +525,7 @@ impl<'a, P: JacsProvider> A2AIntegration<'a, P> {
                 subject: subject.to_string(),
                 body: format!("Signed A2A artifact:\n\n{pretty}"),
                 in_reply_to: None,
+                attachments: Vec::new(),
             })
             .await
     }
