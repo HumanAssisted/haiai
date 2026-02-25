@@ -6,12 +6,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use haisdk::{
-    generate_verify_link, generate_verify_link_hosted, CreateAgentOptions, HaiClient,
-    HaiClientOptions, JacsProvider, ListMessagesOptions, LocalJacsProvider, NoopJacsProvider,
-    RegisterAgentOptions, SearchOptions, SendEmailOptions,
+    CreateAgentOptions, HaiClient, HaiClientOptions, JacsProvider, ListMessagesOptions,
+    LocalJacsProvider, NoopJacsProvider, RegisterAgentOptions, SearchOptions, SendEmailOptions,
+    generate_verify_link, generate_verify_link_hosted,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
@@ -1011,7 +1011,10 @@ async fn call_send_email(
         .map_err(|e| e.to_string())?;
 
     Ok(success_tool_result(
-        format!("sent message_id={} status={}", result.message_id, result.status),
+        format!(
+            "sent message_id={} status={}",
+            result.message_id, result.status
+        ),
         json!({ "send_email": result }),
     ))
 }
@@ -1160,10 +1163,7 @@ async fn call_get_unread_count(
         optional_string(args, "config_path"),
         optional_string(args, "hai_url"),
     )?;
-    let count = client
-        .get_unread_count()
-        .await
-        .map_err(|e| e.to_string())?;
+    let count = client.get_unread_count().await.map_err(|e| e.to_string())?;
 
     Ok(success_tool_result(
         format!("unread_count={count}"),
@@ -1179,10 +1179,7 @@ async fn call_get_email_status(
         optional_string(args, "config_path"),
         optional_string(args, "hai_url"),
     )?;
-    let result = client
-        .get_email_status()
-        .await
-        .map_err(|e| e.to_string())?;
+    let result = client.get_email_status().await.map_err(|e| e.to_string())?;
 
     Ok(success_tool_result(
         format!(
@@ -1210,7 +1207,10 @@ async fn call_reply_email(
         .map_err(|e| e.to_string())?;
 
     Ok(success_tool_result(
-        format!("replied message_id={} status={}", result.message_id, result.status),
+        format!(
+            "replied message_id={} status={}",
+            result.message_id, result.status
+        ),
         json!({ "reply": result }),
     ))
 }
@@ -1266,13 +1266,15 @@ fn bridge_candidates() -> Vec<BridgeCandidate> {
 
     if let Ok(bin) = std::env::var("JACS_MCP_BIN") {
         if !bin.is_empty() {
-            let args = std::env::var("JACS_MCP_ARGS")
-                .map(|v| split_whitespace_args(&v))
-                .unwrap_or_default();
+            if let Ok(raw_args) = std::env::var("JACS_MCP_ARGS") {
+                if !raw_args.trim().is_empty() {
+                    eprintln!("warning: ignoring JACS_MCP_ARGS; stdio-only local mode is enforced");
+                }
+            }
             let cwd = std::env::var("JACS_MCP_CWD").ok().filter(|v| !v.is_empty());
             out.push(BridgeCandidate {
                 command: bin,
-                args,
+                args: Vec::new(),
                 cwd,
             });
             return out;
@@ -1304,6 +1306,70 @@ fn bridge_candidates() -> Vec<BridgeCandidate> {
     out
 }
 
-fn split_whitespace_args(raw: &str) -> Vec<String> {
-    raw.split_whitespace().map(ToString::to_string).collect()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_lock() -> &'static Mutex<()> {
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn set_env_var(key: &str, value: Option<&str>) {
+        match value {
+            Some(v) => {
+                // SAFETY: tests serialize env mutations with ENV_LOCK.
+                unsafe { std::env::set_var(key, v) };
+            }
+            None => {
+                // SAFETY: tests serialize env mutations with ENV_LOCK.
+                unsafe { std::env::remove_var(key) };
+            }
+        }
+    }
+
+    #[test]
+    fn bridge_candidates_ignores_jacs_mcp_args_when_custom_bin_is_set() {
+        let _guard = env_lock().lock().expect("lock");
+        let old_bin = std::env::var("JACS_MCP_BIN").ok();
+        let old_args = std::env::var("JACS_MCP_ARGS").ok();
+        let old_cwd = std::env::var("JACS_MCP_CWD").ok();
+
+        set_env_var("JACS_MCP_BIN", Some("/tmp/custom-jacs-mcp"));
+        set_env_var("JACS_MCP_ARGS", Some("--transport http --port 8080"));
+        set_env_var("JACS_MCP_CWD", Some("/tmp/mcp-cwd"));
+
+        let candidates = bridge_candidates();
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].command, "/tmp/custom-jacs-mcp");
+        assert!(candidates[0].args.is_empty());
+        assert_eq!(candidates[0].cwd.as_deref(), Some("/tmp/mcp-cwd"));
+
+        set_env_var("JACS_MCP_BIN", old_bin.as_deref());
+        set_env_var("JACS_MCP_ARGS", old_args.as_deref());
+        set_env_var("JACS_MCP_CWD", old_cwd.as_deref());
+    }
+
+    #[test]
+    fn bridge_candidates_default_to_stdio_local_command() {
+        let _guard = env_lock().lock().expect("lock");
+        let old_bin = std::env::var("JACS_MCP_BIN").ok();
+        let old_args = std::env::var("JACS_MCP_ARGS").ok();
+        let old_cwd = std::env::var("JACS_MCP_CWD").ok();
+
+        set_env_var("JACS_MCP_BIN", None);
+        set_env_var("JACS_MCP_ARGS", Some("--transport http"));
+        set_env_var("JACS_MCP_CWD", None);
+
+        let candidates = bridge_candidates();
+        assert!(!candidates.is_empty());
+        assert_eq!(candidates[0].command, "jacs-mcp");
+        assert!(candidates[0].args.is_empty());
+
+        set_env_var("JACS_MCP_BIN", old_bin.as_deref());
+        set_env_var("JACS_MCP_ARGS", old_args.as_deref());
+        set_env_var("JACS_MCP_CWD", old_cwd.as_deref());
+    }
 }

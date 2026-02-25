@@ -21,9 +21,11 @@ the full `jacs_*` tool surface from `jacs-mcp`.
 
 `hai-mcp` discovers `jacs-mcp` in this order:
 
-1. `JACS_MCP_BIN` (+ optional `JACS_MCP_ARGS`, `JACS_MCP_CWD`)
+1. `JACS_MCP_BIN` (+ optional `JACS_MCP_CWD`)
 2. `jacs-mcp` on `PATH`
 3. `cargo run --manifest-path ~/personal/JACS/jacs-mcp/Cargo.toml` (if present)
 
 For authenticated `hai_*` tools, set `JACS_CONFIG` (or pass `config_path` args)
 so `LocalJacsProvider` can load your agent.
+
+`hai-mcp` enforces local stdio mode and ignores `JACS_MCP_ARGS` runtime overrides.
