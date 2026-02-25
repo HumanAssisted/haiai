@@ -34,9 +34,14 @@ func TestEmailIntegration(t *testing.T) {
 	agentName := fmt.Sprintf("go-integ-%d", time.Now().UnixMilli())
 
 	// ── Setup: register a fresh agent ─────────────────────────────────────
+	ownerEmail := os.Getenv("HAI_OWNER_EMAIL")
+	if ownerEmail == "" {
+		ownerEmail = "jonathan@hai.io"
+	}
+
 	reg, err := RegisterNewAgentWithEndpoint(ctx, apiURL, agentName, &RegisterNewAgentOptions{
-		OwnerEmail:  "test@example.com",
 		Description: "Go integration test agent",
+		OwnerEmail:  ownerEmail,
 		Quiet:       true,
 	})
 	if err != nil {
@@ -75,6 +80,13 @@ func TestEmailIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
+
+	// ── 0. Claim username (provisions email address) ─────────────────────
+	claimResult, err := client.ClaimUsername(ctx, haiAgentID, agentName)
+	if err != nil {
+		t.Fatalf("ClaimUsername: %v", err)
+	}
+	t.Logf("Claimed username: %s, email=%s", claimResult.Username, claimResult.Email)
 
 	subject := fmt.Sprintf("go-integ-test-%d", time.Now().UnixMilli())
 	body := "Hello from Go integration test!"

@@ -30,13 +30,18 @@ describe.skipIf(!LIVE)('Email integration (live API)', () => {
     });
 
     // Register the agent with the local API.
+    const ownerEmail = process.env.HAI_OWNER_EMAIL || 'jonathan@hai.io';
     const result = await client.register({
-      ownerEmail: 'test@example.com',
       description: 'Node integration test agent',
+      ownerEmail,
     });
 
     expect(result.success).toBe(true);
     console.log(`Registered agent: jacsId=${result.jacsId}`);
+
+    // Claim username to provision email address.
+    const claim = await client.claimUsername(client.haiAgentId, agentName);
+    console.log(`Claimed username: ${claim.username}, email=${claim.email}`);
   }, 30_000);
 
   it('should send an email', async () => {

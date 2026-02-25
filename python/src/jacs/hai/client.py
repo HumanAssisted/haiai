@@ -1495,7 +1495,7 @@ class HaiClient:
         Returns:
             SendEmailResult with message_id and status.
         """
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/send")
         headers = self._build_auth_headers()
@@ -1627,7 +1627,7 @@ class HaiClient:
         Returns:
             List of EmailMessage objects.
         """
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/messages")
         headers = self._build_auth_headers()
@@ -1695,7 +1695,7 @@ class HaiClient:
         Returns:
             True if successful.
         """
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         safe_message_id = self._escape_path_segment(message_id)
         url = self._make_url(
@@ -1737,7 +1737,7 @@ class HaiClient:
         Returns:
             EmailStatus with daily limits and tier info.
         """
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/status")
         headers = self._build_auth_headers()
@@ -1788,7 +1788,7 @@ class HaiClient:
         Returns:
             EmailMessage object.
         """
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         safe_message_id = self._escape_path_segment(message_id)
         url = self._make_url(
@@ -1853,7 +1853,7 @@ class HaiClient:
         Returns:
             True if successful (204).
         """
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         safe_message_id = self._escape_path_segment(message_id)
         url = self._make_url(
@@ -1902,7 +1902,7 @@ class HaiClient:
         Returns:
             True if successful.
         """
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         safe_message_id = self._escape_path_segment(message_id)
         url = self._make_url(
@@ -1963,7 +1963,7 @@ class HaiClient:
         Returns:
             List of matching EmailMessage objects.
         """
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/search")
         headers = self._build_auth_headers()
@@ -2037,7 +2037,7 @@ class HaiClient:
         Returns:
             Number of unread messages.
         """
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/unread-count")
         headers = self._build_auth_headers()

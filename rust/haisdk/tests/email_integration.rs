@@ -69,7 +69,7 @@ async fn email_integration_lifecycle() {
     let agent_json = provider.export_agent_json().expect("export agent json");
     let public_key_pem = provider.public_key_pem().expect("public key pem");
 
-    let client = HaiClient::new(
+    let mut client = HaiClient::new(
         provider,
         HaiClientOptions {
             base_url: base_url.clone(),
@@ -82,15 +82,28 @@ async fn email_integration_lifecycle() {
         .register(&RegisterAgentOptions {
             agent_json,
             public_key_pem: Some(public_key_pem),
-            owner_email: Some("test@example.com".to_string()),
+            owner_email: Some(env::var("HAI_OWNER_EMAIL").unwrap_or_else(|_| "jonathan@hai.io".to_string())),
             domain: None,
             description: Some("Rust integration test agent".to_string()),
         })
         .await
         .expect("register agent");
 
-    eprintln!("Registered agent: jacs_id={}", reg.jacs_id);
+    eprintln!("Registered agent: jacs_id={}, agent_id={}", reg.jacs_id, reg.agent_id);
     assert!(reg.success || !reg.jacs_id.is_empty(), "registration should succeed");
+
+    // Store the HAI-assigned agent UUID for email URL paths.
+    if !reg.agent_id.is_empty() {
+        client.set_hai_agent_id(reg.agent_id.clone());
+    }
+
+    // ── 0. Claim username (provisions email address) ────────────────────
+    let claim = client
+        .claim_username(&reg.agent_id, &agent_name)
+        .await
+        .expect("claim_username");
+    eprintln!("Claimed username: {}, email={}", claim.username, claim.email);
+    assert!(!claim.email.is_empty(), "claim should return email");
 
     // ── 1. Send email ────────────────────────────────────────────────────
     let subject = format!("rust-integ-test-{}", uuid_v4_short());

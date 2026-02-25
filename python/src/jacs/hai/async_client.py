@@ -86,6 +86,7 @@ class AsyncHaiClient:
         self._should_disconnect = False
         self._hai_url: Optional[str] = None
         self._http: Optional[httpx.AsyncClient] = None
+        self._hai_agent_id: Optional[str] = None
 
     async def _get_http(self) -> httpx.AsyncClient:
         if self._http is None or self._http.is_closed:
@@ -124,6 +125,10 @@ class AsyncHaiClient:
         if cfg.jacs_id is None:
             raise HaiAuthError("jacsId is required in config for JACS authentication")
         return cfg.jacs_id
+
+    def _get_hai_agent_id(self) -> str:
+        """Return the HAI-assigned agent UUID for email URL paths."""
+        return self._hai_agent_id or self._get_jacs_id()
 
     def _build_jacs_auth_header(self) -> str:
         from jacs.hai.config import get_config, get_private_key
@@ -287,9 +292,12 @@ class AsyncHaiClient:
 
                 if resp.status_code in (200, 201):
                     data = resp.json()
+                    agent_id = data.get("agent_id", "")
+                    if agent_id:
+                        self._hai_agent_id = agent_id
                     return HaiRegistrationResult(
                         success=True,
-                        agent_id=data.get("agent_id", ""),
+                        agent_id=agent_id,
                         registered_at=data.get("registered_at", ""),
                         raw_response=data,
                     )
@@ -476,7 +484,7 @@ class AsyncHaiClient:
     ) -> SendEmailResult:
         """Send an email from this agent's @hai.ai address."""
         http = await self._get_http()
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/send")
         headers = self._build_auth_headers()
@@ -564,7 +572,7 @@ class AsyncHaiClient:
     ) -> list[EmailMessage]:
         """List email messages for this agent."""
         http = await self._get_http()
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/messages")
         headers = self._build_auth_headers()
@@ -607,7 +615,7 @@ class AsyncHaiClient:
     async def mark_read(self, hai_url: str, message_id: str) -> bool:
         """Mark an email message as read."""
         http = await self._get_http()
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         safe_message_id = self._escape_path_segment(message_id)
         url = self._make_url(
@@ -631,7 +639,7 @@ class AsyncHaiClient:
     async def get_email_status(self, hai_url: str) -> EmailStatus:
         """Get email rate-limit and reputation status."""
         http = await self._get_http()
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/status")
         headers = self._build_auth_headers()
@@ -662,7 +670,7 @@ class AsyncHaiClient:
     async def get_message(self, hai_url: str, message_id: str) -> EmailMessage:
         """Get a single email message by ID."""
         http = await self._get_http()
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         safe_message_id = self._escape_path_segment(message_id)
         url = self._make_url(
@@ -703,7 +711,7 @@ class AsyncHaiClient:
     async def delete_message(self, hai_url: str, message_id: str) -> bool:
         """Delete an email message."""
         http = await self._get_http()
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         safe_message_id = self._escape_path_segment(message_id)
         url = self._make_url(
@@ -729,7 +737,7 @@ class AsyncHaiClient:
     async def mark_unread(self, hai_url: str, message_id: str) -> bool:
         """Mark an email message as unread."""
         http = await self._get_http()
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         safe_message_id = self._escape_path_segment(message_id)
         url = self._make_url(
@@ -764,7 +772,7 @@ class AsyncHaiClient:
     ) -> list[EmailMessage]:
         """Search email messages."""
         http = await self._get_http()
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/search")
         headers = self._build_auth_headers()
@@ -817,7 +825,7 @@ class AsyncHaiClient:
     async def get_unread_count(self, hai_url: str) -> int:
         """Get the number of unread email messages."""
         http = await self._get_http()
-        jacs_id = self._get_jacs_id()
+        jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
         url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/unread-count")
         headers = self._build_auth_headers()

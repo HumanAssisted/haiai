@@ -33,9 +33,11 @@ def registered_client():
         key_dir = os.path.join(tmp, "keys")
         config_path = os.path.join(tmp, "jacs.config.json")
 
+        owner_email = os.environ.get("HAI_OWNER_EMAIL", "jonathan@hai.io")
+
         result = register_new_agent(
             name=agent_name,
-            owner_email="test@example.com",
+            owner_email=owner_email,
             hai_url=API_URL,
             key_dir=key_dir,
             config_path=config_path,
@@ -44,6 +46,11 @@ def registered_client():
         )
 
         client = HaiClient()
+
+        # Claim username to provision email address.
+        claim = client.claim_username(API_URL, result.agent_id, agent_name)
+        assert claim.get("email"), "claim should return email"
+
         yield client, agent_name, result
 
 

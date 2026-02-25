@@ -90,6 +90,8 @@ pub struct HaiClient<P: JacsProvider> {
     http: reqwest::Client,
     max_retries: usize,
     jacs: P,
+    /// HAI-assigned agent UUID for email URL paths (set after registration).
+    hai_agent_id: Option<String>,
 }
 
 impl<P: JacsProvider> HaiClient<P> {
@@ -103,6 +105,7 @@ impl<P: JacsProvider> HaiClient<P> {
             http,
             max_retries: options.max_retries.max(1),
             jacs,
+            hai_agent_id: None,
         })
     }
 
@@ -116,6 +119,17 @@ impl<P: JacsProvider> HaiClient<P> {
 
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// Returns the HAI-assigned agent UUID for email URL paths.
+    /// Falls back to jacs_id if not set.
+    pub fn hai_agent_id(&self) -> &str {
+        self.hai_agent_id.as_deref().unwrap_or_else(|| self.jacs.jacs_id())
+    }
+
+    /// Set the HAI-assigned agent UUID (from registration response).
+    pub fn set_hai_agent_id(&mut self, id: String) {
+        self.hai_agent_id = Some(id);
     }
 
     pub fn build_auth_header(&self) -> Result<String> {
@@ -361,7 +375,7 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     pub async fn send_email(&self, options: &SendEmailOptions) -> Result<SendEmailResult> {
-        let safe_jacs_id = encode_path_segment(self.jacs.jacs_id());
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/send"));
 
         let timestamp = OffsetDateTime::now_utc().unix_timestamp();
@@ -405,7 +419,7 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     pub async fn list_messages(&self, options: &ListMessagesOptions) -> Result<Vec<EmailMessage>> {
-        let safe_jacs_id = encode_path_segment(self.jacs.jacs_id());
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/messages"));
 
         let mut request = self
@@ -434,7 +448,7 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     pub async fn mark_read(&self, message_id: &str) -> Result<()> {
-        let safe_jacs_id = encode_path_segment(self.jacs.jacs_id());
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let safe_message_id = encode_path_segment(message_id);
         let url = self.url(&format!(
             "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/read"
@@ -454,7 +468,7 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     pub async fn get_email_status(&self) -> Result<EmailStatus> {
-        let safe_jacs_id = encode_path_segment(self.jacs.jacs_id());
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/status"));
 
         let response = self
@@ -469,7 +483,7 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     pub async fn get_message(&self, message_id: &str) -> Result<EmailMessage> {
-        let safe_jacs_id = encode_path_segment(self.jacs.jacs_id());
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let safe_message_id = encode_path_segment(message_id);
         let url = self.url(&format!(
             "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}"
@@ -487,7 +501,7 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     pub async fn delete_message(&self, message_id: &str) -> Result<()> {
-        let safe_jacs_id = encode_path_segment(self.jacs.jacs_id());
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let safe_message_id = encode_path_segment(message_id);
         let url = self.url(&format!(
             "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}"
@@ -507,7 +521,7 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     pub async fn mark_unread(&self, message_id: &str) -> Result<()> {
-        let safe_jacs_id = encode_path_segment(self.jacs.jacs_id());
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let safe_message_id = encode_path_segment(message_id);
         let url = self.url(&format!(
             "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/unread"
@@ -527,7 +541,7 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     pub async fn search_messages(&self, options: &SearchOptions) -> Result<Vec<EmailMessage>> {
-        let safe_jacs_id = encode_path_segment(self.jacs.jacs_id());
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/search"));
 
         let mut request = self
@@ -571,7 +585,7 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     pub async fn get_unread_count(&self) -> Result<u64> {
-        let safe_jacs_id = encode_path_segment(self.jacs.jacs_id());
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/unread-count"));
 
         let response = self
