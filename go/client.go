@@ -47,6 +47,7 @@ const (
 type Client struct {
 	endpoint   string
 	jacsID     string
+	haiAgentID string // HAI-assigned agent UUID for email URL paths (set after registration)
 	privateKey ed25519.PrivateKey
 	httpClient *http.Client
 }
@@ -72,6 +73,13 @@ func WithJACSID(jacsID string) Option {
 func WithPrivateKey(key ed25519.PrivateKey) Option {
 	return func(c *Client) {
 		c.privateKey = key
+	}
+}
+
+// WithHaiAgentID sets the HAI-assigned agent UUID (used for email URL paths).
+func WithHaiAgentID(id string) Option {
+	return func(c *Client) {
+		c.haiAgentID = id
 	}
 }
 
@@ -152,6 +160,19 @@ func (c *Client) Endpoint() string {
 // JacsID returns the agent's JACS ID.
 func (c *Client) JacsID() string {
 	return c.jacsID
+}
+
+// HaiAgentID returns the HAI-assigned agent UUID. Falls back to jacsID if not set.
+func (c *Client) HaiAgentID() string {
+	if c.haiAgentID != "" {
+		return c.haiAgentID
+	}
+	return c.jacsID
+}
+
+// SetHaiAgentID sets the HAI-assigned agent UUID (used for email URL paths).
+func (c *Client) SetHaiAgentID(id string) {
+	c.haiAgentID = id
 }
 
 // doRequest performs an authenticated HTTP request and decodes the JSON response.
@@ -750,7 +771,7 @@ func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions
 	opts.JacsSignature = base64.StdEncoding.EncodeToString(sig)
 	opts.JacsTimestamp = timestamp
 
-	url := c.endpoint + fmt.Sprintf("/api/agents/%s/email/send", neturl.PathEscape(c.jacsID))
+	url := c.endpoint + fmt.Sprintf("/api/agents/%s/email/send", neturl.PathEscape(c.HaiAgentID()))
 
 	data, err := json.Marshal(opts)
 	if err != nil {
@@ -810,7 +831,7 @@ func (c *Client) ListMessages(ctx context.Context, opts ListMessagesOptions) ([]
 	if opts.Direction != "" {
 		query.Set("direction", opts.Direction)
 	}
-	path := fmt.Sprintf("/api/agents/%s/email/messages?%s", neturl.PathEscape(c.jacsID), query.Encode())
+	path := fmt.Sprintf("/api/agents/%s/email/messages?%s", neturl.PathEscape(c.HaiAgentID()), query.Encode())
 	var wrapper ListMessagesResponse
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &wrapper); err != nil {
 		return nil, err
@@ -822,7 +843,7 @@ func (c *Client) ListMessages(ctx context.Context, opts ListMessagesOptions) ([]
 func (c *Client) MarkRead(ctx context.Context, messageID string) error {
 	path := fmt.Sprintf(
 		"/api/agents/%s/email/messages/%s/read",
-		neturl.PathEscape(c.jacsID),
+		neturl.PathEscape(c.HaiAgentID()),
 		neturl.PathEscape(messageID),
 	)
 	return c.doRequest(ctx, http.MethodPost, path, nil, nil)
@@ -830,7 +851,7 @@ func (c *Client) MarkRead(ctx context.Context, messageID string) error {
 
 // GetEmailStatus retrieves the agent's email usage and limits.
 func (c *Client) GetEmailStatus(ctx context.Context) (*EmailStatus, error) {
-	path := fmt.Sprintf("/api/agents/%s/email/status", neturl.PathEscape(c.jacsID))
+	path := fmt.Sprintf("/api/agents/%s/email/status", neturl.PathEscape(c.HaiAgentID()))
 	var status EmailStatus
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &status); err != nil {
 		return nil, err
@@ -842,7 +863,7 @@ func (c *Client) GetEmailStatus(ctx context.Context) (*EmailStatus, error) {
 func (c *Client) GetMessage(ctx context.Context, messageID string) (*EmailMessage, error) {
 	path := fmt.Sprintf(
 		"/api/agents/%s/email/messages/%s",
-		neturl.PathEscape(c.jacsID),
+		neturl.PathEscape(c.HaiAgentID()),
 		neturl.PathEscape(messageID),
 	)
 	var msg EmailMessage
@@ -856,7 +877,7 @@ func (c *Client) GetMessage(ctx context.Context, messageID string) (*EmailMessag
 func (c *Client) DeleteMessage(ctx context.Context, messageID string) error {
 	path := fmt.Sprintf(
 		"/api/agents/%s/email/messages/%s",
-		neturl.PathEscape(c.jacsID),
+		neturl.PathEscape(c.HaiAgentID()),
 		neturl.PathEscape(messageID),
 	)
 	return c.doRequest(ctx, http.MethodDelete, path, nil, nil)
@@ -866,7 +887,7 @@ func (c *Client) DeleteMessage(ctx context.Context, messageID string) error {
 func (c *Client) MarkUnread(ctx context.Context, messageID string) error {
 	path := fmt.Sprintf(
 		"/api/agents/%s/email/messages/%s/unread",
-		neturl.PathEscape(c.jacsID),
+		neturl.PathEscape(c.HaiAgentID()),
 		neturl.PathEscape(messageID),
 	)
 	return c.doRequest(ctx, http.MethodPost, path, nil, nil)
@@ -893,7 +914,7 @@ func (c *Client) SearchMessages(ctx context.Context, opts SearchOptions) ([]Emai
 	if opts.Offset > 0 {
 		query.Set("offset", fmt.Sprintf("%d", opts.Offset))
 	}
-	path := fmt.Sprintf("/api/agents/%s/email/search?%s", neturl.PathEscape(c.jacsID), query.Encode())
+	path := fmt.Sprintf("/api/agents/%s/email/search?%s", neturl.PathEscape(c.HaiAgentID()), query.Encode())
 	var wrapper ListMessagesResponse
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &wrapper); err != nil {
 		return nil, err
@@ -903,7 +924,7 @@ func (c *Client) SearchMessages(ctx context.Context, opts SearchOptions) ([]Emai
 
 // GetUnreadCount returns the number of unread messages in the agent's inbox.
 func (c *Client) GetUnreadCount(ctx context.Context) (int, error) {
-	path := fmt.Sprintf("/api/agents/%s/email/unread-count", neturl.PathEscape(c.jacsID))
+	path := fmt.Sprintf("/api/agents/%s/email/unread-count", neturl.PathEscape(c.HaiAgentID()))
 	var result UnreadCountResult
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
 		return 0, err

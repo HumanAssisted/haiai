@@ -47,7 +47,8 @@ func TestEmailIntegration(t *testing.T) {
 	if jacsID == "" {
 		jacsID = reg.Registration.AgentID
 	}
-	t.Logf("Registered agent: jacs_id=%s", jacsID)
+	haiAgentID := reg.Registration.AgentID
+	t.Logf("Registered agent: jacs_id=%s, agent_id=%s", jacsID, haiAgentID)
 
 	// Parse the returned private key PEM back into ed25519.PrivateKey.
 	block, _ := pem.Decode(reg.PrivateKey)
@@ -64,9 +65,11 @@ func TestEmailIntegration(t *testing.T) {
 	}
 
 	// Build client with explicit credentials.
+	// jacsID is used for auth headers; haiAgentID (the UUID) is used for email URL paths.
 	client, err := NewClient(
 		WithEndpoint(apiURL),
 		WithJACSID(jacsID),
+		WithHaiAgentID(haiAgentID),
 		WithPrivateKey(privKey),
 	)
 	if err != nil {

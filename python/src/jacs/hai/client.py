@@ -107,6 +107,7 @@ class HaiClient:
         self._sse_connection: Any = None
         self._hai_url: Optional[str] = None
         self._last_event_id: Optional[str] = None
+        self._hai_agent_id: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -132,6 +133,13 @@ class HaiClient:
         if cfg.jacs_id is None:
             raise HaiAuthError("jacsId is required in config for JACS authentication")
         return cfg.jacs_id
+
+    def _get_hai_agent_id(self) -> str:
+        """Return the HAI-assigned agent UUID for email URL paths.
+
+        Falls back to the JACS ID if not set (e.g. before registration).
+        """
+        return self._hai_agent_id or self._get_jacs_id()
 
     def _build_jacs_auth_header(self) -> str:
         """Build ``Authorization: JACS {jacsId}:{timestamp}:{signature}``.
@@ -462,9 +470,12 @@ class HaiClient:
                     # RegisterAgentResponse fields:
                     # agent_id, jacs_id, jacs_version, registrations,
                     # dns_verified, registered_at, a2a_detected, a2a_skills_count
+                    agent_id = data.get("agent_id", "")
+                    if agent_id:
+                        self._hai_agent_id = agent_id
                     return HaiRegistrationResult(
                         success=True,
-                        agent_id=data.get("agent_id", ""),
+                        agent_id=agent_id,
                         hai_signature="",
                         registration_id="",
                         registered_at=data.get("registered_at", ""),

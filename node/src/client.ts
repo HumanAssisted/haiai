@@ -80,6 +80,8 @@ export class HaiClient {
   private _wsConnection: unknown = null;
   private _lastEventId: string | null = null;
   private serverPublicKeys: Record<string, string> = {};
+  /** HAI-assigned agent UUID, set after register(). Used for email URL paths. */
+  private _haiAgentId: string | null = null;
 
   private constructor(options?: HaiClientOptions) {
     this.baseUrl = (options?.url ?? 'https://hai.ai').replace(/\/+$/, '');
@@ -132,6 +134,11 @@ export class HaiClient {
   /** The agent name from config. */
   get agentName(): string {
     return this.config.jacsAgentName;
+  }
+
+  /** The HAI-assigned agent UUID (set after register()). Falls back to jacsId. */
+  get haiAgentId(): string {
+    return this._haiAgentId ?? this.jacsId;
   }
 
   /** Whether the client is currently connected to an event stream. */
@@ -335,9 +342,17 @@ export class HaiClient {
 
     const data = await response.json() as Record<string, unknown>;
 
+    // After successful registration, store the HAI-assigned agent_id (UUID).
+    // Email endpoints use this UUID in their URL paths while auth headers
+    // continue to use the original JACS ID string.
+    const assignedAgentId = (data.agent_id as string) || (data.agentId as string) || '';
+    if (assignedAgentId) {
+      this._haiAgentId = assignedAgentId;
+    }
+
     return {
       success: true,
-      agentId: (data.agent_id as string) || (data.agentId as string) || '',
+      agentId: assignedAgentId,
       jacsId: (data.jacs_id as string) || (data.jacsId as string) || this.jacsId,
       haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
       registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
@@ -1332,8 +1347,8 @@ export class HaiClient {
    * @returns Send result with message ID and status
    */
   async sendEmail(options: SendEmailOptions): Promise<SendEmailResult> {
-    const safeJacsId = this.encodePathSegment(this.jacsId);
-    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/send`);
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/send`);
 
     // JACS content signing: hash subject+body, sign with agent key
     const contentHash = 'sha256:' + createHash('sha256')
@@ -1415,8 +1430,8 @@ export class HaiClient {
     if (options?.direction) params.set('direction', options.direction);
 
     const qs = params.toString();
-    const safeJacsId = this.encodePathSegment(this.jacsId);
-    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/messages${qs ? `?${qs}` : ''}`);
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/messages${qs ? `?${qs}` : ''}`);
 
     const response = await this.fetchWithRetry(url, {
       method: 'GET',
@@ -1434,9 +1449,9 @@ export class HaiClient {
    * @param messageId - The message ID to mark as read
    */
   async markRead(messageId: string): Promise<void> {
-    const safeJacsId = this.encodePathSegment(this.jacsId);
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
     const safeMessageId = this.encodePathSegment(messageId);
-    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/messages/${safeMessageId}/read`);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/messages/${safeMessageId}/read`);
     await this.fetchWithRetry(url, {
       method: 'POST',
       headers: this.buildAuthHeaders(),
@@ -1449,8 +1464,8 @@ export class HaiClient {
    * @returns Email status with daily limits and usage
    */
   async getEmailStatus(): Promise<EmailStatus> {
-    const safeJacsId = this.encodePathSegment(this.jacsId);
-    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/status`);
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/status`);
     const response = await this.fetchWithRetry(url, {
       method: 'GET',
       headers: this.buildAuthHeaders(),
@@ -1477,9 +1492,9 @@ export class HaiClient {
    * @returns The email message
    */
   async getMessage(messageId: string): Promise<EmailMessage> {
-    const safeJacsId = this.encodePathSegment(this.jacsId);
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
     const safeMessageId = this.encodePathSegment(messageId);
-    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/messages/${safeMessageId}`);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/messages/${safeMessageId}`);
     const response = await this.fetchWithRetry(url, {
       method: 'GET',
       headers: this.buildAuthHeaders(),
@@ -1495,9 +1510,9 @@ export class HaiClient {
    * @param messageId - The message ID to delete
    */
   async deleteMessage(messageId: string): Promise<void> {
-    const safeJacsId = this.encodePathSegment(this.jacsId);
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
     const safeMessageId = this.encodePathSegment(messageId);
-    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/messages/${safeMessageId}`);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/messages/${safeMessageId}`);
     await this.fetchWithRetry(url, {
       method: 'DELETE',
       headers: this.buildAuthHeaders(),
@@ -1510,9 +1525,9 @@ export class HaiClient {
    * @param messageId - The message ID to mark as unread
    */
   async markUnread(messageId: string): Promise<void> {
-    const safeJacsId = this.encodePathSegment(this.jacsId);
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
     const safeMessageId = this.encodePathSegment(messageId);
-    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/messages/${safeMessageId}/unread`);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/messages/${safeMessageId}/unread`);
     await this.fetchWithRetry(url, {
       method: 'POST',
       headers: this.buildAuthHeaders(),
@@ -1534,8 +1549,8 @@ export class HaiClient {
     if (options.fromAddress) params.set('from_address', options.fromAddress);
     if (options.toAddress) params.set('to_address', options.toAddress);
 
-    const safeJacsId = this.encodePathSegment(this.jacsId);
-    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/search?${params.toString()}`);
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/search?${params.toString()}`);
     const response = await this.fetchWithRetry(url, {
       method: 'GET',
       headers: this.buildAuthHeaders(),
@@ -1552,8 +1567,8 @@ export class HaiClient {
    * @returns The number of unread messages
    */
   async getUnreadCount(): Promise<number> {
-    const safeJacsId = this.encodePathSegment(this.jacsId);
-    const url = this.makeUrl(`/api/agents/${safeJacsId}/email/unread-count`);
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/unread-count`);
     const response = await this.fetchWithRetry(url, {
       method: 'GET',
       headers: this.buildAuthHeaders(),
