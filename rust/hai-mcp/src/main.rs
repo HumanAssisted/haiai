@@ -7,7 +7,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use haisdk::{
     generate_verify_link, generate_verify_link_hosted, CreateAgentOptions, HaiClient,
-    HaiClientOptions, JacsProvider, LocalJacsProvider, NoopJacsProvider, RegisterAgentOptions,
+    HaiClientOptions, JacsProvider, ListMessagesOptions, LocalJacsProvider, NoopJacsProvider,
+    RegisterAgentOptions, SearchOptions, SendEmailOptions,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -485,6 +486,16 @@ async fn handle_request(
                 "hai_create_agent" => call_create_agent(context, &args).await,
                 "hai_register_agent" => call_register_agent(context, &args).await,
                 "hai_generate_verify_link" => call_generate_verify_link(&args).await,
+                "hai_send_email" => call_send_email(context, &args).await,
+                "hai_list_messages" => call_list_messages(context, &args).await,
+                "hai_get_message" => call_get_message(context, &args).await,
+                "hai_delete_message" => call_delete_message(context, &args).await,
+                "hai_mark_read" => call_mark_read(context, &args).await,
+                "hai_mark_unread" => call_mark_unread(context, &args).await,
+                "hai_search_messages" => call_search_messages(context, &args).await,
+                "hai_get_unread_count" => call_get_unread_count(context, &args).await,
+                "hai_get_email_status" => call_get_email_status(context, &args).await,
+                "hai_reply_email" => call_reply_email(context, &args).await,
                 _ => {
                     if let Some(result) = bridge.call_tool(name, &args).await {
                         result
@@ -621,6 +632,145 @@ fn hai_tool_definitions() -> Vec<Value> {
                     "hosted": { "type": "boolean" }
                 },
                 "required": ["document"]
+            }
+        }),
+        // ----- Email tools -----
+        json!({
+            "name": "hai_send_email",
+            "description": "Send an email from the agent's @hai.ai address",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "to": { "type": "string", "description": "Recipient email address" },
+                    "subject": { "type": "string", "description": "Email subject line" },
+                    "body": { "type": "string", "description": "Plain text email body" },
+                    "in_reply_to": { "type": "string", "description": "Message-ID to reply to (for threading)" },
+                    "config_path": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                },
+                "required": ["to", "subject", "body"]
+            }
+        }),
+        json!({
+            "name": "hai_list_messages",
+            "description": "List email messages in the agent's inbox/outbox",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "integer", "description": "Max messages to return (default 20)" },
+                    "offset": { "type": "integer", "description": "Pagination offset" },
+                    "direction": { "type": "string", "description": "Filter: 'inbound' or 'outbound'" },
+                    "config_path": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_get_message",
+            "description": "Get a single email message by ID",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "message_id": { "type": "string", "description": "Message UUID" },
+                    "config_path": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                },
+                "required": ["message_id"]
+            }
+        }),
+        json!({
+            "name": "hai_delete_message",
+            "description": "Delete an email message",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "message_id": { "type": "string", "description": "Message UUID" },
+                    "config_path": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                },
+                "required": ["message_id"]
+            }
+        }),
+        json!({
+            "name": "hai_mark_read",
+            "description": "Mark an email message as read",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "message_id": { "type": "string", "description": "Message UUID" },
+                    "config_path": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                },
+                "required": ["message_id"]
+            }
+        }),
+        json!({
+            "name": "hai_mark_unread",
+            "description": "Mark an email message as unread",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "message_id": { "type": "string", "description": "Message UUID" },
+                    "config_path": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                },
+                "required": ["message_id"]
+            }
+        }),
+        json!({
+            "name": "hai_search_messages",
+            "description": "Search email messages by query, sender, recipient, or date range",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "q": { "type": "string", "description": "Search query text" },
+                    "direction": { "type": "string", "description": "Filter: 'inbound' or 'outbound'" },
+                    "from_address": { "type": "string", "description": "Filter by sender address" },
+                    "to_address": { "type": "string", "description": "Filter by recipient address" },
+                    "since": { "type": "string", "description": "Filter: messages after this ISO date" },
+                    "until": { "type": "string", "description": "Filter: messages before this ISO date" },
+                    "limit": { "type": "integer", "description": "Max results (default 20)" },
+                    "offset": { "type": "integer", "description": "Pagination offset" },
+                    "config_path": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_get_unread_count",
+            "description": "Get the count of unread email messages",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "config_path": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_get_email_status",
+            "description": "Get email account status including usage limits and daily stats",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "config_path": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_reply_email",
+            "description": "Reply to an email message (fetches original, sends reply with threading)",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "message_id": { "type": "string", "description": "ID of the message to reply to" },
+                    "body": { "type": "string", "description": "Reply body text" },
+                    "subject_override": { "type": "string", "description": "Override the Re: subject line" },
+                    "config_path": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                },
+                "required": ["message_id", "body"]
             }
         }),
     ]
@@ -838,6 +988,233 @@ async fn call_generate_verify_link(args: &Value) -> std::result::Result<Value, S
     ))
 }
 
+// ---------------------------------------------------------------------------
+// Email tool handlers
+// ---------------------------------------------------------------------------
+
+async fn call_send_email(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let client = context.local_client_with_url(
+        optional_string(args, "config_path"),
+        optional_string(args, "hai_url"),
+    )?;
+    let result = client
+        .send_email(&SendEmailOptions {
+            to: required_string(args, "to")?.to_string(),
+            subject: required_string(args, "subject")?.to_string(),
+            body: required_string(args, "body")?.to_string(),
+            in_reply_to: optional_string(args, "in_reply_to").map(ToString::to_string),
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(success_tool_result(
+        format!("sent message_id={} status={}", result.message_id, result.status),
+        json!({ "send_email": result }),
+    ))
+}
+
+async fn call_list_messages(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let client = context.local_client_with_url(
+        optional_string(args, "config_path"),
+        optional_string(args, "hai_url"),
+    )?;
+    let result = client
+        .list_messages(&ListMessagesOptions {
+            limit: optional_u32(args, "limit"),
+            offset: optional_u32(args, "offset"),
+            direction: optional_string(args, "direction").map(ToString::to_string),
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let count = result.len();
+    Ok(success_tool_result(
+        format!("found {count} messages"),
+        json!({ "messages": result }),
+    ))
+}
+
+async fn call_get_message(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let message_id = required_string(args, "message_id")?;
+    let client = context.local_client_with_url(
+        optional_string(args, "config_path"),
+        optional_string(args, "hai_url"),
+    )?;
+    let result = client
+        .get_message(message_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(success_tool_result(
+        format!(
+            "message from={} to={} subject={}",
+            result.from_address, result.to_address, result.subject
+        ),
+        json!({ "message": result }),
+    ))
+}
+
+async fn call_delete_message(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let message_id = required_string(args, "message_id")?;
+    let client = context.local_client_with_url(
+        optional_string(args, "config_path"),
+        optional_string(args, "hai_url"),
+    )?;
+    client
+        .delete_message(message_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(success_tool_result(
+        format!("deleted message_id={message_id}"),
+        json!({ "deleted": true, "message_id": message_id }),
+    ))
+}
+
+async fn call_mark_read(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let message_id = required_string(args, "message_id")?;
+    let client = context.local_client_with_url(
+        optional_string(args, "config_path"),
+        optional_string(args, "hai_url"),
+    )?;
+    client
+        .mark_read(message_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(success_tool_result(
+        format!("marked read message_id={message_id}"),
+        json!({ "message_id": message_id, "is_read": true }),
+    ))
+}
+
+async fn call_mark_unread(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let message_id = required_string(args, "message_id")?;
+    let client = context.local_client_with_url(
+        optional_string(args, "config_path"),
+        optional_string(args, "hai_url"),
+    )?;
+    client
+        .mark_unread(message_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(success_tool_result(
+        format!("marked unread message_id={message_id}"),
+        json!({ "message_id": message_id, "is_read": false }),
+    ))
+}
+
+async fn call_search_messages(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let client = context.local_client_with_url(
+        optional_string(args, "config_path"),
+        optional_string(args, "hai_url"),
+    )?;
+    let result = client
+        .search_messages(&SearchOptions {
+            q: optional_string(args, "q").map(ToString::to_string),
+            direction: optional_string(args, "direction").map(ToString::to_string),
+            from_address: optional_string(args, "from_address").map(ToString::to_string),
+            to_address: optional_string(args, "to_address").map(ToString::to_string),
+            since: optional_string(args, "since").map(ToString::to_string),
+            until: optional_string(args, "until").map(ToString::to_string),
+            limit: optional_u32(args, "limit"),
+            offset: optional_u32(args, "offset"),
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let count = result.len();
+    Ok(success_tool_result(
+        format!("found {count} messages"),
+        json!({ "messages": result }),
+    ))
+}
+
+async fn call_get_unread_count(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let client = context.local_client_with_url(
+        optional_string(args, "config_path"),
+        optional_string(args, "hai_url"),
+    )?;
+    let count = client
+        .get_unread_count()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(success_tool_result(
+        format!("unread_count={count}"),
+        json!({ "count": count }),
+    ))
+}
+
+async fn call_get_email_status(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let client = context.local_client_with_url(
+        optional_string(args, "config_path"),
+        optional_string(args, "hai_url"),
+    )?;
+    let result = client
+        .get_email_status()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(success_tool_result(
+        format!(
+            "email={} status={} tier={} daily_used={}/{}",
+            result.email, result.status, result.tier, result.daily_used, result.daily_limit
+        ),
+        json!({ "email_status": result }),
+    ))
+}
+
+async fn call_reply_email(
+    context: &HaiServerContext,
+    args: &Value,
+) -> std::result::Result<Value, String> {
+    let message_id = required_string(args, "message_id")?;
+    let body = required_string(args, "body")?;
+    let subject_override = optional_string(args, "subject_override");
+    let client = context.local_client_with_url(
+        optional_string(args, "config_path"),
+        optional_string(args, "hai_url"),
+    )?;
+    let result = client
+        .reply(message_id, body, subject_override)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(success_tool_result(
+        format!("replied message_id={} status={}", result.message_id, result.status),
+        json!({ "reply": result }),
+    ))
+}
+
 fn success_tool_result(text: String, structured: Value) -> Value {
     json!({
         "content": [{"type": "text", "text": text}],
@@ -860,6 +1237,10 @@ fn required_string<'a>(args: &'a Value, key: &str) -> std::result::Result<&'a st
 
 fn optional_string<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.get(key).and_then(Value::as_str)
+}
+
+fn optional_u32(args: &Value, key: &str) -> Option<u32> {
+    args.get(key).and_then(Value::as_u64).map(|v| v as u32)
 }
 
 fn id_matches(value: &Value, id: u64) -> bool {
