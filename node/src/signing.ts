@@ -25,7 +25,11 @@ export function computeContentHash(
       ah.update(':');
       ah.update(att.contentType);
       ah.update(':');
-      ah.update(att.data);
+      // Prefer data Buffer if present and non-empty, otherwise decode dataBase64
+      const effectiveData = att.data.length > 0
+        ? att.data
+        : (att.dataBase64 ? Buffer.from(att.dataBase64, 'base64') : att.data);
+      ah.update(effectiveData);
       return ah.digest('hex');
     }).sort();
     for (const ah of attHashes) {
@@ -288,8 +292,18 @@ export async function verifyEmailSignature(
     return { valid: false, jacsId, reputationTier: '', error: `Invalid timestamp: ${timestampStr}` };
   }
 
-  // Version-gate: use `v=` field when present, otherwise detect v2 via `h=` presence
-  const isV2 = sigVersion === '2' || (sigVersion === '' && !!sigHashField);
+  // Version-gate: only detect v2 when explicitly marked with v=2
+  const isV2 = sigVersion === '2';
+
+  // For v2, enforce from= field presence and match against From header
+  if (isV2) {
+    if (!sigFromField) {
+      return { valid: false, jacsId, reputationTier: '', error: 'v2 requires from= field' };
+    }
+    if (sigFromField !== fromAddress) {
+      return { valid: false, jacsId, reputationTier: '', error: 'v2 from= field does not match From header' };
+    }
+  }
 
   // For v1, X-JACS-Content-Hash header is required
   if (!isV2 && !contentHashHeader) {
@@ -351,11 +365,11 @@ export async function verifyEmailSignature(
   }
 
   // Step 5: Verify Ed25519 signature (version-gated, no fallback)
-  const fromForSig = sigFromField || fromAddress;
   let sigValid: boolean;
   if (isV2) {
     // v2 payload: "{content_hash}:{from_email}:{timestamp}"
-    const v2SignInput = `${contentHash}:${fromForSig}:${timestamp}`;
+    // sigFromField is guaranteed present and matching fromAddress (validated above)
+    const v2SignInput = `${contentHash}:${sigFromField}:${timestamp}`;
     sigValid = verifyString(publicKeyPem, v2SignInput, signatureB64);
   } else {
     // v1 payload: "{content_hash}:{timestamp}"

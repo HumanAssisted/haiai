@@ -404,7 +404,7 @@ impl<P: JacsProvider> HaiClient<P> {
 
         let timestamp = OffsetDateTime::now_utc().unix_timestamp();
 
-        let content_hash = compute_content_hash_v2(
+        let content_hash = compute_content_hash(
             &options.subject,
             &options.body,
             &options.attachments,
@@ -1229,7 +1229,7 @@ impl EmptyFallback for String {
 /// - Returns: `"sha256:" + hex`
 ///
 /// When `data` is empty but `data_base64` is set, decodes base64 as a fallback.
-pub fn compute_content_hash_v2(
+pub fn compute_content_hash(
     subject: &str,
     body: &str,
     attachments: &[crate::types::EmailAttachment],
@@ -1275,7 +1275,7 @@ mod tests {
 
     #[test]
     fn test_content_hash_no_attachments() {
-        let hash = compute_content_hash_v2("Subject", "Body", &[]);
+        let hash = compute_content_hash("Subject", "Body", &[]);
         // Expected: sha256("Subject\nBody") as hex
         let mut hasher = Sha256::new();
         hasher.update(b"Subject\nBody");
@@ -1291,7 +1291,7 @@ mod tests {
             "text/plain".to_string(),
             b"hello".to_vec(),
         );
-        let hash = compute_content_hash_v2("Test", "Hello", &[att]);
+        let hash = compute_content_hash("Test", "Hello", &[att]);
 
         // att_hash = sha256("a.txt:text/plain:hello") as hex
         let mut ah = Sha256::new();
@@ -1319,8 +1319,8 @@ mod tests {
             b"beta".to_vec(),
         );
 
-        let hash_ab = compute_content_hash_v2("Sub", "Body", &[att_a.clone(), att_b.clone()]);
-        let hash_ba = compute_content_hash_v2("Sub", "Body", &[att_b, att_a]);
+        let hash_ab = compute_content_hash("Sub", "Body", &[att_a.clone(), att_b.clone()]);
+        let hash_ba = compute_content_hash("Sub", "Body", &[att_b, att_a]);
 
         assert_eq!(hash_ab, hash_ba, "attachment order must not affect content hash");
     }
@@ -1338,8 +1338,8 @@ mod tests {
             b"HELLO".to_vec(),
         );
 
-        let hash_ok = compute_content_hash_v2("Sub", "Body", &[att_ok]);
-        let hash_tampered = compute_content_hash_v2("Sub", "Body", &[att_tampered]);
+        let hash_ok = compute_content_hash("Sub", "Body", &[att_ok]);
+        let hash_tampered = compute_content_hash("Sub", "Body", &[att_tampered]);
 
         assert_ne!(hash_ok, hash_tampered, "changed attachment data must produce different hash");
     }
@@ -1376,8 +1376,8 @@ mod tests {
             b"hello".to_vec(),
         );
 
-        let hash_b64 = compute_content_hash_v2("Test", "Hello", &[att]);
-        let hash_data = compute_content_hash_v2("Test", "Hello", &[att_ref]);
+        let hash_b64 = compute_content_hash("Test", "Hello", &[att]);
+        let hash_data = compute_content_hash("Test", "Hello", &[att_ref]);
 
         assert_eq!(hash_b64, hash_data, "data_base64 fallback should produce identical hash");
     }
@@ -1495,5 +1495,33 @@ mod tests {
 
         let _result = client.claim_username("test-agent-001", "myagent").await.expect("claim");
         assert!(client.agent_email().is_none(), "empty email should not be stored");
+    }
+
+    // ── Cross-SDK golden hash test ────────────────────────────────────
+
+    #[test]
+    fn test_cross_sdk_golden_hash() {
+        let attachments = vec![
+            EmailAttachment::new(
+                "doc.pdf".into(),
+                "application/pdf".into(),
+                b"pdf-content".to_vec(),
+            ),
+            EmailAttachment::new(
+                "img.png".into(),
+                "image/png".into(),
+                b"png-content".to_vec(),
+            ),
+        ];
+        let hash = compute_content_hash("Cross-SDK Test", "Verify me", &attachments);
+
+        // Golden value shared across Go, Python, Node, and Rust SDKs.
+        // If this test fails after code changes, the content hash algorithm
+        // has diverged from other SDKs. All SDKs must produce identical
+        // hashes for the same inputs.
+        assert_eq!(
+            hash,
+            "sha256:a0222afb5f569cb89efd21f2bebdcf84e97c4c98cb31cb5ff54e6e4a2b88c8a1",
+        );
     }
 }

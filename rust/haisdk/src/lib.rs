@@ -19,7 +19,7 @@ pub use a2a::{
     A2AIntegration, A2AMediatedJobOptions, A2ATrustAssessment, A2ATrustPolicy, A2AWrappedArtifact,
     A2A_JACS_EXTENSION_URI, A2A_PROTOCOL_VERSION_04, A2A_PROTOCOL_VERSION_10,
 };
-pub use client::{compute_content_hash_v2, HaiClient, HaiClientOptions, SseConnection, WsConnection};
+pub use client::{compute_content_hash, HaiClient, HaiClientOptions, SseConnection, WsConnection};
 pub use config::{load_config, resolve_private_key_candidates, AgentConfig};
 pub use error::{HaiError, Result};
 pub use jacs::{JacsProvider, NoopJacsProvider, StaticJacsProvider};

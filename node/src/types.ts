@@ -337,6 +337,8 @@ export interface EmailAttachment {
   contentType: string;
   /** Raw attachment data. */
   data: Buffer;
+  /** Base64-encoded attachment data (used when `data` is empty). */
+  dataBase64?: string;
 }
 
 /** Options for sending an email. */

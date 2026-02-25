@@ -356,6 +356,77 @@ describe('verifyEmailSignature', () => {
     expect(result.error).toContain('Missing X-JACS-Content-Hash');
   });
 
+  it('v2 rejects missing from= field', async () => {
+    // v2 header without from= should return valid:false
+    const sigHeader = 'v=2; a=ed25519; id=agent-x; t=1740000000; h=sha256:abc; s=fakesig';
+    const headers: Record<string, string> = {
+      'X-JACS-Signature': sigHeader,
+      'From': 'sender@hai.ai',
+    };
+
+    const result = await verifyEmailSignature(headers, 'Sub', 'Body', 'https://hai.ai');
+
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('v2 requires from= field');
+  });
+
+  it('v2 rejects from= mismatch', async () => {
+    // v2 header where from= doesn't match the From email header
+    const sigHeader = 'v=2; a=ed25519; id=agent-x; t=1740000000; h=sha256:abc; from=other@hai.ai; s=fakesig';
+    const headers: Record<string, string> = {
+      'X-JACS-Signature': sigHeader,
+      'From': 'sender@hai.ai',
+    };
+
+    const result = await verifyEmailSignature(headers, 'Sub', 'Body', 'https://hai.ai');
+
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('v2 from= field does not match From header');
+  });
+
+  it('v2 accepts matching from=', async () => {
+    const keypair = generateKeypair();
+    const jacsId = 'v2-from-match-agent';
+    const fromEmail = 'sender@hai.ai';
+    const subject = 'V2 From Match';
+    const body = 'V2 from match body';
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    const contentHash = computeContentHash(subject, body);
+    const signInput = `${contentHash}:${fromEmail}:${timestamp}`;
+    const signature = signString(keypair.privateKeyPem, signInput);
+
+    const sigHeader = `v=2; a=ed25519; id=${jacsId}; t=${timestamp}; h=${contentHash}; from=${fromEmail}; s=${signature}`;
+    const headers: Record<string, string> = {
+      'X-JACS-Signature': sigHeader,
+      'From': fromEmail,
+    };
+
+    mockRegistryForKey(keypair.publicKeyPem, jacsId);
+
+    const result = await verifyEmailSignature(headers, subject, body, 'https://hai.ai');
+
+    expect(result.valid).toBe(true);
+    expect(result.jacsId).toBe(jacsId);
+    expect(result.error).toBeNull();
+  });
+
+  it('v= absent with h= present defaults to v1', async () => {
+    // Header has h= but no v= field -- should be treated as v1, not promoted to v2.
+    // Since v1 requires X-JACS-Content-Hash and it's missing, this should fail with that error.
+    const sigHeader = 'a=ed25519; id=agent-x; t=1740000000; h=sha256:abc; s=fakesig';
+    const headers: Record<string, string> = {
+      'X-JACS-Signature': sigHeader,
+      'From': 'sender@hai.ai',
+      // No X-JACS-Content-Hash -- v1 requires it
+    };
+
+    const result = await verifyEmailSignature(headers, 'Sub', 'Body', 'https://hai.ai');
+
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('Missing X-JACS-Content-Hash');
+  });
+
   it('v2 uses h= field instead of X-JACS-Content-Hash', async () => {
     const keypair = generateKeypair();
     const jacsId = 'v2-h-field-agent';

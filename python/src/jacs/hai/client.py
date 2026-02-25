@@ -73,7 +73,7 @@ MAX_VERIFY_DOCUMENT_BYTES = 1515
 # ---------------------------------------------------------------------------
 
 
-def _compute_content_hash(
+def compute_content_hash(
     subject: str,
     body: str,
     attachments: Optional[list[dict[str, Any]]] = None,
@@ -1570,7 +1570,7 @@ class HaiClient:
         # JACS content signing v2: hash includes attachments and email
         from jacs.hai.config import get_private_key
 
-        content_hash = _compute_content_hash(subject, body, attachments)
+        content_hash = compute_content_hash(subject, body, attachments)
         jacs_timestamp = int(time.time())
         sign_input = f"{content_hash}:{self._agent_email}:{jacs_timestamp}"
         jacs_signature = sign_string(get_private_key(), sign_input)

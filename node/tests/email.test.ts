@@ -615,3 +615,25 @@ describe('sendEmail with attachments', () => {
     ).rejects.toThrow('agent email not set');
   });
 });
+
+describe('computeContentHash dataBase64 fallback', () => {
+  it('computeContentHash uses dataBase64 when data is empty', () => {
+    const withData = computeContentHash('S', 'B', [
+      { filename: 'f.txt', contentType: 'text/plain', data: Buffer.from('hello') }
+    ]);
+    const withBase64 = computeContentHash('S', 'B', [
+      { filename: 'f.txt', contentType: 'text/plain', data: Buffer.alloc(0), dataBase64: Buffer.from('hello').toString('base64') }
+    ]);
+    expect(withData).toBe(withBase64);
+  });
+});
+
+describe('cross-SDK golden hash', () => {
+  it('matches Go/Rust/Python golden value', () => {
+    const hash = computeContentHash('Cross-SDK Test', 'Verify me', [
+      { filename: 'doc.pdf', contentType: 'application/pdf', data: Buffer.from('pdf-content') },
+      { filename: 'img.png', contentType: 'image/png', data: Buffer.from('png-content') },
+    ]);
+    expect(hash).toBe('sha256:a0222afb5f569cb89efd21f2bebdcf84e97c4c98cb31cb5ff54e6e4a2b88c8a1');
+  });
+});

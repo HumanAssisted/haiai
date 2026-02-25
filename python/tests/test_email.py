@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from jacs.hai.client import HaiClient, _compute_content_hash
+from jacs.hai.client import HaiClient, compute_content_hash
 from jacs.hai.crypt import sign_string, verify_string
 from jacs.hai.errors import (
     BodyTooLarge,
@@ -247,8 +247,8 @@ class TestSendEmailJacsSigning:
             BASE_URL, "bob@hai.ai", subject, body, attachments=attachments,
         )
 
-        # Recompute expected content hash using _compute_content_hash
-        expected_hash = _compute_content_hash(subject, body, attachments)
+        # Recompute expected content hash using compute_content_hash
+        expected_hash = compute_content_hash(subject, body, attachments)
 
         payload = captured["json"]
         sign_input = f"{expected_hash}:{TEST_AGENT_EMAIL}:{payload['jacs_timestamp']}"
@@ -284,8 +284,8 @@ class TestSendEmailJacsSigning:
 
         # Both should produce the same content hash (extracted from the
         # standalone function for independent verification)
-        hash_ab = _compute_content_hash("Order test", "Body", [att_a, att_b])
-        hash_ba = _compute_content_hash("Order test", "Body", [att_b, att_a])
+        hash_ab = compute_content_hash("Order test", "Body", [att_a, att_b])
+        hash_ba = compute_content_hash("Order test", "Body", [att_b, att_a])
         assert hash_ab == hash_ba
 
     def test_send_email_no_agent_email_raises(
@@ -992,3 +992,24 @@ class TestHaiErrorFromResponseErrorCode:
 
         err = HaiError.from_response(fake_resp)
         assert err.error_code == ""
+
+
+# ---------------------------------------------------------------
+# Cross-SDK golden hash test
+# ---------------------------------------------------------------
+
+
+class TestCrossSDKGoldenHash:
+    """Verify content hash matches Go, Node, and Rust SDKs for identical inputs."""
+
+    def test_cross_sdk_golden_hash(self) -> None:
+        """All four SDKs must produce the same hash for the same inputs."""
+        h = compute_content_hash(
+            "Cross-SDK Test",
+            "Verify me",
+            [
+                {"filename": "doc.pdf", "content_type": "application/pdf", "data": b"pdf-content"},
+                {"filename": "img.png", "content_type": "image/png", "data": b"png-content"},
+            ],
+        )
+        assert h == "sha256:a0222afb5f569cb89efd21f2bebdcf84e97c4c98cb31cb5ff54e6e4a2b88c8a1"

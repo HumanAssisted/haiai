@@ -286,7 +286,7 @@ def verify_email_signature(
     **v1 payload:** ``{content_hash}:{timestamp}``
     **v2 payload:** ``{content_hash}:{from}:{timestamp}``
 
-    v2 is detected by the presence of an ``h`` field in the X-JACS-Signature
+    v2 is detected by the explicit ``v=2`` field in the X-JACS-Signature
     header.  v2 carries the content hash inline (``h=sha256:...``) and does
     not require a separate ``X-JACS-Content-Hash`` header.
 
@@ -324,8 +324,8 @@ def verify_email_signature(
     header_hash = fields.get("h", "")         # v2: content hash inline
     header_from = fields.get("from", "")       # v2: sender identity
 
-    # Detect v2: presence of "h" field in the parsed signature
-    is_v2 = bool(header_hash)
+    # Detect v2: use the explicit v= field value, not the presence of h=
+    is_v2 = (version == "2")
 
     if not jacs_id or not timestamp_str or not signature_b64:
         return EmailVerificationResult(
@@ -367,13 +367,13 @@ def verify_email_signature(
                 error=f"Signature from ({header_from}) does not match email From header ({from_address})",
             )
 
-        # Informational: recompute content hash from subject+body for comparison.
+        # Recompute content hash from subject+body for comparison.
         # A mismatch may be due to attachments (which we cannot recompute here).
         computed_hash = "sha256:" + hashlib.sha256(
             (subject + "\n" + body).encode("utf-8")
         ).hexdigest()
         if computed_hash != content_hash:
-            logger.info(
+            logger.warning(
                 "v2 content hash mismatch (may include attachments): "
                 "header=%s computed=%s",
                 content_hash, computed_hash,

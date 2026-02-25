@@ -172,6 +172,22 @@ pub async fn verify_email_signature(
         Err(msg) => return err_result(jacs_id, "", &msg),
     };
 
+    // Step 3b: For v2, enforce from= field and validate it matches the From header.
+    // This prevents sender-spoofing where an attacker signs with from=attacker@evil.com
+    // but the email From: header says victim@hai.ai.
+    if version == 2 {
+        if from_field.is_empty() {
+            return err_result(jacs_id, "", "v2 signature missing from= field");
+        }
+        if from_field != from_address {
+            return err_result(
+                jacs_id,
+                "",
+                "v2 from= field does not match From header",
+            );
+        }
+    }
+
     // Step 4: For v1, recompute and compare content hash.
     // For v2, the h= value is trusted once the signature is verified — the
     // signature itself proves the sender committed to that hash.
@@ -188,9 +204,9 @@ pub async fn verify_email_signature(
     }
 
     // Step 5: Fetch public key from registry
-    // Use `from` field from sig header if present (v2), otherwise fall back to From header
-    let lookup_address = if !from_field.is_empty() { from_field } else { from_address };
-    let registry_url = format!("{hai_url}/api/agents/keys/{lookup_address}");
+    // ALWAYS use the From header for registry lookup — never trust from= in the
+    // signature for key selection (prevents attacker substituting their own key).
+    let registry_url = format!("{hai_url}/api/agents/keys/{from_address}");
     let client = reqwest::Client::new();
     let registry_resp = match client.get(&registry_url).send().await {
         Ok(r) => r,
@@ -254,7 +270,10 @@ pub async fn verify_email_signature(
         }
     };
 
-    // Build version-specific signing payload
+    // Build version-specific signing payload.
+    // For v2, from= has been validated to match From header above.
+    // Use from_field (the value the sender committed to in the signature) for
+    // payload reconstruction so the signature verification succeeds.
     let sign_from = if !from_field.is_empty() { from_field } else { from_address };
     let sign_input = build_signing_payload(version, &sig_content_hash, sign_from, timestamp);
     let verify_key = ring::signature::UnparsedPublicKey::new(
@@ -488,5 +507,68 @@ mod tests {
         let result = rt.block_on(verify_email_signature(&headers, "Test", "Body", "https://hai.ai"));
         assert!(!result.valid);
         assert_eq!(result.error.as_deref(), Some("Missing X-JACS-Content-Hash header"));
+    }
+
+    // ── P1-1: v2 from= field enforcement tests ──────────────────────────
+
+    #[test]
+    fn test_v2_rejects_missing_from_field() {
+        // v2 signature without from= must be rejected
+        let mut headers = HashMap::new();
+        headers.insert(
+            "X-JACS-Signature".to_string(),
+            "v=2; a=ed25519; id=test; h=sha256:abc; t=1740000000; s=abc".to_string(),
+        );
+        headers.insert("From".to_string(), "agent@hai.ai".to_string());
+
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let result = rt.block_on(verify_email_signature(&headers, "Test", "Body", "https://hai.ai"));
+        assert!(!result.valid);
+        assert_eq!(result.error.as_deref(), Some("v2 signature missing from= field"));
+    }
+
+    #[test]
+    fn test_v2_rejects_from_mismatch() {
+        // v2 signature with from=attacker@evil.com but From: victim@hai.ai must be rejected
+        let mut headers = HashMap::new();
+        headers.insert(
+            "X-JACS-Signature".to_string(),
+            "v=2; a=ed25519; id=test; from=attacker@evil.com; h=sha256:abc; t=1740000000; s=abc".to_string(),
+        );
+        headers.insert("From".to_string(), "victim@hai.ai".to_string());
+
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let result = rt.block_on(verify_email_signature(&headers, "Test", "Body", "https://hai.ai"));
+        assert!(!result.valid);
+        assert_eq!(result.error.as_deref(), Some("v2 from= field does not match From header"));
+    }
+
+    #[test]
+    fn test_v2_accepts_matching_from() {
+        // v2 signature with from=agent@hai.ai and From: agent@hai.ai should
+        // pass the from= validation and proceed to registry lookup.
+        // The request will fail at the HTTP fetch stage (no mock server), but
+        // the error must NOT be from= related -- proving the from= check passed.
+        let mut headers = HashMap::new();
+        headers.insert(
+            "X-JACS-Signature".to_string(),
+            "v=2; a=ed25519; id=test; from=agent@hai.ai; h=sha256:abc; t=1740000000; s=abc".to_string(),
+        );
+        headers.insert("From".to_string(), "agent@hai.ai".to_string());
+
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let result = rt.block_on(verify_email_signature(
+            &headers,
+            "Test",
+            "Body",
+            "http://127.0.0.1:1", // unreachable address to trigger connection error
+        ));
+        assert!(!result.valid);
+        // The error should be about the failed HTTP request, NOT about from= validation
+        let err = result.error.as_deref().unwrap();
+        assert!(
+            err.starts_with("Failed to fetch public key"),
+            "Expected HTTP fetch error, got: {err}",
+        );
     }
 }

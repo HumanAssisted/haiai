@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -435,3 +436,110 @@ class TestVerifyEmailSignatureV2:
             )
 
         assert result.valid is True, f"Expected valid but got error: {result.error}"
+
+    def test_v2_detection_uses_v_field_not_h_presence(self) -> None:
+        """A header with v=1 and h=sha256:... must be treated as v1, not v2.
+
+        This ensures version detection uses the explicit v= field rather
+        than the mere presence of the h= field.
+        """
+        # Build a v1 header that also happens to include h= (unusual but valid).
+        # Because v=1, the verifier should take the v1 code path and require
+        # X-JACS-Content-Hash, which we deliberately omit.
+        sig_header = (
+            "v=1; a=ed25519; id=test-agent; "
+            "h=sha256:deadbeef; t=1740393600; s=base64sig"
+        )
+        result = verify_email_signature(
+            headers={
+                "X-JACS-Signature": sig_header,
+                "From": "test@hai.ai",
+            },
+            subject="Test",
+            body="Body",
+        )
+        # v1 path requires X-JACS-Content-Hash header -- its absence proves
+        # the verifier correctly chose the v1 path.
+        assert result.valid is False
+        assert "Missing X-JACS-Content-Hash" in (result.error or "")
+
+    def test_v2_with_attachment_hash_warns_but_passes(self) -> None:
+        """v2 with h= that doesn't match body-only hash (attachments) still passes.
+
+        When the signed content hash includes attachments the verifier cannot
+        recompute the full hash.  It should log a warning but the signature
+        itself is still valid.
+        """
+        private_key = Ed25519PrivateKey.generate()
+        public_pem = (
+            private_key.public_key()
+            .public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+            .decode()
+        )
+
+        jacs_id = "v2-attach-agent"
+        from_addr = "attach@hai.ai"
+        subject = "Attachment Test"
+        body = "Body without attachment bytes."
+        timestamp = 1740393600
+
+        # Simulate a content hash that covers subject + body + attachment data.
+        # This will NOT match sha256(subject + "\n" + body) because the
+        # attachment bytes are included in the original hash.
+        full_content = subject + "\n" + body + "\nATTACHMENT_BYTES_HERE"
+        content_hash = "sha256:" + hashlib.sha256(
+            full_content.encode("utf-8")
+        ).hexdigest()
+
+        # v2 signing payload: {hash}:{from}:{timestamp}
+        sign_input = f"{content_hash}:{from_addr}:{timestamp}"
+        signature_b64 = sign_string(private_key, sign_input)
+
+        sig_header = _build_v2_header(
+            jacs_id=jacs_id,
+            from_addr=from_addr,
+            content_hash=content_hash,
+            timestamp=timestamp,
+            signature_b64=signature_b64,
+        )
+
+        headers = {
+            "X-JACS-Signature": sig_header,
+            "From": from_addr,
+        }
+
+        mock_registry = MagicMock()
+        mock_registry.status_code = 200
+        mock_registry.raise_for_status = MagicMock()
+        mock_registry.json.return_value = {
+            "email": from_addr,
+            "jacs_id": jacs_id,
+            "public_key": public_pem,
+            "algorithm": "ed25519",
+            "reputation_tier": "established",
+            "registered_at": "2026-01-15T00:00:00Z",
+        }
+
+        with patch("jacs.hai.signing.httpx") as mock_httpx, \
+             patch("jacs.hai.signing.time") as mock_time, \
+             patch("jacs.hai.signing.logger") as mock_logger:
+            mock_httpx.get.return_value = mock_registry
+            mock_time.time.return_value = timestamp + 100
+            mock_time.monotonic = time.monotonic
+
+            result = verify_email_signature(
+                headers=headers,
+                subject=subject,
+                body=body,
+                hai_url="https://hai.ai",
+            )
+
+        # Signature is valid despite content hash mismatch
+        assert result.valid is True, f"Expected valid but got error: {result.error}"
+        assert result.jacs_id == jacs_id
+        assert result.error is None
+
+        # The warning about content hash mismatch was logged
+        mock_logger.warning.assert_called_once()
+        warning_msg = mock_logger.warning.call_args[0][0]
+        assert "content hash mismatch" in warning_msg.lower()

@@ -31,6 +31,7 @@ from jacs.hai.client import (
     MAX_VERIFY_URL_LEN,
     HaiClient,
     benchmark,
+    compute_content_hash,
     delete_username,
     connect,
     disconnect,
@@ -129,6 +130,7 @@ __all__ = [
     "MAX_VERIFY_URL_LEN",
     "MAX_VERIFY_DOCUMENT_BYTES",
     # Convenience functions
+    "compute_content_hash",
     "generate_verify_link",
     "testconnection",
     "hello_world",
