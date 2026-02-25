@@ -100,6 +100,9 @@ haisdk mcp install
 haisdk mcp run
 ```
 
+`haisdk` enforces local MCP execution for `mcp run` (stdio transport only).  
+Only optional `--bin <path>` is allowed; transport/runtime override args are blocked.
+
 ## Quickstart
 
 ### Python

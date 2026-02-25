@@ -68,6 +68,9 @@ func VerifyEmailSignature(
 	if contentHashHeader == "" {
 		return errResult("", "", "Missing X-JACS-Content-Hash header")
 	}
+	if strings.TrimSpace(fromAddress) == "" {
+		return errResult("", "", "Missing From header")
+	}
 
 	// Step 2: Parse signature header fields
 	fields := ParseJacsSignatureHeader(sigHeader)
@@ -125,9 +128,16 @@ func VerifyEmailSignature(
 
 	reputationTier := registryData.ReputationTier
 	publicKeyPem := registryData.PublicKey
+	registryJacsID := strings.TrimSpace(registryData.JacsID)
 
 	if publicKeyPem == "" {
 		return errResult(jacsID, reputationTier, "No public key found in registry")
+	}
+	if registryJacsID == "" {
+		return errResult(jacsID, reputationTier, "No jacs_id found in registry")
+	}
+	if registryJacsID != jacsID {
+		return errResult(registryJacsID, reputationTier, "Signature id does not match registry jacs_id")
 	}
 
 	// Parse PEM-encoded public key
@@ -158,22 +168,22 @@ func VerifyEmailSignature(
 	}
 
 	if !ed25519.Verify(pubKey, []byte(signInput), sigBytes) {
-		return errResult(jacsID, reputationTier, "Signature verification failed")
+		return errResult(registryJacsID, reputationTier, "Signature verification failed")
 	}
 
 	// Step 7: Check timestamp freshness
 	now := nowFunc()
 	age := now - timestamp
 	if age > maxTimestampAge {
-		return errResult(jacsID, reputationTier, "Signature timestamp is too old (>24h)")
+		return errResult(registryJacsID, reputationTier, "Signature timestamp is too old (>24h)")
 	}
 	if age < -maxTimestampFuture {
-		return errResult(jacsID, reputationTier, "Signature timestamp is too far in the future (>5min)")
+		return errResult(registryJacsID, reputationTier, "Signature timestamp is too far in the future (>5min)")
 	}
 
 	return &EmailVerificationResult{
 		Valid:          true,
-		JacsID:         jacsID,
+		JacsID:         registryJacsID,
 		ReputationTier: reputationTier,
 		Error:          nil,
 	}

@@ -23,14 +23,14 @@ def _load_fixture() -> dict:
         return json.load(fh)
 
 
-def _mock_registry_response(fixture: dict) -> MagicMock:
+def _mock_registry_response(fixture: dict, *, jacs_id: str = "test-agent-jacs-id") -> MagicMock:
     """Create a mock httpx response that returns the registry data."""
     mock_resp = MagicMock()
     mock_resp.status_code = 200
     mock_resp.raise_for_status = MagicMock()
     mock_resp.json.return_value = {
         "email": fixture["headers"]["From"],
-        "jacs_id": "test-agent-jacs-id",
+        "jacs_id": jacs_id,
         "public_key": fixture["test_public_key_pem"],
         "algorithm": "ed25519",
         "reputation_tier": "established",
@@ -118,6 +118,15 @@ class TestVerifyEmailSignature:
         assert result.valid is False
         assert "Missing X-JACS-Content-Hash" in (result.error or "")
 
+    def test_missing_from_header(self) -> None:
+        result = verify_email_signature(
+            headers={"X-JACS-Signature": "v=1; a=ed25519; id=x; t=1; s=abc", "X-JACS-Content-Hash": "sha256:abc"},
+            subject="Test",
+            body="Body",
+        )
+        assert result.valid is False
+        assert result.error == "Missing From header"
+
     def test_stale_timestamp(self) -> None:
         fixture = _load_fixture()
 
@@ -175,3 +184,21 @@ class TestVerifyEmailSignature:
 
         assert result.valid is False
         assert "Signature verification failed" in (result.error or "")
+
+    def test_rejects_signature_id_mismatch(self) -> None:
+        fixture = _load_fixture()
+
+        with patch("jacs.hai.signing.httpx") as mock_httpx, \
+             patch("jacs.hai.signing.time") as mock_time:
+            mock_httpx.get.return_value = _mock_registry_response(fixture, jacs_id="different-agent-id")
+            mock_time.time.return_value = 1740393600 + 100
+            mock_time.monotonic = time.monotonic
+
+            result = verify_email_signature(
+                headers=fixture["headers"],
+                subject=fixture["subject"],
+                body=fixture["body"],
+            )
+
+        assert result.valid is False
+        assert result.error == "Signature id does not match registry jacs_id"

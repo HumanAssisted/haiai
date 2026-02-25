@@ -307,6 +307,10 @@ def verify_email_signature(
         return EmailVerificationResult(
             valid=False, jacs_id="", reputation_tier="", error="Missing X-JACS-Content-Hash header"
         )
+    if not from_address:
+        return EmailVerificationResult(
+            valid=False, jacs_id="", reputation_tier="", error="Missing From header"
+        )
 
     # Step 2: Parse signature header fields
     fields = _parse_jacs_signature_header(sig_header)
@@ -361,11 +365,22 @@ def verify_email_signature(
 
     public_key_pem = registry_data.get("public_key", "")
     reputation_tier = registry_data.get("reputation_tier", "")
+    registry_jacs_id = registry_data.get("jacs_id") or registry_data.get("jacsId") or ""
 
     if not public_key_pem:
         return EmailVerificationResult(
             valid=False, jacs_id=jacs_id, reputation_tier=reputation_tier,
             error="No public key found in registry",
+        )
+    if not registry_jacs_id:
+        return EmailVerificationResult(
+            valid=False, jacs_id=jacs_id, reputation_tier=reputation_tier,
+            error="No jacs_id found in registry",
+        )
+    if registry_jacs_id != jacs_id:
+        return EmailVerificationResult(
+            valid=False, jacs_id=registry_jacs_id, reputation_tier=reputation_tier,
+            error="Signature id does not match registry jacs_id",
         )
 
     try:
@@ -385,7 +400,7 @@ def verify_email_signature(
     sign_input = f"{computed_hash}:{timestamp}"
     if not verify_string(loaded_key, sign_input, signature_b64):
         return EmailVerificationResult(
-            valid=False, jacs_id=jacs_id, reputation_tier=reputation_tier,
+            valid=False, jacs_id=registry_jacs_id, reputation_tier=reputation_tier,
             error="Signature verification failed",
         )
 
@@ -394,15 +409,15 @@ def verify_email_signature(
     age = now - timestamp
     if age > _MAX_TIMESTAMP_AGE:
         return EmailVerificationResult(
-            valid=False, jacs_id=jacs_id, reputation_tier=reputation_tier,
+            valid=False, jacs_id=registry_jacs_id, reputation_tier=reputation_tier,
             error="Signature timestamp is too old (>24h)",
         )
     if age < -_MAX_TIMESTAMP_FUTURE:
         return EmailVerificationResult(
-            valid=False, jacs_id=jacs_id, reputation_tier=reputation_tier,
+            valid=False, jacs_id=registry_jacs_id, reputation_tier=reputation_tier,
             error="Signature timestamp is too far in the future (>5min)",
         )
 
     return EmailVerificationResult(
-        valid=True, jacs_id=jacs_id, reputation_tier=reputation_tier, error=None,
+        valid=True, jacs_id=registry_jacs_id, reputation_tier=reputation_tier, error=None,
     )

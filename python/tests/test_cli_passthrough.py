@@ -78,6 +78,43 @@ def test_verify_command_passthrough_invokes_jacs_binary(
     assert seen["command"] == ["jacs", "verify", "signed.json"]
 
 
+def test_mcp_run_passthrough_allows_bin_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, list[str]] = {}
+
+    def fake_run(command: list[str], check: bool = False):  # noqa: ARG001
+        seen["command"] = command
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(hai_cli.subprocess, "run", fake_run)
+
+    with pytest.raises(SystemExit) as exit_info:
+        hai_cli.main(["mcp", "run", "--bin", "/tmp/jacs-mcp"])
+
+    assert exit_info.value.code == 0
+    assert seen["command"] == ["jacs", "mcp", "run", "--bin", "/tmp/jacs-mcp"]
+
+
+def test_mcp_run_passthrough_rejects_runtime_args(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    called = {"run": False}
+
+    def fake_run(command: list[str], check: bool = False):  # noqa: ARG001
+        called["run"] = True
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(hai_cli.subprocess, "run", fake_run)
+
+    with pytest.raises(SystemExit) as exit_info:
+        hai_cli.main(["mcp", "run", "--transport", "http"])
+
+    err = capsys.readouterr().err
+    assert exit_info.value.code == 2
+    assert "stdio-only in haisdk" in err
+    assert called["run"] is False
+
+
 def test_help_is_merged_with_jacs_help(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

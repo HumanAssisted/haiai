@@ -12,12 +12,15 @@ function loadFixture(): Record<string, unknown> {
   return JSON.parse(readFileSync(fixturePath, 'utf-8')) as Record<string, unknown>;
 }
 
-function mockRegistryResponse(fixture: Record<string, unknown>): void {
+function mockRegistryResponse(
+  fixture: Record<string, unknown>,
+  overrides: { jacsId?: string } = {},
+): void {
   const headers = fixture.headers as Record<string, string>;
   const fetchMock = vi.fn(async (url: string | URL) => {
     return new Response(JSON.stringify({
       email: headers.From,
-      jacs_id: 'test-agent-jacs-id',
+      jacs_id: overrides.jacsId ?? 'test-agent-jacs-id',
       public_key: fixture.test_public_key_pem,
       algorithm: 'ed25519',
       reputation_tier: 'established',
@@ -111,6 +114,16 @@ describe('verifyEmailSignature', () => {
     expect(result.error).toContain('Missing X-JACS-Content-Hash');
   });
 
+  it('rejects missing From header', async () => {
+    const result = await verifyEmailSignature(
+      { 'X-JACS-Signature': 'v=1; a=ed25519; id=x; t=1; s=abc', 'X-JACS-Content-Hash': 'sha256:abc' },
+      'Test',
+      'Body',
+    );
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('Missing From header');
+  });
+
   it('rejects stale timestamp', async () => {
     const fixture = loadFixture();
     mockRegistryResponse(fixture);
@@ -164,5 +177,23 @@ describe('verifyEmailSignature', () => {
 
     expect(result.valid).toBe(false);
     expect(result.error).toContain('Signature verification failed');
+  });
+
+  it('rejects id mismatch between signature header and registry', async () => {
+    const fixture = loadFixture();
+    mockRegistryResponse(fixture, { jacsId: 'different-agent-id' });
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date((1740393600 + 100) * 1000));
+
+    const headers = fixture.headers as Record<string, string>;
+    const result = await verifyEmailSignature(
+      headers,
+      fixture.subject as string,
+      fixture.body as string,
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('Signature id does not match registry jacs_id');
   });
 });

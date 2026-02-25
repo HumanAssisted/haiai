@@ -223,6 +223,9 @@ export async function verifyEmailSignature(
   if (!contentHashHeader) {
     return { valid: false, jacsId: '', reputationTier: '', error: 'Missing X-JACS-Content-Hash header' };
   }
+  if (!fromAddress) {
+    return { valid: false, jacsId: '', reputationTier: '', error: 'Missing From header' };
+  }
 
   // Step 2: Parse signature header fields
   const fields = parseJacsSignatureHeader(sigHeader);
@@ -278,27 +281,36 @@ export async function verifyEmailSignature(
 
   const publicKeyPem = (registryData.public_key as string) || '';
   const reputationTier = (registryData.reputation_tier as string) || '';
+  const registryJacsId = (registryData.jacs_id as string)
+    || (registryData.jacsId as string)
+    || '';
 
   if (!publicKeyPem) {
     return { valid: false, jacsId, reputationTier, error: 'No public key found in registry' };
+  }
+  if (!registryJacsId) {
+    return { valid: false, jacsId, reputationTier, error: 'No jacs_id found in registry' };
+  }
+  if (registryJacsId !== jacsId) {
+    return { valid: false, jacsId: registryJacsId, reputationTier, error: 'Signature id does not match registry jacs_id' };
   }
 
   // Step 6: Verify Ed25519 signature
   const signInput = `${computedHash}:${timestamp}`;
   const sigValid = verifyString(publicKeyPem, signInput, signatureB64);
   if (!sigValid) {
-    return { valid: false, jacsId, reputationTier, error: 'Signature verification failed' };
+    return { valid: false, jacsId: registryJacsId, reputationTier, error: 'Signature verification failed' };
   }
 
   // Step 7: Check timestamp freshness
   const now = Math.floor(Date.now() / 1000);
   const age = now - timestamp;
   if (age > MAX_TIMESTAMP_AGE) {
-    return { valid: false, jacsId, reputationTier, error: 'Signature timestamp is too old (>24h)' };
+    return { valid: false, jacsId: registryJacsId, reputationTier, error: 'Signature timestamp is too old (>24h)' };
   }
   if (age < -MAX_TIMESTAMP_FUTURE) {
-    return { valid: false, jacsId, reputationTier, error: 'Signature timestamp is too far in the future (>5min)' };
+    return { valid: false, jacsId: registryJacsId, reputationTier, error: 'Signature timestamp is too far in the future (>5min)' };
   }
 
-  return { valid: true, jacsId, reputationTier, error: null };
+  return { valid: true, jacsId: registryJacsId, reputationTier, error: null };
 }

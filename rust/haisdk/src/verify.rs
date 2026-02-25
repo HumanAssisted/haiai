@@ -94,6 +94,9 @@ pub async fn verify_email_signature(
     if content_hash_header.is_empty() {
         return err_result("", "", "Missing X-JACS-Content-Hash header");
     }
+    if from_address.is_empty() {
+        return err_result("", "", "Missing From header");
+    }
 
     // Step 2: Parse signature header fields
     let fields = parse_jacs_signature_header(sig_header);
@@ -148,11 +151,22 @@ pub async fn verify_email_signature(
         Err(e) => return err_result(jacs_id, "", &format!("Failed to parse registry response: {e}")),
     };
 
-    let reputation_tier = &registry_data.reputation_tier;
-    let public_key_pem = &registry_data.public_key;
+    let reputation_tier = registry_data.reputation_tier;
+    let public_key_pem = registry_data.public_key;
+    let registry_jacs_id = registry_data.jacs_id;
 
     if public_key_pem.is_empty() {
-        return err_result(jacs_id, reputation_tier, "No public key found in registry");
+        return err_result(jacs_id, &reputation_tier, "No public key found in registry");
+    }
+    if registry_jacs_id.trim().is_empty() {
+        return err_result(jacs_id, &reputation_tier, "No jacs_id found in registry");
+    }
+    if registry_jacs_id != jacs_id {
+        return err_result(
+            &registry_jacs_id,
+            &reputation_tier,
+            "Signature id does not match registry jacs_id",
+        );
     }
 
     // Parse PEM to get raw Ed25519 public key bytes
@@ -162,12 +176,12 @@ pub async fn verify_email_signature(
         .collect();
     let der_bytes = match base64::engine::general_purpose::STANDARD.decode(pem_lines.join("")) {
         Ok(b) => b,
-        Err(e) => return err_result(jacs_id, reputation_tier, &format!("Invalid PEM encoding: {e}")),
+        Err(e) => return err_result(&registry_jacs_id, &reputation_tier, &format!("Invalid PEM encoding: {e}")),
     };
 
     // Ed25519 SPKI: last 32 bytes are the raw public key
     if der_bytes.len() < 32 {
-        return err_result(jacs_id, reputation_tier, "Public key DER too short");
+        return err_result(&registry_jacs_id, &reputation_tier, "Public key DER too short");
     }
     let raw_pub_key = &der_bytes[der_bytes.len() - 32..];
 
@@ -176,7 +190,7 @@ pub async fn verify_email_signature(
         Err(_) => {
             match base64::engine::general_purpose::URL_SAFE.decode(signature_b64) {
                 Ok(b) => b,
-                Err(_) => return err_result(jacs_id, reputation_tier, "Invalid signature encoding"),
+                Err(_) => return err_result(&registry_jacs_id, &reputation_tier, "Invalid signature encoding"),
             }
         }
     };
@@ -187,7 +201,7 @@ pub async fn verify_email_signature(
         raw_pub_key,
     );
     if verify_key.verify(sign_input.as_bytes(), &sig_bytes).is_err() {
-        return err_result(jacs_id, reputation_tier, "Signature verification failed");
+        return err_result(&registry_jacs_id, &reputation_tier, "Signature verification failed");
     }
 
     // Step 7: Check timestamp freshness
@@ -197,16 +211,20 @@ pub async fn verify_email_signature(
         .as_secs() as i64;
     let age = now - timestamp;
     if age > MAX_TIMESTAMP_AGE {
-        return err_result(jacs_id, reputation_tier, "Signature timestamp is too old (>24h)");
+        return err_result(&registry_jacs_id, &reputation_tier, "Signature timestamp is too old (>24h)");
     }
     if age < -MAX_TIMESTAMP_FUTURE {
-        return err_result(jacs_id, reputation_tier, "Signature timestamp is too far in the future (>5min)");
+        return err_result(
+            &registry_jacs_id,
+            &reputation_tier,
+            "Signature timestamp is too far in the future (>5min)",
+        );
     }
 
     EmailVerificationResult {
         valid: true,
-        jacs_id: jacs_id.to_string(),
-        reputation_tier: reputation_tier.to_string(),
+        jacs_id: registry_jacs_id,
+        reputation_tier,
         error: None,
     }
 }

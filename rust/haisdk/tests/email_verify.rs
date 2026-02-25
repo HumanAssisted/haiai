@@ -136,6 +136,21 @@ async fn verify_missing_content_hash_header() {
 }
 
 #[tokio::test]
+async fn verify_missing_from_header() {
+    let mut headers = HashMap::new();
+    headers.insert(
+        "X-JACS-Signature".to_string(),
+        "v=1; a=ed25519; id=x; t=1; s=abc".to_string(),
+    );
+    headers.insert("X-JACS-Content-Hash".to_string(), "sha256:abc".to_string());
+
+    let result = verify_email_signature(&headers, "Test", "Body", "https://hai.ai").await;
+
+    assert!(!result.valid);
+    assert_eq!(result.error.as_deref(), Some("Missing From header"));
+}
+
+#[tokio::test]
 async fn verify_tampered_signature() {
     let fixture = load_fixture();
     let server = MockServer::start();
@@ -174,5 +189,42 @@ async fn verify_tampered_signature() {
     assert_eq!(
         result.error.as_deref(),
         Some("Signature verification failed")
+    );
+}
+
+#[tokio::test]
+async fn verify_rejects_jacs_id_mismatch() {
+    let fixture = load_fixture();
+    let server = MockServer::start();
+
+    let from = fixture["headers"]["From"].as_str().unwrap();
+    server.mock(|when, then| {
+        when.method("GET")
+            .path(format!("/api/agents/keys/{from}"));
+        then.status(200)
+            .header("content-type", "application/json")
+            .json_body(serde_json::json!({
+                "email": from,
+                "jacs_id": "different-agent-id",
+                "public_key": fixture["test_public_key_pem"].as_str().unwrap(),
+                "algorithm": "ed25519",
+                "reputation_tier": "established",
+                "registered_at": "2026-01-15T00:00:00Z"
+            }));
+    });
+
+    let headers = fixture_headers(&fixture);
+    let result = verify_email_signature(
+        &headers,
+        fixture["subject"].as_str().unwrap(),
+        fixture["body"].as_str().unwrap(),
+        &server.base_url(),
+    )
+    .await;
+
+    assert!(!result.valid);
+    assert_eq!(
+        result.error.as_deref(),
+        Some("Signature id does not match registry jacs_id")
     );
 }

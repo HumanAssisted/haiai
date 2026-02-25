@@ -36,11 +36,19 @@ func loadVerificationFixture(t *testing.T) emailVerificationFixture {
 }
 
 func mockRegistryServer(t *testing.T, fixture emailVerificationFixture) *httptest.Server {
+	return mockRegistryServerWithJacsID(t, fixture, "test-agent-jacs-id")
+}
+
+func mockRegistryServerWithJacsID(
+	t *testing.T,
+	fixture emailVerificationFixture,
+	jacsID string,
+) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := KeyRegistryResponse{
 			Email:          fixture.Headers["From"],
-			JacsID:         "test-agent-jacs-id",
+			JacsID:         jacsID,
 			PublicKey:      fixture.TestPublicKeyPem,
 			Algorithm:      "ed25519",
 			ReputationTier: "established",
@@ -156,6 +164,21 @@ func TestVerifyEmailSignatureMissingHeaders(t *testing.T) {
 	if result.Error == nil || *result.Error != "Missing X-JACS-Content-Hash header" {
 		t.Fatalf("unexpected error: %v", result.Error)
 	}
+
+	// Missing From
+	result = VerifyEmailSignature(
+		map[string]string{
+			"X-JACS-Signature":    "v=1; a=ed25519; id=x; t=1; s=abc",
+			"X-JACS-Content-Hash": "sha256:abc",
+		},
+		"Test", "Body", "",
+	)
+	if result.Valid {
+		t.Fatal("expected valid=false for missing From header")
+	}
+	if result.Error == nil || *result.Error != "Missing From header" {
+		t.Fatalf("unexpected error: %v", result.Error)
+	}
 }
 
 func TestVerifyEmailSignatureRegistryFetchFailure(t *testing.T) {
@@ -216,6 +239,30 @@ func TestVerifyEmailSignatureTamperedSignature(t *testing.T) {
 		t.Fatal("expected valid=false for tampered signature")
 	}
 	if result.Error == nil || *result.Error != "Signature verification failed" {
+		t.Fatalf("unexpected error: %v", result.Error)
+	}
+}
+
+func TestVerifyEmailSignatureJacsIDMismatch(t *testing.T) {
+	fixture := loadVerificationFixture(t)
+	srv := mockRegistryServerWithJacsID(t, fixture, "different-agent-id")
+	defer srv.Close()
+
+	origNow := nowFunc
+	nowFunc = func() int64 { return 1740393600 + 100 }
+	defer func() { nowFunc = origNow }()
+
+	result := VerifyEmailSignature(
+		fixture.Headers,
+		fixture.Subject,
+		fixture.Body,
+		srv.URL,
+	)
+
+	if result.Valid {
+		t.Fatal("expected valid=false when header id does not match registry jacs_id")
+	}
+	if result.Error == nil || *result.Error != "Signature id does not match registry jacs_id" {
 		t.Fatalf("unexpected error: %v", result.Error)
 	}
 }

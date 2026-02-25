@@ -8,7 +8,7 @@ vi.mock('node:child_process', () => ({
   spawnSync: spawnSyncMock,
 }));
 
-import { resolveJacsCliBin, runJacsCli } from '../src/jacs.js';
+import { enforceMcpRunStdioArgs, resolveJacsCliBin, runJacsCli } from '../src/jacs.js';
 
 describe('jacs passthrough library helpers', () => {
   afterEach(() => {
@@ -83,6 +83,43 @@ describe('jacs passthrough library helpers', () => {
       expect(() => runJacsCli(['verify'], { jacsBin: '/custom/jacs' })).toThrow(
         "Failed to execute JACS CLI '/custom/jacs': permission denied",
       );
+    });
+
+    it('enforces stdio-only policy for `mcp run` and allows `--bin`', () => {
+      spawnSyncMock.mockReturnValue({ status: 0, error: undefined });
+
+      runJacsCli(['mcp', 'run', '--bin', '/tmp/jacs-mcp']);
+
+      expect(spawnSyncMock).toHaveBeenCalledWith('jacs', ['mcp', 'run', '--bin', '/tmp/jacs-mcp'], {
+        cwd: undefined,
+        env: undefined,
+        stdio: 'pipe',
+        encoding: 'buffer',
+      });
+    });
+
+    it('rejects runtime argument passthrough for `mcp run`', () => {
+      expect(() => runJacsCli(['mcp', 'run', '--transport', 'http'])).toThrow(
+        '`jacs mcp run` is stdio-only in haisdk.',
+      );
+    });
+  });
+
+  describe('enforceMcpRunStdioArgs', () => {
+    it('returns unchanged args for non-mcp commands', () => {
+      expect(enforceMcpRunStdioArgs(['verify', 'doc.json'])).toEqual(['verify', 'doc.json']);
+    });
+
+    it('keeps mcp run with no extra args', () => {
+      expect(enforceMcpRunStdioArgs(['mcp', 'run'])).toEqual(['mcp', 'run']);
+    });
+
+    it('accepts --bin= form', () => {
+      expect(enforceMcpRunStdioArgs(['mcp', 'run', '--bin=/tmp/jacs-mcp'])).toEqual([
+        'mcp',
+        'run',
+        '--bin=/tmp/jacs-mcp',
+      ]);
     });
   });
 });

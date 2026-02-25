@@ -289,10 +289,44 @@ def _print_merged_help(parser: argparse.ArgumentParser) -> None:
         print(completed.stderr.rstrip(), file=sys.stderr)
 
 
+def _normalize_jacs_passthrough_args(argv: Sequence[str]) -> list[str]:
+    """Enforce stdio-only policy for `jacs mcp run` passthrough."""
+    args = list(argv)
+    if len(args) < 2 or args[0] != "mcp" or args[1] != "run":
+        return args
+
+    normalized: list[str] = ["mcp", "run"]
+    i = 2
+    while i < len(args):
+        token = args[i]
+        if token == "--bin":
+            if i + 1 >= len(args):
+                raise ValueError("Missing value for --bin")
+            normalized.extend([token, args[i + 1]])
+            i += 2
+            continue
+        if token.startswith("--bin="):
+            normalized.append(token)
+            i += 1
+            continue
+        raise ValueError(
+            "`jacs mcp run` is stdio-only in haisdk. "
+            "Only optional `--bin <path>` is allowed; transport/runtime overrides are blocked."
+        )
+
+    return normalized
+
+
 def _forward_to_jacs_cli(argv: Sequence[str]) -> None:
     """Execute the JACS CLI and exit with the same status code."""
     jacs_bin = os.environ.get("JACS_CLI_BIN", "jacs").strip() or "jacs"
-    command = [jacs_bin, *argv]
+    try:
+        normalized_argv = _normalize_jacs_passthrough_args(argv)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    command = [jacs_bin, *normalized_argv]
     try:
         completed = subprocess.run(command, check=False)
     except FileNotFoundError:
