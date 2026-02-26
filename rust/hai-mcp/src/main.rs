@@ -855,7 +855,7 @@ async fn call_claim_username(
     let config_path = optional_string(args, "config_path");
     let hai_url = optional_string(args, "hai_url");
 
-    let client = context.local_client_with_url(config_path, hai_url)?;
+    let mut client = context.local_client_with_url(config_path, hai_url)?;
     let result = client
         .claim_username(agent_id, username)
         .await
@@ -1006,6 +1006,7 @@ async fn call_send_email(
             subject: required_string(args, "subject")?.to_string(),
             body: required_string(args, "body")?.to_string(),
             in_reply_to: optional_string(args, "in_reply_to").map(ToString::to_string),
+            attachments: vec![],
         })
         .await
         .map_err(|e| e.to_string())?;

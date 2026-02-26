@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import sys
 import types
@@ -30,6 +31,14 @@ def _install_package(monkeypatch: pytest.MonkeyPatch, package_name: str) -> type
 def test_missing_dependency_error_has_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delitem(sys.modules, "jacs.a2a", raising=False)
     monkeypatch.delitem(sys.modules, "jacs", raising=False)
+    real_import_module = importlib.import_module
+
+    def fake_import_module(module_name: str, package: str | None = None) -> Any:
+        if module_name == "jacs.a2a":
+            raise ImportError("No module named 'jacs.a2a'")
+        return real_import_module(module_name, package)
+
+    monkeypatch.setattr(a2a_module.importlib, "import_module", fake_import_module)
 
     with pytest.raises(ImportError, match=r"haisdk\[a2a\]"):
         a2a_module.get_a2a_integration(client=object())
@@ -47,11 +56,17 @@ def test_get_a2a_integration_and_wrappers_delegate(monkeypatch: pytest.MonkeyPat
         @classmethod
         def quickstart(
             cls,
-            algorithm: str | None = None,
+            name: str,
+            domain: str,
+            description: str,
+            algorithm: str = "pq2025",
             config_path: str | None = None,
             url: str | None = None,
         ) -> dict[str, Any]:
             calls["quickstart"] = {
+                "name": name,
+                "domain": domain,
+                "description": description,
                 "algorithm": algorithm,
                 "config_path": config_path,
                 "url": url,
@@ -130,10 +145,21 @@ def test_get_a2a_integration_and_wrappers_delegate(monkeypatch: pytest.MonkeyPat
     assert calls["ctor"]["client"] is fake_client
     assert calls["ctor"]["trust_policy"] == "strict"
 
-    assert a2a_module.quickstart_a2a(algorithm="pq2025", config_path="cfg.json", url="https://a2a.example") == {
-        "quickstart": True,
-    }
+    assert (
+        a2a_module.quickstart_a2a(
+            name="hai-agent",
+            domain="agent.example.com",
+            description="HAISDK agent",
+            algorithm="pq2025",
+            config_path="cfg.json",
+            url="https://a2a.example",
+        )
+        == {"quickstart": True}
+    )
     assert calls["quickstart"] == {
+        "name": "hai-agent",
+        "domain": "agent.example.com",
+        "description": "HAISDK agent",
         "algorithm": "pq2025",
         "config_path": "cfg.json",
         "url": "https://a2a.example",

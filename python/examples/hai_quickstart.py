@@ -2,7 +2,7 @@
 """HAI SDK Quickstart -- register an agent, say hello, run a benchmark.
 
 Prerequisites:
-    pip install haisdk
+    pip install haisdk jacs
 
 Usage (new agent):
     export JACS_PRIVATE_KEY_PASSWORD=dev-password
@@ -24,27 +24,31 @@ Configure exactly one password source.
 import argparse
 import sys
 
-from haisdk import config, HaiClient, register_new_agent
+from jacs.client import JacsClient
+
+from haisdk import config, HaiClient
 
 HAI_URL = "https://hai.ai"
+CONFIG_PATH = "./jacs.config.json"
 
 
 def quickstart_new_agent():
-    """Generate a keypair, register with HAI, and run a free benchmark."""
+    """Create/load JACS identity, register with HAI, and run a free benchmark."""
 
-    # 1. Register a brand-new agent (generates Ed25519 keys automatically)
+    # 1. Create/load local JACS identity (identity fields are required).
     print("=== Step 1: Register a new JACS agent with HAI ===")
-    result = register_new_agent(
+    JacsClient.quickstart(
         name="my-quickstart-agent",
-        owner_email="you@example.com",
-        hai_url=HAI_URL,
-        key_dir="./keys",
-        config_path="./jacs.config.json",
+        domain="agent.example.com",
+        description="HAISDK quickstart agent",
+        algorithm="pq2025",
+        config_path=CONFIG_PATH,
     )
-    print(f"Agent registered: {result.jacs_id}")
-
-    # 2. Create a client (config is already loaded after register_new_agent)
+    # 2. Register this identity with HAI.
+    config.load(CONFIG_PATH)
     client = HaiClient()
+    result = client.register(HAI_URL, owner_email="you@example.com")
+    print(f"Agent registered: {result.agent_id}")
 
     # 3. Hello world -- verify signed connectivity
     print("\n=== Step 2: Hello world ===")
@@ -77,7 +81,7 @@ def quickstart_existing_agent():
     print(
         "=== Loading existing config (requires JACS_PASSWORD_FILE or JACS_PRIVATE_KEY_PASSWORD) ==="
     )
-    config.load("./jacs.config.json")
+    config.load(CONFIG_PATH)
     client = HaiClient()
 
     # 2. Test connection

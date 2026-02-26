@@ -11,6 +11,15 @@ export interface GetA2AIntegrationOptions {
   trustPolicy?: A2ATrustPolicy;
 }
 
+export interface QuickstartA2AOptions {
+  name: string;
+  domain: string;
+  description: string;
+  algorithm?: string;
+  configPath?: string;
+  url?: string;
+}
+
 export interface RegisterWithAgentCardOptions extends GetA2AIntegrationOptions {
   ownerEmail?: string;
   domain?: string;
@@ -170,6 +179,12 @@ function mergeOptions<T extends Record<string, unknown>>(value: T): T {
   return out as T;
 }
 
+function assertRequiredIdentityField(value: unknown, fieldName: string): asserts value is string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new JacsModuleError(`quickstartA2A requires non-empty '${fieldName}'`);
+  }
+}
+
 /**
  * Build a JACS A2A integration instance from a caller-provided JACS client.
  *
@@ -187,11 +202,18 @@ export async function getA2AIntegration(
 /**
  * Delegate to `JACSA2AIntegration.quickstart(...)` from `@hai.ai/jacs/a2a`.
  */
-export async function quickstartA2A(options: Record<string, unknown> = {}): Promise<unknown> {
+export async function quickstartA2A(options: QuickstartA2AOptions): Promise<unknown> {
+  assertRequiredIdentityField(options.name, 'name');
+  assertRequiredIdentityField(options.domain, 'domain');
+  assertRequiredIdentityField(options.description, 'description');
+
   const mod = await loadOptionalModule(A2A_MODULE, 'A2A quickstart', A2A_HINT);
   const IntegrationClass = getRequiredClass(A2A_MODULE, mod, 'JACSA2AIntegration');
   const quickstart = getRequiredFunction(A2A_MODULE, IntegrationClass as unknown as AnyModule, 'quickstart');
-  return quickstart(options);
+  return quickstart(mergeOptions({
+    ...options,
+    algorithm: options.algorithm ?? 'pq2025',
+  }));
 }
 
 export async function exportAgentCard(

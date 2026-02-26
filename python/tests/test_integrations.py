@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 import types
 from typing import Any
 
 import pytest
 
+from haisdk import integrations as integrations_module
 from haisdk.integrations import (
     agentsdk_tool_wrapper,
     agentsdk_verify_payload,
+    register_a2a_tools,
+    register_jacs_tools,
+    register_trust_tools,
     create_mcp_server,
     crewai_guardrail,
     crewai_signed_tool,
@@ -144,6 +149,109 @@ def test_mcp_helper_delegates_to_jacs_mcp(monkeypatch: pytest.MonkeyPatch) -> No
     assert calls["server"] == {"name": "demo", "config_path": "jacs.config.json"}
 
 
+def test_mcp_tool_registration_helpers_delegate_to_jacs_adapters_mcp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_package(monkeypatch, "jacs")
+    _install_package(monkeypatch, "jacs.adapters")
+
+    calls: dict[str, Any] = {}
+
+    def fake_register_jacs_tools(
+        mcp_server: Any,
+        *,
+        client: Any = None,
+        config_path: str | None = None,
+        strict: bool = False,
+        tools: list[str] | None = None,
+    ) -> dict[str, Any]:
+        calls["register_jacs_tools"] = {
+            "mcp_server": mcp_server,
+            "client": client,
+            "config_path": config_path,
+            "strict": strict,
+            "tools": tools,
+        }
+        return {"ok": "jacs"}
+
+    def fake_register_a2a_tools(
+        mcp_server: Any,
+        *,
+        client: Any = None,
+        config_path: str | None = None,
+        strict: bool = False,
+    ) -> dict[str, Any]:
+        calls["register_a2a_tools"] = {
+            "mcp_server": mcp_server,
+            "client": client,
+            "config_path": config_path,
+            "strict": strict,
+        }
+        return {"ok": "a2a"}
+
+    def fake_register_trust_tools(
+        mcp_server: Any,
+        *,
+        client: Any = None,
+        config_path: str | None = None,
+        strict: bool = False,
+    ) -> dict[str, Any]:
+        calls["register_trust_tools"] = {
+            "mcp_server": mcp_server,
+            "client": client,
+            "config_path": config_path,
+            "strict": strict,
+        }
+        return {"ok": "trust"}
+
+    _install_module(
+        monkeypatch,
+        "jacs.adapters.mcp",
+        register_jacs_tools=fake_register_jacs_tools,
+        register_a2a_tools=fake_register_a2a_tools,
+        register_trust_tools=fake_register_trust_tools,
+    )
+
+    mcp_server = object()
+    client = object()
+    assert (
+        register_jacs_tools(
+            mcp_server,
+            client=client,
+            config_path="jacs.config.json",
+            strict=True,
+            tools=[
+                "share_public_key",
+                "share_agent",
+            ],
+        )
+        == {"ok": "jacs"}
+    )
+    assert calls["register_jacs_tools"] == {
+        "mcp_server": mcp_server,
+        "client": client,
+        "config_path": "jacs.config.json",
+        "strict": True,
+        "tools": ["share_public_key", "share_agent"],
+    }
+
+    assert register_a2a_tools(mcp_server, client=client, config_path="cfg", strict=False) == {"ok": "a2a"}
+    assert calls["register_a2a_tools"] == {
+        "mcp_server": mcp_server,
+        "client": client,
+        "config_path": "cfg",
+        "strict": False,
+    }
+
+    assert register_trust_tools(mcp_server, client=client, config_path="cfg2", strict=True) == {"ok": "trust"}
+    assert calls["register_trust_tools"] == {
+        "mcp_server": mcp_server,
+        "client": client,
+        "config_path": "cfg2",
+        "strict": True,
+    }
+
+
 def test_agentsdk_wrapper_and_verify_delegate_to_base_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -208,6 +316,15 @@ async def test_agentsdk_wrapper_supports_async_tools(monkeypatch: pytest.MonkeyP
     assert await async_tool("hello") == "async::async_tool::HELLO"
 
 
-def test_missing_dependency_error_includes_install_hint() -> None:
+def test_missing_dependency_error_includes_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_import_module = importlib.import_module
+
+    def fake_import_module(module_name: str, package: str | None = None) -> Any:
+        if module_name == "jacs.adapters.langchain":
+            raise ImportError("No module named 'jacs.adapters.langchain'")
+        return real_import_module(module_name, package)
+
+    monkeypatch.setattr(integrations_module.importlib, "import_module", fake_import_module)
+
     with pytest.raises(ImportError, match=r"haisdk\[langgraph\]"):
         langgraph_wrap_tool_call()

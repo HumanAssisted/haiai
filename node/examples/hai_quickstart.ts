@@ -2,7 +2,7 @@
  * HAI SDK Quickstart (TypeScript) -- register an agent, say hello, run a benchmark.
  *
  * Prerequisites:
- *     npm install @humanassisted/haisdk
+ *     npm install haisdk @hai.ai/jacs
  *
  * Usage (new agent):
  *     export JACS_PRIVATE_KEY_PASSWORD=dev-password
@@ -22,24 +22,28 @@
  */
 
 import { HaiClient } from '../src/client.js';
-import { generateKeypair } from '../src/crypt.js';
+import { JacsClient } from '@hai.ai/jacs/client';
 
 const HAI_URL = 'https://hai.ai';
+const CONFIG_PATH = './jacs.config.json';
 
 async function quickstartNewAgent(): Promise<void> {
-  // 1. Bootstrap an in-memory client for first-time registration.
-  //    Persist keys/config with the CLI for real usage.
-  const keypair = generateKeypair();
-  const client = HaiClient.fromCredentials(
-    'my-quickstart-agent',
-    keypair.privateKeyPem,
-    { url: HAI_URL },
-  );
+  // 1. Create/load a local JACS identity (mandatory identity fields).
+  await JacsClient.quickstart({
+    name: 'my-quickstart-agent',
+    domain: 'agent.example.com',
+    description: 'HAISDK quickstart agent',
+    algorithm: 'pq2025',
+    configPath: CONFIG_PATH,
+  });
+  const client = await HaiClient.create({ url: HAI_URL, configPath: CONFIG_PATH });
 
   // Register this JACS identity with HAI.
   console.log('=== Step 1: Register a new JACS agent with HAI ===');
   const reg = await client.register({
     ownerEmail: 'you@example.com',
+    domain: 'agent.example.com',
+    description: 'HAISDK quickstart agent',
   });
   console.log(`Agent ID: ${reg.agentId}`);
   console.log(`Registered at: ${reg.registeredAt}`);
@@ -72,7 +76,7 @@ async function quickstartNewAgent(): Promise<void> {
 async function quickstartExistingAgent(): Promise<void> {
   // 1. Load existing config
   console.log('=== Loading existing config (configure exactly one password source) ===');
-  const client = await HaiClient.create({ url: HAI_URL });
+  const client = await HaiClient.create({ url: HAI_URL, configPath: CONFIG_PATH });
 
   // 2. Test connection
   console.log('\n=== Test connection ===');

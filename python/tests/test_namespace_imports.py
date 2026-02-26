@@ -45,7 +45,12 @@ def test_haisdk_step2_modules_import() -> None:
     from haisdk import a2a
     from haisdk.agentsdk import agentsdk_tool_wrapper
     from haisdk.crewai import crewai_guardrail
-    from haisdk.integrations import create_mcp_server
+    from haisdk.integrations import (
+        create_mcp_server,
+        register_a2a_tools,
+        register_jacs_tools,
+        register_trust_tools,
+    )
     from haisdk.langgraph import langgraph_wrap_tool_call
     from haisdk.mcp import mcp_tool
 
@@ -55,5 +60,8 @@ def test_haisdk_step2_modules_import() -> None:
     assert callable(agentsdk_tool_wrapper)
     assert callable(crewai_guardrail)
     assert callable(create_mcp_server)
+    assert callable(register_jacs_tools)
+    assert callable(register_a2a_tools)
+    assert callable(register_trust_tools)
     assert callable(langgraph_wrap_tool_call)
     assert callable(mcp_tool)

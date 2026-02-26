@@ -30,7 +30,12 @@ const A2A_OPTIONS = { trustPolicy: 'verified' as const };
 
 async function main(): Promise<void> {
   console.log('=== Step 1: Initialize JACS + HAI clients ===');
-  const jacs = await JacsClient.quickstart();
+  const jacs = await JacsClient.quickstart({
+    name: 'hai-agent',
+    domain: 'agent.example.com',
+    description: 'HAISDK agent',
+    algorithm: 'pq2025',
+  });
   const hai = await HaiClient.create({ url: HAI_URL });
 
   console.log('\n=== Step 2: Register with embedded A2A agent card metadata ===');

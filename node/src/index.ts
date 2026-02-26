@@ -60,6 +60,7 @@ export {
 export type {
   A2ATrustPolicy,
   GetA2AIntegrationOptions,
+  QuickstartA2AOptions,
   RegisterWithAgentCardOptions,
   RegisterWithAgentCardResult,
   A2AMediatedJobOptions,

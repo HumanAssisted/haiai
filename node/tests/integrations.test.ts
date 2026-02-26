@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createAgentSdkToolWrapper,
+  createJacsLangchainTools,
+  getJacsMcpToolDefinitions,
   JacsModuleError,
   langchainSignedTool,
+  registerJacsMcpTools,
   verifyAgentSdkPayload,
 } from '../src/integrations.js';
 
@@ -79,5 +82,42 @@ describe('integration wrappers', () => {
     await expect(verifyAgentSdkPayload(signer, 'raw', { strict: true })).rejects.toThrow(
       JacsModuleError,
     );
+  });
+
+  it('passes through expanded LangChain toolsets from local JACS', async () => {
+    vi.doMock('@hai.ai/jacs/langchain', () => ({
+      createJacsTools: vi.fn(() => ([
+        { name: 'jacs_share_public_key' },
+        { name: 'jacs_share_agent' },
+        { name: 'jacs_trust_agent_with_key' },
+      ])),
+    }));
+
+    await expect(createJacsLangchainTools({ client: { id: 'c' } })).resolves.toEqual([
+      { name: 'jacs_share_public_key' },
+      { name: 'jacs_share_agent' },
+      { name: 'jacs_trust_agent_with_key' },
+    ]);
+  });
+
+  it('passes through expanded MCP tool definitions and registration', async () => {
+    const registerSpy = vi.fn();
+    vi.doMock('@hai.ai/jacs/mcp', () => ({
+      getJacsMcpToolDefinitions: vi.fn(() => ([
+        { name: 'jacs_share_public_key' },
+        { name: 'jacs_share_agent' },
+        { name: 'jacs_trust_agent_with_key' },
+      ])),
+      registerJacsTools: registerSpy,
+    }));
+
+    await expect(getJacsMcpToolDefinitions()).resolves.toEqual([
+      { name: 'jacs_share_public_key' },
+      { name: 'jacs_share_agent' },
+      { name: 'jacs_trust_agent_with_key' },
+    ]);
+
+    await registerJacsMcpTools({ id: 'server' }, { id: 'client' });
+    expect(registerSpy).toHaveBeenCalledOnce();
   });
 });

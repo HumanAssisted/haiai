@@ -220,6 +220,66 @@ def verify_mcp_message(signed_json: str) -> dict[str, Any]:
     return module.verify_mcp_message(signed_json)
 
 
+def register_jacs_tools(
+    mcp_server: Any,
+    client: Any = None,
+    config_path: str | None = None,
+    strict: bool = False,
+    *,
+    tools: list[str] | None = None,
+) -> Any:
+    module = _load_optional(
+        "jacs.adapters.mcp",
+        feature="MCP JACS tool registration",
+        install_hint='Install with: pip install "haisdk[mcp]"',
+    )
+    return module.register_jacs_tools(
+        mcp_server,
+        client=client,
+        config_path=config_path,
+        strict=strict,
+        tools=tools,
+    )
+
+
+def register_a2a_tools(
+    mcp_server: Any,
+    client: Any = None,
+    config_path: str | None = None,
+    strict: bool = False,
+) -> Any:
+    module = _load_optional(
+        "jacs.adapters.mcp",
+        feature="MCP A2A tool registration",
+        install_hint='Install with: pip install "haisdk[mcp,a2a]"',
+    )
+    return module.register_a2a_tools(
+        mcp_server,
+        client=client,
+        config_path=config_path,
+        strict=strict,
+    )
+
+
+def register_trust_tools(
+    mcp_server: Any,
+    client: Any = None,
+    config_path: str | None = None,
+    strict: bool = False,
+) -> Any:
+    module = _load_optional(
+        "jacs.adapters.mcp",
+        feature="MCP trust tool registration",
+        install_hint='Install with: pip install "haisdk[mcp]"',
+    )
+    return module.register_trust_tools(
+        mcp_server,
+        client=client,
+        config_path=config_path,
+        strict=strict,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Agent SDK (framework-neutral wrappers around tool callables)
 # ---------------------------------------------------------------------------
@@ -296,6 +356,9 @@ __all__ = [
     "mcp_tool",
     "sign_mcp_message",
     "verify_mcp_message",
+    "register_jacs_tools",
+    "register_a2a_tools",
+    "register_trust_tools",
     "agentsdk_tool_wrapper",
     "agentsdk_verify_payload",
 ]

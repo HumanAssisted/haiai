@@ -42,7 +42,10 @@ def get_a2a_integration(client: Any, trust_policy: str = "verified") -> Any:
 
 
 def quickstart_a2a(
-    algorithm: str | None = None,
+    name: str,
+    domain: str,
+    description: str,
+    algorithm: str = "pq2025",
     config_path: str | None = None,
     url: str | None = None,
 ) -> Any:
@@ -54,7 +57,14 @@ def quickstart_a2a(
             "jacs.a2a.JACSA2AIntegration.quickstart is missing. "
             "Install/upgrade JACS with A2A support: pip install -U 'jacs[a2a]'"
         )
-    return quickstart(algorithm=algorithm, config_path=config_path, url=url)
+    return quickstart(
+        name=name,
+        domain=domain,
+        description=description,
+        algorithm=algorithm,
+        config_path=config_path,
+        url=url,
+    )
 
 
 def export_agent_card(

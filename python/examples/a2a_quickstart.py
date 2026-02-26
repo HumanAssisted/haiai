@@ -48,7 +48,12 @@ def _public_key_b64() -> str:
 
 def main() -> None:
     print("=== Step 1: Initialize JACS + HAI clients ===")
-    jacs = JacsClient.quickstart()
+    jacs = JacsClient.quickstart(
+        name="hai-agent",
+        domain="agent.example.com",
+        description="HAISDK agent",
+        algorithm="pq2025",
+    )
     hai = HaiClient()
     print("\n=== Step 2: Register with embedded A2A agent card metadata ===")
     local_jacs_id = getattr(hai, "_get_jacs_id")()

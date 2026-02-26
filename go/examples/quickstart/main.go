@@ -4,21 +4,27 @@
 //
 //	go get github.com/HumanAssisted/haisdk-go
 //
-// Usage (new agent):
+// Recommended usage (JACS-managed identity):
 //
 //	export JACS_PRIVATE_KEY_PASSWORD=dev-password
-//	go run .
-// or:
-//	export JACS_PASSWORD_FILE=/secure/path/password.txt
-//	go run .
+//	jacs quickstart --algorithm pq2025
+//	go run . --existing
 //
-// Usage (existing agent with jacs.config.json):
+// or:
+//
+//	export JACS_PASSWORD_FILE=/secure/path/password.txt
+//	jacs quickstart --algorithm pq2025
+//	go run . --existing
+//
+// Legacy bootstrap usage (transitional, local keygen path):
 //
 //	export JACS_PRIVATE_KEY_PASSWORD=dev-password
-//	go run . --existing
+//	go run . --bootstrap-local
+//
 // or:
+//
 //	export JACS_PASSWORD_FILE=/secure/path/password.txt
-//	go run . --existing
+//	go run . --bootstrap-local
 //
 // Configure exactly one password source.
 package main
@@ -37,14 +43,19 @@ import (
 const HAIURL = haisdk.DefaultEndpoint
 
 func main() {
-	existing := flag.Bool("existing", false, "Use existing jacs.config.json")
+	existing := flag.Bool("existing", true, "Use existing jacs.config.json/JACS_CONFIG_PATH (recommended)")
+	bootstrapLocal := flag.Bool("bootstrap-local", false, "Use legacy local bootstrap registration path")
 	flag.Parse()
 
+	if *bootstrapLocal {
+		quickstartNew()
+		return
+	}
 	if *existing {
 		quickstartExisting()
-	} else {
-		quickstartNew()
+		return
 	}
+	quickstartExisting()
 }
 
 func quickstartNew() {
@@ -123,7 +134,7 @@ func quickstartExisting() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	// 1. Load existing config
+	// 1. Load existing JACS-managed config
 	fmt.Println("=== Loading existing config (configure exactly one password source) ===")
 	client, err := haisdk.NewClient(haisdk.WithEndpoint(HAIURL))
 	if err != nil {

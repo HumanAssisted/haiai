@@ -108,14 +108,19 @@ Only optional `--bin <path>` is allowed; transport/runtime override args are blo
 ### Python
 
 ```python
-from haisdk import config, HaiClient
+from jacs.client import JacsClient
+from haisdk import HaiClient
 
-# Requires an existing jacs.config.json + encrypted private key.
-# Configure exactly one password source (env is the developer default):
-# export JACS_PRIVATE_KEY_PASSWORD=dev-password
-# or: export JACS_PASSWORD_FILE=/secure/path/password.txt
-config.load("./jacs.config.json")
+# Direct quickstart now requires identity fields.
+jacs = JacsClient.quickstart(
+    name="hai-agent",
+    domain="agent.example.com",
+    description="HAISDK quickstart agent",
+    algorithm="pq2025",
+)
+
 client = HaiClient()
+client.register("https://hai.ai", owner_email="you@example.com")
 
 # Hello handshake
 hello = client.hello_world("https://hai.ai")
@@ -135,14 +140,19 @@ for event in client.connect("https://hai.ai", transport="ws"):
 ### Node.js
 
 ```typescript
+import { JacsClient } from "@hai.ai/jacs/client";
 import { HaiClient } from "haisdk";
 
-// Requires an existing jacs.config.json + encrypted private key.
-// Configure exactly one password source (env is the developer default):
-// process.env.JACS_PRIVATE_KEY_PASSWORD = "dev-password";
-// or:
-// process.env.JACS_PASSWORD_FILE = "/secure/path/password.txt";
+// Direct quickstart now requires identity fields.
+await JacsClient.quickstart({
+  name: "hai-agent",
+  domain: "agent.example.com",
+  description: "HAISDK quickstart agent",
+  algorithm: "pq2025",
+});
+
 const client = await HaiClient.create({ url: "https://hai.ai" });
+await client.register({ ownerEmail: "you@example.com" });
 
 // Hello handshake
 const hello = await client.hello();
@@ -167,6 +177,8 @@ without copying adapter code.
 ### Python: LangGraph / CrewAI / Agent SDK / MCP
 
 ```python
+from jacs.client import JacsClient
+
 # LangGraph/LangChain middleware wrappers
 from haisdk.langgraph import langchain_signing_middleware, langgraph_wrap_tool_call
 
@@ -177,24 +189,69 @@ from haisdk.crewai import crewai_guardrail, crewai_signed_tool
 from haisdk.agentsdk import agentsdk_tool_wrapper
 
 # MCP server bootstrap wrapper
-from haisdk.mcp import create_mcp_server
+from haisdk.mcp import (
+    create_mcp_server,
+    register_a2a_tools,
+    register_jacs_tools,
+    register_trust_tools,
+)
+
+jacs = JacsClient.quickstart(
+    name="hai-agent",
+    domain="agent.example.com",
+    description="HAISDK framework agent",
+    algorithm="pq2025",
+)
+
+middleware = langchain_signing_middleware(client=jacs)
+mcp = create_mcp_server("hai-sdk")
+
+# Includes jacs_share_public_key and jacs_share_agent
+register_jacs_tools(mcp, client=jacs)
+# Includes A2A tools (sign/verify/export/register helpers)
+register_a2a_tools(mcp, client=jacs)
+# Includes jacs_trust_agent_with_key
+register_trust_tools(mcp, client=jacs)
 ```
 
 The wrappers delegate to canonical JACS adapter modules:
-`jacs.adapters.langchain`, `jacs.adapters.crewai`, and `jacs.mcp`.
+`jacs.adapters.langchain`, `jacs.adapters.crewai`, and `jacs.adapters.mcp`.
+
+Working example: `python/examples/mcp_quickstart.py`.
 
 ### Node: LangGraph / MCP / Agent SDK
 
 ```typescript
+import { JacsClient } from "@hai.ai/jacs/client";
 import {
+  createJacsLangchainTools,
+  getJacsMcpToolDefinitions,
   langgraphToolNode,
   createJacsMcpTransportProxy,
+  registerJacsMcpTools,
   createAgentSdkToolWrapper,
 } from "haisdk";
 
-// LangGraph and MCP wrappers are delegated to @hai.ai/jacs modules.
-// Ensure @hai.ai/jacs is installed alongside haisdk.
+const jacs = await JacsClient.quickstart({
+  name: "hai-agent",
+  domain: "agent.example.com",
+  description: "HAISDK framework agent",
+  algorithm: "pq2025",
+});
+
+const langchainTools = await createJacsLangchainTools({ client: jacs });
+const mcpToolDefs = await getJacsMcpToolDefinitions();
+
+// New toolsets include:
+// - jacs_share_public_key
+// - jacs_share_agent
+// - jacs_trust_agent_with_key
+await registerJacsMcpTools(server, jacs);
 ```
+
+LangGraph and MCP wrappers are delegated to `@hai.ai/jacs` modules.
+
+Working example: `node/examples/mcp_quickstart.ts`.
 
 ### Go
 
@@ -247,7 +304,12 @@ import {
 } from "haisdk";
 import { JacsClient } from "@hai.ai/jacs/client";
 
-const jacs = await JacsClient.quickstart();
+const jacs = await JacsClient.quickstart({
+  name: "hai-agent",
+  domain: "agent.example.com",
+  description: "HAISDK agent",
+  algorithm: "pq2025",
+});
 const a2a = await getA2AIntegration(jacs, { trustPolicy: "verified" });
 
 const signed = await signArtifact(jacs, { taskId: "t-1", input: "hello" }, "task");
@@ -271,7 +333,12 @@ from haisdk.a2a import (
 )
 from jacs.client import JacsClient
 
-jacs = JacsClient.quickstart()
+jacs = JacsClient.quickstart(
+    name="hai-agent",
+    domain="agent.example.com",
+    description="HAISDK agent",
+    algorithm="pq2025",
+)
 a2a = get_a2a_integration(jacs, trust_policy="verified")
 
 signed = sign_artifact(jacs, {"taskId": "t-1", "input": "hello"}, "task")

@@ -99,9 +99,19 @@ describe('a2a facade wrappers', () => {
     const integration = await mod.getA2AIntegration(fakeClient, options);
     expect(calls.ctor).toEqual([fakeClient, 'strict']);
 
-    await expect(mod.quickstartA2A({ algorithm: 'pq2025' })).resolves.toEqual({
+    await expect(mod.quickstartA2A({
+      name: 'hai-agent',
+      domain: 'agent.example.com',
+      description: 'HAISDK agent',
+      algorithm: 'pq2025',
+    })).resolves.toEqual({
       quickstart: true,
-      options: { algorithm: 'pq2025' },
+      options: {
+        name: 'hai-agent',
+        domain: 'agent.example.com',
+        description: 'HAISDK agent',
+        algorithm: 'pq2025',
+      },
     });
 
     await expect(mod.exportAgentCard(fakeClient, { jacsId: 'agent-1' }, options)).resolves.toEqual({
