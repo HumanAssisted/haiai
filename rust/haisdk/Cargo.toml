@@ -12,10 +12,11 @@ repository.workspace = true
 homepage.workspace = true
 
 [features]
-default = ["rustls-tls", "jacs-local"]
+default = ["rustls-tls", "jacs-crate"]
 rustls-tls = ["reqwest/rustls-tls"]
 native-tls = ["reqwest/native-tls"]
-jacs-local = ["dep:jacs"]
+jacs-crate = ["dep:jacs"]
+jacs-local = ["dep:jacs_local_path"]
 
 [dependencies]
 async-trait.workspace = true
@@ -33,7 +34,8 @@ futures-util = "0.3"
 tokio-tungstenite = "0.24"
 url.workspace = true
 uuid.workspace = true
-jacs = { path = "../../../JACS/jacs", optional = true }
+jacs = { version = "0.8.1", optional = true }
+jacs_local_path = { package = "jacs", path = "../../../JACS/jacs", optional = true }
 
 [dev-dependencies]
 httpmock = "0.7"

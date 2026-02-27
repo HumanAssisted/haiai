@@ -174,6 +174,15 @@ def load(config_path: str | None = None) -> None:
     if not key_dir.is_absolute():
         key_dir = path.parent / key_dir
 
+    private_key_path_raw = raw.get("jacsPrivateKeyPath") or raw.get(
+        "jacs_private_key_path"
+    )
+    explicit_private_key_path: Optional[Path] = None
+    if private_key_path_raw:
+        explicit_private_key_path = Path(str(private_key_path_raw))
+        if not explicit_private_key_path.is_absolute():
+            explicit_private_key_path = path.parent / explicit_private_key_path
+
     _config = AgentConfig(
         name=raw["jacsAgentName"],
         version=raw["jacsAgentVersion"],
@@ -181,14 +190,35 @@ def load(config_path: str | None = None) -> None:
         jacs_id=raw.get("jacsId"),
     )
 
-    # Find the first .pem private key file in key_dir
-    pem_files = sorted(key_dir.glob("*private*.pem"))
-    if not pem_files:
-        pem_files = sorted(key_dir.glob("*.pem"))
-    if not pem_files:
-        raise FileNotFoundError(f"No .pem key file found in {key_dir}")
+    candidate_paths: list[Path] = []
+    if explicit_private_key_path is not None:
+        candidate_paths.append(explicit_private_key_path)
 
-    pem_path = pem_files[0]
+    candidate_paths.extend(
+        [
+            key_dir / "agent_private_key.pem",
+            key_dir / f"{raw['jacsAgentName']}.private.pem",
+            key_dir / "private_key.pem",
+        ]
+    )
+
+    if explicit_private_key_path is not None and not explicit_private_key_path.is_file():
+        raise FileNotFoundError(
+            f"Configured jacsPrivateKeyPath does not exist: {explicit_private_key_path}"
+        )
+
+    pem_path: Optional[Path] = None
+    for candidate in candidate_paths:
+        if candidate.is_file():
+            pem_path = candidate
+            break
+
+    if pem_path is None:
+        raise FileNotFoundError(
+            "No .pem private key file found. Searched: "
+            + ", ".join(str(p) for p in candidate_paths)
+        )
+
     logger.info("Loading private key from %s", pem_path)
 
     pem_data = pem_path.read_bytes()

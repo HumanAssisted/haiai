@@ -304,10 +304,11 @@ describe('contract: sign input format', () => {
   it('produces the correct sign_input from content hash and timestamp', () => {
     const fixture = loadEmailContract('content_hash_example.json');
     const expectedHash = fixture.expected_hash as string;
+    const fromEmail = fixture.from_email as string;
     const timestamp = fixture.timestamp as number;
     const expectedSignInput = fixture.sign_input_example as string;
 
-    const signInput = `${expectedHash}:${timestamp}`;
+    const signInput = `${expectedHash}:${fromEmail}:${timestamp}`;
 
     expect(signInput).toBe(expectedSignInput);
   });

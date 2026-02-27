@@ -2,6 +2,9 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+#[cfg(all(feature = "jacs-local", not(feature = "jacs-crate")))]
+use jacs_local_path as jacs;
+
 use jacs::agent::boilerplate::BoilerPlate;
 use jacs::crypt::KeyManager;
 use jacs::simple::{self, CreateAgentParams, SimpleAgent};

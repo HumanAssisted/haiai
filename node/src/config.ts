@@ -124,14 +124,27 @@ export async function loadConfig(configPath?: string): Promise<AgentConfig> {
 
   const raw = await readFile(absoluteConfigPath, 'utf-8');
   const json = JSON.parse(raw) as Record<string, unknown>;
-  const keyDir = (json.jacsKeyDir ?? json.key_dir ?? '.') as string;
+  const name = (json.jacsAgentName ?? json.agent_name) as string | undefined;
+  const version = (json.jacsAgentVersion ?? json.agent_version) as string | undefined;
+  const keyDir = (json.jacsKeyDir ?? json.key_dir) as string | undefined;
+  const missing: string[] = [];
+  if (!name) missing.push('jacsAgentName');
+  if (!version) missing.push('jacsAgentVersion');
+  if (!keyDir) missing.push('jacsKeyDir');
+  if (missing.length > 0) {
+    throw new Error(`JACS config missing required fields: ${missing.join(', ')}`);
+  }
+  const resolvedKeyDir = keyDir as string;
+
   const privateKeyPath = (json.jacsPrivateKeyPath ?? json.private_key_path) as string | undefined;
 
   return {
-    jacsAgentName: (json.jacsAgentName ?? json.agent_name ?? 'unnamed-agent') as string,
-    jacsAgentVersion: (json.jacsAgentVersion ?? json.agent_version ?? '1.0.0') as string,
+    jacsAgentName: name as string,
+    jacsAgentVersion: version as string,
     // Resolve relative paths from the config location, not the caller CWD.
-    jacsKeyDir: isAbsolute(keyDir) ? keyDir : resolve(configDir, keyDir),
+    jacsKeyDir: isAbsolute(resolvedKeyDir)
+      ? resolvedKeyDir
+      : resolve(configDir, resolvedKeyDir),
     jacsId: (json.jacsId ?? json.jacs_id) as string | undefined,
     jacsPrivateKeyPath: privateKeyPath
       ? (isAbsolute(privateKeyPath) ? privateKeyPath : resolve(configDir, privateKeyPath))
@@ -152,6 +165,13 @@ export async function loadPrivateKey(config: AgentConfig): Promise<string> {
 
   // Explicit path takes priority
   if (config.jacsPrivateKeyPath) {
+    try {
+      await readFile(config.jacsPrivateKeyPath, 'utf-8');
+    } catch {
+      throw new Error(
+        `Configured jacsPrivateKeyPath does not exist: ${config.jacsPrivateKeyPath}`,
+      );
+    }
     candidates.push(config.jacsPrivateKeyPath);
   }
 

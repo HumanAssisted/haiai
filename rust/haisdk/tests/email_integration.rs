@@ -5,10 +5,10 @@
 //!
 //! Run:
 //! ```bash
-//! HAI_LIVE_TEST=1 cargo test --features jacs-local -p haisdk email_integration -- --nocapture
+//! HAI_LIVE_TEST=1 cargo test -p haisdk email_integration -- --nocapture
 //! ```
 
-#![cfg(feature = "jacs-local")]
+#![cfg(any(feature = "jacs-crate", feature = "jacs-local"))]
 
 use haisdk::{
     CreateAgentOptions, HaiClient, HaiClientOptions, ListMessagesOptions, LocalJacsProvider,

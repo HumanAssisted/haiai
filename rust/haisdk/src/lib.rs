@@ -8,7 +8,7 @@ pub mod client;
 pub mod config;
 pub mod error;
 pub mod jacs;
-#[cfg(feature = "jacs-local")]
+#[cfg(any(feature = "jacs-crate", feature = "jacs-local"))]
 pub mod jacs_local;
 pub mod types;
 pub mod verify;
@@ -23,7 +23,7 @@ pub use client::{compute_content_hash, HaiClient, HaiClientOptions, SseConnectio
 pub use config::{load_config, resolve_private_key_candidates, AgentConfig};
 pub use error::{HaiError, Result};
 pub use jacs::{JacsProvider, NoopJacsProvider, StaticJacsProvider};
-#[cfg(feature = "jacs-local")]
+#[cfg(any(feature = "jacs-crate", feature = "jacs-local"))]
 pub use jacs_local::LocalJacsProvider;
 pub use types::*;
 pub use verify::{

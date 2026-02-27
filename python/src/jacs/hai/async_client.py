@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import hashlib
 import json
 import logging
 import time
@@ -30,6 +29,7 @@ import httpx
 
 from jacs.hai._retry import RETRY_MAX_ATTEMPTS, backoff, should_retry
 from jacs.hai._sse import flatten_benchmark_job, parse_sse_lines
+from jacs.hai.client import compute_content_hash
 from jacs.hai.crypt import canonicalize_json, create_agent_document, sign_string
 from jacs.hai.errors import (
     BenchmarkError,
@@ -87,6 +87,16 @@ class AsyncHaiClient:
         self._hai_url: Optional[str] = None
         self._http: Optional[httpx.AsyncClient] = None
         self._hai_agent_id: Optional[str] = None
+        self._agent_email: Optional[str] = None
+
+    @property
+    def agent_email(self) -> Optional[str]:
+        """Agent @hai.ai email, required for v2 email signing."""
+        return self._agent_email
+
+    def set_agent_email(self, email: str) -> None:
+        """Set the agent @hai.ai email used in v2 email signing payloads."""
+        self._agent_email = email
 
     async def _get_http(self) -> httpx.AsyncClient:
         if self._http is None or self._http.is_closed:
@@ -481,8 +491,12 @@ class AsyncHaiClient:
         subject: str,
         body: str,
         in_reply_to: Optional[str] = None,
+        attachments: Optional[list[dict[str, Any]]] = None,
     ) -> SendEmailResult:
         """Send an email from this agent's @hai.ai address."""
+        if self._agent_email is None:
+            raise HaiError("agent email not set -- set_agent_email() before send_email")
+
         http = await self._get_http()
         jacs_id = self._get_hai_agent_id()
         safe_jacs_id = self._escape_path_segment(jacs_id)
@@ -490,14 +504,12 @@ class AsyncHaiClient:
         headers = self._build_auth_headers()
         headers["Content-Type"] = "application/json"
 
-        # JACS content signing: hash(subject + "\n" + body), then sign
+        # JACS content signing v2: "{content_hash}:{from_email}:{timestamp}"
         from jacs.hai.config import get_private_key
 
-        content_hash = "sha256:" + hashlib.sha256(
-            (subject + "\n" + body).encode("utf-8")
-        ).hexdigest()
+        content_hash = compute_content_hash(subject, body, attachments)
         jacs_timestamp = int(time.time())
-        sign_input = f"{content_hash}:{jacs_timestamp}"
+        sign_input = f"{content_hash}:{self._agent_email}:{jacs_timestamp}"
         jacs_signature = sign_string(get_private_key(), sign_input)
 
         payload: dict[str, Any] = {
@@ -509,6 +521,15 @@ class AsyncHaiClient:
         }
         if in_reply_to is not None:
             payload["in_reply_to"] = in_reply_to
+        if attachments:
+            payload["attachments"] = [
+                {
+                    "filename": a["filename"],
+                    "content_type": a["content_type"],
+                    "data_base64": base64.b64encode(a["data"]).decode(),
+                }
+                for a in attachments
+            ]
 
         try:
             resp = await http.post(url, json=payload, headers=headers)

@@ -8,6 +8,12 @@ from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import (
+    BestAvailableEncryption,
+    Encoding,
+    PrivateFormat,
+    PublicFormat,
+)
 
 from jacs.hai.config import (
     get_config,
@@ -18,6 +24,23 @@ from jacs.hai.config import (
     reset,
     save,
 )
+
+
+def _write_encrypted_private_key(path: Path, key: Ed25519PrivateKey, password: bytes) -> None:
+    path.write_bytes(
+        key.private_bytes(
+            Encoding.PEM,
+            PrivateFormat.PKCS8,
+            BestAvailableEncryption(password),
+        )
+    )
+
+
+def _public_pem(key: Ed25519PrivateKey) -> str:
+    return key.public_key().public_bytes(
+        Encoding.PEM,
+        PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
 
 
 class TestLoad:
@@ -56,6 +79,112 @@ class TestLoad:
         p = tmp_path / "nopem.json"
         p.write_text(json.dumps(config))
         with pytest.raises(FileNotFoundError, match="No .pem"):
+            load(str(p))
+
+    def test_load_prefers_agent_name_private_key_before_private_key_fallback(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset()
+        monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", "test-private-key-password")
+        kd = tmp_path / "keys"
+        kd.mkdir()
+
+        preferred_key = Ed25519PrivateKey.generate()
+        fallback_key = Ed25519PrivateKey.generate()
+        _write_encrypted_private_key(
+            kd / "order-agent.private.pem",
+            preferred_key,
+            b"test-private-key-password",
+        )
+        _write_encrypted_private_key(
+            kd / "private_key.pem",
+            fallback_key,
+            b"test-private-key-password",
+        )
+
+        config = {
+            "jacsAgentName": "order-agent",
+            "jacsAgentVersion": "1.0.0",
+            "jacsKeyDir": str(kd),
+            "jacsId": "order-agent-id",
+        }
+        p = tmp_path / "ordered.json"
+        p.write_text(json.dumps(config))
+
+        load(str(p))
+        loaded_key = get_private_key()
+        assert _public_pem(loaded_key) == _public_pem(preferred_key)
+        reset()
+
+    def test_load_honors_explicit_private_key_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset()
+        monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", "test-private-key-password")
+        kd = tmp_path / "keys"
+        kd.mkdir()
+
+        explicit_key = Ed25519PrivateKey.generate()
+        other_key = Ed25519PrivateKey.generate()
+
+        explicit_path = kd / "explicit.pem"
+        _write_encrypted_private_key(
+            explicit_path,
+            explicit_key,
+            b"test-private-key-password",
+        )
+        _write_encrypted_private_key(
+            kd / "agent_private_key.pem",
+            other_key,
+            b"test-private-key-password",
+        )
+
+        config = {
+            "jacsAgentName": "explicit-agent",
+            "jacsAgentVersion": "1.0.0",
+            "jacsKeyDir": str(kd),
+            "jacsPrivateKeyPath": str(explicit_path),
+            "jacsId": "explicit-agent-id",
+        }
+        p = tmp_path / "explicit.json"
+        p.write_text(json.dumps(config))
+
+        load(str(p))
+        loaded_key = get_private_key()
+        assert _public_pem(loaded_key) == _public_pem(explicit_key)
+        reset()
+
+    def test_load_requires_explicit_private_key_path_to_exist(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        reset()
+        monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", "test-private-key-password")
+        kd = tmp_path / "keys"
+        kd.mkdir()
+        _write_encrypted_private_key(
+            kd / "agent_private_key.pem",
+            Ed25519PrivateKey.generate(),
+            b"test-private-key-password",
+        )
+
+        missing_path = kd / "missing-explicit.pem"
+        config = {
+            "jacsAgentName": "explicit-agent",
+            "jacsAgentVersion": "1.0.0",
+            "jacsKeyDir": str(kd),
+            "jacsPrivateKeyPath": str(missing_path),
+            "jacsId": "explicit-agent-id",
+        }
+        p = tmp_path / "explicit-missing.json"
+        p.write_text(json.dumps(config))
+
+        with pytest.raises(FileNotFoundError, match="jacsPrivateKeyPath"):
             load(str(p))
 
 

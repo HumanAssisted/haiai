@@ -1,10 +1,11 @@
 {
-  "_comment": "Canonical content hash computation. SDKs MUST produce the same hash and sign_input for interop.",
+  "_comment": "Canonical v2 email signing fixture for outbound generation. Verification remains dual-stack (v1 + v2) via dedicated verification fixtures/tests.",
   "subject": "Test Subject",
   "body": "Hello, this is a test email body.",
+  "from_email": "testbot@hai.ai",
   "canonical_input": "Test Subject\nHello, this is a test email body.",
   "expected_hash": "sha256:281a89eac66f256513e8f5ee12f4a5031f13b6902cc060341a163e2371d732eb",
   "timestamp": 1740393600,
-  "sign_input_format": "{content_hash}:{timestamp}",
-  "sign_input_example": "sha256:281a89eac66f256513e8f5ee12f4a5031f13b6902cc060341a163e2371d732eb:1740393600"
+  "sign_input_format": "{content_hash}:{from_email}:{timestamp}",
+  "sign_input_example": "sha256:281a89eac66f256513e8f5ee12f4a5031f13b6902cc060341a163e2371d732eb:testbot@hai.ai:1740393600"
 }

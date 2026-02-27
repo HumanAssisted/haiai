@@ -349,6 +349,7 @@ func TestContractDeserializeVerificationResult(t *testing.T) {
 type contentHashFixture struct {
 	Subject          string `json:"subject"`
 	Body             string `json:"body"`
+	FromEmail        string `json:"from_email"`
 	CanonicalInput   string `json:"canonical_input"`
 	ExpectedHash     string `json:"expected_hash"`
 	Timestamp        int64  `json:"timestamp"`
@@ -397,8 +398,8 @@ func TestContractSignInputFormat(t *testing.T) {
 	h := sha256.Sum256([]byte(fixture.Subject + "\n" + fixture.Body))
 	contentHash := "sha256:" + hex.EncodeToString(h[:])
 
-	// Verify sign_input matches "{content_hash}:{timestamp}".
-	signInput := fmt.Sprintf("%s:%d", contentHash, fixture.Timestamp)
+	// Verify sign_input matches "{content_hash}:{from_email}:{timestamp}".
+	signInput := fmt.Sprintf("%s:%s:%d", contentHash, fixture.FromEmail, fixture.Timestamp)
 	if signInput != fixture.SignInputExample {
 		t.Fatalf("sign_input mismatch:\n  got:  %q\n  want: %q", signInput, fixture.SignInputExample)
 	}

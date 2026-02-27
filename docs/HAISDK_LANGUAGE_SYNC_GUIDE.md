@@ -88,6 +88,18 @@ Keep these constants aligned:
 
 Inline verify links must use base64url **without padding**.
 
+### Email signature compatibility
+
+Outbound email signing must use v2 payload format:
+
+1. `sign_input = "{content_hash}:{from_email}:{timestamp}"`
+2. `content_hash` is computed from subject/body (+ sorted attachment hashes)
+
+Verification must remain backward compatible:
+
+1. v2 verify: `{content_hash}:{from_email}:{timestamp}`
+2. v1 verify: `{content_hash}:{timestamp}`
+
 ### Config discovery and key candidate order
 
 Config discovery order:

@@ -185,6 +185,7 @@ class TestSignInputFormat:
 
         subject = data["subject"]
         body = data["body"]
+        from_email = data["from_email"]
         timestamp = data["timestamp"]
         expected_sign_input = data["sign_input_example"]
 
@@ -192,8 +193,8 @@ class TestSignInputFormat:
             (subject + "\n" + body).encode("utf-8")
         ).hexdigest()
 
-        # Same format as HaiClient.send_email
-        sign_input = f"{content_hash}:{timestamp}"
+        # Same v2 format as HaiClient.send_email
+        sign_input = f"{content_hash}:{from_email}:{timestamp}"
 
         assert sign_input == expected_sign_input
 

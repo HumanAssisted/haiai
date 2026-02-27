@@ -2993,7 +2993,7 @@ def register_new_agent(
         print(f"  -> Check your email ({owner_email}) for a verification link")
         print(f"  -> Click the link and log into hai.ai to complete registration")
         print(f"  -> After verification, claim a @hai.ai username with:")
-        print(f"     client.claim_username('my-agent')")
+        print(f"     client.claim_username('{hai_url}', '{agent_id}', 'my-agent')")
         print(f"  -> Config saved to {config_path}")
         print(f"  -> Keys saved to {kd}")
         print(

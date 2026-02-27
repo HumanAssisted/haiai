@@ -146,10 +146,11 @@ fn contract_sign_input_format() {
         serde_json::from_str(CONTENT_HASH_JSON).expect("content_hash_example.json parse failed");
 
     let expected_hash = fixture["expected_hash"].as_str().expect("expected_hash");
+    let from_email = fixture["from_email"].as_str().expect("from_email");
     let timestamp = fixture["timestamp"].as_i64().expect("timestamp");
     let expected_sign_input = fixture["sign_input_example"].as_str().expect("sign_input_example");
 
-    let sign_input = format!("{expected_hash}:{timestamp}");
+    let sign_input = format!("{expected_hash}:{from_email}:{timestamp}");
 
     assert_eq!(
         sign_input, expected_sign_input,

@@ -37,6 +37,8 @@ brew install haisdk
 
 ```bash
 pip install haisdk
+# Quickstart examples also import JacsClient:
+pip install jacs
 
 # With optional extras:
 pip install "haisdk[ws]"       # WebSocket support

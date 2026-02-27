@@ -83,3 +83,20 @@ jobs:
         run: |
           cd go
           go test -race -v ./...
+
+  test-rust:
+    runs-on: ubuntu-latest
+    needs: [crypto-policy]
+    strategy:
+      matrix:
+        rust-version: ["stable"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust-version }}
+      - name: Run tests
+        run: |
+          cd rust
+          cargo test --workspace

@@ -21,6 +21,17 @@ Initial scaffold for parity with existing Python/Node/Go SDK contracts.
 Do not implement runtime crypto primitives in this crate. Use `JacsProvider`
 implementations backed by JACS.
 
+## JACS dependency source
+
+Default builds use the published `jacs` crate pinned to `0.8.1`.
+
+For local development against a checkout at `../../../JACS/jacs`, disable
+default features and enable `jacs-local`:
+
+```bash
+cargo test -p haisdk --no-default-features --features rustls-tls,jacs-local
+```
+
 ## A2A facade
 
 `haisdk` exposes first-class A2A wrappers that stay at the SDK layer while

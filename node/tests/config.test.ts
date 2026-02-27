@@ -54,14 +54,13 @@ describe('config', () => {
       expect(config.jacsId).toBe('snake-id');
     });
 
-    it('defaults missing fields', async () => {
+    it('throws when required fields are missing', async () => {
       const configPath = path.join(tmpDir, 'jacs.config.json');
       await fs.writeFile(configPath, JSON.stringify({}));
 
-      const config = await loadConfig(configPath);
-      expect(config.jacsAgentName).toBe('unnamed-agent');
-      expect(config.jacsAgentVersion).toBe('1.0.0');
-      expect(config.jacsKeyDir).toBe(path.resolve(tmpDir));
+      await expect(loadConfig(configPath)).rejects.toThrow(
+        'JACS config missing required fields',
+      );
     });
 
     it('throws for non-existent file', async () => {
@@ -136,6 +135,23 @@ describe('config', () => {
 
       const pem = await loadPrivateKey(config);
       expect(pem).toContain('-----BEGIN PRIVATE KEY-----');
+    });
+
+    it('throws when jacsPrivateKeyPath is configured but missing', async () => {
+      const keyPath = path.join(tmpDir, 'missing_key.pem');
+      const kp = generateKeypair();
+      await fs.writeFile(path.join(tmpDir, 'agent_private_key.pem'), kp.privateKeyPem);
+
+      const config = {
+        jacsAgentName: 'test',
+        jacsAgentVersion: '1.0',
+        jacsKeyDir: tmpDir,
+        jacsPrivateKeyPath: keyPath,
+      };
+
+      await expect(loadPrivateKey(config)).rejects.toThrow(
+        'Configured jacsPrivateKeyPath does not exist',
+      );
     });
 
     it('strips comment lines from PEM', async () => {
