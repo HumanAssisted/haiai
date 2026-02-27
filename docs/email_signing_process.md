@@ -830,7 +830,7 @@ X-JACS-Signature header if not found.
 | `hai/api/src/hai_signing.rs` | Implement `JacsSigner` for `HaiSigningAuthority` |
 | `hai/api/src/jacs_email.rs` | Fallback logic: prefer attachment, fall back to headers |
 
-### Phase 3: SDK clients (Python, Node, Go)
+### Phase 4: SDK clients (Python, Node, Go)
 
 Each SDK calls the new hai API endpoints. This matches the existing SDK
 pattern — the SDKs are thin HTTP wrappers, not FFI bindings.
@@ -867,34 +867,24 @@ func (c *Client) VerifyEmail(ctx context.Context, rawEmail string) (*EmailVerifi
 | Node | `client.ts`, `types.ts` (add `EmailVerificationResultV2`) |
 | Go | `client.go`, `types.go` (add `EmailVerificationResultV2`) |
 
-### Phase 4: Tests
+### Implementation Order (TDD)
 
-| Test | What it validates |
-|------|-------------------|
-| `sign_then_verify_roundtrip` | Sign an email, verify it, expect `valid: true`, zero tampered fields |
-| `tampered_header` | Sign, modify From header, verify, expect `tampered_fields` contains `headers.from` with original vs current values |
-| `tampered_body` | Sign, modify body, verify, expect `tampered_fields` contains `body_plain` |
-| `tampered_attachment` | Sign, modify an attachment, verify, expect attachment hash mismatch |
-| `missing_body_part` | Sign with text/plain + text/html, strip text/plain, verify, expect partial verification (html valid, plain unverifiable) |
-| `forwarding_chain` | Agent A signs, Agent B forwards (new JACS doc with parent_signature_hash), verify full chain |
-| `broken_chain` | Forward with tampered parent attachment, verify, expect chain validation failure |
-| `multi_algorithm` | Sign with RSA-PSS key, verify, confirm algorithm field propagates correctly |
-| `dns_verification` | Sign with dns_certified agent, verify, confirm DNS check is attempted |
-| `legacy_fallback` | Email with X-JACS-Signature header but no attachment, verify falls back to v1/v2 flow |
-
-### Implementation Order
+Tests are written FIRST, using the shared email fixture suite. Implementation
+follows to make the tests pass.
 
 ```
-1. Add mail-parser + mail-builder to Cargo.toml
-2. Add new types to types.rs
-3. Add error variants to error.rs
-4. Extend JacsProvider trait with key_id() and algorithm()
-5. Extract shared helpers from verify.rs
-6. Create email.rs with sign_email() + roundtrip test
-7. Add verify_email() + tamper detection tests
-8. Wire into lib.rs
-9. Add hai API endpoints (Phase 2)
-10. Add HTTP wrappers to Python, Node, Go SDKs (Phase 3)
-11. Cross-SDK contract tests
-12. Update this document with final API signatures
+ 1. Create contract/email_fixtures/ with .eml files + expected results
+ 2. Write test stubs in JACS: sign_roundtrip, tamper_*, forwarding_chain
+ 3. Add mail-parser + mail-builder to JACS Cargo.toml
+ 4. Add types to JACS (SignedHeaderEntry, EmailSignaturePayload, etc.)
+ 5. Define JacsSigner trait in JACS
+ 6. Implement sign_email() in JACS — make roundtrip test pass
+ 7. Implement verify_email_document() in JACS — make tamper tests pass
+ 8. Implement verify_email_content() in JACS — make content comparison pass
+ 9. Add forwarding chain support — make chain tests pass
+10. Wire haisdk wrapper: verify_email() with HAI registry + DNS
+11. Add hai API endpoints (Phase 3)
+12. Add HTTP wrappers to Python, Node, Go SDKs (Phase 4)
+13. Run cross-SDK contract tests against same fixtures
+14. Update this document with final API signatures
 ```
