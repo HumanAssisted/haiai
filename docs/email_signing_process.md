@@ -529,3 +529,241 @@ jacs-signature-1.json    ← first forwarder
 ...
 jacs-signature.json      ← most recent signer (always this name)
 ```
+
+---
+
+## Implementation Plan
+
+### Goal
+
+Expose two simple functions at the Rust layer:
+
+```rust
+/// Sign a raw RFC 5322 email, return the email with jacs-signature.json attached.
+pub fn sign_email(raw_email: &str, jacs: &dyn JacsProvider) -> Result<String>
+
+/// Verify a raw RFC 5322 email with jacs-signature.json attachment.
+pub async fn verify_email(raw_email: &str, hai_url: &str) -> EmailVerificationResultV2
+```
+
+Then expose them to Python, Node, and Go via hai API HTTP endpoints. Then
+update SDK clients to call those endpoints.
+
+### Phase 1: Rust core (haisdk)
+
+**New crate dependencies** (`rust/haisdk/Cargo.toml`):
+
+```toml
+mail-parser = "0.9"      # RFC 5322 parsing (read-only, zero-copy)
+mail-builder = "0.3"     # MIME construction (for reattaching)
+```
+
+**New types** (`rust/haisdk/src/types.rs`):
+
+```rust
+pub struct SignedHeaderEntry {
+    pub value: String,           // raw header value
+    pub hash: String,            // "sha256:<hex>"
+}
+
+pub struct EmailSignaturePayload {
+    pub headers: EmailSignatureHeaders,
+    pub body_hash_plain: Option<String>,
+    pub body_hash_html: Option<String>,
+    pub attachment_hashes: Vec<String>,
+    pub parent_signature_hash: Option<String>,
+}
+
+pub struct EmailSignatureHeaders {
+    pub from: SignedHeaderEntry,
+    pub to: SignedHeaderEntry,
+    pub subject: SignedHeaderEntry,
+    pub date: SignedHeaderEntry,
+    pub message_id: SignedHeaderEntry,
+    pub in_reply_to: Option<SignedHeaderEntry>,
+    pub references: Option<SignedHeaderEntry>,
+}
+
+pub struct JacsEmailSignatureDocument {
+    pub version: String,              // "1.0"
+    pub document_type: String,        // "email_signature"
+    pub payload: EmailSignaturePayload,
+    pub metadata: JacsEmailMetadata,
+    pub signature: JacsEmailSignature,
+}
+
+pub struct EmailVerificationResultV2 {
+    pub valid: bool,
+    pub jacs_id: String,
+    pub algorithm: String,
+    pub reputation_tier: String,
+    pub dns_verified: Option<bool>,
+    pub tampered_fields: Vec<TamperedField>,
+    pub original_values: HashMap<String, String>,
+    pub chain: Vec<ChainEntry>,
+    pub error: Option<String>,
+}
+
+pub struct TamperedField {
+    pub field: String,           // e.g., "headers.from", "body_plain"
+    pub original_hash: String,
+    pub current_hash: String,
+    pub original_value: Option<String>,
+    pub current_value: Option<String>,
+}
+
+pub struct ChainEntry {
+    pub signer: String,
+    pub jacs_id: String,
+    pub valid: bool,
+    pub forwarded: bool,
+}
+```
+
+**New module** (`rust/haisdk/src/email.rs`):
+
+Contains `sign_email` and `verify_email` plus internal helpers:
+
+| Helper | Purpose |
+|--------|---------|
+| `extract_email_parts()` | Parse raw RFC 5322 → headers, body parts, attachments |
+| `compute_header_entry()` | Hash a header value (lowercase From/To) |
+| `compute_body_hash()` | SHA-256 of body content |
+| `compute_attachment_hash()` | SHA-256 of `filename:content_type:data` |
+| `build_jacs_email_document()` | Assemble the JACS document from payload + sign |
+| `attach_jacs_signature_to_email()` | Append the attachment to raw MIME |
+| `fetch_public_key_from_registry()` | GET /api/agents/keys/{email} |
+| `verify_jacs_document_crypto()` | Verify signature using correct algorithm |
+| `compare_payload_to_email()` | Phase 2 hash comparison, returns tampered fields |
+
+**Files changed:**
+
+| File | Change |
+|------|--------|
+| `rust/haisdk/src/email.rs` | **NEW** — both functions + helpers |
+| `rust/haisdk/src/types.rs` | Add all new types above |
+| `rust/haisdk/src/lib.rs` | Add `pub mod email;` + re-exports |
+| `rust/haisdk/src/verify.rs` | Extract `fetch_public_key_from_registry()` and PEM parsing into shared helpers |
+| `rust/haisdk/src/error.rs` | Add `EmailParseError`, `MimeError`, `JacsDocumentError` |
+| `rust/haisdk/Cargo.toml` | Add `mail-parser`, `mail-builder` |
+
+**`JacsProvider` trait changes** (`rust/haisdk/src/jacs.rs`):
+
+The trait currently lacks `key_id()` and `algorithm()` methods. These are
+needed for the JACS document's `signature.key_id` and `signature.algorithm`
+fields. Options:
+
+- Extend `JacsProvider` with `fn key_id(&self) -> &str` and
+  `fn algorithm(&self) -> &str`
+- Or pass a `JacsSigningContext` struct alongside the provider
+
+Extending the trait is cleaner since `LocalJacsProvider` already wraps the
+JACS `SimpleAgent` which knows both values.
+
+**MIME reconstruction note:**
+
+Rebuilding a MIME email from parsed parts can alter whitespace, header
+ordering, and encoding. The `sign_email` function should ideally work at the
+raw byte level — finding the final MIME boundary and inserting a new part
+before the closing boundary — rather than fully re-serializing via
+`mail-builder`. This preserves the original email byte-for-byte and only
+appends the new attachment.
+
+### Phase 2: hai API endpoints
+
+Add two new endpoints that call the haisdk Rust functions:
+
+```
+POST /api/v1/email/sign
+  Body: { "raw_email": "<RFC 5322 string>" }
+  Response: { "signed_email": "<RFC 5322 string with jacs-signature.json>" }
+
+POST /api/v1/email/verify
+  Body: { "raw_email": "<RFC 5322 string>" }
+  Response: EmailVerificationResultV2
+```
+
+The hai API adds `haisdk` as a Cargo dependency. The API's
+`HaiSigningAuthority` (which uses `jacs::simple::SimpleAgent`) is wrapped in a
+`JacsProvider` adapter so `sign_email()` can use it.
+
+The existing `jacs_email.rs` header-based flow is preserved as a fallback.
+`verify_email()` checks for `jacs-signature.json` first, falls back to
+X-JACS-Signature header if not found.
+
+**Files changed in hai:**
+
+| File | Change |
+|------|--------|
+| `hai/api/src/routes/agent_email.rs` | Add `/api/v1/email/sign` and `/api/v1/email/verify` |
+| `hai/api/Cargo.toml` | Add `haisdk` as workspace dependency |
+| `hai/api/src/jacs_email.rs` | Fallback logic: prefer attachment, fall back to headers |
+
+### Phase 3: SDK clients (Python, Node, Go)
+
+Each SDK calls the new hai API endpoints. This matches the existing SDK
+pattern — the SDKs are thin HTTP wrappers, not FFI bindings.
+
+**Python** (`python/src/jacs/hai/client.py` and `async_client.py`):
+
+```python
+def sign_email(self, raw_email: str, hai_url: str) -> str:
+    """POST /api/v1/email/sign → returns signed email string."""
+
+def verify_email(self, raw_email: str, hai_url: str) -> EmailVerificationResultV2:
+    """POST /api/v1/email/verify → returns verification result."""
+```
+
+**Node** (`node/src/client.ts`):
+
+```typescript
+async signEmail(rawEmail: string): Promise<string>
+async verifyEmail(rawEmail: string): Promise<EmailVerificationResultV2>
+```
+
+**Go** (`go/client.go`):
+
+```go
+func (c *Client) SignEmail(ctx context.Context, rawEmail string) (string, error)
+func (c *Client) VerifyEmail(ctx context.Context, rawEmail string) (*EmailVerificationResultV2, error)
+```
+
+**Files changed per SDK:**
+
+| SDK | Files |
+|-----|-------|
+| Python | `client.py`, `async_client.py`, `models.py` (add `EmailVerificationResultV2`) |
+| Node | `client.ts`, `types.ts` (add `EmailVerificationResultV2`) |
+| Go | `client.go`, `types.go` (add `EmailVerificationResultV2`) |
+
+### Phase 4: Tests
+
+| Test | What it validates |
+|------|-------------------|
+| `sign_then_verify_roundtrip` | Sign an email, verify it, expect `valid: true`, zero tampered fields |
+| `tampered_header` | Sign, modify From header, verify, expect `tampered_fields` contains `headers.from` with original vs current values |
+| `tampered_body` | Sign, modify body, verify, expect `tampered_fields` contains `body_plain` |
+| `tampered_attachment` | Sign, modify an attachment, verify, expect attachment hash mismatch |
+| `missing_body_part` | Sign with text/plain + text/html, strip text/plain, verify, expect partial verification (html valid, plain unverifiable) |
+| `forwarding_chain` | Agent A signs, Agent B forwards (new JACS doc with parent_signature_hash), verify full chain |
+| `broken_chain` | Forward with tampered parent attachment, verify, expect chain validation failure |
+| `multi_algorithm` | Sign with RSA-PSS key, verify, confirm algorithm field propagates correctly |
+| `dns_verification` | Sign with dns_certified agent, verify, confirm DNS check is attempted |
+| `legacy_fallback` | Email with X-JACS-Signature header but no attachment, verify falls back to v1/v2 flow |
+
+### Implementation Order
+
+```
+1. Add mail-parser + mail-builder to Cargo.toml
+2. Add new types to types.rs
+3. Add error variants to error.rs
+4. Extend JacsProvider trait with key_id() and algorithm()
+5. Extract shared helpers from verify.rs
+6. Create email.rs with sign_email() + roundtrip test
+7. Add verify_email() + tamper detection tests
+8. Wire into lib.rs
+9. Add hai API endpoints (Phase 2)
+10. Add HTTP wrappers to Python, Node, Go SDKs (Phase 3)
+11. Cross-SDK contract tests
+12. Update this document with final API signatures
+```
