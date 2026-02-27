@@ -534,33 +534,144 @@ jacs-signature.json      ← most recent signer (always this name)
 
 ## Implementation Plan
 
-### Goal
+### Principles
 
-Expose two simple functions at the Rust layer:
+**DRY (Don't Repeat Yourself):** The core email signing and verification logic
+is implemented once in the JACS library (neutral, no HAI dependency). haisdk
+wraps it to add HAI-specific trust chain (registry lookup, DNS verification).
+Each SDK language calls the hai API rather than reimplementing crypto.
+
+**TDD (Test-Driven Development):** A shared test fixture suite of raw RFC 5322
+emails is created first. Tests are written before implementation. All SDKs run
+the same fixture suite to ensure cross-language consistency.
+
+### Architecture: JACS (neutral) vs haisdk (HAI-specific)
+
+The core functions live in the **JACS library** so any email client can use
+them without depending on HAI:
 
 ```rust
-/// Sign a raw RFC 5322 email, return the email with jacs-signature.json attached.
-pub fn sign_email(raw_email: &str, jacs: &dyn JacsProvider) -> Result<String>
+// In JACS library (neutral — no HAI, no network)
 
-/// Verify a raw RFC 5322 email with jacs-signature.json attachment.
-pub async fn verify_email(raw_email: &str, hai_url: &str) -> EmailVerificationResultV2
+/// Sign a raw RFC 5322 email, return the email with jacs-signature.json attached.
+pub fn sign_email(raw_email: &str, signer: &dyn JacsSigner) -> Result<String>
+
+/// Extract and validate the JACS document from an email.
+/// Verifies document hash + cryptographic signature. No network calls.
+/// The caller provides the public key.
+pub fn verify_email_document(
+    raw_email: &str,
+    public_key_pem: &str,
+) -> Result<(JacsEmailSignatureDocument, ParsedEmailParts)>
+
+/// Compare the trusted JACS payload against actual email content.
+/// Pure hash comparison, no crypto, no network.
+pub fn verify_email_content(
+    doc: &JacsEmailSignatureDocument,
+    parts: &ParsedEmailParts,
+) -> ContentVerificationResult
 ```
 
-Then expose them to Python, Node, and Go via hai API HTTP endpoints. Then
-update SDK clients to call those endpoints.
+The **haisdk** wraps these to add HAI trust chain:
 
-### Phase 1: Rust core (haisdk)
+```rust
+// In haisdk (HAI-specific — registry lookup, DNS verification)
 
-**New crate dependencies** (`rust/haisdk/Cargo.toml`):
+/// Full email verification: JACS document validation + HAI registry
+/// lookup + DNS check + content hash comparison.
+pub async fn verify_email(
+    raw_email: &str,
+    hai_url: &str,
+) -> EmailVerificationResultV2
+```
+
+This separation means:
+
+- **Any email client** can call `jacs::sign_email()` and
+  `jacs::verify_email_document()` directly without HAI
+- **HAI users** call `haisdk::verify_email()` which adds registry + DNS
+- The JACS library never makes network calls
+- haisdk never reimplements crypto or MIME parsing
+
+### Test Fixture Suite
+
+A shared directory of raw RFC 5322 email fixtures for TDD:
+
+```
+contract/email_fixtures/
+├── simple_text.eml              # plain text only, no attachments
+├── html_only.eml                # HTML body only
+├── multipart_alternative.eml    # text/plain + text/html
+├── with_attachments.eml         # body + 2 file attachments
+├── with_inline_images.eml       # body + inline image attachments
+├── threaded_reply.eml           # In-Reply-To + References headers
+├── forwarded_chain.eml          # email with jacs-signature-0.json + jacs-signature.json
+├── unicode_headers.eml          # non-ASCII subject and body
+├── large_attachment.eml          # attachment near provider size limits
+└── README.md                    # describes each fixture and expected results
+```
+
+Each fixture has a corresponding expected-result JSON:
+
+```
+contract/email_fixtures/expected/
+├── simple_text.json             # expected payload hashes, header values
+├── html_only.json
+├── multipart_alternative.json
+├── with_attachments.json
+└── ...
+```
+
+**Test categories** (written before implementation):
+
+| Test | Fixture | What it validates |
+|------|---------|-------------------|
+| `sign_roundtrip` | `simple_text.eml` | Sign → verify → `valid: true`, zero tampered fields |
+| `sign_multipart` | `multipart_alternative.eml` | Both body_hash_plain and body_hash_html are populated |
+| `sign_attachments` | `with_attachments.eml` | Attachment hashes are sorted and correct |
+| `tamper_header` | `simple_text.eml` | Sign, modify From, verify → `tampered_fields` contains `headers.from` |
+| `tamper_body` | `simple_text.eml` | Sign, modify body, verify → `tampered_fields` contains `body_plain` |
+| `tamper_attachment` | `with_attachments.eml` | Sign, modify attachment, verify → attachment hash mismatch |
+| `strip_body_part` | `multipart_alternative.eml` | Sign, strip text/plain, verify → html valid, plain "unverifiable" |
+| `forwarding_chain` | `forwarded_chain.eml` | Verify full chain, both signers valid |
+| `broken_chain` | `forwarded_chain.eml` | Tamper parent attachment → chain validation failure |
+| `multi_algorithm` | `simple_text.eml` | Sign with RSA-PSS, verify → algorithm field correct |
+| `legacy_fallback` | header-only email | No attachment, falls back to X-JACS-Signature v1/v2 |
+| `cross_language` | all fixtures | Same fixture produces identical hashes in Rust, Python, Node, Go |
+
+### Phase 1: JACS library (neutral core)
+
+**New crate dependencies** (in JACS `Cargo.toml`):
 
 ```toml
 mail-parser = "0.9"      # RFC 5322 parsing (read-only, zero-copy)
 mail-builder = "0.3"     # MIME construction (for reattaching)
 ```
 
-**New types** (`rust/haisdk/src/types.rs`):
+The JACS library already has SHA-256 and signing capabilities. The new
+module adds MIME handling on top.
+
+### Phase 2: haisdk Rust wrapper
+
+haisdk does NOT duplicate MIME parsing or crypto. It imports the JACS email
+module and adds HAI-specific logic on top.
+
+**New dependency** (`rust/haisdk/Cargo.toml`):
+
+```toml
+jacs = { path = "..." }  # already a dependency — gains email module
+```
+
+No need for `mail-parser` or `mail-builder` in haisdk — those live in JACS.
+
+**New types** (`rust/haisdk/src/types.rs`) — HAI-specific result types only.
+The core types (`EmailSignaturePayload`, `JacsEmailSignatureDocument`, etc.)
+are defined in JACS and re-exported:
 
 ```rust
+// These types are defined in the JACS library (neutral).
+// haisdk re-exports them and adds HAI-specific result types.
+
 pub struct SignedHeaderEntry {
     pub value: String,           // raw header value
     pub hash: String,            // "sha256:<hex>"
@@ -592,6 +703,8 @@ pub struct JacsEmailSignatureDocument {
     pub signature: JacsEmailSignature,
 }
 
+// This type is HAI-specific (defined in haisdk, not JACS).
+// It wraps the JACS ContentVerificationResult and adds registry + DNS fields.
 pub struct EmailVerificationResultV2 {
     pub valid: bool,
     pub jacs_id: String,
@@ -620,45 +733,63 @@ pub struct ChainEntry {
 }
 ```
 
-**New module** (`rust/haisdk/src/email.rs`):
+**JACS library new module** (`jacs/src/email.rs`) — all core logic:
 
-Contains `sign_email` and `verify_email` plus internal helpers:
-
-| Helper | Purpose |
-|--------|---------|
+| Function | Purpose |
+|----------|---------|
+| `sign_email()` | Parse email → compute hashes → build JACS doc → attach |
+| `verify_email_document()` | Extract JACS attachment → verify hash + signature |
+| `verify_email_content()` | Compare payload hashes against actual email |
 | `extract_email_parts()` | Parse raw RFC 5322 → headers, body parts, attachments |
 | `compute_header_entry()` | Hash a header value (lowercase From/To) |
 | `compute_body_hash()` | SHA-256 of body content |
 | `compute_attachment_hash()` | SHA-256 of `filename:content_type:data` |
 | `build_jacs_email_document()` | Assemble the JACS document from payload + sign |
-| `attach_jacs_signature_to_email()` | Append the attachment to raw MIME |
-| `fetch_public_key_from_registry()` | GET /api/agents/keys/{email} |
-| `verify_jacs_document_crypto()` | Verify signature using correct algorithm |
-| `compare_payload_to_email()` | Phase 2 hash comparison, returns tampered fields |
+| `attach_jacs_signature_to_email()` | Append attachment to raw MIME |
 
-**Files changed:**
+**haisdk wrapper module** (`rust/haisdk/src/email.rs`) — HAI trust chain only:
+
+| Function | Purpose |
+|----------|---------|
+| `verify_email()` | Calls JACS verify functions + HAI registry lookup + DNS |
+| `fetch_public_key_from_registry()` | GET /api/agents/keys/{email} |
+| `verify_dns_public_key()` | Check public key hash against DNS TXT record |
+
+**Files changed — JACS library:**
 
 | File | Change |
 |------|--------|
-| `rust/haisdk/src/email.rs` | **NEW** — both functions + helpers |
-| `rust/haisdk/src/types.rs` | Add all new types above |
+| `jacs/src/email.rs` | **NEW** — `sign_email`, `verify_email_document`, `verify_email_content` + all helpers |
+| `jacs/src/lib.rs` | Add `pub mod email;` |
+| `jacs/src/types.rs` (or inline) | Add `SignedHeaderEntry`, `EmailSignaturePayload`, `EmailSignatureHeaders`, `JacsEmailSignatureDocument`, `ParsedEmailParts`, `ContentVerificationResult` |
+| `jacs/Cargo.toml` | Add `mail-parser`, `mail-builder` |
+
+**Files changed — haisdk:**
+
+| File | Change |
+|------|--------|
+| `rust/haisdk/src/email.rs` | **NEW** — `verify_email()` wrapper (HAI trust chain) |
+| `rust/haisdk/src/types.rs` | Add `EmailVerificationResultV2`, `TamperedField`, `ChainEntry`; re-export JACS types |
 | `rust/haisdk/src/lib.rs` | Add `pub mod email;` + re-exports |
-| `rust/haisdk/src/verify.rs` | Extract `fetch_public_key_from_registry()` and PEM parsing into shared helpers |
-| `rust/haisdk/src/error.rs` | Add `EmailParseError`, `MimeError`, `JacsDocumentError` |
-| `rust/haisdk/Cargo.toml` | Add `mail-parser`, `mail-builder` |
+| `rust/haisdk/src/verify.rs` | Extract `fetch_public_key_from_registry()` into shared helper |
 
-**`JacsProvider` trait changes** (`rust/haisdk/src/jacs.rs`):
+**`JacsSigner` trait** (in JACS library):
 
-The trait currently lacks `key_id()` and `algorithm()` methods. These are
-needed for the JACS document's `signature.key_id` and `signature.algorithm`
-fields. Options:
+`sign_email()` needs access to `key_id` and `algorithm` to populate the JACS
+document's signature fields. The JACS library should define a `JacsSigner`
+trait:
 
-- Extend `JacsProvider` with `fn key_id(&self) -> &str` and
-  `fn algorithm(&self) -> &str`
-- Or pass a `JacsSigningContext` struct alongside the provider
+```rust
+pub trait JacsSigner {
+    fn sign_bytes(&self, data: &[u8]) -> Result<Vec<u8>>;
+    fn key_id(&self) -> &str;
+    fn algorithm(&self) -> &str;   // "ed25519", "rsa-pss", "pq2025"
+    fn agent_id(&self) -> &str;    // JACS ID (for metadata.issuer)
+}
+```
 
-Extending the trait is cleaner since `LocalJacsProvider` already wraps the
-JACS `SimpleAgent` which knows both values.
+The existing `SimpleAgent` in JACS already knows all four values. haisdk's
+`LocalJacsProvider` wraps `SimpleAgent` and implements this trait.
 
 **MIME reconstruction note:**
 
@@ -669,9 +800,13 @@ before the closing boundary — rather than fully re-serializing via
 `mail-builder`. This preserves the original email byte-for-byte and only
 appends the new attachment.
 
-### Phase 2: hai API endpoints
+### Phase 3: hai API endpoints
 
-Add two new endpoints that call the haisdk Rust functions:
+Add two new endpoints. The hai API already depends on the JACS library
+directly, so it calls `jacs::email::sign_email()` and
+`jacs::email::verify_email_document()` with its own `HaiSigningAuthority`
+(which implements `JacsSigner`). For the full HAI trust chain (registry + DNS),
+it uses haisdk's `verify_email()` wrapper.
 
 ```
 POST /api/v1/email/sign
@@ -683,10 +818,6 @@ POST /api/v1/email/verify
   Response: EmailVerificationResultV2
 ```
 
-The hai API adds `haisdk` as a Cargo dependency. The API's
-`HaiSigningAuthority` (which uses `jacs::simple::SimpleAgent`) is wrapped in a
-`JacsProvider` adapter so `sign_email()` can use it.
-
 The existing `jacs_email.rs` header-based flow is preserved as a fallback.
 `verify_email()` checks for `jacs-signature.json` first, falls back to
 X-JACS-Signature header if not found.
@@ -696,7 +827,7 @@ X-JACS-Signature header if not found.
 | File | Change |
 |------|--------|
 | `hai/api/src/routes/agent_email.rs` | Add `/api/v1/email/sign` and `/api/v1/email/verify` |
-| `hai/api/Cargo.toml` | Add `haisdk` as workspace dependency |
+| `hai/api/src/hai_signing.rs` | Implement `JacsSigner` for `HaiSigningAuthority` |
 | `hai/api/src/jacs_email.rs` | Fallback logic: prefer attachment, fall back to headers |
 
 ### Phase 3: SDK clients (Python, Node, Go)
