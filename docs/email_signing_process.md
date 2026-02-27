@@ -888,3 +888,118 @@ follows to make the tests pass.
 13. Run cross-SDK contract tests against same fixtures
 14. Update this document with final API signatures
 ```
+
+---
+
+## Review Appendix (2026-02-27)
+
+This appendix captures a security/viability review of the plan. It is additive
+and does not change the implementation sequence above.
+
+### Summary
+
+- The detached-signature design is viable for authenticity/tamper evidence.
+- The largest risk is canonicalization ambiguity (P0): without strict rules,
+  independent implementations will disagree and can be bypassed.
+- Identity binding is mostly correct but needs explicit hard checks/policy.
+- Forwarding-chain and DNS semantics need tighter normative rules.
+
+### Critical Issue (P0): Canonicalization Ambiguity
+
+Current text says "hash headers/body/attachments" but does not fully define
+normalization behavior. RFC 5322/MIME allows many equivalent wire
+representations. If canonicalization is underspecified, two conforming
+implementations can compute different hashes for the same semantic email.
+
+#### P0 Solution (normative profile to add)
+
+Define one required canonicalization profile and enforce it everywhere (sign
+and verify), with golden fixtures.
+
+1. Message parsing
+   - Parse as RFC 5322 + MIME.
+   - If message is malformed/ambiguous, fail verification (no best-effort mode
+     in strict path).
+
+2. JACS JSON canonicalization
+   - Canonicalize the JACS payload with RFC 8785 (JCS) before `metadata.hash`
+     and signature generation/verification.
+
+3. Header canonicalization (for signed headers)
+   - Use DKIM-style relaxed normalization:
+     - lowercase header name
+     - unfold continuation lines
+     - compress WSP runs to one SP
+     - trim leading/trailing WSP
+   - For required singleton headers (`From`, `Date`, `Message-ID`): if
+     duplicates exist, fail as ambiguous.
+   - For optional headers (`In-Reply-To`, `References`): if absent, field is
+     `null`; if duplicated unexpectedly, fail as ambiguous.
+   - Decode RFC 2047 encoded words before hashing, then UTF-8 NFC normalize.
+
+4. Body-part canonicalization (`text/plain`, `text/html`)
+   - MIME decode `Content-Transfer-Encoding`.
+   - Convert charset to UTF-8 (if declared/parseable; else fail strict path).
+   - Normalize line endings to `\n`.
+   - Hash resulting bytes exactly.
+
+5. Attachment canonicalization
+   - MIME decode `Content-Transfer-Encoding` to raw attachment bytes.
+   - Do not transcode payload bytes after decode.
+   - Canonical hash input:
+     `sha256(filename_utf8_nfc + ":" + content_type_lower + ":" + raw_bytes)`.
+   - Exclude only the active `jacs-signature.json` attachment from
+     `attachment_hashes`.
+
+6. Determinism tests
+   - Shared cross-language fixtures MUST include tricky cases:
+     folded headers, RFC 2047 subjects, mixed charsets, quoted-printable vs
+     base64 bodies, duplicate headers, Unicode normalization edge cases.
+
+### High Issue (P1): Identity Binding and Policy Enforcement
+
+Add explicit verification invariants:
+
+1. `metadata.issuer == registry.jacs_id`
+2. `payload.headers.from.value` must match registry email for `registry.jacs_id`
+3. If DNS policy requires DNS, verify TXT binding for the same agent ID and key
+   hash; do not rely on `reputation_tier` alone.
+
+Recommendation: use an explicit verification policy enum (example:
+`local_only`, `registry_required`, `dns_required`, `dns_strict`) instead of
+tier-gated DNS checks.
+
+### High Issue (P1): Replay Detection Needs Concrete Rules
+
+"Date helps detect replay" is insufficient by itself. Add strict rules:
+
+- max accepted age (example: 24h) and max future skew (example: 5m)
+- replay cache key (example: `issuer + message_id + metadata.hash`)
+- on duplicate cache hit within TTL: fail/replay warning per policy
+
+### High Issue (P1): Forwarding Chain Selection Is Underspecified
+
+Current filename-based chain discovery can be ambiguous/spoofed.
+
+Add deterministic rules:
+
+- exactly one active `jacs-signature.json` (latest signer) is required
+- parent resolution must be by `parent_signature_hash` matching raw bytes, not
+  by filename alone
+- if multiple candidates match or none match, fail chain validation
+
+### Medium Issue (P2): Docs Accuracy / Consistency
+
+1. "Standard JACS document" wording should explicitly state whether this uses
+   existing `jacsSignature`/`jacsSha256` schema fields or a new email-specific
+   schema profile.
+2. DNS TXT field naming/encoding must match JACS DNS conventions exactly.
+3. If legacy header flow is being removed, remove fallback language from this
+   plan to avoid preserving unintended behavior.
+
+### Code Drift Note (current repositories vs this plan)
+
+- Plan targets detached `jacs-signature.json` flow; current SDK code paths in
+  `haisdk` still primarily verify header signatures.
+- The signature algorithm field is parsed in current header flows, but the
+  inspected SDK verifiers still enforce Ed25519 in guard checks today.
