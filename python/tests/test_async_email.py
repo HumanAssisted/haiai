@@ -31,11 +31,56 @@ class _FakeAsyncHTTP:
     def __init__(self) -> None:
         self.last_url: str | None = None
         self.last_json: dict[str, Any] | None = None
+        self.last_params: dict[str, Any] | None = None
 
     async def post(self, url: str, **kwargs: Any) -> _FakeAsyncResponse:
         self.last_url = url
         self.last_json = kwargs.get("json")
+        if "username" in (self.last_json or {}):
+            return _FakeAsyncResponse(
+                200,
+                {
+                    "username": self.last_json["username"],
+                    "email": f"{self.last_json['username']}@hai.ai",
+                    "agent_id": "agent-123",
+                },
+            )
         return _FakeAsyncResponse(200, {"message_id": "msg-1", "status": "sent"})
+
+    async def put(self, url: str, **kwargs: Any) -> _FakeAsyncResponse:
+        self.last_url = url
+        self.last_json = kwargs.get("json")
+        return _FakeAsyncResponse(
+            200,
+            {
+                "username": self.last_json.get("username", ""),
+                "email": f"{self.last_json.get('username', '')}@hai.ai",
+                "previous_username": "old-name",
+            },
+        )
+
+    async def delete(self, url: str, **kwargs: Any) -> _FakeAsyncResponse:
+        self.last_url = url
+        return _FakeAsyncResponse(
+            200,
+            {
+                "released_username": "old-name",
+                "cooldown_until": "2026-03-01T00:00:00Z",
+                "message": "released",
+            },
+        )
+
+    async def get(self, url: str, **kwargs: Any) -> _FakeAsyncResponse:
+        self.last_url = url
+        self.last_params = kwargs.get("params")
+        return _FakeAsyncResponse(
+            200,
+            {
+                "available": True,
+                "username": (self.last_params or {}).get("username", ""),
+                "reason": None,
+            },
+        )
 
 
 @pytest.mark.asyncio
@@ -125,3 +170,73 @@ async def test_async_send_email_attachment_hash_and_payload_match_v2(
     )
     sign_input = f"{expected_hash}:{TEST_AGENT_EMAIL}:{payload['jacs_timestamp']}"
     assert verify_string(private_key.public_key(), sign_input, payload["jacs_signature"])
+
+
+@pytest.mark.asyncio
+async def test_async_check_username_uses_public_endpoint(
+    loaded_config: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_http = _FakeAsyncHTTP()
+
+    async def fake_get_http(_self: AsyncHaiClient) -> _FakeAsyncHTTP:
+        return fake_http
+
+    monkeypatch.setattr(AsyncHaiClient, "_get_http", fake_get_http)
+    client = AsyncHaiClient()
+
+    result = await client.check_username(BASE_URL, "alice")
+    assert fake_http.last_url == "https://test.hai.ai/api/v1/agents/username/check"
+    assert fake_http.last_params == {"username": "alice"}
+    assert result["available"] is True
+    assert result["username"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_async_claim_username_sets_agent_email_and_escapes_agent_id(
+    loaded_config: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_http = _FakeAsyncHTTP()
+
+    async def fake_get_http(_self: AsyncHaiClient) -> _FakeAsyncHTTP:
+        return fake_http
+
+    monkeypatch.setattr(AsyncHaiClient, "_get_http", fake_get_http)
+    client = AsyncHaiClient()
+
+    result = await client.claim_username(BASE_URL, "agent/with/slash", "myagent")
+    assert (
+        fake_http.last_url
+        == "https://test.hai.ai/api/v1/agents/agent%2Fwith%2Fslash/username"
+    )
+    assert result["email"] == "myagent@hai.ai"
+    assert client.agent_email == "myagent@hai.ai"
+
+
+@pytest.mark.asyncio
+async def test_async_update_and_delete_username_escape_agent_id(
+    loaded_config: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_http = _FakeAsyncHTTP()
+
+    async def fake_get_http(_self: AsyncHaiClient) -> _FakeAsyncHTTP:
+        return fake_http
+
+    monkeypatch.setattr(AsyncHaiClient, "_get_http", fake_get_http)
+    client = AsyncHaiClient()
+
+    updated = await client.update_username(BASE_URL, "agent/with/slash", "new-name")
+    assert (
+        fake_http.last_url
+        == "https://test.hai.ai/api/v1/agents/agent%2Fwith%2Fslash/username"
+    )
+    assert updated["username"] == "new-name"
+
+    deleted = await client.delete_username(BASE_URL, "agent/with/slash")
+    assert (
+        fake_http.last_url
+        == "https://test.hai.ai/api/v1/agents/agent%2Fwith%2Fslash/username"
+    )
+    assert deleted["message"] == "released"

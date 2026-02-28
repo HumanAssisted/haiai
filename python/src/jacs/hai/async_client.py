@@ -385,6 +385,127 @@ class AsyncHaiClient:
             raise HaiError(f"Status check failed: {exc}")
 
     # ------------------------------------------------------------------
+    # username APIs
+    # ------------------------------------------------------------------
+
+    async def check_username(self, hai_url: str, username: str) -> dict[str, Any]:
+        """Check if a username is available for @hai.ai email."""
+        http = await self._get_http()
+        url = self._make_url(hai_url, "/api/v1/agents/username/check")
+
+        try:
+            resp = await http.get(url, params={"username": username}, timeout=self._timeout)
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Username check failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return resp.json()
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Username check failed: {exc}")
+
+    async def claim_username(
+        self, hai_url: str, agent_id: str, username: str
+    ) -> dict[str, Any]:
+        """Claim a username for an agent and cache returned @hai.ai email."""
+        http = await self._get_http()
+        safe_agent_id = self._escape_path_segment(agent_id)
+        url = self._make_url(hai_url, f"/api/v1/agents/{safe_agent_id}/username")
+        headers = self._build_auth_headers()
+        headers["Content-Type"] = "application/json"
+
+        try:
+            resp = await http.post(
+                url,
+                json={"username": username},
+                headers=headers,
+                timeout=self._timeout,
+            )
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Username claim auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Username claim failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            data = resp.json()
+            self._agent_email = data.get("email")
+            return data
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Username claim failed: {exc}")
+
+    async def update_username(
+        self, hai_url: str, agent_id: str, username: str
+    ) -> dict[str, Any]:
+        """Rename an existing username for an agent."""
+        http = await self._get_http()
+        safe_agent_id = self._escape_path_segment(agent_id)
+        url = self._make_url(hai_url, f"/api/v1/agents/{safe_agent_id}/username")
+        headers = self._build_auth_headers()
+
+        try:
+            resp = await http.put(
+                url,
+                headers=headers,
+                json={"username": username},
+                timeout=self._timeout,
+            )
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Username update auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Username update failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return resp.json()
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Username update failed: {exc}")
+
+    async def delete_username(self, hai_url: str, agent_id: str) -> dict[str, Any]:
+        """Release a claimed username for an agent."""
+        http = await self._get_http()
+        safe_agent_id = self._escape_path_segment(agent_id)
+        url = self._make_url(hai_url, f"/api/v1/agents/{safe_agent_id}/username")
+        headers = self._build_auth_headers()
+
+        try:
+            resp = await http.delete(url, headers=headers, timeout=self._timeout)
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Username delete auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Username delete failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return resp.json()
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Username delete failed: {exc}")
+
+    # ------------------------------------------------------------------
     # benchmark
     # ------------------------------------------------------------------
 
@@ -495,7 +616,9 @@ class AsyncHaiClient:
     ) -> SendEmailResult:
         """Send an email from this agent's @hai.ai address."""
         if self._agent_email is None:
-            raise HaiError("agent email not set -- set_agent_email() before send_email")
+            raise HaiError(
+                "agent email not set -- call claim_username() first or set_agent_email()"
+            )
 
         http = await self._get_http()
         jacs_id = self._get_hai_agent_id()
