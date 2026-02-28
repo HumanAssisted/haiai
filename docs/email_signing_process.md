@@ -1,5 +1,13 @@
 # JACS Email Signature: Signing and Verification Process
 
+## Target Users
+
+AI agents that understand JACS. The JACS email signing system is designed for
+agent-to-agent communication where both sender and recipient use JACS for
+identity and trust. The HAI server uses the same JACS verification functions as
+the recipient — there is no separate "server-side" vs "client-side" verification
+path.
+
 ## Overview
 
 JACS email signatures use a **detached signature** model. A standard JACS
@@ -16,6 +24,10 @@ This separation means multi-algorithm support, DNS verification, and registry
 lookup are handled entirely by the JACS layer. The email-specific code only
 needs to compute hashes and compare them.
 
+The JACS attachment is the **only** signing method. The legacy `X-JACS-Signature`
+header (v1/v2) is deprecated and must not be used in new implementations. See
+the **Deprecation** section for migration details.
+
 ---
 
 ## Trust Chain
@@ -28,15 +40,18 @@ needs to compute hashes and compare them.
 │                                                     │
 │     a. Parse jacs-signature.json as JacsDocument    │
 │     b. Verify document hash (SHA-256 of canonical   │
-│        payload)                                     │
-│     c. Verify cryptographic signature using the     │
-│        algorithm declared in signature.algorithm    │
-│        (ed25519, rsa-pss, or pq2025)               │
+│        payload via RFC 8785 / JCS)                  │
+│     c. Resolve the agent's public key and algorithm │
+│        using the agent ID version from              │
+│        metadata.issuer                              │
 │     d. Fetch public key from HAI registry           │
 │        GET /api/agents/keys/{from_email}            │
 │        → returns public_key, algorithm,             │
 │          reputation_tier                            │
-│     e. If reputation_tier is dns_certified or       │
+│     e. Verify cryptographic signature using the     │
+│        algorithm determined by the agent ID version │
+│        (ed25519, rsa-pss, or pq2025)               │
+│     f. If reputation_tier is dns_certified or       │
 │        fully_certified: verify public key hash      │
 │        against DNS TXT record at                    │
 │        _v1.agent.jacs.{domain}                     │
@@ -64,6 +79,21 @@ needs to compute hashes and compare them.
 
 ---
 
+## Algorithm Resolution
+
+The signing algorithm is **not** declared in the email or assumed by the
+verifier. It is determined by the **agent ID version** stored in
+`metadata.issuer`. The JACS agent ID encodes which key type and algorithm the
+agent uses. The verification flow resolves the public key and algorithm from
+the agent ID version, either via local JACS lookup or HAI registry.
+
+This means:
+- No algorithm field needs to be trusted from the email itself
+- Multi-algorithm support (Ed25519, RSA-PSS, PQ2025) is automatic
+- Key rotation is handled by the agent ID versioning system
+
+---
+
 ## Email Structure
 
 ```
@@ -75,16 +105,20 @@ Email:
 │   ├── Date: Thu, 27 Feb 2026 12:00:00 +0000
 │   ├── Message-ID: <abc123@example.com>
 │   ├── In-Reply-To: <prev456@example.com>          (if replying)
-│   ├── References: <orig789@example.com>            (if in thread)
-│   └── X-JACS-Signature: v=2; ...                   (optional fast-path)
+│   └── References: <orig789@example.com>            (if in thread)
 ├── multipart/mixed
 │   ├── multipart/alternative
 │   │   ├── text/plain                               (plain text body)
 │   │   └── text/html                                (HTML body)
 │   ├── report.pdf                                   (user attachment)
 │   ├── data.csv                                     (user attachment)
+│   ├── image001.png                                 (inline image)
 │   └── jacs-signature.json                          (DETACHED JACS SIGNATURE)
 ```
+
+The entire email is signed — headers, body (all MIME parts), all attachments
+including inline/embedded images. Content must be properly encoded without
+modification. The JACS signature covers exactly what the sender composed.
 
 ---
 
@@ -138,14 +172,14 @@ can display what was originally signed even if the email was tampered with).
     "parent_signature_hash": null
   },
   "metadata": {
-    "issuer": "<agent-jacs-id>",
+    "issuer": "<agent-jacs-id-with-version>",
     "document_id": "<uuid>",
     "created_at": "<ISO 8601>",
-    "hash": "sha256:<hex of canonical payload>"
+    "hash": "sha256:<hex of RFC 8785 canonical payload>"
   },
   "signature": {
-    "key_id": "hai-pq2025-001",
-    "algorithm": "pq2025",
+    "key_id": "<agent-key-id>",
+    "algorithm": "<resolved-from-agent-id-version>",
     "signature": "<base64>",
     "signed_at": "<ISO 8601>"
   }
@@ -192,8 +226,8 @@ verified.
 
 ### Attachment Hashes
 
-Each non-JACS attachment is hashed and the list is sorted lexicographically
-for determinism:
+Each non-JACS attachment is hashed — including inline/embedded images — and
+the list is sorted lexicographically for determinism:
 
 ```
 attachment_hash = sha256(filename + ":" + content_type + ":" + raw_bytes)
@@ -201,6 +235,9 @@ attachment_hashes = sort([hash_1, hash_2, ...])
 ```
 
 The `jacs-signature.json` attachment itself is excluded from the list.
+Attachments must be properly MIME-decoded before hashing (see
+**Canonicalization Profile**). Maximum email size including all attachments
+is **25 MB**.
 
 ### Parent Signature Hash (Forwarding Chain)
 
@@ -210,62 +247,158 @@ document includes `parent_signature_hash` — the SHA-256 hash of the previous
 
 ---
 
+## Canonicalization Profile (Normative)
+
+All implementations MUST follow this canonicalization profile exactly.
+Without strict rules, independent implementations will compute different
+hashes for the same semantic email. This profile is enforced on both sign
+and verify paths.
+
+### 1. Message Parsing
+
+- Parse as RFC 5322 + MIME.
+- If message is malformed/ambiguous, fail with `InvalidEmailFormat` error
+  (no best-effort mode).
+
+### 2. JACS JSON Canonicalization
+
+- Canonicalize the JACS payload with **RFC 8785 (JCS)** before
+  `metadata.hash` and signature generation/verification.
+- Use JACS library's `serde_json_canonicalizer` (Rust) or equivalent.
+  Do NOT use simple key-sorting — RFC 8785 also handles number
+  serialization and Unicode escape normalization.
+
+### 3. Header Canonicalization (for signed headers)
+
+- Use DKIM-style relaxed normalization:
+  - lowercase header name
+  - unfold continuation lines
+  - compress WSP runs to one SP
+  - trim leading/trailing WSP
+- For required singleton headers (`From`, `Date`, `Message-ID`): if
+  duplicates exist, fail as ambiguous.
+- For optional headers (`In-Reply-To`, `References`): if absent, field is
+  `null`; if duplicated unexpectedly, fail as ambiguous.
+- Decode RFC 2047 encoded words before hashing, then UTF-8 NFC normalize.
+
+### 4. Body-Part Canonicalization (`text/plain`, `text/html`)
+
+- MIME decode `Content-Transfer-Encoding`.
+- Convert charset to UTF-8 (if declared/parseable; else fail).
+- Normalize line endings to `\n`.
+- Hash resulting bytes exactly.
+
+### 5. Attachment Canonicalization
+
+- MIME decode `Content-Transfer-Encoding` to raw attachment bytes.
+- Do not transcode payload bytes after decode.
+- Canonical hash input:
+  `sha256(filename_utf8_nfc + ":" + content_type_lower + ":" + raw_bytes)`.
+- Exclude only the active `jacs-signature.json` attachment from
+  `attachment_hashes`.
+- Inline/embedded images (Content-Disposition: inline) are treated as
+  attachments for hashing purposes.
+
+### 6. Determinism Tests
+
+- Shared cross-language fixtures MUST include tricky cases:
+  folded headers, RFC 2047 subjects, mixed charsets, quoted-printable vs
+  base64 bodies, duplicate headers, Unicode normalization edge cases.
+
+---
+
 ## Signing Flow (Sender)
 
 ```
-1. Compose the email (headers, body, attachments)
+1. Accept the raw RFC 5322 email as bytes
 
-2. Compute hashes:
+2. Parse and canonicalize:
+   a. Parse the raw email using mail-parser (read-only)
+   b. Apply the canonicalization profile to extract clean values
+
+3. Compute hashes:
    a. For each header (From, To, Subject, Date, Message-ID,
       In-Reply-To, References):
-      - Store the raw value
+      - Store the canonicalized value
       - Compute sha256(value) — lowercase From and To before hashing
    b. Hash the text/plain body → body_hash_plain
    c. Hash the text/html body  → body_hash_html
-   d. Hash each attachment (filename:content_type:data), sort the hashes
+   d. Hash each attachment including inline images
+      (filename:content_type:data), sort the hashes
    e. Set parent_signature_hash = null (unless forwarding, see below)
 
-3. Build the JACS document payload with headers (value + hash),
+4. Build the JACS document payload with headers (value + hash),
    body hashes, and attachment hashes
 
-4. Sign the JACS document using the agent's private key:
-   - Canonicalize the payload (sorted keys, no whitespace)
+5. Sign the JACS document using the agent's private key:
+   - Canonicalize the payload via RFC 8785 (JCS)
    - Compute metadata.hash = sha256(canonical_payload)
-   - Sign using the agent's key (algorithm stored in signature.algorithm)
-   - The algorithm is NOT assumed — it comes from the agent's key type
+   - Resolve algorithm from the agent's ID version
+   - Sign using the agent's key
 
-5. Attach jacs-signature.json to the email
+6. Attach jacs-signature.json to the email via raw byte injection:
+   - Find the outermost MIME boundary
+   - Insert new MIME part before closing boundary
+   - If email is not multipart/mixed, wrap it first
    Content-Type: application/json; name="jacs-signature.json"
    Content-Disposition: attachment; filename="jacs-signature.json"
-
-6. (Optional) Add X-JACS-Signature header as a fast-path hint
 ```
+
+### MIME Attachment Injection
+
+The `sign_email` function works at the raw byte level to preserve the
+original email content exactly:
+
+1. **Already `multipart/mixed` at top level**: Find the closing boundary
+   (`--{boundary}--`) and insert the JACS attachment part before it.
+2. **`multipart/alternative` at top level** (text + html, no attachments):
+   Wrap in a new `multipart/mixed` envelope.
+3. **Single-part** (`text/plain` or `text/html` only): Wrap in a new
+   `multipart/mixed` envelope.
+
+For cases 2 and 3, the original content becomes the first part of the new
+`multipart/mixed`, and the JACS attachment is added as the second part.
+The key invariant: **hash body parts AFTER parsing but BEFORE
+reconstruction.** The verifier also parses and then hashes. As long as both
+sides use the same canonicalization profile, reconstruction does not break
+verification.
+
+Do NOT use `mail-builder` or any library that re-serializes the full email.
+Re-serialization alters boundary strings, header ordering, whitespace, and
+Content-Transfer-Encoding, which breaks hash verification.
 
 ---
 
 ## Verification Flow (Receiver)
 
 ```
-1. Find the jacs-signature.json attachment in the email
-   - If not found, fall back to X-JACS-Signature header (legacy v1/v2)
+1. Accept the raw RFC 5322 email as bytes
+
+2. Find the jacs-signature.json attachment in the email
+   - If not found, fail — JACS attachment is required
    - If multiple jacs-signature.json files exist, this is a forwarding
      chain — see below
 
-2. Validate the JACS document (standard JACS verification):
+3. Remove the jacs-signature.json attachment for content verification
+   (the signature covers the email WITHOUT itself)
+
+4. Validate the JACS document (standard JACS verification):
    a. Parse the JSON as a JacsDocument
    b. Verify the document hash:
-      - Canonicalize payload → SHA-256 → compare to metadata.hash
+      - Canonicalize payload via RFC 8785 → SHA-256 → compare to
+        metadata.hash
    c. Identify the signer:
-      - Extract metadata.issuer (the agent's JACS ID)
-   d. Fetch the public key from HAI registry:
+      - Extract metadata.issuer (the agent's JACS ID with version)
+   d. Resolve the public key and algorithm from the agent ID version
+   e. Fetch the public key from HAI registry:
       - GET /api/agents/keys/{payload.headers.from.value}
       - Response: public_key, algorithm, reputation_tier
-   e. Verify algorithm matches:
-      - signature.algorithm must match the registry's algorithm
-   f. Verify the cryptographic signature:
-      - Use the algorithm from the JACS document
-      - The key type is NOT hardcoded
-   g. If reputation_tier is "dns_certified" or "fully_certified":
+   f. Verify identity binding:
+      - metadata.issuer must match registry.jacs_id
+      - payload.headers.from.value must match registry email
+   g. Verify the cryptographic signature:
+      - Use the algorithm resolved from the agent ID version
+   h. If reputation_tier is "dns_certified" or "fully_certified":
       - Extract domain from the From email
       - Query DNS TXT at _v1.agent.jacs.{domain}
       - Compute sha256(public_key_pem_bytes), base64 encode
@@ -274,9 +407,11 @@ document includes `parent_signature_hash` — the SHA-256 hash of the previous
 
    The JACS document is now trusted. Its payload can be used.
 
-3. Validate email contents against the trusted payload:
+5. Parse and canonicalize the email content (same profile as signing)
+
+6. Validate email contents against the trusted payload:
    a. For each header in payload.headers:
-      - Recompute sha256(actual_header_value)
+      - Recompute sha256(canonicalized_header_value)
       - Compare to payload.headers.{field}.hash
       - On mismatch: report tampered field, show original value
         from payload.headers.{field}.value vs current value
@@ -291,7 +426,7 @@ document includes `parent_signature_hash` — the SHA-256 hash of the previous
       - Compare to payload.attachment_hashes
    d. Check parent_signature_hash for forwarding chain (see below)
 
-4. Return verification result:
+7. Return verification result:
    - valid: true/false
    - jacs_id: the signer's agent ID
    - algorithm: the algorithm used
@@ -306,9 +441,10 @@ document includes `parent_signature_hash` — the SHA-256 hash of the previous
 
 ## Forwarding Chain
 
-When a JACS-signing agent forwards an email, it creates a **new** JACS
-signature document that wraps the previous one. This creates a verifiable chain
-of custody: original signer → forwarder → recipient.
+When a JACS-signing agent forwards an email, it wraps the original email in a
+new one and creates a **new** JACS signature document. The new signature
+references the previous one via `parent_signature_hash`. This creates a
+verifiable chain of custody: original signer → forwarder → recipient.
 
 ### How it works
 
@@ -354,7 +490,7 @@ Agent B forwards to Agent C:
    b. Rename Agent A's attachment to jacs-signature-0.json
       (or jacs-signature-{N}.json for deeper chains)
 
-3. Compose the forwarded email (new headers, possibly new body)
+3. Wrap the original email in a new forwarded email (new headers, new body)
 
 4. Build Agent B's JACS document:
    - Hash the NEW headers (Agent B's From, new To, etc.)
@@ -375,11 +511,12 @@ Agent B forwards to Agent C:
 3. Validate email contents against Agent B's payload
 
 4. If parent_signature_hash is not null:
-   a. Find jacs-signature-0.json (or iterate jacs-signature-{N}.json)
-   b. Compute sha256(raw bytes of that file)
-   c. Compare to parent_signature_hash → must match
-   d. Recursively validate the parent JACS document
-   e. Continue until parent_signature_hash is null (the original)
+   a. Find candidate parent documents among attachments
+   b. Compute sha256(raw bytes) of each candidate
+   c. Match by parent_signature_hash value (NOT by filename alone)
+   d. If no match or multiple matches → fail chain validation
+   e. Recursively validate the parent JACS document
+   f. Continue until parent_signature_hash is null (the original)
 
 5. Return the full chain:
    [
@@ -398,6 +535,67 @@ Agent B forwards to Agent C:
 - The original signer's raw header values are preserved in their JACS
   document, so even if headers changed during forwarding, the verifier
   can recover the original values
+- Parent resolution is by `parent_signature_hash` matching raw bytes,
+  not by filename alone
+- Exactly one active `jacs-signature.json` (latest signer) is required
+
+---
+
+## JACS Attachment Operations
+
+The JACS email module provides three core operations on raw RFC 5322 emails:
+
+| Operation | Purpose |
+|-----------|---------|
+| `add_jacs_attachment(email, doc)` | Attach `jacs-signature.json` to raw email via byte-level MIME injection |
+| `get_jacs_attachment(email)` | Extract `jacs-signature.json` from raw email without modifying it |
+| `remove_jacs_attachment(email)` | Remove `jacs-signature.json` for content hash verification |
+
+These operations work on raw bytes (`&[u8]` in Rust) and preserve the
+original email content exactly. They are used by both the JACS library
+and the HAI API.
+
+---
+
+## Error Taxonomy
+
+All implementations must use consistent error types:
+
+| Error | When |
+|-------|------|
+| `InvalidEmailFormat` | Raw email is not valid RFC 5322 / MIME |
+| `CanonicalizationFailed` | Email is ambiguous or unparseable per strict canonicalization profile |
+| `MissingJacsSignature` | No `jacs-signature.json` attachment found |
+| `InvalidJacsDocument` | JACS document fails hash or structural validation |
+| `SignatureVerificationFailed` | Cryptographic signature does not verify |
+| `SignerKeyNotFound` | Registry lookup for agent's public key failed |
+| `IdentityMismatch` | metadata.issuer or from header doesn't match registry |
+| `DNSVerificationFailed` | DNS TXT record check failed |
+| `ContentTampered` | One or more email content hashes don't match payload |
+| `ChainVerificationFailed` | Parent signature hash mismatch in forwarding chain |
+| `ReplayDetected` | Duplicate message within replay detection TTL |
+| `EmailTooLarge` | Email exceeds 25 MB limit |
+
+---
+
+## Identity Binding (Normative)
+
+Verification MUST enforce these invariants:
+
+1. `metadata.issuer` must match `registry.jacs_id` for the claimed agent
+2. `payload.headers.from.value` must match the registered email for
+   `registry.jacs_id`
+3. If DNS policy requires verification, the DNS TXT binding must match
+   the same agent ID and key hash — do not rely on `reputation_tier` alone
+
+---
+
+## Replay Detection
+
+- Max accepted age: 24 hours
+- Max future skew: 5 minutes
+- Replay cache key: `issuer + message_id + metadata.hash`
+- On duplicate cache hit within TTL: fail with `ReplayDetected`
 
 ---
 
@@ -405,21 +603,22 @@ Agent B forwards to Agent C:
 
 ### Multi-algorithm support comes for free
 
-The JACS document's `signature.algorithm` field declares the algorithm. The
-standard JACS verification path already handles Ed25519, RSA-PSS, and PQ2025.
-Email verification code does not need its own algorithm dispatch.
+The agent ID version determines the algorithm. The standard JACS verification
+path already handles Ed25519, RSA-PSS, and PQ2025. Email verification code
+does not need its own algorithm dispatch.
 
 ### Survives email forwarding
 
-X-headers are stripped when emails are forwarded. Attachments are preserved by
-all major email providers. The `jacs-signature.json` attachment survives
-forwarding, making verification possible even after the email has been relayed.
+Attachments are preserved by all major email providers. The
+`jacs-signature.json` attachment survives forwarding, making verification
+possible even after the email has been relayed.
 
 ### Chain of custody for forwarding
 
 The `parent_signature_hash` field creates a tamper-evident chain. Each
-forwarder signs a new JACS document that references the previous one. The full
-chain can be verified back to the original sender.
+forwarder wraps the original email and signs a new JACS document that
+references the previous one. The full chain can be verified back to the
+original sender.
 
 ### Clean separation of concerns
 
@@ -453,34 +652,11 @@ the registry check. Both must agree.
 
 ---
 
-## Backward Compatibility
-
-### X-JACS-Signature header (legacy / fast-path)
-
-For backward compatibility and as an optimization for direct delivery, the
-`X-JACS-Signature` header is still supported:
-
-```
-X-JACS-Signature: v=2; a=ed25519; id={jacsId}; from={email};
-                  h={content_hash}; jv={jacs_version}; t={timestamp};
-                  s={base64_signature}
-```
-
-The verification flow checks for `jacs-signature.json` first. If not found, it
-falls back to the header-based flow (v1/v2). The header-based flow is limited:
-
-- Algorithm is declared in `a=` but SDK verification must read it from the
-  registry rather than trusting the header
-- Does not survive forwarding (headers are stripped)
-- Cannot include per-field hashes (limited header space)
-- Cannot include raw header values for forensics
-
-New implementations should produce both the attachment and the header. Verifiers
-should prefer the attachment when present.
-
----
-
 ## Relationship to PGP/MIME and DKIM
+
+JACS email signatures are **complementary** to DKIM/ARC, not a replacement.
+DKIM validates domain-level sending authority. JACS validates agent-level
+identity and content integrity. Both can coexist on the same email.
 
 | Property | JACS Email | PGP/MIME | DKIM |
 |----------|-----------|----------|------|
@@ -489,7 +665,7 @@ should prefer the attachment when present.
 | Survives forwarding | Yes (attachment preserved) | Yes (MIME part preserved) | No (header + body may change) |
 | Forwarding chain | Yes (parent_signature_hash) | No | ARC (separate standard) |
 | Identity model | Agent registry + DNS TXT | Web of Trust / key servers | Domain DNS (selector._domainkey) |
-| Algorithm agility | Yes (declared in JACS doc) | Yes (declared in signature) | Yes (declared in header) |
+| Algorithm agility | Yes (from agent ID version) | Yes (declared in signature) | Yes (declared in header) |
 | Proves sender identity | Via registry + DNS | Via key fingerprint trust | Via domain ownership |
 | Signs From: header | Yes (hashed + raw value) | No | Yes |
 | Signs other headers | Yes (To, Subject, Date, Message-ID, threading) | No | Configurable |
@@ -502,10 +678,6 @@ should prefer the attachment when present.
 | Method | Direct delivery | Forward | Reply | Reliability |
 |--------|----------------|---------|-------|-------------|
 | JSON attachment | Preserved | Preserved | Lost | High |
-| X-JACS-Signature header | Preserved | Lost | Lost | Medium |
-| Hidden HTML div | Mostly preserved | Preserved in quoted body | Preserved | Low (Outlook issues) |
-| HTML comments | Stripped by Gmail/Yahoo | N/A | N/A | None |
-| data-* attributes | Stripped by Gmail | N/A | N/A | None |
 
 The JSON attachment is the only method that reliably survives forwarding across
 all major providers (Gmail, Outlook, Yahoo, ProtonMail).
@@ -532,6 +704,30 @@ jacs-signature.json      ← most recent signer (always this name)
 
 ---
 
+## Deprecation: X-JACS-Signature Header (v1/v2)
+
+The `X-JACS-Signature` header-based signing flow (v1 and v2) is **immediately
+deprecated**. All implementations must:
+
+1. **Stop producing** `X-JACS-Signature` headers
+2. **Stop verifying** `X-JACS-Signature` headers
+3. **Remove** header-based signing code paths (e.g., `verify_email_signature()`
+   in Python/Node/Rust/Go, `computeContentHash()` for signing purposes)
+4. **Use only** the `jacs-signature.json` attachment model
+
+The `sendEmail()` methods in all SDKs must be updated to use the JACS
+attachment signing flow. The existing `computeContentHash()` function and
+v1/v2 header generation code are removed.
+
+Header-based signing had these limitations that made it unsuitable:
+- Did not survive forwarding (headers stripped)
+- Could not include per-field hashes (limited header space)
+- Could not include raw header values for forensics
+- Hardcoded Ed25519 in all SDK implementations
+- Algorithm declared in `a=` field was untrusted
+
+---
+
 ## Implementation Plan
 
 ### Principles
@@ -539,7 +735,7 @@ jacs-signature.json      ← most recent signer (always this name)
 **DRY (Don't Repeat Yourself):** The core email signing and verification logic
 is implemented once in the JACS library (neutral, no HAI dependency). haisdk
 wraps it to add HAI-specific trust chain (registry lookup, DNS verification).
-Each SDK language calls the hai API rather than reimplementing crypto.
+The HAI API uses the same JACS functions as the SDK clients.
 
 **TDD (Test-Driven Development):** A shared test fixture suite of raw RFC 5322
 emails is created first. Tests are written before implementation. All SDKs run
@@ -552,15 +748,18 @@ them without depending on HAI:
 
 ```rust
 // In JACS library (neutral — no HAI, no network)
+// All functions operate on raw bytes (&[u8]), not &str.
+// RFC 5322 emails are byte streams, not valid UTF-8.
 
 /// Sign a raw RFC 5322 email, return the email with jacs-signature.json attached.
-pub fn sign_email(raw_email: &str, signer: &dyn JacsSigner) -> Result<String>
+/// Uses raw byte MIME injection — does NOT re-serialize the email.
+pub fn sign_email(raw_email: &[u8], signer: &dyn JacsProvider) -> Result<Vec<u8>>
 
 /// Extract and validate the JACS document from an email.
-/// Verifies document hash + cryptographic signature. No network calls.
-/// The caller provides the public key.
+/// Verifies document hash (via RFC 8785) + cryptographic signature.
+/// No network calls. The caller provides the public key.
 pub fn verify_email_document(
-    raw_email: &str,
+    raw_email: &[u8],
     public_key_pem: &str,
 ) -> Result<(JacsEmailSignatureDocument, ParsedEmailParts)>
 
@@ -570,6 +769,11 @@ pub fn verify_email_content(
     doc: &JacsEmailSignatureDocument,
     parts: &ParsedEmailParts,
 ) -> ContentVerificationResult
+
+/// JACS attachment operations (used by sign and verify)
+pub fn add_jacs_attachment(raw_email: &[u8], doc: &[u8]) -> Result<Vec<u8>>
+pub fn get_jacs_attachment(raw_email: &[u8]) -> Result<Vec<u8>>
+pub fn remove_jacs_attachment(raw_email: &[u8]) -> Result<Vec<u8>>
 ```
 
 The **haisdk** wraps these to add HAI trust chain:
@@ -580,7 +784,7 @@ The **haisdk** wraps these to add HAI trust chain:
 /// Full email verification: JACS document validation + HAI registry
 /// lookup + DNS check + content hash comparison.
 pub async fn verify_email(
-    raw_email: &str,
+    raw_email: &[u8],
     hai_url: &str,
 ) -> EmailVerificationResultV2
 ```
@@ -590,8 +794,31 @@ This separation means:
 - **Any email client** can call `jacs::sign_email()` and
   `jacs::verify_email_document()` directly without HAI
 - **HAI users** call `haisdk::verify_email()` which adds registry + DNS
+- **The HAI API** uses the same JACS functions — same code path as clients
 - The JACS library never makes network calls
 - haisdk never reimplements crypto or MIME parsing
+
+### Extending `JacsProvider` (not a new trait)
+
+The existing `JacsProvider` trait in haisdk must be extended with the
+fields needed for email signing. Do NOT create a separate `JacsSigner` trait:
+
+```rust
+pub trait JacsProvider: Send + Sync {
+    // Existing methods
+    fn jacs_id(&self) -> &str;
+    fn sign_string(&self, message: &str) -> Result<String>;
+    fn canonical_json(&self, value: &Value) -> Result<String>;
+    fn sign_response(&self, payload: &Value) -> Result<SignedPayload>;
+
+    // New methods for email signing
+    fn sign_bytes(&self, data: &[u8]) -> Result<Vec<u8>>;
+    fn key_id(&self) -> &str;
+    fn algorithm(&self) -> &str;   // resolved from agent ID version
+}
+```
+
+`SimpleAgent` in JACS needs a `key_id()` accessor added.
 
 ### Test Fixture Suite
 
@@ -606,8 +833,10 @@ contract/email_fixtures/
 ├── with_inline_images.eml       # body + inline image attachments
 ├── threaded_reply.eml           # In-Reply-To + References headers
 ├── forwarded_chain.eml          # email with jacs-signature-0.json + jacs-signature.json
-├── unicode_headers.eml          # non-ASCII subject and body
-├── large_attachment.eml          # attachment near provider size limits
+├── unicode_headers.eml          # non-ASCII subject and body (RFC 2047, NFC edge cases)
+├── folded_headers.eml           # continuation lines, WSP normalization
+├── mixed_charsets.eml           # quoted-printable vs base64 bodies
+├── embedded_images.eml          # inline Content-Disposition images
 └── README.md                    # describes each fixture and expected results
 ```
 
@@ -629,14 +858,16 @@ contract/email_fixtures/expected/
 | `sign_roundtrip` | `simple_text.eml` | Sign → verify → `valid: true`, zero tampered fields |
 | `sign_multipart` | `multipart_alternative.eml` | Both body_hash_plain and body_hash_html are populated |
 | `sign_attachments` | `with_attachments.eml` | Attachment hashes are sorted and correct |
+| `sign_inline_images` | `embedded_images.eml` | Inline images are hashed as attachments |
 | `tamper_header` | `simple_text.eml` | Sign, modify From, verify → `tampered_fields` contains `headers.from` |
 | `tamper_body` | `simple_text.eml` | Sign, modify body, verify → `tampered_fields` contains `body_plain` |
 | `tamper_attachment` | `with_attachments.eml` | Sign, modify attachment, verify → attachment hash mismatch |
 | `strip_body_part` | `multipart_alternative.eml` | Sign, strip text/plain, verify → html valid, plain "unverifiable" |
 | `forwarding_chain` | `forwarded_chain.eml` | Verify full chain, both signers valid |
 | `broken_chain` | `forwarded_chain.eml` | Tamper parent attachment → chain validation failure |
-| `multi_algorithm` | `simple_text.eml` | Sign with RSA-PSS, verify → algorithm field correct |
-| `legacy_fallback` | header-only email | No attachment, falls back to X-JACS-Signature v1/v2 |
+| `multi_algorithm` | `simple_text.eml` | Sign with RSA-PSS, verify → algorithm resolved from agent ID |
+| `canonicalization` | `folded_headers.eml`, `unicode_headers.eml`, `mixed_charsets.eml` | Cross-language hash agreement |
+| `missing_signature` | plain email (no attachment) | Verify → `MissingJacsSignature` error |
 | `cross_language` | all fixtures | Same fixture produces identical hashes in Rust, Python, Node, Go |
 
 ### Phase 1: JACS library (neutral core)
@@ -644,12 +875,16 @@ contract/email_fixtures/expected/
 **New crate dependencies** (in JACS `Cargo.toml`):
 
 ```toml
-mail-parser = "0.9"      # RFC 5322 parsing (read-only, zero-copy)
-mail-builder = "0.3"     # MIME construction (for reattaching)
+mail-parser = "0.9"              # RFC 5322 parsing (read-only, zero-copy)
+unicode-normalization = "0.1"    # UTF-8 NFC normalization for canonicalization
 ```
 
-The JACS library already has SHA-256 and signing capabilities. The new
-module adds MIME handling on top.
+Do NOT add `mail-builder`. MIME attachment injection is implemented as raw
+byte manipulation (see **MIME Attachment Injection** above).
+
+The JACS library already has SHA-256, signing capabilities, and
+`serde_json_canonicalizer` for RFC 8785. The new module adds MIME handling
+on top.
 
 ### Phase 2: haisdk Rust wrapper
 
@@ -662,15 +897,14 @@ module and adds HAI-specific logic on top.
 jacs = { path = "..." }  # already a dependency — gains email module
 ```
 
-No need for `mail-parser` or `mail-builder` in haisdk — those live in JACS.
+No need for `mail-parser` in haisdk — that lives in JACS.
 
 **New types** (`rust/haisdk/src/types.rs`) — HAI-specific result types only.
 The core types (`EmailSignaturePayload`, `JacsEmailSignatureDocument`, etc.)
 are defined in JACS and re-exported:
 
 ```rust
-// These types are defined in the JACS library (neutral).
-// haisdk re-exports them and adds HAI-specific result types.
+// Core types defined in JACS library (neutral), re-exported by haisdk.
 
 pub struct SignedHeaderEntry {
     pub value: String,           // raw header value
@@ -703,8 +937,8 @@ pub struct JacsEmailSignatureDocument {
     pub signature: JacsEmailSignature,
 }
 
-// This type is HAI-specific (defined in haisdk, not JACS).
-// It wraps the JACS ContentVerificationResult and adds registry + DNS fields.
+// HAI-specific type (defined in haisdk, not JACS).
+// Wraps the JACS ContentVerificationResult and adds registry + DNS fields.
 pub struct EmailVerificationResultV2 {
     pub valid: bool,
     pub jacs_id: String,
@@ -741,11 +975,14 @@ pub struct ChainEntry {
 | `verify_email_document()` | Extract JACS attachment → verify hash + signature |
 | `verify_email_content()` | Compare payload hashes against actual email |
 | `extract_email_parts()` | Parse raw RFC 5322 → headers, body parts, attachments |
-| `compute_header_entry()` | Hash a header value (lowercase From/To) |
-| `compute_body_hash()` | SHA-256 of body content |
-| `compute_attachment_hash()` | SHA-256 of `filename:content_type:data` |
+| `canonicalize_header()` | DKIM-style relaxed normalization + RFC 2047 decode + NFC |
+| `compute_header_entry()` | Hash a canonicalized header value |
+| `compute_body_hash()` | SHA-256 of canonicalized body content |
+| `compute_attachment_hash()` | SHA-256 of `filename_nfc:content_type_lower:raw_bytes` |
 | `build_jacs_email_document()` | Assemble the JACS document from payload + sign |
-| `attach_jacs_signature_to_email()` | Append attachment to raw MIME |
+| `add_jacs_attachment()` | Inject attachment into raw MIME via byte manipulation |
+| `get_jacs_attachment()` | Extract jacs-signature.json from raw email |
+| `remove_jacs_attachment()` | Remove jacs-signature.json for verification |
 
 **haisdk wrapper module** (`rust/haisdk/src/email.rs`) — HAI trust chain only:
 
@@ -759,10 +996,11 @@ pub struct ChainEntry {
 
 | File | Change |
 |------|--------|
-| `jacs/src/email.rs` | **NEW** — `sign_email`, `verify_email_document`, `verify_email_content` + all helpers |
+| `jacs/src/email.rs` | **NEW** — all email functions (sign, verify, MIME ops, canonicalization) |
 | `jacs/src/lib.rs` | Add `pub mod email;` |
 | `jacs/src/types.rs` (or inline) | Add `SignedHeaderEntry`, `EmailSignaturePayload`, `EmailSignatureHeaders`, `JacsEmailSignatureDocument`, `ParsedEmailParts`, `ContentVerificationResult` |
-| `jacs/Cargo.toml` | Add `mail-parser`, `mail-builder` |
+| `jacs/Cargo.toml` | Add `mail-parser`, `unicode-normalization` |
+| `jacs/src/simple.rs` | Add `key_id()` accessor to `SimpleAgent` |
 
 **Files changed — haisdk:**
 
@@ -771,101 +1009,156 @@ pub struct ChainEntry {
 | `rust/haisdk/src/email.rs` | **NEW** — `verify_email()` wrapper (HAI trust chain) |
 | `rust/haisdk/src/types.rs` | Add `EmailVerificationResultV2`, `TamperedField`, `ChainEntry`; re-export JACS types |
 | `rust/haisdk/src/lib.rs` | Add `pub mod email;` + re-exports |
-| `rust/haisdk/src/verify.rs` | Extract `fetch_public_key_from_registry()` into shared helper |
-
-**`JacsSigner` trait** (in JACS library):
-
-`sign_email()` needs access to `key_id` and `algorithm` to populate the JACS
-document's signature fields. The JACS library should define a `JacsSigner`
-trait:
-
-```rust
-pub trait JacsSigner {
-    fn sign_bytes(&self, data: &[u8]) -> Result<Vec<u8>>;
-    fn key_id(&self) -> &str;
-    fn algorithm(&self) -> &str;   // "ed25519", "rsa-pss", "pq2025"
-    fn agent_id(&self) -> &str;    // JACS ID (for metadata.issuer)
-}
-```
-
-The existing `SimpleAgent` in JACS already knows all four values. haisdk's
-`LocalJacsProvider` wraps `SimpleAgent` and implements this trait.
-
-**MIME reconstruction note:**
-
-Rebuilding a MIME email from parsed parts can alter whitespace, header
-ordering, and encoding. The `sign_email` function should ideally work at the
-raw byte level — finding the final MIME boundary and inserting a new part
-before the closing boundary — rather than fully re-serializing via
-`mail-builder`. This preserves the original email byte-for-byte and only
-appends the new attachment.
+| `rust/haisdk/src/jacs.rs` | Extend `JacsProvider` trait with `sign_bytes()`, `key_id()`, `algorithm()` |
+| `rust/haisdk/src/verify.rs` | Remove legacy `verify_email_signature()` header-based flow |
 
 ### Phase 3: hai API endpoints
 
-Add two new endpoints. The hai API already depends on the JACS library
-directly, so it calls `jacs::email::sign_email()` and
-`jacs::email::verify_email_document()` with its own `HaiSigningAuthority`
-(which implements `JacsSigner`). For the full HAI trust chain (registry + DNS),
-it uses haisdk's `verify_email()` wrapper.
+Add two new endpoints. The hai API uses the **same JACS library functions**
+as the SDK clients — there is no separate server-side verification path.
 
 ```
 POST /api/v1/email/sign
-  Body: { "raw_email": "<RFC 5322 string>" }
-  Response: { "signed_email": "<RFC 5322 string with jacs-signature.json>" }
+  Body: { "raw_email": "<base64-encoded RFC 5322 bytes>" }
+  Response: { "signed_email": "<base64-encoded RFC 5322 bytes with jacs-signature.json>" }
 
 POST /api/v1/email/verify
-  Body: { "raw_email": "<RFC 5322 string>" }
+  Body: { "raw_email": "<base64-encoded RFC 5322 bytes>" }
   Response: EmailVerificationResultV2
 ```
 
-The existing `jacs_email.rs` header-based flow is preserved as a fallback.
-`verify_email()` checks for `jacs-signature.json` first, falls back to
-X-JACS-Signature header if not found.
+The existing `sendEmail()` flow must be updated to use `sign_email()` from
+the JACS library internally. The legacy `jacs_email.rs` header-based flow
+is removed.
 
 **Files changed in hai:**
 
 | File | Change |
 |------|--------|
-| `hai/api/src/routes/agent_email.rs` | Add `/api/v1/email/sign` and `/api/v1/email/verify` |
-| `hai/api/src/hai_signing.rs` | Implement `JacsSigner` for `HaiSigningAuthority` |
-| `hai/api/src/jacs_email.rs` | Fallback logic: prefer attachment, fall back to headers |
+| `hai/api/src/routes/agent_email.rs` | Add `/api/v1/email/sign` and `/api/v1/email/verify`; update `send_email` to use JACS attachment signing |
+| `hai/api/src/hai_signing.rs` | Extend to implement full `JacsProvider` (add `sign_bytes`, `key_id`, `algorithm`) |
+| `hai/api/src/jacs_email.rs` | Remove header-based signing/verification code |
 
 ### Phase 4: SDK clients (Python, Node, Go)
 
-Each SDK calls the new hai API endpoints. This matches the existing SDK
-pattern — the SDKs are thin HTTP wrappers, not FFI bindings.
+Each SDK:
+1. Calls the new hai API endpoints for sign/verify
+2. Uses the JACS email parsing functions for client-side operations
+3. Updates `sendEmail()` to use JACS attachment signing
+4. Removes all header-based signing code (`computeContentHash()`,
+   `verify_email_signature()`, `X-JACS-Signature` generation)
 
 **Python** (`python/src/jacs/hai/client.py` and `async_client.py`):
 
 ```python
-def sign_email(self, raw_email: str, hai_url: str) -> str:
-    """POST /api/v1/email/sign → returns signed email string."""
+def sign_email(self, raw_email: bytes) -> bytes:
+    """POST /api/v1/email/sign → returns signed email bytes."""
 
-def verify_email(self, raw_email: str, hai_url: str) -> EmailVerificationResultV2:
+def verify_email(self, raw_email: bytes) -> EmailVerificationResultV2:
     """POST /api/v1/email/verify → returns verification result."""
 ```
+
+New types in `models.py`:
+
+```python
+@dataclass
+class TamperedField:
+    field: str
+    original_hash: str
+    current_hash: str
+    original_value: Optional[str] = None
+    current_value: Optional[str] = None
+
+@dataclass
+class ChainEntry:
+    signer: str
+    jacs_id: str
+    valid: bool
+    forwarded: bool = False
+
+@dataclass
+class EmailVerificationResultV2:
+    valid: bool
+    jacs_id: str
+    algorithm: str
+    reputation_tier: str
+    dns_verified: Optional[bool] = None
+    tampered_fields: list[TamperedField] = field(default_factory=list)
+    original_values: dict[str, str] = field(default_factory=dict)
+    chain: list[ChainEntry] = field(default_factory=list)
+    error: Optional[str] = None
+```
+
+Python `email.message.EmailMessage` objects are also accepted (converted
+via `msg.as_bytes()` before sending to the API), as long as tests pass.
 
 **Node** (`node/src/client.ts`):
 
 ```typescript
-async signEmail(rawEmail: string): Promise<string>
-async verifyEmail(rawEmail: string): Promise<EmailVerificationResultV2>
+async signEmail(rawEmail: Buffer): Promise<Buffer>
+async verifyEmail(rawEmail: Buffer): Promise<EmailVerificationResultV2>
+```
+
+New types in `types.ts`:
+
+```typescript
+interface TamperedField {
+  field: string;
+  originalHash: string;
+  currentHash: string;
+  originalValue?: string;
+  currentValue?: string;
+}
+
+interface ChainEntry {
+  signer: string;
+  jacsId: string;
+  valid: boolean;
+  forwarded: boolean;
+}
+
+interface EmailVerificationResultV2 {
+  valid: boolean;
+  jacsId: string;
+  algorithm: string;
+  reputationTier: string;
+  dnsVerified: boolean | null;
+  tamperedFields: TamperedField[];
+  originalValues: Record<string, string>;
+  chain: ChainEntry[];
+  error: string | null;
+}
 ```
 
 **Go** (`go/client.go`):
 
 ```go
-func (c *Client) SignEmail(ctx context.Context, rawEmail string) (string, error)
-func (c *Client) VerifyEmail(ctx context.Context, rawEmail string) (*EmailVerificationResultV2, error)
+func (c *Client) SignEmail(ctx context.Context, rawEmail []byte) ([]byte, error)
+func (c *Client) VerifyEmail(ctx context.Context, rawEmail []byte) (*EmailVerificationResultV2, error)
 ```
 
 **Files changed per SDK:**
 
-| SDK | Files |
-|-----|-------|
-| Python | `client.py`, `async_client.py`, `models.py` (add `EmailVerificationResultV2`) |
-| Node | `client.ts`, `types.ts` (add `EmailVerificationResultV2`) |
-| Go | `client.go`, `types.go` (add `EmailVerificationResultV2`) |
+| SDK | Files changed | Files removed/deprecated |
+|-----|---------------|------------------------|
+| Python | `client.py`, `async_client.py`, `models.py` | Remove `signing.py` header flow, `computeContentHash()` |
+| Node | `client.ts`, `types.ts` | Remove `signing.ts` header flow, `computeContentHash()` |
+| Go | `client.go`, `types.go` | Remove header-based signing in `email_verify.go` |
+
+### Phase 4 SDK Test Plan
+
+Each SDK must have these tests for the new attachment-based flow:
+
+| Test | What it validates |
+|------|-------------------|
+| `test_sign_email_roundtrip` | Sign a raw email, verify the result contains `jacs-signature.json` |
+| `test_verify_email_valid` | Verify a pre-signed email returns `valid=True` with correct fields |
+| `test_verify_email_tampered` | Modify a signed email, verify returns `tampered_fields` |
+| `test_verify_email_chain` | Verify a forwarded email returns chain entries |
+| `test_verify_email_missing_signature` | Email without attachment returns `MissingJacsSignature` |
+| `test_verify_email_network_error` | Server unreachable returns error gracefully |
+| `test_send_email_uses_jacs_attachment` | `sendEmail()` produces email with `jacs-signature.json` |
+| Async parity tests | All above repeated for async client (Python, Node) |
 
 ### Implementation Order (TDD)
 
@@ -874,132 +1167,28 @@ follows to make the tests pass.
 
 ```
  1. Create contract/email_fixtures/ with .eml files + expected results
- 2. Write test stubs in JACS: sign_roundtrip, tamper_*, forwarding_chain
- 3. Add mail-parser + mail-builder to JACS Cargo.toml
+ 2. Write test stubs in JACS: sign_roundtrip, tamper_*, forwarding_chain,
+    canonicalization
+ 3. Add mail-parser + unicode-normalization to JACS Cargo.toml
  4. Add types to JACS (SignedHeaderEntry, EmailSignaturePayload, etc.)
- 5. Define JacsSigner trait in JACS
- 6. Implement sign_email() in JACS — make roundtrip test pass
- 7. Implement verify_email_document() in JACS — make tamper tests pass
- 8. Implement verify_email_content() in JACS — make content comparison pass
- 9. Add forwarding chain support — make chain tests pass
-10. Wire haisdk wrapper: verify_email() with HAI registry + DNS
-11. Add hai API endpoints (Phase 3)
-12. Add HTTP wrappers to Python, Node, Go SDKs (Phase 4)
-13. Run cross-SDK contract tests against same fixtures
-14. Update this document with final API signatures
+ 5. Extend JacsProvider trait with sign_bytes(), key_id(), algorithm()
+ 6. Implement canonicalization functions in JACS
+ 7. Implement sign_email() in JACS — make roundtrip test pass
+ 8. Implement verify_email_document() in JACS — make tamper tests pass
+ 9. Implement verify_email_content() in JACS — make content comparison pass
+10. Add forwarding chain support — make chain tests pass
+11. Wire haisdk wrapper: verify_email() with HAI registry + DNS
+12. Remove legacy header-based signing from haisdk verify.rs
+13. Add hai API endpoints (Phase 3)
+14. Update sendEmail() in hai API to use JACS attachment signing
+15. Add HTTP wrappers to Python, Node, Go SDKs (Phase 4)
+16. Remove legacy header signing code from all SDKs
+17. Run cross-SDK contract tests against same fixtures
+18. Update this document with final API signatures
 ```
 
----
+### JACS Crate Publishing
 
-## Review Appendix (2026-02-27)
-
-This appendix captures a security/viability review of the plan. It is additive
-and does not change the implementation sequence above.
-
-### Summary
-
-- The detached-signature design is viable for authenticity/tamper evidence.
-- The largest risk is canonicalization ambiguity (P0): without strict rules,
-  independent implementations will disagree and can be bypassed.
-- Identity binding is mostly correct but needs explicit hard checks/policy.
-- Forwarding-chain and DNS semantics need tighter normative rules.
-
-### Critical Issue (P0): Canonicalization Ambiguity
-
-Current text says "hash headers/body/attachments" but does not fully define
-normalization behavior. RFC 5322/MIME allows many equivalent wire
-representations. If canonicalization is underspecified, two conforming
-implementations can compute different hashes for the same semantic email.
-
-#### P0 Solution (normative profile to add)
-
-Define one required canonicalization profile and enforce it everywhere (sign
-and verify), with golden fixtures.
-
-1. Message parsing
-   - Parse as RFC 5322 + MIME.
-   - If message is malformed/ambiguous, fail verification (no best-effort mode
-     in strict path).
-
-2. JACS JSON canonicalization
-   - Canonicalize the JACS payload with RFC 8785 (JCS) before `metadata.hash`
-     and signature generation/verification.
-
-3. Header canonicalization (for signed headers)
-   - Use DKIM-style relaxed normalization:
-     - lowercase header name
-     - unfold continuation lines
-     - compress WSP runs to one SP
-     - trim leading/trailing WSP
-   - For required singleton headers (`From`, `Date`, `Message-ID`): if
-     duplicates exist, fail as ambiguous.
-   - For optional headers (`In-Reply-To`, `References`): if absent, field is
-     `null`; if duplicated unexpectedly, fail as ambiguous.
-   - Decode RFC 2047 encoded words before hashing, then UTF-8 NFC normalize.
-
-4. Body-part canonicalization (`text/plain`, `text/html`)
-   - MIME decode `Content-Transfer-Encoding`.
-   - Convert charset to UTF-8 (if declared/parseable; else fail strict path).
-   - Normalize line endings to `\n`.
-   - Hash resulting bytes exactly.
-
-5. Attachment canonicalization
-   - MIME decode `Content-Transfer-Encoding` to raw attachment bytes.
-   - Do not transcode payload bytes after decode.
-   - Canonical hash input:
-     `sha256(filename_utf8_nfc + ":" + content_type_lower + ":" + raw_bytes)`.
-   - Exclude only the active `jacs-signature.json` attachment from
-     `attachment_hashes`.
-
-6. Determinism tests
-   - Shared cross-language fixtures MUST include tricky cases:
-     folded headers, RFC 2047 subjects, mixed charsets, quoted-printable vs
-     base64 bodies, duplicate headers, Unicode normalization edge cases.
-
-### High Issue (P1): Identity Binding and Policy Enforcement
-
-Add explicit verification invariants:
-
-1. `metadata.issuer == registry.jacs_id`
-2. `payload.headers.from.value` must match registry email for `registry.jacs_id`
-3. If DNS policy requires DNS, verify TXT binding for the same agent ID and key
-   hash; do not rely on `reputation_tier` alone.
-
-Recommendation: use an explicit verification policy enum (example:
-`local_only`, `registry_required`, `dns_required`, `dns_strict`) instead of
-tier-gated DNS checks.
-
-### High Issue (P1): Replay Detection Needs Concrete Rules
-
-"Date helps detect replay" is insufficient by itself. Add strict rules:
-
-- max accepted age (example: 24h) and max future skew (example: 5m)
-- replay cache key (example: `issuer + message_id + metadata.hash`)
-- on duplicate cache hit within TTL: fail/replay warning per policy
-
-### High Issue (P1): Forwarding Chain Selection Is Underspecified
-
-Current filename-based chain discovery can be ambiguous/spoofed.
-
-Add deterministic rules:
-
-- exactly one active `jacs-signature.json` (latest signer) is required
-- parent resolution must be by `parent_signature_hash` matching raw bytes, not
-  by filename alone
-- if multiple candidates match or none match, fail chain validation
-
-### Medium Issue (P2): Docs Accuracy / Consistency
-
-1. "Standard JACS document" wording should explicitly state whether this uses
-   existing `jacsSignature`/`jacsSha256` schema fields or a new email-specific
-   schema profile.
-2. DNS TXT field naming/encoding must match JACS DNS conventions exactly.
-3. If legacy header flow is being removed, remove fallback language from this
-   plan to avoid preserving unintended behavior.
-
-### Code Drift Note (current repositories vs this plan)
-
-- Plan targets detached `jacs-signature.json` flow; current SDK code paths in
-  `haisdk` still primarily verify header signatures.
-- The signature algorithm field is parsed in current header flows, but the
-  inspected SDK verifiers still enforce Ed25519 in guard checks today.
+JACS will be published first or at the same time as haisdk changes. haisdk
+may use a local path dependency (`jacs = { path = "..." }`) during
+development, but the published version must reference a released JACS crate.
