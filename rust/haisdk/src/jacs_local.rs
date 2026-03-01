@@ -46,10 +46,15 @@ impl LocalJacsProvider {
             .map_err(|e| HaiError::Provider(format!("failed to resolve JACS agent id: {e}")))?;
 
         // Resolve algorithm from the loaded agent (PRD lines 86-98).
+        // Fail fast if the algorithm cannot be determined — a silent default
+        // would cause algorithm mismatches during verification (Issue 039).
         let algorithm = agent
             .get_key_algorithm()
             .cloned()
-            .unwrap_or_else(|| "ed25519".to_string());
+            .ok_or_else(|| HaiError::Provider(
+                "Cannot resolve signing algorithm from JACS agent. \
+                 Ensure the agent was created with a valid key algorithm.".to_string()
+            ))?;
 
         Ok(Self {
             agent: Mutex::new(agent),

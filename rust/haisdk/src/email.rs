@@ -239,7 +239,12 @@ async fn verify_parent_chain_entries(
 
         // Check identity binding
         if parent_doc.metadata.issuer != registry.jacs_id {
-            continue;
+            continue; // issuer mismatch — leave as invalid
+        }
+
+        // Check algorithm binding (matches top-level check at line 115)
+        if !algorithms_match(&parent_doc.signature.algorithm, &registry.algorithm) {
+            continue; // algorithm mismatch — leave as invalid
         }
 
         // Extract public key bytes
@@ -297,7 +302,11 @@ pub async fn fetch_public_key_from_registry(
     hai_url: &str,
     email: &str,
 ) -> Result<KeyRegistryResponse> {
-    let url = format!("{}/api/agents/keys/{}", hai_url, email);
+    let encoded_email = percent_encoding::utf8_percent_encode(
+        email,
+        percent_encoding::NON_ALPHANUMERIC,
+    );
+    let url = format!("{}/api/agents/keys/{}", hai_url, encoded_email);
     let client = reqwest::Client::new();
     let resp = client
         .get(&url)
@@ -426,14 +435,15 @@ fn extract_domain(email: &str) -> String {
         .to_string()
 }
 
-/// Extract raw public key bytes from a PEM-encoded public key.
+/// Extract public key bytes from a PEM-encoded public key.
 ///
 /// Detects the algorithm from the SPKI DER structure:
 /// - Ed25519 (OID 1.3.101.112): extracts the 32-byte raw public key
-/// - RSA (OID 1.2.840.113549.1.1.1): returns the full DER-encoded SubjectPublicKeyInfo
+/// - Everything else (RSA, PQ2025): returns the full DER-encoded SubjectPublicKeyInfo
 ///
-/// The JACS verifier expects Ed25519 keys as 32 raw bytes and RSA keys
-/// as full DER.
+/// The JACS `DefaultEmailVerifier` handles per-algorithm format conversion
+/// internally (PEM re-wrapping for RSA, SPKI stripping for PQ2025), so
+/// callers can pass these bytes directly.
 fn extract_public_key_bytes(pem: &str) -> Result<Vec<u8>> {
     let pem_lines: Vec<&str> = pem
         .lines()
@@ -650,5 +660,29 @@ mod tests {
         assert!(!result.valid);
         assert!(result.error.as_deref().unwrap().contains("Identity mismatch"));
         assert!(result.error.as_deref().unwrap().contains("From"));
+    }
+
+    #[test]
+    fn registry_url_encodes_special_email_chars() {
+        // Verify that percent_encoding properly encodes special characters
+        // in email addresses used for registry lookups (Issue 038).
+        let encoded: String = percent_encoding::utf8_percent_encode(
+            "agent+tag@example.com",
+            percent_encoding::NON_ALPHANUMERIC,
+        )
+        .to_string();
+        assert!(
+            !encoded.contains('+'),
+            "'+' should be percent-encoded in URL path, got: {encoded}"
+        );
+        assert!(
+            encoded.contains("%2B") || encoded.contains("%2b"),
+            "'+' should become %2B, got: {encoded}"
+        );
+        // '@' should also be encoded
+        assert!(
+            encoded.contains("%40"),
+            "'@' should be percent-encoded, got: {encoded}"
+        );
     }
 }
