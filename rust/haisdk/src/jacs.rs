@@ -1,7 +1,5 @@
-use std::collections::BTreeMap;
-
 use base64::Engine;
-use serde_json::{Map, Value};
+use serde_json::Value;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -160,25 +158,13 @@ impl JacsProvider for StaticJacsProvider {
     }
 }
 
+/// Canonical JSON per RFC 8785 (JSON Canonicalization Scheme / JCS).
+///
+/// Uses the `serde_json_canonicalizer` crate for full compliance including:
+/// - Sorted keys
+/// - IEEE 754 number serialization
+/// - Minimal Unicode escape handling
+/// - No unnecessary whitespace
 pub fn canonical_json_sorted(value: &Value) -> String {
-    let canonical = canonicalize_value(value);
-    serde_json::to_string(&canonical).unwrap_or_else(|_| "null".to_string())
-}
-
-fn canonicalize_value(value: &Value) -> Value {
-    match value {
-        Value::Object(map) => {
-            let mut sorted: BTreeMap<String, Value> = BTreeMap::new();
-            for (key, val) in map {
-                sorted.insert(key.clone(), canonicalize_value(val));
-            }
-            let mut out = Map::new();
-            for (key, val) in sorted {
-                out.insert(key, val);
-            }
-            Value::Object(out)
-        }
-        Value::Array(arr) => Value::Array(arr.iter().map(canonicalize_value).collect()),
-        _ => value.clone(),
-    }
+    serde_json_canonicalizer::to_string(value).unwrap_or_else(|_| "null".to_string())
 }

@@ -463,7 +463,9 @@ mod tests {
 
     // -- Tests that use JACS email functions with TestSigner/TestVerifier --
 
-    use jacs::email::sign::EmailSigner;
+    // Use the re-exported EmailSigner from the parent module to avoid
+    // ambiguity between jacs_local_path (aliased as jacs) and the jacs crate.
+    use super::EmailSigner;
 
     struct TestSigner {
         id: String,

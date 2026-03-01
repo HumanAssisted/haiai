@@ -2,6 +2,22 @@
 //!
 //! This crate is intentionally a thin HAI-platform wrapper around JACS.
 //! Runtime signing/canonicalization should be delegated via [`JacsProvider`].
+//!
+//! # Feature flags
+//!
+//! * `jacs-crate` (default) -- Use the published jacs crate from crates.io.
+//! * `jacs-local` -- Use the local path dependency to the JACS repo (for dev).
+//!
+//! These are mutually exclusive. To use `jacs-local`, run:
+//! ```sh
+//! cargo test --no-default-features --features jacs-local,rustls-tls
+//! ```
+
+#[cfg(all(feature = "jacs-local", feature = "jacs-crate"))]
+compile_error!(
+    "Features `jacs-local` and `jacs-crate` are mutually exclusive. \
+     Use `--no-default-features --features jacs-local,rustls-tls` to select jacs-local."
+);
 
 pub mod a2a;
 pub mod client;

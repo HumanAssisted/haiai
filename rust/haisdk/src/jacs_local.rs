@@ -24,6 +24,7 @@ use crate::types::{CreateAgentOptions, CreateAgentResult, SignedPayload};
 pub struct LocalJacsProvider {
     agent: Mutex<jacs::agent::Agent>,
     jacs_id: String,
+    algorithm: String,
     config_path: PathBuf,
 }
 
@@ -44,9 +45,16 @@ impl LocalJacsProvider {
             .get_id()
             .map_err(|e| HaiError::Provider(format!("failed to resolve JACS agent id: {e}")))?;
 
+        // Resolve algorithm from the loaded agent (PRD lines 86-98).
+        let algorithm = agent
+            .get_key_algorithm()
+            .cloned()
+            .unwrap_or_else(|| "ed25519".to_string());
+
         Ok(Self {
             agent: Mutex::new(agent),
             jacs_id,
+            algorithm,
             config_path,
         })
     }
@@ -164,8 +172,7 @@ impl JacsProvider for LocalJacsProvider {
         // with base64 encoding as a bridge.
         #[cfg(feature = "jacs-local")]
         {
-            agent
-                .sign_bytes(data)
+            jacs::agent::Agent::sign_bytes(&mut *agent, data)
                 .map_err(|e| HaiError::Provider(format!("JACS sign_bytes failed: {e}")))
         }
         #[cfg(not(feature = "jacs-local"))]
@@ -187,10 +194,7 @@ impl JacsProvider for LocalJacsProvider {
     }
 
     fn algorithm(&self) -> &str {
-        // Resolve algorithm from the agent ID version.
-        // The agent ID encodes which key type and algorithm the agent uses.
-        // Default to ed25519 for now; the JACS agent ID format encodes the algorithm.
-        "ed25519"
+        &self.algorithm
     }
 
     fn canonical_json(&self, value: &Value) -> Result<String> {
