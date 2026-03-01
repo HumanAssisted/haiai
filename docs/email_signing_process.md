@@ -13,16 +13,20 @@ path.
 JACS email signatures use a **detached signature** model. A standard JACS
 document is attached to the email as `jacs-signature.json`. The document
 contains hashes and raw values of the email headers, body, and other
-attachments. Verification is a two-phase process:
+attachments.
 
-1. **Validate the JACS document** using standard JACS verification (crypto +
-   identity).
-2. **Validate the email contents** against the hashes inside the now-trusted
-   JACS document.
+The JACS document is signed by definition — JACS handles cryptographic
+validation, identity resolution, and trust. The email-specific code only
+needs to:
 
-This separation means multi-algorithm support, DNS verification, and registry
-lookup are handled entirely by the JACS layer. The email-specific code only
-needs to compute hashes and compare them.
+1. **Extract** the `jacs-signature.json` attachment (which JACS validates
+   as part of its standard document verification).
+2. **Compare** the hashes inside the now-trusted JACS document against
+   the actual email content.
+
+Multi-algorithm support, DNS verification, and registry lookup are handled
+entirely by the JACS layer. The email module computes hashes and compares
+them — it never touches cryptography.
 
 The JACS attachment is the **only** signing method. The legacy `X-JACS-Signature`
 header (v1/v2) is deprecated and must not be used in new implementations. See
@@ -275,8 +279,8 @@ and verify paths.
   - unfold continuation lines
   - compress WSP runs to one SP
   - trim leading/trailing WSP
-- For required singleton headers (`From`, `Date`, `Message-ID`): if
-  duplicates exist, fail as ambiguous.
+- For required singleton headers (`From`, `To`, `Subject`, `Date`,
+  `Message-ID`): if duplicates exist, fail as ambiguous.
 - For optional headers (`In-Reply-To`, `References`): if absent, field is
   `null`; if duplicated unexpectedly, fail as ambiguous.
 - Decode RFC 2047 encoded words before hashing, then UTF-8 NFC normalize.
@@ -573,8 +577,10 @@ All implementations must use consistent error types:
 | `DNSVerificationFailed` | DNS TXT record check failed |
 | `ContentTampered` | One or more email content hashes don't match payload |
 | `ChainVerificationFailed` | Parent signature hash mismatch in forwarding chain |
+| `AlgorithmMismatch` | Signature algorithm does not match algorithm resolved from agent ID version |
 | `ReplayDetected` | Duplicate message within replay detection TTL |
 | `EmailTooLarge` | Email exceeds 25 MB limit |
+| `UnsupportedFeature` | Requested capability is not implemented in this version |
 
 ---
 
@@ -585,8 +591,12 @@ Verification MUST enforce these invariants:
 1. `metadata.issuer` must match `registry.jacs_id` for the claimed agent
 2. `payload.headers.from.value` must match the registered email for
    `registry.jacs_id`
-3. If DNS policy requires verification, the DNS TXT binding must match
+3. `signature.algorithm` must match the algorithm resolved from the
+   agent's public key (or be cryptographically inferable and equal)
+4. If DNS policy requires verification, the DNS TXT binding must match
    the same agent ID and key hash — do not rely on `reputation_tier` alone
+5. Registry lookup must use the signer's versioned identity path to
+   support key rotation and multi-version key resolution
 
 ---
 
@@ -728,6 +738,32 @@ Header-based signing had these limitations that made it unsuitable:
 
 ---
 
+## Migration Plan (Header Signing Removal)
+
+1. Immediately mark header-based verification/signing APIs as deprecated
+   in all SDKs
+2. Block new features on the header flow — no bug fixes, no enhancements
+3. Remove header flow from default code paths in all SDKs
+4. Remove header fixtures from the active conformance suite
+5. Keep a temporary compatibility shim only if needed for a rollback
+   window (aim to remove within one release cycle)
+
+---
+
+## SDK Consistency Requirement
+
+All SDKs (Rust, Python, Node, Go) MUST:
+
+- Consume the same email fixture suite (`jacs/tests/fixtures/email/`)
+- Produce identical hashes for the same fixture inputs
+- Use the same error type names (mapped to language-idiomatic casing)
+- Return structurally equivalent `EmailVerificationResultV2` responses
+
+Cross-SDK conformance is verified by running each SDK against the shared
+fixtures and comparing outputs.
+
+---
+
 ## Implementation Plan
 
 ### Principles
@@ -825,7 +861,7 @@ pub trait JacsProvider: Send + Sync {
 A shared directory of raw RFC 5322 email fixtures for TDD:
 
 ```
-contract/email_fixtures/
+jacs/tests/fixtures/email/
 ├── simple_text.eml              # plain text only, no attachments
 ├── html_only.eml                # HTML body only
 ├── multipart_alternative.eml    # text/plain + text/html
@@ -843,7 +879,7 @@ contract/email_fixtures/
 Each fixture has a corresponding expected-result JSON:
 
 ```
-contract/email_fixtures/expected/
+jacs/tests/fixtures/email/expected/
 ├── simple_text.json             # expected payload hashes, header values
 ├── html_only.json
 ├── multipart_alternative.json
@@ -1166,7 +1202,7 @@ Tests are written FIRST, using the shared email fixture suite. Implementation
 follows to make the tests pass.
 
 ```
- 1. Create contract/email_fixtures/ with .eml files + expected results
+ 1. Create jacs/tests/fixtures/email/ with .eml files + expected results
  2. Write test stubs in JACS: sign_roundtrip, tamper_*, forwarding_chain,
     canonicalization
  3. Add mail-parser + unicode-normalization to JACS Cargo.toml
