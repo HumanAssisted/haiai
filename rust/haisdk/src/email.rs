@@ -20,56 +20,13 @@ use crate::types::KeyRegistryResponse;
 // Re-export JACS email types for consumer convenience.
 pub use jacs::email::{
     sign_email, AttachmentEntry, BodyPartEntry, ChainEntry, ContentVerificationResult,
-    EmailSignatureHeaders, EmailSignaturePayload, EmailSigner, EmailVerifier, FieldResult,
-    FieldStatus, JacsEmailMetadata, JacsEmailSignature, JacsEmailSignatureDocument,
-    ParsedAttachment, ParsedBodyPart, ParsedEmailParts, SignedHeaderEntry,
+    EmailSignatureHeaders, EmailSignaturePayload, EmailSigner, EmailVerifier,
+    EmailVerificationResultV2, FieldResult, FieldStatus, JacsEmailMetadata,
+    JacsEmailSignature, JacsEmailSignatureDocument, ParsedAttachment, ParsedBodyPart,
+    ParsedEmailParts, SignedHeaderEntry,
 };
 
 use jacs::email::{get_jacs_attachment, verify_email_content, verify_email_document};
-
-/// HAI-specific email verification result that wraps JACS content verification
-/// and adds registry + DNS fields.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct EmailVerificationResultV2 {
-    /// Overall validity: false if any verification step fails.
-    pub valid: bool,
-    /// JACS agent ID of the signer (from registry).
-    #[serde(default)]
-    pub jacs_id: String,
-    /// Signing algorithm.
-    #[serde(default)]
-    pub algorithm: String,
-    /// HAI reputation tier (e.g., "free_chaotic", "dns_certified", "fully_certified").
-    #[serde(default)]
-    pub reputation_tier: String,
-    /// DNS verification result. None if DNS check was skipped (free tier).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dns_verified: Option<bool>,
-    /// Per-field verification results (from JACS content verification).
-    #[serde(default)]
-    pub field_results: Vec<FieldResult>,
-    /// Forwarding chain entries.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub chain: Vec<ChainEntry>,
-    /// Error message if verification failed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-impl EmailVerificationResultV2 {
-    fn err(jacs_id: &str, reputation_tier: &str, error: &str) -> Self {
-        Self {
-            valid: false,
-            jacs_id: jacs_id.to_string(),
-            algorithm: String::new(),
-            reputation_tier: reputation_tier.to_string(),
-            dns_verified: None,
-            field_results: Vec::new(),
-            chain: Vec::new(),
-            error: Some(error.to_string()),
-        }
-    }
-}
 
 /// Verify a raw RFC 5322 email with JACS attachment signature.
 ///
@@ -223,15 +180,113 @@ pub async fn verify_email(
     // Step 8: Content hash comparison
     let content_result = verify_email_content(&trusted_doc, &parts);
 
+    // Step 9: Verify parent chain entries cryptographically.
+    // JACS returns parent chain entries with valid=false because it lacks
+    // the parent signers' public keys. We upgrade them here by looking up
+    // each parent signer from the registry and verifying their signature.
+    let mut chain = content_result.chain;
+    verify_parent_chain_entries(&mut chain, &parts, hai_url).await;
+
+    // Recompute overall validity: fields must pass AND all chain entries valid
+    let fields_valid = !content_result.field_results.iter().any(|r| {
+        r.status == FieldStatus::Fail
+    });
+    let chain_valid = chain.iter().all(|entry| entry.valid);
+    let valid = fields_valid && chain_valid;
+
     EmailVerificationResultV2 {
-        valid: content_result.valid,
+        valid,
         jacs_id: jacs_id.clone(),
         algorithm: sig_algorithm.clone(),
         reputation_tier: reputation_tier.clone(),
         dns_verified,
         field_results: content_result.field_results,
-        chain: content_result.chain,
+        chain,
         error: None,
+    }
+}
+
+/// Verify parent chain entries by looking up each signer's public key
+/// and verifying their JACS document signature.
+async fn verify_parent_chain_entries(
+    chain: &mut [ChainEntry],
+    parts: &ParsedEmailParts,
+    hai_url: &str,
+) {
+    // Skip the first chain entry (the current signer, already verified)
+    for entry in chain.iter_mut().skip(1) {
+        if entry.valid {
+            continue; // Already verified
+        }
+
+        // Find the parent JACS attachment that matches this signer
+        let parent_doc = parts.jacs_attachments.iter().find_map(|att| {
+            serde_json::from_slice::<JacsEmailSignatureDocument>(&att.content)
+                .ok()
+                .filter(|doc| doc.metadata.issuer == entry.jacs_id)
+        });
+
+        let Some(parent_doc) = parent_doc else {
+            continue; // Can't find the parent document
+        };
+
+        // Look up the parent signer's public key from the registry
+        let parent_email = &parent_doc.payload.headers.from.value;
+        let registry = match fetch_public_key_from_registry(hai_url, parent_email).await {
+            Ok(r) => r,
+            Err(_) => continue, // Registry lookup failed, leave as invalid
+        };
+
+        // Check identity binding
+        if parent_doc.metadata.issuer != registry.jacs_id {
+            continue;
+        }
+
+        // Extract public key bytes
+        let raw_pub_key = match extract_public_key_bytes(&registry.public_key) {
+            Ok(k) => k,
+            Err(_) => continue,
+        };
+
+        // Verify the parent document's cryptographic signature
+        let payload_json = match serde_json::to_value(&parent_doc.payload) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let canonical_payload = jacs::email::canonicalize_json_rfc8785(&payload_json);
+
+        // Verify hash
+        let computed_hash = {
+            let mut hasher = Sha256::new();
+            hasher.update(canonical_payload.as_bytes());
+            let digest = hasher.finalize();
+            let hex_str: String = digest.iter().map(|b| format!("{:02x}", b)).collect();
+            format!("sha256:{}", hex_str)
+        };
+        if computed_hash != parent_doc.metadata.hash {
+            continue; // Hash mismatch
+        }
+
+        // Verify crypto signature
+        let sig_bytes = match base64::engine::general_purpose::STANDARD
+            .decode(&parent_doc.signature.signature)
+        {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+
+        let default_verifier = jacs::email::DefaultEmailVerifier;
+        if default_verifier
+            .verify_bytes(
+                canonical_payload.as_bytes(),
+                &sig_bytes,
+                &raw_pub_key,
+                &parent_doc.signature.algorithm,
+            )
+            .is_ok()
+        {
+            entry.valid = true;
+        }
     }
 }
 
@@ -416,14 +471,9 @@ fn extract_public_key_bytes(pem: &str) -> Result<Vec<u8>> {
 
 /// Check if two algorithm names refer to the same algorithm.
 ///
-/// Handles variations like "ed25519" vs "ring-ed25519", "rsa-pss" vs "rsa-pss-sha256".
+/// Uses JACS's `normalize_algorithm` for consistent normalization across the stack.
 fn algorithms_match(a: &str, b: &str) -> bool {
-    let normalize = |s: &str| -> String {
-        s.to_lowercase()
-            .replace("ring-", "")
-            .replace("-sha256", "")
-    };
-    normalize(a) == normalize(b)
+    jacs::email::normalize_algorithm(a) == jacs::email::normalize_algorithm(b)
 }
 
 #[cfg(test)]
