@@ -21,12 +21,48 @@ use crate::types::KeyRegistryResponse;
 pub use jacs::email::{
     sign_email, AttachmentEntry, BodyPartEntry, ChainEntry, ContentVerificationResult,
     EmailSignatureHeaders, EmailSignaturePayload, EmailSigner, EmailVerifier,
-    EmailVerificationResultV2, FieldResult, FieldStatus, JacsEmailMetadata,
-    JacsEmailSignature, JacsEmailSignatureDocument, ParsedAttachment, ParsedBodyPart,
-    ParsedEmailParts, SignedHeaderEntry,
+    FieldResult, FieldStatus, JacsEmailMetadata, JacsEmailSignature,
+    JacsEmailSignatureDocument, ParsedAttachment, ParsedBodyPart, ParsedEmailParts,
+    SignedHeaderEntry,
 };
 
 use jacs::email::{get_jacs_attachment, verify_email_content, verify_email_document};
+
+/// HAI-layer verification result wrapping JACS content verification with
+/// registry metadata (reputation tier, DNS status, forwarding chain).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EmailVerificationResultV2 {
+    pub valid: bool,
+    #[serde(default)]
+    pub jacs_id: String,
+    #[serde(default)]
+    pub algorithm: String,
+    #[serde(default)]
+    pub reputation_tier: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dns_verified: Option<bool>,
+    #[serde(default)]
+    pub field_results: Vec<FieldResult>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chain: Vec<ChainEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl EmailVerificationResultV2 {
+    pub fn err(jacs_id: &str, reputation_tier: &str, error: &str) -> Self {
+        Self {
+            valid: false,
+            jacs_id: jacs_id.to_string(),
+            algorithm: String::new(),
+            reputation_tier: reputation_tier.to_string(),
+            dns_verified: None,
+            field_results: Vec::new(),
+            chain: Vec::new(),
+            error: Some(error.to_string()),
+        }
+    }
+}
 
 /// Verify a raw RFC 5322 email with JACS attachment signature.
 ///
