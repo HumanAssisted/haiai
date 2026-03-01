@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Optional
 
 
@@ -332,11 +333,64 @@ class KeyRegistryResponse:
 
 @dataclass
 class EmailVerificationResult:
-    """Result of verifying an email's JACS signature."""
+    """Result of verifying an email's JACS signature (legacy header-based).
+
+    .. deprecated::
+        Use :class:`EmailVerificationResultV2` for attachment-based verification.
+    """
 
     valid: bool
     jacs_id: str
     reputation_tier: str
+    error: Optional[str] = None
+
+
+class FieldStatus(Enum):
+    """Status of a single field in JACS email content verification."""
+
+    PASS = "pass"
+    MODIFIED = "modified"
+    FAIL = "fail"
+    UNVERIFIABLE = "unverifiable"
+
+
+@dataclass
+class FieldResult:
+    """Result for a single field in content verification."""
+
+    field: str
+    status: FieldStatus
+    original_hash: Optional[str] = None
+    current_hash: Optional[str] = None
+    original_value: Optional[str] = None
+    current_value: Optional[str] = None
+
+
+@dataclass
+class ChainEntry:
+    """Entry in a JACS email forwarding chain."""
+
+    signer: str
+    jacs_id: str
+    valid: bool
+    forwarded: bool = False
+
+
+@dataclass
+class EmailVerificationResultV2:
+    """Result of verifying a JACS attachment-signed email.
+
+    This is the new verification result format that includes per-field
+    content verification and forwarding chain support.
+    """
+
+    valid: bool
+    jacs_id: str
+    algorithm: str
+    reputation_tier: str
+    dns_verified: Optional[bool] = None
+    field_results: list[FieldResult] = field(default_factory=list)
+    chain: list[ChainEntry] = field(default_factory=list)
     error: Optional[str] = None
 
 

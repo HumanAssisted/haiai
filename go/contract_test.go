@@ -2,10 +2,7 @@ package haisdk
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -320,87 +317,3 @@ func TestContractDeserializeKeyRegistryResponse(t *testing.T) {
 	}
 }
 
-func TestContractDeserializeVerificationResult(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(contractDir(), "verification_result.json"))
-	if err != nil {
-		t.Fatalf("read verification_result.json: %v", err)
-	}
-
-	var result EmailVerificationResult
-	if err := json.Unmarshal(data, &result); err != nil {
-		t.Fatalf("unmarshal EmailVerificationResult: %v", err)
-	}
-
-	if result.Valid != true {
-		t.Fatalf("Valid = %v, want true", result.Valid)
-	}
-	if result.JacsID != "test-agent-jacs-id" {
-		t.Fatalf("JacsID = %q, want %q", result.JacsID, "test-agent-jacs-id")
-	}
-	if result.ReputationTier != "established" {
-		t.Fatalf("ReputationTier = %q, want %q", result.ReputationTier, "established")
-	}
-	if result.Error != nil {
-		t.Fatalf("Error = %v, want nil", result.Error)
-	}
-}
-
-// contentHashFixture mirrors the JSON structure in content_hash_example.json.
-type contentHashFixture struct {
-	Subject          string `json:"subject"`
-	Body             string `json:"body"`
-	FromEmail        string `json:"from_email"`
-	CanonicalInput   string `json:"canonical_input"`
-	ExpectedHash     string `json:"expected_hash"`
-	Timestamp        int64  `json:"timestamp"`
-	SignInputFormat  string `json:"sign_input_format"`
-	SignInputExample string `json:"sign_input_example"`
-}
-
-func TestContractContentHashComputation(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(contractDir(), "content_hash_example.json"))
-	if err != nil {
-		t.Fatalf("read content_hash_example.json: %v", err)
-	}
-
-	var fixture contentHashFixture
-	if err := json.Unmarshal(data, &fixture); err != nil {
-		t.Fatalf("unmarshal content_hash_example: %v", err)
-	}
-
-	// Verify the canonical input is subject + "\n" + body.
-	canonicalInput := fixture.Subject + "\n" + fixture.Body
-	if canonicalInput != fixture.CanonicalInput {
-		t.Fatalf("canonical input mismatch:\n  got:  %q\n  want: %q", canonicalInput, fixture.CanonicalInput)
-	}
-
-	// Compute sha256 of the canonical input and prepend "sha256:".
-	h := sha256.Sum256([]byte(canonicalInput))
-	contentHash := "sha256:" + hex.EncodeToString(h[:])
-
-	if contentHash != fixture.ExpectedHash {
-		t.Fatalf("content hash mismatch:\n  got:  %q\n  want: %q", contentHash, fixture.ExpectedHash)
-	}
-}
-
-func TestContractSignInputFormat(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(contractDir(), "content_hash_example.json"))
-	if err != nil {
-		t.Fatalf("read content_hash_example.json: %v", err)
-	}
-
-	var fixture contentHashFixture
-	if err := json.Unmarshal(data, &fixture); err != nil {
-		t.Fatalf("unmarshal content_hash_example: %v", err)
-	}
-
-	// Recompute the content hash from subject + body (same as TestContractContentHashComputation).
-	h := sha256.Sum256([]byte(fixture.Subject + "\n" + fixture.Body))
-	contentHash := "sha256:" + hex.EncodeToString(h[:])
-
-	// Verify sign_input matches "{content_hash}:{from_email}:{timestamp}".
-	signInput := fmt.Sprintf("%s:%s:%d", contentHash, fixture.FromEmail, fixture.Timestamp)
-	if signInput != fixture.SignInputExample {
-		t.Fatalf("sign_input mismatch:\n  got:  %q\n  want: %q", signInput, fixture.SignInputExample)
-	}
-}

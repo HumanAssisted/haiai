@@ -273,13 +273,11 @@ type EmailAttachment struct {
 }
 
 type SendEmailOptions struct {
-	To            string            `json:"to"`
-	Subject       string            `json:"subject"`
-	Body          string            `json:"body"`
-	InReplyTo     string            `json:"in_reply_to,omitempty"`
-	Attachments   []EmailAttachment `json:"attachments,omitempty"`
-	JacsSignature string            `json:"jacs_signature,omitempty"`
-	JacsTimestamp int64             `json:"jacs_timestamp,omitempty"`
+	To          string            `json:"to"`
+	Subject     string            `json:"subject"`
+	Body        string            `json:"body"`
+	InReplyTo   string            `json:"in_reply_to,omitempty"`
+	Attachments []EmailAttachment `json:"attachments,omitempty"`
 }
 
 // SearchOptions configures a message search request.
@@ -365,12 +363,44 @@ type KeyRegistryResponse struct {
 	RegisteredAt   string `json:"registered_at"`
 }
 
-// EmailVerificationResult is the result of verifying an email signature.
-type EmailVerificationResult struct {
-	Valid          bool    `json:"valid"`
-	JacsID         string  `json:"jacs_id"`
-	ReputationTier string  `json:"reputation_tier"`
-	Error          *string `json:"error"`
+// FieldStatus represents the verification status of a single field.
+type FieldStatus string
+
+const (
+	FieldStatusPass         FieldStatus = "pass"
+	FieldStatusModified     FieldStatus = "modified"
+	FieldStatusFail         FieldStatus = "fail"
+	FieldStatusUnverifiable FieldStatus = "unverifiable"
+)
+
+// FieldResult is the verification result for a single email field.
+type FieldResult struct {
+	Field         string      `json:"field"`
+	Status        FieldStatus `json:"status"`
+	OriginalHash  *string     `json:"original_hash,omitempty"`
+	CurrentHash   *string     `json:"current_hash,omitempty"`
+	OriginalValue *string     `json:"original_value,omitempty"`
+	CurrentValue  *string     `json:"current_value,omitempty"`
+}
+
+// ChainEntry represents an entry in a JACS email forwarding chain.
+type ChainEntry struct {
+	Signer    string `json:"signer"`
+	JacsID    string `json:"jacs_id"`
+	Valid     bool   `json:"valid"`
+	Forwarded bool   `json:"forwarded"`
+}
+
+// EmailVerificationResultV2 is the result of verifying a JACS attachment-signed email.
+type EmailVerificationResultV2 struct {
+	Valid          bool          `json:"valid"`
+	JacsID         string        `json:"jacs_id"`
+	Algorithm      string        `json:"algorithm"`
+	ReputationTier string        `json:"reputation_tier"`
+	DNSVerified    *bool         `json:"dns_verified"`
+	FieldResults   []FieldResult `json:"field_results"`
+	Chain          []ChainEntry  `json:"chain"`
+	Error          *string       `json:"error,omitempty"`
 }
 
 // HaiAPIError represents a structured error response from the HAI API.

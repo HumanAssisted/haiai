@@ -153,6 +153,46 @@ impl JacsProvider for LocalJacsProvider {
             .map_err(|e| HaiError::Provider(format!("JACS sign_string failed: {e}")))
     }
 
+    fn sign_bytes(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let mut agent = self
+            .agent
+            .lock()
+            .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
+
+        // Use Agent::sign_bytes when available (jacs-local path with our changes).
+        // For the crates.io jacs-crate path (0.8.0), fall back to sign_string
+        // with base64 encoding as a bridge.
+        #[cfg(feature = "jacs-local")]
+        {
+            agent
+                .sign_bytes(data)
+                .map_err(|e| HaiError::Provider(format!("JACS sign_bytes failed: {e}")))
+        }
+        #[cfg(not(feature = "jacs-local"))]
+        {
+            use base64::Engine;
+            // Encode data as base64 string, sign it, then decode the signature
+            let encoded = base64::engine::general_purpose::STANDARD.encode(data);
+            let sig_b64 = agent
+                .sign_string(&encoded)
+                .map_err(|e| HaiError::Provider(format!("JACS sign_bytes (via sign_string) failed: {e}")))?;
+            base64::engine::general_purpose::STANDARD
+                .decode(&sig_b64)
+                .map_err(|e| HaiError::Provider(format!("JACS sign_bytes decode failed: {e}")))
+        }
+    }
+
+    fn key_id(&self) -> &str {
+        &self.jacs_id
+    }
+
+    fn algorithm(&self) -> &str {
+        // Resolve algorithm from the agent ID version.
+        // The agent ID encodes which key type and algorithm the agent uses.
+        // Default to ed25519 for now; the JACS agent ID format encodes the algorithm.
+        "ed25519"
+    }
+
     fn canonical_json(&self, value: &Value) -> Result<String> {
         // Canonical JSON for HAISDK contract parity (sorted keys, compact JSON).
         // Signing itself remains delegated to JACS.

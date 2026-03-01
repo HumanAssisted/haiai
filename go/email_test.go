@@ -2,13 +2,9 @@ package haisdk
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +12,7 @@ import (
 	"testing"
 )
 
-func TestSendEmailWithOptionsIncludesJACSSignature(t *testing.T) {
+func TestSendEmailWithOptionsServerSideSigning(t *testing.T) {
 	var gotBody map[string]interface{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +34,7 @@ func TestSendEmailWithOptionsIncludesJACSSignature(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cl, pub := newTestClient(t, srv.URL)
+	cl, _ := newTestClient(t, srv.URL)
 	result, err := cl.SendEmailWithOptions(context.Background(), SendEmailOptions{
 		To:      "bob@hai.ai",
 		Subject: "Hello",
@@ -51,28 +47,23 @@ func TestSendEmailWithOptionsIncludesJACSSignature(t *testing.T) {
 		t.Fatalf("unexpected message_id: %s", result.MessageID)
 	}
 
-	// Verify jacs_signature and jacs_timestamp are present in the payload.
-	sigB64, ok := gotBody["jacs_signature"].(string)
-	if !ok || sigB64 == "" {
-		t.Fatalf("expected jacs_signature in body, got %#v", gotBody["jacs_signature"])
+	// Server-side signing: client should NOT send jacs_signature or jacs_timestamp.
+	if _, ok := gotBody["jacs_signature"]; ok {
+		t.Fatal("client should not send jacs_signature (server handles signing)")
 	}
-	tsFloat, ok := gotBody["jacs_timestamp"].(float64)
-	if !ok || tsFloat == 0 {
-		t.Fatalf("expected jacs_timestamp in body, got %#v", gotBody["jacs_timestamp"])
+	if _, ok := gotBody["jacs_timestamp"]; ok {
+		t.Fatal("client should not send jacs_timestamp (server handles signing)")
 	}
-	timestamp := int64(tsFloat)
 
-	// Verify the signature is valid using the public key (v2 format includes email).
-	h := sha256.Sum256([]byte("Hello\nWorld"))
-	contentHash := "sha256:" + hex.EncodeToString(h[:])
-	signInput := fmt.Sprintf("%s:%s:%d", contentHash, testAgentEmail, timestamp)
-
-	sigBytes, err := base64.StdEncoding.DecodeString(sigB64)
-	if err != nil {
-		t.Fatalf("failed to decode signature: %v", err)
+	// Verify expected fields are present.
+	if gotBody["to"] != "bob@hai.ai" {
+		t.Fatalf("unexpected to: %v", gotBody["to"])
 	}
-	if !ed25519.Verify(pub, []byte(signInput), sigBytes) {
-		t.Fatal("JACS content signature verification failed")
+	if gotBody["subject"] != "Hello" {
+		t.Fatalf("unexpected subject: %v", gotBody["subject"])
+	}
+	if gotBody["body"] != "World" {
+		t.Fatalf("unexpected body: %v", gotBody["body"])
 	}
 }
 
@@ -89,7 +80,7 @@ func TestSendEmailWithOptionsContentHashIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestSendEmailConvenienceAddsJACSSignature(t *testing.T) {
+func TestSendEmailConvenienceServerSideSigning(t *testing.T) {
 	var gotBody map[string]interface{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -106,11 +97,12 @@ func TestSendEmailConvenienceAddsJACSSignature(t *testing.T) {
 		t.Fatalf("SendEmail: %v", err)
 	}
 
-	if gotBody["jacs_signature"] == nil || gotBody["jacs_signature"] == "" {
-		t.Fatal("SendEmail convenience should include jacs_signature")
+	// Server-side signing: convenience method should NOT send client-side signing fields.
+	if _, ok := gotBody["jacs_signature"]; ok {
+		t.Fatal("SendEmail convenience should not include jacs_signature (server handles signing)")
 	}
-	if gotBody["jacs_timestamp"] == nil || gotBody["jacs_timestamp"].(float64) == 0 {
-		t.Fatal("SendEmail convenience should include jacs_timestamp")
+	if _, ok := gotBody["jacs_timestamp"]; ok {
+		t.Fatal("SendEmail convenience should not include jacs_timestamp (server handles signing)")
 	}
 }
 
@@ -343,8 +335,9 @@ func TestReplyFetchesOriginalAndSends(t *testing.T) {
 			if payload["body"] != "Reply body" {
 				t.Fatalf("unexpected body: %v", payload["body"])
 			}
-			if payload["jacs_signature"] == nil || payload["jacs_signature"] == "" {
-				t.Fatal("reply should include jacs_signature")
+			// Server-side signing: reply should NOT include client-side signing fields.
+			if _, ok := payload["jacs_signature"]; ok {
+				t.Fatal("reply should not include jacs_signature (server handles signing)")
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"message_id":"msg-reply","status":"sent"}`))
@@ -563,169 +556,6 @@ func TestSendEmailFallsBackToGenericErrorForUnstructuredResponse(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Content hash tests — exercise the extracted computeContentHash function
-// ---------------------------------------------------------------------------
-
-func TestContentHashNoAttachments(t *testing.T) {
-	got := computeContentHash("Subject", "Body", nil)
-	// sha256("Subject\nBody")
-	want := "sha256:ee0c09adcdb487b1c64d7e63dfeaf7eabc1fe5ffc7f6182b0541061e2610bb25"
-	if got != want {
-		t.Fatalf("content hash mismatch:\n  got:  %s\n  want: %s", got, want)
-	}
-}
-
-func TestContentHashWithOneAttachment(t *testing.T) {
-	att := EmailAttachment{
-		Filename:    "a.txt",
-		ContentType: "text/plain",
-		Data:        []byte("hello"),
-	}
-	got := computeContentHash("Test", "Hello", []EmailAttachment{att})
-	// att_hash = sha256("a.txt:text/plain:hello")
-	// expected = sha256("Test\nHello\n" + att_hash)
-	want := "sha256:4160c4723a01eb96bd05f707b78790deb16fd92f1ad0362bf5d4881d5ba2f0c7"
-	if got != want {
-		t.Fatalf("content hash mismatch:\n  got:  %s\n  want: %s", got, want)
-	}
-}
-
-func TestContentHashAttachmentOrderIndependent(t *testing.T) {
-	a := EmailAttachment{Filename: "a.txt", ContentType: "text/plain", Data: []byte("alpha")}
-	b := EmailAttachment{Filename: "b.txt", ContentType: "text/plain", Data: []byte("beta")}
-
-	hashAB := computeContentHash("Subject", "Body", []EmailAttachment{a, b})
-	hashBA := computeContentHash("Subject", "Body", []EmailAttachment{b, a})
-
-	if hashAB != hashBA {
-		t.Fatalf("attachment order should not affect hash:\n  [a,b]: %s\n  [b,a]: %s", hashAB, hashBA)
-	}
-
-	// Also verify against the known golden value.
-	want := "sha256:0ee8bf6bd5490c7a907d748e4012453226dea38583767e0126b2a26376ea9568"
-	if hashAB != want {
-		t.Fatalf("content hash mismatch:\n  got:  %s\n  want: %s", hashAB, want)
-	}
-}
-
-func TestContentHashWithThreeAttachments(t *testing.T) {
-	a := EmailAttachment{Filename: "a.txt", ContentType: "text/plain", Data: []byte("alpha")}
-	b := EmailAttachment{Filename: "b.txt", ContentType: "text/plain", Data: []byte("beta")}
-	c := EmailAttachment{Filename: "c.txt", ContentType: "text/plain", Data: []byte("gamma")}
-
-	got := computeContentHash("Subject", "Body", []EmailAttachment{a, b, c})
-	want := "sha256:8a2933b3b884212fb47655c51fd1d0490ebaa941ece2d2bde6cdc8423921a67a"
-	if got != want {
-		t.Fatalf("content hash mismatch:\n  got:  %s\n  want: %s", got, want)
-	}
-
-	// Order permutation should produce the same hash.
-	got2 := computeContentHash("Subject", "Body", []EmailAttachment{c, a, b})
-	if got != got2 {
-		t.Fatalf("three-attachment hash should be order-independent:\n  [a,b,c]: %s\n  [c,a,b]: %s", got, got2)
-	}
-}
-
-func TestContentHashAttachmentTamperDetected(t *testing.T) {
-	original := EmailAttachment{Filename: "a.txt", ContentType: "text/plain", Data: []byte("alpha")}
-	tampered := EmailAttachment{Filename: "a.txt", ContentType: "text/plain", Data: []byte("TAMPERED")}
-
-	hashOriginal := computeContentHash("Subject", "Body", []EmailAttachment{original})
-	hashTampered := computeContentHash("Subject", "Body", []EmailAttachment{tampered})
-
-	if hashOriginal == hashTampered {
-		t.Fatal("changing attachment data MUST produce a different hash")
-	}
-}
-
-func TestContentHashContentTypeChange(t *testing.T) {
-	plain := EmailAttachment{Filename: "a.txt", ContentType: "text/plain", Data: []byte("alpha")}
-	octet := EmailAttachment{Filename: "a.txt", ContentType: "application/octet-stream", Data: []byte("alpha")}
-
-	hashPlain := computeContentHash("Subject", "Body", []EmailAttachment{plain})
-	hashOctet := computeContentHash("Subject", "Body", []EmailAttachment{octet})
-
-	if hashPlain == hashOctet {
-		t.Fatal("changing content_type MUST produce a different hash")
-	}
-}
-
-func TestContentHashEmptyAttachmentData(t *testing.T) {
-	att := EmailAttachment{Filename: "empty.txt", ContentType: "text/plain", Data: []byte{}}
-	hashWithEmpty := computeContentHash("Subject", "Body", []EmailAttachment{att})
-	hashNoAtt := computeContentHash("Subject", "Body", nil)
-
-	// An empty attachment is still an attachment; the hash must differ from no-attachment.
-	if hashWithEmpty == hashNoAtt {
-		t.Fatal("empty-data attachment should produce a different hash than no attachments")
-	}
-
-	// Verify against golden value.
-	want := "sha256:a51415d203b1f74ce4eb2e00edca52fec0c4371ceab2530bf6a53a0ba1f24718"
-	if hashWithEmpty != want {
-		t.Fatalf("content hash mismatch:\n  got:  %s\n  want: %s", hashWithEmpty, want)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Signing payload format tests
-// ---------------------------------------------------------------------------
-
-func TestV2SigningPayloadFormat(t *testing.T) {
-	// v2 format: "{contentHash}:{email}:{timestamp}"
-	contentHash := computeContentHash("Hello", "World", nil)
-	email := "agent@hai.ai"
-	timestamp := int64(1700000000)
-
-	signInput := fmt.Sprintf("%s:%s:%d", contentHash, email, timestamp)
-
-	// Verify all three components are present and correctly ordered.
-	parts := strings.SplitN(signInput, ":", 4)
-	// parts: ["sha256", "<hex>", "<email>", "<timestamp>"]
-	// But the content hash itself contains "sha256:", so split on last two colons.
-	if !strings.HasPrefix(signInput, "sha256:") {
-		t.Fatalf("sign input should start with 'sha256:', got %q", signInput)
-	}
-	if !strings.Contains(signInput, ":"+email+":") {
-		t.Fatalf("sign input should contain ':%s:', got %q", email, signInput)
-	}
-	if !strings.HasSuffix(signInput, ":1700000000") {
-		t.Fatalf("sign input should end with ':1700000000', got %q", signInput)
-	}
-
-	// Verify exact expected format.
-	want := contentHash + ":" + email + ":1700000000"
-	if signInput != want {
-		t.Fatalf("v2 sign input mismatch:\n  got:  %s\n  want: %s", signInput, want)
-	}
-
-	// Verify it has exactly the format with 4 colon separators total:
-	// sha256:<hex>:<email>:<timestamp>
-	if len(parts) != 4 {
-		t.Fatalf("expected 4 colon-delimited parts, got %d: %v", len(parts), parts)
-	}
-}
-
-func TestV1SigningPayloadFormat(t *testing.T) {
-	// v1 format (legacy): "{contentHash}:{timestamp}" — no email component.
-	contentHash := computeContentHash("Hello", "World", nil)
-	timestamp := int64(1700000000)
-
-	signInput := fmt.Sprintf("%s:%d", contentHash, timestamp)
-
-	want := contentHash + ":1700000000"
-	if signInput != want {
-		t.Fatalf("v1 sign input mismatch:\n  got:  %s\n  want: %s", signInput, want)
-	}
-
-	// v1 should have exactly 3 colon-delimited parts: sha256, hex, timestamp.
-	parts := strings.SplitN(signInput, ":", 4)
-	if len(parts) != 3 {
-		t.Fatalf("v1 should have 3 colon-delimited parts, got %d: %v", len(parts), parts)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Guard tests
 // ---------------------------------------------------------------------------
 
@@ -819,47 +649,183 @@ func TestAttachmentDataBase64InJSON(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-SDK golden value test
+// SignEmail / VerifyEmail tests
 // ---------------------------------------------------------------------------
 
-func TestCrossSDKGoldenHash(t *testing.T) {
-	// Fixed inputs shared across all SDK implementations.
-	subject := "Cross-SDK Test"
-	body := "Verify me"
-	attachments := []EmailAttachment{
-		{Filename: "doc.pdf", ContentType: "application/pdf", Data: []byte("pdf-content")},
-		{Filename: "img.png", ContentType: "image/png", Data: []byte("png-content")},
+func TestSignEmailSendsRawRFC5322(t *testing.T) {
+	var gotContentType string
+	var gotBody []byte
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/email/sign" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		gotContentType = r.Header.Get("Content-Type")
+		var err error
+		gotBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body: %v", err)
+		}
+		w.Header().Set("Content-Type", "message/rfc822")
+		_, _ = w.Write([]byte("signed-email-bytes"))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	rawEmail := []byte("From: agent@hai.ai\r\nTo: bob@hai.ai\r\nSubject: Test\r\n\r\nHello")
+	result, err := cl.SignEmail(context.Background(), rawEmail)
+	if err != nil {
+		t.Fatalf("SignEmail: %v", err)
 	}
 
-	got := computeContentHash(subject, body, attachments)
+	if gotContentType != "message/rfc822" {
+		t.Fatalf("expected Content-Type message/rfc822, got %s", gotContentType)
+	}
+	if string(gotBody) != string(rawEmail) {
+		t.Fatalf("request body should be raw email, got %q", string(gotBody))
+	}
+	if string(result) != "signed-email-bytes" {
+		t.Fatalf("expected signed-email-bytes, got %q", string(result))
+	}
+}
 
-	// Golden value computed independently:
-	//   att1_hash = sha256("doc.pdf:application/pdf:pdf-content")
-	//            = 529fcac3033bb5ced0ae558dafac6b1dc4b87818ac08dc16d877f000dceb608d
-	//   att2_hash = sha256("img.png:image/png:png-content")
-	//            = 64eb9ccbf4de85131d75c1a6d79cafee46684bec3f0ba4c8c044feb8aa43c706
-	//   sorted:  [att1_hash, att2_hash]  (att1 < att2 lexicographically)
-	//   content  = "Cross-SDK Test\nVerify me\n" + att1_hash + "\n" + att2_hash
-	//   hash     = sha256(content)
-	want := "sha256:a0222afb5f569cb89efd21f2bebdcf84e97c4c98cb31cb5ff54e6e4a2b88c8a1"
+func TestSignEmailReturnsErrorOnHTTPFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`Internal Server Error`))
+	}))
+	defer srv.Close()
 
-	if got != want {
-		t.Fatalf("cross-SDK golden hash mismatch:\n  got:  %s\n  want: %s\n\n"+
-			"If this test fails after code changes, the content hash algorithm\n"+
-			"has diverged from other SDKs (Python, Node, Rust). All SDKs must\n"+
-			"produce identical hashes for the same inputs.", got, want)
+	cl, _ := newTestClient(t, srv.URL)
+	_, err := cl.SignEmail(context.Background(), []byte("raw-email"))
+	if err == nil {
+		t.Fatal("expected error for HTTP 500")
+	}
+}
+
+func TestVerifyEmailSendsRawRFC5322(t *testing.T) {
+	var gotContentType string
+	var gotBody []byte
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/email/verify" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		gotContentType = r.Header.Get("Content-Type")
+		var err error
+		gotBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"valid": true,
+			"jacs_id": "agent-123",
+			"algorithm": "ed25519",
+			"reputation_tier": "established",
+			"dns_verified": true,
+			"field_results": [
+				{"field": "subject", "status": "pass"},
+				{"field": "body", "status": "pass"}
+			],
+			"chain": [
+				{"signer": "agent@hai.ai", "jacs_id": "agent-123", "valid": true, "forwarded": false}
+			]
+		}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	rawEmail := []byte("From: agent@hai.ai\r\nTo: bob@hai.ai\r\nSubject: Test\r\n\r\nHello")
+	result, err := cl.VerifyEmail(context.Background(), rawEmail)
+	if err != nil {
+		t.Fatalf("VerifyEmail: %v", err)
 	}
 
-	// Verify the individual attachment hashes for debuggability.
-	h1 := sha256.Sum256([]byte("doc.pdf:application/pdf:pdf-content"))
-	att1Hash := hex.EncodeToString(h1[:])
-	if att1Hash != "529fcac3033bb5ced0ae558dafac6b1dc4b87818ac08dc16d877f000dceb608d" {
-		t.Fatalf("doc.pdf attachment hash mismatch: %s", att1Hash)
+	if gotContentType != "message/rfc822" {
+		t.Fatalf("expected Content-Type message/rfc822, got %s", gotContentType)
+	}
+	if string(gotBody) != string(rawEmail) {
+		t.Fatalf("request body should be raw email, got %q", string(gotBody))
 	}
 
-	h2 := sha256.Sum256([]byte("img.png:image/png:png-content"))
-	att2Hash := hex.EncodeToString(h2[:])
-	if att2Hash != "64eb9ccbf4de85131d75c1a6d79cafee46684bec3f0ba4c8c044feb8aa43c706" {
-		t.Fatalf("img.png attachment hash mismatch: %s", att2Hash)
+	if !result.Valid {
+		t.Fatal("expected valid=true")
+	}
+	if result.JacsID != "agent-123" {
+		t.Fatalf("unexpected jacs_id: %s", result.JacsID)
+	}
+	if result.Algorithm != "ed25519" {
+		t.Fatalf("unexpected algorithm: %s", result.Algorithm)
+	}
+	if result.ReputationTier != "established" {
+		t.Fatalf("unexpected reputation_tier: %s", result.ReputationTier)
+	}
+	if result.DNSVerified == nil || !*result.DNSVerified {
+		t.Fatal("expected dns_verified=true")
+	}
+	if len(result.FieldResults) != 2 {
+		t.Fatalf("expected 2 field results, got %d", len(result.FieldResults))
+	}
+	if result.FieldResults[0].Field != "subject" || result.FieldResults[0].Status != FieldStatusPass {
+		t.Fatalf("unexpected first field result: %+v", result.FieldResults[0])
+	}
+	if len(result.Chain) != 1 {
+		t.Fatalf("expected 1 chain entry, got %d", len(result.Chain))
+	}
+	if result.Chain[0].Signer != "agent@hai.ai" || !result.Chain[0].Valid {
+		t.Fatalf("unexpected chain entry: %+v", result.Chain[0])
+	}
+}
+
+func TestVerifyEmailReturnsErrorOnHTTPFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"bad request"}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	_, err := cl.VerifyEmail(context.Background(), []byte("raw-email"))
+	if err == nil {
+		t.Fatal("expected error for HTTP 400")
+	}
+}
+
+func TestVerifyEmailWithErrorField(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"valid": false,
+			"jacs_id": "",
+			"algorithm": "",
+			"reputation_tier": "",
+			"field_results": [],
+			"chain": [],
+			"error": "no JACS signature attachment found"
+		}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	result, err := cl.VerifyEmail(context.Background(), []byte("unsigned-email"))
+	if err != nil {
+		t.Fatalf("VerifyEmail: %v", err)
+	}
+
+	if result.Valid {
+		t.Fatal("expected valid=false")
+	}
+	if result.Error == nil {
+		t.Fatal("expected error field to be set")
+	}
+	if *result.Error != "no JACS signature attachment found" {
+		t.Fatalf("unexpected error: %s", *result.Error)
 	}
 }

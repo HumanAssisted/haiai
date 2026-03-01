@@ -8,6 +8,8 @@ pub mod client;
 pub mod config;
 pub mod error;
 pub mod jacs;
+#[cfg(feature = "jacs-local")]
+pub mod email;
 #[cfg(any(feature = "jacs-crate", feature = "jacs-local"))]
 pub mod jacs_local;
 pub mod types;
@@ -19,15 +21,23 @@ pub use a2a::{
     A2AIntegration, A2AMediatedJobOptions, A2ATrustAssessment, A2ATrustPolicy, A2AWrappedArtifact,
     A2A_JACS_EXTENSION_URI, A2A_PROTOCOL_VERSION_04, A2A_PROTOCOL_VERSION_10,
 };
-pub use client::{compute_content_hash, HaiClient, HaiClientOptions, SseConnection, WsConnection};
+pub use client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
 pub use config::{load_config, resolve_private_key_candidates, AgentConfig};
+#[cfg(feature = "jacs-local")]
+pub use email::{
+    verify_email, EmailVerificationResultV2,
+    // JACS email types re-exported for consumer convenience
+    sign_email, AttachmentEntry, BodyPartEntry, ChainEntry, ContentVerificationResult,
+    EmailSignatureHeaders, EmailSignaturePayload, EmailSigner, EmailVerifier, FieldResult,
+    FieldStatus, JacsEmailMetadata, JacsEmailSignature, JacsEmailSignatureDocument,
+    ParsedAttachment, ParsedBodyPart, ParsedEmailParts, SignedHeaderEntry,
+};
 pub use error::{HaiError, Result};
 pub use jacs::{JacsProvider, NoopJacsProvider, StaticJacsProvider};
 #[cfg(any(feature = "jacs-crate", feature = "jacs-local"))]
 pub use jacs_local::LocalJacsProvider;
 pub use types::*;
 pub use verify::{
-    build_signing_payload, generate_verify_link, generate_verify_link_hosted,
-    parse_jacs_signature_header, resolve_sig_version, verify_email_signature,
+    generate_verify_link, generate_verify_link_hosted,
     MAX_VERIFY_DOCUMENT_BYTES, MAX_VERIFY_URL_LEN,
 };

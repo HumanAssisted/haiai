@@ -17,6 +17,16 @@ pub trait JacsProvider: Send + Sync {
     fn jacs_id(&self) -> &str;
     fn sign_string(&self, message: &str) -> Result<String>;
 
+    /// Sign raw bytes and return the signature bytes.
+    /// Required for email signing where the payload is binary.
+    fn sign_bytes(&self, data: &[u8]) -> Result<Vec<u8>>;
+
+    /// Return the key identifier used for signing.
+    fn key_id(&self) -> &str;
+
+    /// Return the signing algorithm name (e.g., "ed25519", "rsa-pss-sha256").
+    fn algorithm(&self) -> &str;
+
     /// Return canonical JSON text for `value` in the same way JACS signs.
     fn canonical_json(&self, value: &Value) -> Result<String>;
 
@@ -47,6 +57,20 @@ impl JacsProvider for NoopJacsProvider {
         Err(HaiError::Provider(
             "no JACS signer configured; provide a real JacsProvider".to_string(),
         ))
+    }
+
+    fn sign_bytes(&self, _data: &[u8]) -> Result<Vec<u8>> {
+        Err(HaiError::Provider(
+            "no JACS signer configured; provide a real JacsProvider".to_string(),
+        ))
+    }
+
+    fn key_id(&self) -> &str {
+        &self.jacs_id
+    }
+
+    fn algorithm(&self) -> &str {
+        "ed25519"
     }
 
     fn canonical_json(&self, value: &Value) -> Result<String> {
@@ -85,6 +109,20 @@ impl JacsProvider for StaticJacsProvider {
     fn sign_string(&self, message: &str) -> Result<String> {
         let raw = format!("sig:{}", message);
         Ok(base64::engine::general_purpose::STANDARD.encode(raw))
+    }
+
+    fn sign_bytes(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let mut result = b"sig:".to_vec();
+        result.extend_from_slice(data);
+        Ok(result)
+    }
+
+    fn key_id(&self) -> &str {
+        &self.jacs_id
+    }
+
+    fn algorithm(&self) -> &str {
+        "ed25519"
     }
 
     fn canonical_json(&self, value: &Value) -> Result<String> {

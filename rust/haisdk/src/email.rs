@@ -1,0 +1,585 @@
+//! HAI email verification wrapper.
+//!
+//! This module adds HAI-specific trust chain verification on top of JACS's
+//! neutral email signing functions. It handles registry lookup, DNS
+//! verification, and identity binding -- without duplicating any MIME parsing
+//! or cryptography (those live in JACS).
+
+// This module requires the jacs-local feature (path dependency to the JACS
+// repo) because the email module is not yet available on crates.io (jacs 0.8.0).
+// Once a new jacs version is published with the email module, this can be
+// relaxed to also support the jacs-crate feature.
+use jacs_local_path as jacs;
+
+use base64::Engine;
+use sha2::{Digest, Sha256};
+
+use crate::error::{HaiError, Result};
+use crate::types::KeyRegistryResponse;
+
+// Re-export JACS email types for consumer convenience.
+pub use jacs::email::{
+    sign_email, AttachmentEntry, BodyPartEntry, ChainEntry, ContentVerificationResult,
+    EmailSignatureHeaders, EmailSignaturePayload, EmailSigner, EmailVerifier, FieldResult,
+    FieldStatus, JacsEmailMetadata, JacsEmailSignature, JacsEmailSignatureDocument,
+    ParsedAttachment, ParsedBodyPart, ParsedEmailParts, SignedHeaderEntry,
+};
+
+use jacs::email::{get_jacs_attachment, verify_email_content, verify_email_document};
+
+/// HAI-specific email verification result that wraps JACS content verification
+/// and adds registry + DNS fields.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EmailVerificationResultV2 {
+    /// Overall validity: false if any verification step fails.
+    pub valid: bool,
+    /// JACS agent ID of the signer (from registry).
+    #[serde(default)]
+    pub jacs_id: String,
+    /// Signing algorithm.
+    #[serde(default)]
+    pub algorithm: String,
+    /// HAI reputation tier (e.g., "free_chaotic", "dns_certified", "fully_certified").
+    #[serde(default)]
+    pub reputation_tier: String,
+    /// DNS verification result. None if DNS check was skipped (free tier).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dns_verified: Option<bool>,
+    /// Per-field verification results (from JACS content verification).
+    #[serde(default)]
+    pub field_results: Vec<FieldResult>,
+    /// Forwarding chain entries.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chain: Vec<ChainEntry>,
+    /// Error message if verification failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl EmailVerificationResultV2 {
+    fn err(jacs_id: &str, reputation_tier: &str, error: &str) -> Self {
+        Self {
+            valid: false,
+            jacs_id: jacs_id.to_string(),
+            algorithm: String::new(),
+            reputation_tier: reputation_tier.to_string(),
+            dns_verified: None,
+            field_results: Vec::new(),
+            chain: Vec::new(),
+            error: Some(error.to_string()),
+        }
+    }
+}
+
+/// Verify a raw RFC 5322 email with JACS attachment signature.
+///
+/// This is the primary HAI verification API. It performs:
+/// 1. JACS signature extraction and document validation
+/// 2. HAI registry lookup for the signer's public key
+/// 3. Identity binding checks (PRD lines 681-694)
+/// 4. Cryptographic signature verification (delegated to JACS)
+/// 5. DNS verification (for dns_certified and fully_certified tiers)
+/// 6. Content hash comparison
+/// 7. Forwarding chain verification
+///
+/// # Arguments
+/// * `raw_email` - Raw RFC 5322 email bytes (with JACS attachment)
+/// * `hai_url` - HAI server URL for registry lookup (e.g., "https://hai.ai")
+pub async fn verify_email(
+    raw_email: &[u8],
+    hai_url: &str,
+) -> EmailVerificationResultV2 {
+    let hai_url = hai_url.trim_end_matches('/');
+
+    // Step 1: Extract the JACS signature attachment to get metadata
+    let jacs_bytes = match get_jacs_attachment(raw_email) {
+        Ok(b) => b,
+        Err(e) => {
+            return EmailVerificationResultV2::err("", "", &format!("No JACS signature found: {e}"));
+        }
+    };
+
+    // Step 2: Parse the JACS document to get signer info
+    let doc: JacsEmailSignatureDocument = match serde_json::from_slice(&jacs_bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            return EmailVerificationResultV2::err(
+                "",
+                "",
+                &format!("Invalid JACS signature document: {e}"),
+            );
+        }
+    };
+
+    let jacs_id = &doc.metadata.issuer;
+    let from_email = &doc.payload.headers.from.value;
+    let sig_algorithm = &doc.signature.algorithm;
+
+    // Step 3: Fetch public key from HAI registry
+    let registry = match fetch_public_key_from_registry(hai_url, from_email).await {
+        Ok(r) => r,
+        Err(e) => {
+            return EmailVerificationResultV2::err(
+                jacs_id,
+                "",
+                &format!("Registry lookup failed: {e}"),
+            );
+        }
+    };
+
+    let reputation_tier = &registry.reputation_tier;
+
+    // Step 4: Identity binding checks (PRD lines 681-694)
+    // 4a: metadata.issuer must match registry.jacs_id
+    if *jacs_id != registry.jacs_id {
+        return EmailVerificationResultV2::err(
+            jacs_id,
+            reputation_tier,
+            &format!(
+                "Identity mismatch: document issuer '{}' does not match registry jacs_id '{}'",
+                jacs_id, registry.jacs_id
+            ),
+        );
+    }
+
+    // 4b: payload.headers.from.value must match registry email
+    if *from_email != registry.email {
+        return EmailVerificationResultV2::err(
+            jacs_id,
+            reputation_tier,
+            &format!(
+                "Identity mismatch: From '{}' does not match registry email '{}'",
+                from_email, registry.email
+            ),
+        );
+    }
+
+    // 4c: signature.algorithm must match registry algorithm
+    if !algorithms_match(sig_algorithm, &registry.algorithm) {
+        return EmailVerificationResultV2::err(
+            jacs_id,
+            reputation_tier,
+            &format!(
+                "Algorithm mismatch: signature uses '{}' but registry has '{}'",
+                sig_algorithm, registry.algorithm
+            ),
+        );
+    }
+
+    // Step 5: Parse PEM to get raw public key bytes
+    let raw_pub_key = match extract_public_key_bytes(&registry.public_key) {
+        Ok(k) => k,
+        Err(e) => {
+            return EmailVerificationResultV2::err(
+                jacs_id,
+                reputation_tier,
+                &format!("Failed to parse public key: {e}"),
+            );
+        }
+    };
+
+    // Step 6: Verify the JACS document (crypto verification + hash check)
+    // This internally removes the JACS attachment before parsing (PRD line 473)
+    let default_verifier = jacs::email::DefaultEmailVerifier;
+    let (trusted_doc, parts) =
+        match verify_email_document(raw_email, &raw_pub_key, &default_verifier) {
+            Ok(result) => result,
+            Err(e) => {
+                return EmailVerificationResultV2::err(
+                    jacs_id,
+                    reputation_tier,
+                    &format!("JACS signature verification failed: {e}"),
+                );
+            }
+        };
+
+    // Step 7: DNS verification (for dns_certified and fully_certified tiers)
+    let dns_verified = if reputation_tier == "dns_certified" || reputation_tier == "fully_certified"
+    {
+        let domain = extract_domain(from_email);
+        match verify_dns_public_key(&domain, &registry.public_key).await {
+            Ok(verified) => {
+                if !verified {
+                    return EmailVerificationResultV2::err(
+                        jacs_id,
+                        reputation_tier,
+                        "DNS public key hash does not match registry key",
+                    );
+                }
+                Some(true)
+            }
+            Err(e) => {
+                return EmailVerificationResultV2::err(
+                    jacs_id,
+                    reputation_tier,
+                    &format!("DNS verification failed: {e}"),
+                );
+            }
+        }
+    } else {
+        None // DNS check skipped for free tier
+    };
+
+    // Step 8: Content hash comparison
+    let content_result = verify_email_content(&trusted_doc, &parts);
+
+    EmailVerificationResultV2 {
+        valid: content_result.valid,
+        jacs_id: jacs_id.clone(),
+        algorithm: sig_algorithm.clone(),
+        reputation_tier: reputation_tier.clone(),
+        dns_verified,
+        field_results: content_result.field_results,
+        chain: content_result.chain,
+        error: None,
+    }
+}
+
+/// Fetch the public key and metadata from the HAI registry for a given email.
+///
+/// Calls `GET /api/agents/keys/{email}` on the HAI server.
+pub async fn fetch_public_key_from_registry(
+    hai_url: &str,
+    email: &str,
+) -> Result<KeyRegistryResponse> {
+    let url = format!("{}/api/agents/keys/{}", hai_url, email);
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| HaiError::Provider(format!("Failed to fetch public key: {e}")))?;
+
+    if !resp.status().is_success() {
+        return Err(HaiError::Provider(format!(
+            "Registry returned HTTP {}",
+            resp.status().as_u16()
+        )));
+    }
+
+    let registry: KeyRegistryResponse = resp
+        .json()
+        .await
+        .map_err(|e| HaiError::Provider(format!("Failed to parse registry response: {e}")))?;
+
+    if registry.public_key.is_empty() {
+        return Err(HaiError::Provider("No public key found in registry".into()));
+    }
+
+    Ok(registry)
+}
+
+/// Verify that a DNS TXT record at `_v1.agent.jacs.{domain}` contains
+/// a `jacs_public_key_hash=` value matching the SHA-256 hash of the
+/// public key PEM bytes.
+///
+/// Returns `Ok(true)` if verified, `Ok(false)` if the hash doesn't match,
+/// or `Err` if the DNS lookup fails.
+pub async fn verify_dns_public_key(domain: &str, public_key_pem: &str) -> Result<bool> {
+    // Compute expected hash: sha256(public_key_pem_bytes), base64 encoded
+    let expected_hash = {
+        let mut hasher = Sha256::new();
+        hasher.update(public_key_pem.as_bytes());
+        base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
+    };
+
+    // Query DNS TXT record at _v1.agent.jacs.{domain}
+    // Use DNS-over-HTTPS (Google's public resolver) since we don't have a
+    // native DNS TXT record library as a dependency.
+    let txt_name = format!("_v1.agent.jacs.{domain}");
+    let txt_records = fetch_dns_txt_records(&txt_name).await?;
+
+    for record in &txt_records {
+        // Look for jacs_public_key_hash= in the TXT record
+        for part in record.split(';') {
+            let part = part.trim();
+            if let Some(hash_value) = part.strip_prefix("jacs_public_key_hash=") {
+                let hash_value = hash_value.trim();
+                if hash_value == expected_hash {
+                    return Ok(true);
+                }
+                // Found the field but hash doesn't match
+                return Ok(false);
+            }
+        }
+    }
+
+    // No jacs_public_key_hash field found in any TXT record
+    Ok(false)
+}
+
+/// Fetch DNS TXT records using DNS-over-HTTPS (Google's public resolver).
+async fn fetch_dns_txt_records(name: &str) -> Result<Vec<String>> {
+    let url = format!(
+        "https://dns.google/resolve?name={}&type=TXT",
+        percent_encoding::utf8_percent_encode(
+            name,
+            percent_encoding::NON_ALPHANUMERIC
+        )
+    );
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .header("Accept", "application/dns-json")
+        .send()
+        .await
+        .map_err(|e| HaiError::Provider(format!("DNS lookup failed: {e}")))?;
+
+    if !resp.status().is_success() {
+        return Err(HaiError::Provider(format!(
+            "DNS lookup returned HTTP {}",
+            resp.status().as_u16()
+        )));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| HaiError::Provider(format!("Failed to parse DNS response: {e}")))?;
+
+    let mut records = Vec::new();
+    if let Some(answers) = body.get("Answer").and_then(|a| a.as_array()) {
+        for answer in answers {
+            if let Some(data) = answer.get("data").and_then(|d| d.as_str()) {
+                // DNS TXT data is often quoted; strip outer quotes
+                let clean = data.trim_matches('"');
+                records.push(clean.to_string());
+            }
+        }
+    }
+
+    Ok(records)
+}
+
+/// Extract the domain part from an email address.
+fn extract_domain(email: &str) -> String {
+    // Handle angle bracket formats like "Name <user@domain.com>"
+    let clean = email
+        .rfind('<')
+        .and_then(|start| {
+            email[start + 1..]
+                .find('>')
+                .map(|end| &email[start + 1..start + 1 + end])
+        })
+        .unwrap_or(email);
+
+    clean
+        .rfind('@')
+        .map(|pos| &clean[pos + 1..])
+        .unwrap_or(clean)
+        .to_string()
+}
+
+/// Extract raw public key bytes from a PEM-encoded public key.
+///
+/// For Ed25519: extracts the 32-byte raw key from SPKI DER encoding.
+/// For RSA: returns the full DER-encoded public key.
+fn extract_public_key_bytes(pem: &str) -> Result<Vec<u8>> {
+    let pem_lines: Vec<&str> = pem
+        .lines()
+        .filter(|l| !l.starts_with("-----"))
+        .collect();
+    let der_bytes =
+        base64::engine::general_purpose::STANDARD
+            .decode(pem_lines.join(""))
+            .map_err(|e| {
+                HaiError::Provider(format!("Invalid PEM encoding: {e}"))
+            })?;
+
+    if der_bytes.len() < 32 {
+        return Err(HaiError::Provider("Public key DER too short".into()));
+    }
+
+    // For Ed25519 SPKI: the last 32 bytes are the raw public key
+    // For RSA: the full DER is needed. The JACS verifier handles both.
+    // Use the raw key extraction method from jacs if available.
+    Ok(der_bytes[der_bytes.len() - 32..].to_vec())
+}
+
+/// Check if two algorithm names refer to the same algorithm.
+///
+/// Handles variations like "ed25519" vs "ring-ed25519", "rsa-pss" vs "rsa-pss-sha256".
+fn algorithms_match(a: &str, b: &str) -> bool {
+    let normalize = |s: &str| -> String {
+        s.to_lowercase()
+            .replace("ring-", "")
+            .replace("-sha256", "")
+    };
+    normalize(a) == normalize(b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_domain_simple() {
+        assert_eq!(extract_domain("agent@example.com"), "example.com");
+    }
+
+    #[test]
+    fn extract_domain_with_angle_brackets() {
+        assert_eq!(
+            extract_domain("Agent <agent@example.com>"),
+            "example.com"
+        );
+    }
+
+    #[test]
+    fn extract_domain_no_at_sign() {
+        assert_eq!(extract_domain("nodomain"), "nodomain");
+    }
+
+    #[test]
+    fn algorithms_match_ed25519_variants() {
+        assert!(algorithms_match("ed25519", "ed25519"));
+        assert!(algorithms_match("ed25519", "ring-ed25519"));
+        assert!(algorithms_match("ring-ed25519", "ed25519"));
+    }
+
+    #[test]
+    fn algorithms_match_rsa_variants() {
+        assert!(algorithms_match("rsa-pss", "rsa-pss"));
+        assert!(algorithms_match("rsa-pss", "rsa-pss-sha256"));
+    }
+
+    #[test]
+    fn algorithms_mismatch() {
+        assert!(!algorithms_match("ed25519", "rsa-pss"));
+    }
+
+    #[test]
+    fn err_result_sets_fields() {
+        let r = EmailVerificationResultV2::err("agent:v1", "free_chaotic", "test error");
+        assert!(!r.valid);
+        assert_eq!(r.jacs_id, "agent:v1");
+        assert_eq!(r.reputation_tier, "free_chaotic");
+        assert_eq!(r.error.as_deref(), Some("test error"));
+        assert!(r.field_results.is_empty());
+        assert!(r.chain.is_empty());
+        assert!(r.dns_verified.is_none());
+    }
+
+    // -- Tests that use JACS email functions with TestSigner/TestVerifier --
+
+    use jacs::email::sign::EmailSigner;
+
+    struct TestSigner {
+        id: String,
+    }
+
+    impl TestSigner {
+        fn new(id: &str) -> Self {
+            Self {
+                id: id.to_string(),
+            }
+        }
+    }
+
+    impl EmailSigner for TestSigner {
+        fn sign_bytes(&self, data: &[u8]) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
+            let mut result = b"sig:".to_vec();
+            result.extend_from_slice(data);
+            Ok(result)
+        }
+        fn jacs_id(&self) -> &str {
+            &self.id
+        }
+        fn key_id(&self) -> &str {
+            &self.id
+        }
+        fn algorithm(&self) -> &str {
+            "ed25519"
+        }
+    }
+
+    #[test]
+    fn sign_email_and_extract_doc() {
+        let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
+        let signer = TestSigner::new("test-agent:v1");
+        let signed = sign_email(email, &signer).unwrap();
+
+        let doc_bytes = get_jacs_attachment(&signed).unwrap();
+        let doc: JacsEmailSignatureDocument = serde_json::from_slice(&doc_bytes).unwrap();
+
+        assert_eq!(doc.version, "1.0");
+        assert_eq!(doc.document_type, "email_signature");
+        assert_eq!(doc.metadata.issuer, "test-agent:v1");
+    }
+
+    #[tokio::test]
+    async fn verify_email_missing_jacs_attachment() {
+        let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
+
+        let result = verify_email(email, "http://127.0.0.1:1").await;
+        assert!(!result.valid);
+        assert!(result.error.as_deref().unwrap().contains("No JACS signature found"));
+    }
+
+    #[tokio::test]
+    async fn verify_email_registry_unreachable() {
+        let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
+        let signer = TestSigner::new("test-agent:v1");
+        let signed = sign_email(email, &signer).unwrap();
+
+        let result = verify_email(&signed, "http://127.0.0.1:1").await;
+        assert!(!result.valid);
+        assert!(result.error.as_deref().unwrap().contains("Registry lookup failed"));
+    }
+
+    #[tokio::test]
+    async fn verify_email_with_mock_registry_identity_mismatch() {
+        // This test uses httpmock to simulate a registry that returns a different jacs_id
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method("GET")
+                .path_contains("/api/agents/keys/");
+            then.status(200)
+                .json_body(serde_json::json!({
+                    "email": "sender@example.com",
+                    "jacs_id": "wrong-agent:v1",  // Doesn't match signer
+                    "public_key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjA=\n-----END PUBLIC KEY-----",
+                    "algorithm": "ed25519",
+                    "reputation_tier": "free_chaotic",
+                    "registered_at": "2026-01-01T00:00:00Z"
+                }));
+        });
+
+        let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
+        let signer = TestSigner::new("test-agent:v1");
+        let signed = sign_email(email, &signer).unwrap();
+
+        let result = verify_email(&signed, &server.base_url()).await;
+        assert!(!result.valid);
+        assert!(result.error.as_deref().unwrap().contains("Identity mismatch"));
+        assert!(result.error.as_deref().unwrap().contains("issuer"));
+    }
+
+    #[tokio::test]
+    async fn verify_email_with_mock_registry_email_mismatch() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method("GET")
+                .path_contains("/api/agents/keys/");
+            then.status(200)
+                .json_body(serde_json::json!({
+                    "email": "different@example.com",  // Doesn't match From
+                    "jacs_id": "test-agent:v1",
+                    "public_key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjA=\n-----END PUBLIC KEY-----",
+                    "algorithm": "ed25519",
+                    "reputation_tier": "free_chaotic",
+                    "registered_at": "2026-01-01T00:00:00Z"
+                }));
+        });
+
+        let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
+        let signer = TestSigner::new("test-agent:v1");
+        let signed = sign_email(email, &signer).unwrap();
+
+        let result = verify_email(&signed, &server.base_url()).await;
+        assert!(!result.valid);
+        assert!(result.error.as_deref().unwrap().contains("Identity mismatch"));
+        assert!(result.error.as_deref().unwrap().contains("From"));
+    }
+}

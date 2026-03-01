@@ -1,4 +1,4 @@
-"""Async email signing parity tests for AsyncHaiClient."""
+"""Async email tests for AsyncHaiClient (server-side signing model)."""
 
 from __future__ import annotations
 
@@ -8,8 +8,6 @@ from typing import Any
 import pytest
 
 from jacs.hai.async_client import AsyncHaiClient
-from jacs.hai.client import compute_content_hash
-from jacs.hai.crypt import verify_string
 from jacs.hai.errors import HaiError
 
 
@@ -93,12 +91,11 @@ async def test_async_send_email_requires_agent_email(
 
 
 @pytest.mark.asyncio
-async def test_async_send_email_uses_v2_sign_input_with_from_email(
+async def test_async_send_email_server_side_signing(
     loaded_config: None,
-    ed25519_keypair: tuple,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    private_key, _ = ed25519_keypair
+    """Verify send_email sends only content fields (no client-side signing)."""
     fake_http = _FakeAsyncHTTP()
 
     async def fake_get_http(_self: AsyncHaiClient) -> _FakeAsyncHTTP:
@@ -114,18 +111,20 @@ async def test_async_send_email_uses_v2_sign_input_with_from_email(
     assert fake_http.last_json is not None
 
     payload = fake_http.last_json
-    content_hash = compute_content_hash("Test Subject", "Test Body", None)
-    sign_input = f"{content_hash}:{TEST_AGENT_EMAIL}:{payload['jacs_timestamp']}"
-    assert verify_string(private_key.public_key(), sign_input, payload["jacs_signature"])
+    assert payload["to"] == "bob@hai.ai"
+    assert payload["subject"] == "Test Subject"
+    assert payload["body"] == "Test Body"
+    # Server handles JACS signing -- client must NOT send these fields
+    assert "jacs_signature" not in payload
+    assert "jacs_timestamp" not in payload
 
 
 @pytest.mark.asyncio
-async def test_async_send_email_attachment_hash_and_payload_match_v2(
+async def test_async_send_email_attachment_payload_no_client_signing(
     loaded_config: None,
-    ed25519_keypair: tuple,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    private_key, _ = ed25519_keypair
+    """Verify attachments are base64-encoded but no client-side signing."""
     fake_http = _FakeAsyncHTTP()
 
     async def fake_get_http(_self: AsyncHaiClient) -> _FakeAsyncHTTP:
@@ -162,14 +161,9 @@ async def test_async_send_email_attachment_hash_and_payload_match_v2(
     assert len(payload["attachments"]) == 2
     assert base64.b64decode(payload["attachments"][0]["data_base64"]) == b"alpha"
     assert base64.b64decode(payload["attachments"][1]["data_base64"]) == b"beta"
-
-    expected_hash = compute_content_hash(
-        "Attachment Subject",
-        "Attachment Body",
-        attachments,
-    )
-    sign_input = f"{expected_hash}:{TEST_AGENT_EMAIL}:{payload['jacs_timestamp']}"
-    assert verify_string(private_key.public_key(), sign_input, payload["jacs_signature"])
+    # Server handles JACS signing -- client must NOT send these fields
+    assert "jacs_signature" not in payload
+    assert "jacs_timestamp" not in payload
 
 
 @pytest.mark.asyncio

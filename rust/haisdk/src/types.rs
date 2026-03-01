@@ -342,17 +342,6 @@ pub struct KeyRegistryResponse {
     pub registered_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EmailVerificationResult {
-    #[serde(default)]
-    pub valid: bool,
-    #[serde(default)]
-    pub jacs_id: String,
-    #[serde(default)]
-    pub reputation_tier: String,
-    #[serde(default)]
-    pub error: Option<String>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicKeyInfo {

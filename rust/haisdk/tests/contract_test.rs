@@ -5,7 +5,7 @@
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use haisdk::types::{EmailMessage, EmailStatus, KeyRegistryResponse, EmailVerificationResult};
+use haisdk::types::{EmailMessage, EmailStatus, KeyRegistryResponse};
 
 /// Wrapper struct for the `list_messages_response.json` contract.
 /// The SDK client unpacks this internally, but the contract test validates
@@ -31,8 +31,6 @@ const CONTENT_HASH_JSON: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/content_hash_example.json"));
 const KEY_REGISTRY_JSON: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/key_registry_response.json"));
-const VERIFICATION_RESULT_JSON: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/verification_result.json"));
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -104,17 +102,6 @@ fn contract_deserialize_key_registry_response() {
     assert_eq!(resp.algorithm, "ed25519");
     assert_eq!(resp.reputation_tier, "new");
     assert_eq!(resp.registered_at, "2026-01-15T00:00:00Z");
-}
-
-#[test]
-fn contract_deserialize_verification_result() {
-    let result: EmailVerificationResult =
-        serde_json::from_str(VERIFICATION_RESULT_JSON).expect("EmailVerificationResult deserialization failed");
-
-    assert_eq!(result.valid, true);
-    assert_eq!(result.jacs_id, "test-agent-jacs-id");
-    assert_eq!(result.reputation_tier, "established");
-    assert!(result.error.is_none());
 }
 
 #[test]

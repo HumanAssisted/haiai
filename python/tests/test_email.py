@@ -1,18 +1,16 @@
-"""Tests for email methods: JACS signing, CRUD, search, reply."""
+"""Tests for email methods: server-side signing, CRUD, search, reply."""
 
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
-import time
+import warnings
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
-from jacs.hai.client import HaiClient, compute_content_hash
-from jacs.hai.crypt import sign_string, verify_string
+from jacs.hai.client import HaiClient
 from jacs.hai.errors import (
     BodyTooLarge,
     EmailNotActive,
@@ -64,18 +62,16 @@ class _FakeResponse:
 # ---------------------------------------------------------------
 
 
-class TestSendEmailJacsSigning:
-    """Verify that send_email computes and includes JACS content signature."""
+class TestSendEmailServerSideSigning:
+    """Verify send_email sends content-only payloads (server handles JACS signing)."""
 
-    def test_send_email_includes_jacs_signature_and_timestamp(
+    def test_send_email_no_client_side_signing(
         self,
         loaded_config: None,
-        ed25519_keypair: tuple,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """send_email payload must contain jacs_signature and jacs_timestamp."""
+        """send_email payload must NOT contain jacs_signature or jacs_timestamp."""
         captured: dict[str, Any] = {}
-        private_key, _ = ed25519_keypair
 
         def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
             captured["url"] = url
@@ -92,65 +88,12 @@ class TestSendEmailJacsSigning:
         assert result.status == "sent"
 
         payload = captured["json"]
-        assert "jacs_signature" in payload
-        assert "jacs_timestamp" in payload
-        assert isinstance(payload["jacs_timestamp"], int)
-        assert isinstance(payload["jacs_signature"], str)
-        assert len(payload["jacs_signature"]) > 10  # base64 Ed25519 sig
-
-    def test_send_email_signature_is_verifiable(
-        self,
-        loaded_config: None,
-        ed25519_keypair: tuple,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """The JACS signature must verify against the content hash."""
-        captured: dict[str, Any] = {}
-        private_key, _ = ed25519_keypair
-
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, {"message_id": "msg-2", "status": "sent"})
-
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
-
-        subject = "Test Subject"
-        body = "Test body content"
-        HaiClient().send_email(BASE_URL, "bob@hai.ai", subject, body)
-
-        payload = captured["json"]
-        content_hash = "sha256:" + hashlib.sha256(
-            (subject + "\n" + body).encode("utf-8")
-        ).hexdigest()
-        # v2 signing payload includes agent email
-        sign_input = f"{content_hash}:{TEST_AGENT_EMAIL}:{payload['jacs_timestamp']}"
-
-        # Verify signature with the public key
-        pub_key = private_key.public_key()
-        assert verify_string(pub_key, sign_input, payload["jacs_signature"])
-
-    def test_send_email_timestamp_is_recent(
-        self,
-        loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """jacs_timestamp must be within 5 seconds of current time."""
-        captured: dict[str, Any] = {}
-
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, {"message_id": "msg-3", "status": "sent"})
-
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
-
-        before = int(time.time())
-        HaiClient().send_email(BASE_URL, "bob@hai.ai", "Sub", "Body")
-        after = int(time.time())
-
-        ts = captured["json"]["jacs_timestamp"]
-        assert before <= ts <= after
+        assert payload["to"] == "bob@hai.ai"
+        assert payload["subject"] == "Hello"
+        assert payload["body"] == "World"
+        # Server handles JACS signing -- client must NOT send these
+        assert "jacs_signature" not in payload
+        assert "jacs_timestamp" not in payload
 
     def test_send_email_passes_in_reply_to(
         self,
@@ -216,77 +159,9 @@ class TestSendEmailJacsSigning:
         att1 = payload["attachments"][1]
         assert att1["filename"] == "image.png"
         assert att1["content_type"] == "image/png"
-
-    def test_send_email_attachment_hash_verifiable(
-        self,
-        loaded_config: None,
-        ed25519_keypair: tuple,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Content hash for attachments must match the v2 formula."""
-        captured: dict[str, Any] = {}
-        private_key, _ = ed25519_keypair
-
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, {"message_id": "msg-att-v", "status": "sent"})
-
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
-
-        subject = "Attachment Test"
-        body = "Body with attachments"
-        att1_data = b"file-one-content"
-        att2_data = b"file-two-content"
-        attachments = [
-            {"filename": "one.txt", "content_type": "text/plain", "data": att1_data},
-            {"filename": "two.bin", "content_type": "application/octet-stream", "data": att2_data},
-        ]
-
-        HaiClient().send_email(
-            BASE_URL, "bob@hai.ai", subject, body, attachments=attachments,
-        )
-
-        # Recompute expected content hash using compute_content_hash
-        expected_hash = compute_content_hash(subject, body, attachments)
-
-        payload = captured["json"]
-        sign_input = f"{expected_hash}:{TEST_AGENT_EMAIL}:{payload['jacs_timestamp']}"
-        pub_key = private_key.public_key()
-        assert verify_string(pub_key, sign_input, payload["jacs_signature"])
-
-    def test_send_email_attachment_order_independent(
-        self,
-        loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Attachment order must not affect the content hash."""
-        captures: list[dict[str, Any]] = []
-
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captures.append(kwargs.get("json", {}))
-            return _FakeResponse(200, {"message_id": "msg-ord", "status": "sent"})
-
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
-
-        att_a = {"filename": "a.txt", "content_type": "text/plain", "data": b"aaa"}
-        att_b = {"filename": "b.txt", "content_type": "text/plain", "data": b"bbb"}
-
-        HaiClient().send_email(
-            BASE_URL, "bob@hai.ai", "Order test", "Body",
-            attachments=[att_a, att_b],
-        )
-        HaiClient().send_email(
-            BASE_URL, "bob@hai.ai", "Order test", "Body",
-            attachments=[att_b, att_a],
-        )
-
-        # Both should produce the same content hash (extracted from the
-        # standalone function for independent verification)
-        hash_ab = compute_content_hash("Order test", "Body", [att_a, att_b])
-        hash_ba = compute_content_hash("Order test", "Body", [att_b, att_a])
-        assert hash_ab == hash_ba
+        # No client-side signing fields
+        assert "jacs_signature" not in payload
+        assert "jacs_timestamp" not in payload
 
     def test_send_email_no_agent_email_raises(
         self,
@@ -994,22 +869,3 @@ class TestHaiErrorFromResponseErrorCode:
         assert err.error_code == ""
 
 
-# ---------------------------------------------------------------
-# Cross-SDK golden hash test
-# ---------------------------------------------------------------
-
-
-class TestCrossSDKGoldenHash:
-    """Verify content hash matches Go, Node, and Rust SDKs for identical inputs."""
-
-    def test_cross_sdk_golden_hash(self) -> None:
-        """All four SDKs must produce the same hash for the same inputs."""
-        h = compute_content_hash(
-            "Cross-SDK Test",
-            "Verify me",
-            [
-                {"filename": "doc.pdf", "content_type": "application/pdf", "data": b"pdf-content"},
-                {"filename": "img.png", "content_type": "image/png", "data": b"png-content"},
-            ],
-        )
-        assert h == "sha256:a0222afb5f569cb89efd21f2bebdcf84e97c4c98cb31cb5ff54e6e4a2b88c8a1"

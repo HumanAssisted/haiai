@@ -5,7 +5,6 @@ use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use reqwest::{Response, StatusCode};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -396,30 +395,18 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     pub async fn send_email(&self, options: &SendEmailOptions) -> Result<SendEmailResult> {
-        let agent_email = self.agent_email.as_deref().ok_or_else(|| {
+        // Validate agent_email is set before sending.
+        let _ = self.agent_email.as_deref().ok_or_else(|| {
             HaiError::Message("agent email not set — call claim_username first".into())
         })?;
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/send"));
 
-        let timestamp = OffsetDateTime::now_utc().unix_timestamp();
-
-        let content_hash = compute_content_hash(
-            &options.subject,
-            &options.body,
-            &options.attachments,
-        );
-
-        // v2 signing: "{content_hash}:{from_email}:{timestamp}"
-        let sign_input = format!("{content_hash}:{agent_email}:{timestamp}");
-        let jacs_signature = self.jacs.sign_string(&sign_input)?;
-
+        // Server handles JACS signing — client only sends content fields.
         let mut payload = json!({
             "to": options.to,
             "subject": options.subject,
             "body": options.body,
-            "jacs_signature": jacs_signature,
-            "jacs_timestamp": timestamp,
         });
         if let Some(ref in_reply_to) = options.in_reply_to {
             payload["in_reply_to"] = Value::String(in_reply_to.clone());
@@ -1220,167 +1207,16 @@ impl EmptyFallback for String {
 
 /// Compute the v2 content hash for an email (subject + body + sorted attachment hashes).
 ///
-/// This is extracted from `send_email` for testability and cross-SDK compatibility.
+/// **DEPRECATED**: This function supports the legacy v2 header-based signing flow
+/// used by `send_email`. It will be removed when `send_email` is updated to use
+/// JACS attachment-based signing (TASK_014).
 ///
 /// Formula:
-/// - For each attachment: `sha256(filename:content_type:raw_data)` (hex, lowercase)
-/// - Sort attachment hashes lexicographically
-/// - Final hash: `sha256(subject + "\n" + body + "\n" + att_hash_1 + "\n" + att_hash_2 + ...)`
-/// - Returns: `"sha256:" + hex`
-///
-/// When `data` is empty but `data_base64` is set, decodes base64 as a fallback.
-pub fn compute_content_hash(
-    subject: &str,
-    body: &str,
-    attachments: &[crate::types::EmailAttachment],
-) -> String {
-    use crate::types::EmailAttachment;
-
-    let mut hasher = Sha256::new();
-    hasher.update(subject.as_bytes());
-    hasher.update(b"\n");
-    hasher.update(body.as_bytes());
-
-    if !attachments.is_empty() {
-        let mut att_hashes: Vec<String> = attachments
-            .iter()
-            .map(|att: &EmailAttachment| {
-                let raw = att.effective_data();
-                let mut ah = Sha256::new();
-                ah.update(att.filename.as_bytes());
-                ah.update(b":");
-                ah.update(att.content_type.as_bytes());
-                ah.update(b":");
-                ah.update(&raw);
-                format!("{:x}", ah.finalize())
-            })
-            .collect();
-        att_hashes.sort();
-        for h in &att_hashes {
-            hasher.update(b"\n");
-            hasher.update(h.as_bytes());
-        }
-    }
-
-    format!("sha256:{:x}", hasher.finalize())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::jacs::StaticJacsProvider;
     use crate::types::EmailAttachment;
-
-    // ── Issue 8: Content hash tests ──────────────────────────────────────
-
-    #[test]
-    fn test_content_hash_no_attachments() {
-        let hash = compute_content_hash("Subject", "Body", &[]);
-        // Expected: sha256("Subject\nBody") as hex
-        let mut hasher = Sha256::new();
-        hasher.update(b"Subject\nBody");
-        let expected = format!("sha256:{:x}", hasher.finalize());
-        assert_eq!(hash, expected);
-    }
-
-    #[test]
-    fn test_content_hash_with_attachments() {
-        // Golden values for cross-SDK compat
-        let att = EmailAttachment::new(
-            "a.txt".to_string(),
-            "text/plain".to_string(),
-            b"hello".to_vec(),
-        );
-        let hash = compute_content_hash("Test", "Hello", &[att]);
-
-        // att_hash = sha256("a.txt:text/plain:hello") as hex
-        let mut ah = Sha256::new();
-        ah.update(b"a.txt:text/plain:hello");
-        let att_hash = format!("{:x}", ah.finalize());
-
-        // final = sha256("Test\nHello\n" + att_hash)
-        let mut fh = Sha256::new();
-        fh.update(format!("Test\nHello\n{att_hash}").as_bytes());
-        let expected = format!("sha256:{:x}", fh.finalize());
-
-        assert_eq!(hash, expected);
-    }
-
-    #[test]
-    fn test_content_hash_attachment_order_independent() {
-        let att_a = EmailAttachment::new(
-            "a.txt".to_string(),
-            "text/plain".to_string(),
-            b"alpha".to_vec(),
-        );
-        let att_b = EmailAttachment::new(
-            "b.txt".to_string(),
-            "text/plain".to_string(),
-            b"beta".to_vec(),
-        );
-
-        let hash_ab = compute_content_hash("Sub", "Body", &[att_a.clone(), att_b.clone()]);
-        let hash_ba = compute_content_hash("Sub", "Body", &[att_b, att_a]);
-
-        assert_eq!(hash_ab, hash_ba, "attachment order must not affect content hash");
-    }
-
-    #[test]
-    fn test_content_hash_attachment_tamper_detected() {
-        let att_ok = EmailAttachment::new(
-            "a.txt".to_string(),
-            "text/plain".to_string(),
-            b"hello".to_vec(),
-        );
-        let att_tampered = EmailAttachment::new(
-            "a.txt".to_string(),
-            "text/plain".to_string(),
-            b"HELLO".to_vec(),
-        );
-
-        let hash_ok = compute_content_hash("Sub", "Body", &[att_ok]);
-        let hash_tampered = compute_content_hash("Sub", "Body", &[att_tampered]);
-
-        assert_ne!(hash_ok, hash_tampered, "changed attachment data must produce different hash");
-    }
-
-    #[test]
-    fn test_v2_signing_payload_format() {
-        // The v2 signing payload is: "{content_hash}:{from_email}:{timestamp}"
-        use crate::verify::build_signing_payload;
-
-        let payload = build_signing_payload(2, "sha256:abcdef", "agent@hai.ai", 1740000000);
-        assert_eq!(payload, "sha256:abcdef:agent@hai.ai:1740000000");
-
-        // v1 for comparison
-        let payload_v1 = build_signing_payload(1, "sha256:abcdef", "agent@hai.ai", 1740000000);
-        assert_eq!(payload_v1, "sha256:abcdef:1740000000");
-    }
-
-    // ── Issue 14: data/data_base64 desync fix ────────────────────────────
-
-    #[test]
-    fn test_content_hash_uses_data_base64_when_data_empty() {
-        // Simulate a caller who sets data_base64 but leaves data empty
-        let att = EmailAttachment {
-            filename: "a.txt".to_string(),
-            content_type: "text/plain".to_string(),
-            data: Vec::new(), // empty!
-            data_base64: Some(base64::engine::general_purpose::STANDARD.encode(b"hello")),
-        };
-
-        // Should produce the same hash as if data was b"hello"
-        let att_ref = EmailAttachment::new(
-            "a.txt".to_string(),
-            "text/plain".to_string(),
-            b"hello".to_vec(),
-        );
-
-        let hash_b64 = compute_content_hash("Test", "Hello", &[att]);
-        let hash_data = compute_content_hash("Test", "Hello", &[att_ref]);
-
-        assert_eq!(hash_b64, hash_data, "data_base64 fallback should produce identical hash");
-    }
 
     #[test]
     fn test_effective_data_prefers_data_over_data_base64() {
@@ -1497,31 +1333,4 @@ mod tests {
         assert!(client.agent_email().is_none(), "empty email should not be stored");
     }
 
-    // ── Cross-SDK golden hash test ────────────────────────────────────
-
-    #[test]
-    fn test_cross_sdk_golden_hash() {
-        let attachments = vec![
-            EmailAttachment::new(
-                "doc.pdf".into(),
-                "application/pdf".into(),
-                b"pdf-content".to_vec(),
-            ),
-            EmailAttachment::new(
-                "img.png".into(),
-                "image/png".into(),
-                b"png-content".to_vec(),
-            ),
-        ];
-        let hash = compute_content_hash("Cross-SDK Test", "Verify me", &attachments);
-
-        // Golden value shared across Go, Python, Node, and Rust SDKs.
-        // If this test fails after code changes, the content hash algorithm
-        // has diverged from other SDKs. All SDKs must produce identical
-        // hashes for the same inputs.
-        assert_eq!(
-            hash,
-            "sha256:a0222afb5f569cb89efd21f2bebdcf84e97c4c98cb31cb5ff54e6e4a2b88c8a1",
-        );
-    }
 }

@@ -29,7 +29,6 @@ import httpx
 
 from jacs.hai._retry import RETRY_MAX_ATTEMPTS, backoff, should_retry
 from jacs.hai._sse import flatten_benchmark_job, parse_sse_lines
-from jacs.hai.client import compute_content_hash
 from jacs.hai.crypt import canonicalize_json, create_agent_document, sign_string
 from jacs.hai.errors import (
     BenchmarkError,
@@ -47,8 +46,12 @@ from jacs.hai.errors import (
 from jacs.hai.models import (
     BaselineRunResult,
     BenchmarkResult,
+    ChainEntry,
     EmailMessage,
     EmailStatus,
+    EmailVerificationResultV2,
+    FieldResult,
+    FieldStatus,
     FreeChaoticResult,
     HaiEvent,
     HaiRegistrationPreview,
@@ -627,20 +630,12 @@ class AsyncHaiClient:
         headers = self._build_auth_headers()
         headers["Content-Type"] = "application/json"
 
-        # JACS content signing v2: "{content_hash}:{from_email}:{timestamp}"
-        from jacs.hai.config import get_private_key
-
-        content_hash = compute_content_hash(subject, body, attachments)
-        jacs_timestamp = int(time.time())
-        sign_input = f"{content_hash}:{self._agent_email}:{jacs_timestamp}"
-        jacs_signature = sign_string(get_private_key(), sign_input)
-
+        # Server handles JACS attachment signing (TASK_014/017).
+        # Client only sends content fields.
         payload: dict[str, Any] = {
             "to": to,
             "subject": subject,
             "body": body,
-            "jacs_signature": jacs_signature,
-            "jacs_timestamp": jacs_timestamp,
         }
         if in_reply_to is not None:
             payload["in_reply_to"] = in_reply_to
@@ -710,6 +705,117 @@ class AsyncHaiClient:
             raise
         except Exception as exc:
             raise HaiError(f"Email send failed: {exc}")
+
+    async def sign_email(self, hai_url: str, raw_email: bytes) -> bytes:
+        """Sign a raw RFC 5322 email with a JACS attachment via the HAI API.
+
+        The server adds a ``jacs-signature.json`` MIME attachment containing
+        the detached JACS signature. The returned bytes are the signed email.
+
+        Also accepts ``email.message.EmailMessage`` objects -- they are
+        automatically converted to bytes via ``as_bytes()``.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            raw_email: Raw RFC 5322 email bytes (or EmailMessage).
+
+        Returns:
+            Signed email bytes with the JACS attachment added.
+        """
+        import email.message
+        if isinstance(raw_email, email.message.EmailMessage):
+            raw_email = raw_email.as_bytes()
+
+        http = await self._get_http()
+        url = self._make_url(hai_url, "/api/v1/email/sign")
+        headers = self._build_auth_headers()
+        headers["Content-Type"] = "message/rfc822"
+
+        try:
+            resp = await http.post(url, content=raw_email, headers=headers)
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Email sign failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return resp.content
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email sign failed: {exc}")
+
+    async def verify_email(self, hai_url: str, raw_email: bytes) -> EmailVerificationResultV2:
+        """Verify a JACS-signed email via the HAI API.
+
+        The server extracts the ``jacs-signature.json`` attachment, validates
+        the cryptographic signature and content hashes, and returns a
+        detailed verification result.
+
+        Also accepts ``email.message.EmailMessage`` objects -- they are
+        automatically converted to bytes via ``as_bytes()``.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            raw_email: Raw RFC 5322 email bytes (or EmailMessage).
+
+        Returns:
+            EmailVerificationResultV2 with field-level verification results.
+        """
+        import email.message
+        if isinstance(raw_email, email.message.EmailMessage):
+            raw_email = raw_email.as_bytes()
+
+        http = await self._get_http()
+        url = self._make_url(hai_url, "/api/v1/email/verify")
+        headers = self._build_auth_headers()
+        headers["Content-Type"] = "message/rfc822"
+
+        try:
+            resp = await http.post(url, content=raw_email, headers=headers)
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Email verify failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            data = resp.json()
+            return EmailVerificationResultV2(
+                valid=data.get("valid", False),
+                jacs_id=data.get("jacs_id", ""),
+                algorithm=data.get("algorithm", ""),
+                reputation_tier=data.get("reputation_tier", ""),
+                dns_verified=data.get("dns_verified"),
+                field_results=[
+                    FieldResult(
+                        field=fr.get("field", ""),
+                        status=FieldStatus(fr.get("status", "unverifiable")),
+                        original_hash=fr.get("original_hash"),
+                        current_hash=fr.get("current_hash"),
+                        original_value=fr.get("original_value"),
+                        current_value=fr.get("current_value"),
+                    )
+                    for fr in data.get("field_results", [])
+                ],
+                chain=[
+                    ChainEntry(
+                        signer=ce.get("signer", ""),
+                        jacs_id=ce.get("jacs_id", ""),
+                        valid=ce.get("valid", False),
+                        forwarded=ce.get("forwarded", False),
+                    )
+                    for ce in data.get("chain", [])
+                ],
+                error=data.get("error"),
+            )
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email verify failed: {exc}")
 
     async def list_messages(
         self, hai_url: str, limit: int = 20, offset: int = 0, direction: Optional[str] = None,

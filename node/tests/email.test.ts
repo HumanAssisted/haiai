@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
-import { generateKeypair, verifyString } from '../src/crypt.js';
-import { computeContentHash } from '../src/signing.js';
-import { createHash } from 'node:crypto';
+import { generateKeypair } from '../src/crypt.js';
 import {
   HaiApiError,
   EmailNotActiveError,
@@ -24,13 +22,13 @@ function jsonResponse(body: Record<string, unknown>, status = 200): Response {
   });
 }
 
-describe('sendEmail JACS content signing', () => {
+describe('sendEmail server-side signing', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it('includes jacs_signature and jacs_timestamp in send request body', async () => {
+  it('does not include jacs_signature or jacs_timestamp in send request body', async () => {
     const client = makeClient();
     let capturedBody: Record<string, unknown> | null = null;
 
@@ -43,73 +41,12 @@ describe('sendEmail JACS content signing', () => {
     await client.sendEmail({ to: 'bob@hai.ai', subject: 'Hello', body: 'World' });
 
     expect(capturedBody).not.toBeNull();
-    expect(capturedBody!.jacs_signature).toBeDefined();
-    expect(typeof capturedBody!.jacs_signature).toBe('string');
-    expect((capturedBody!.jacs_signature as string).length).toBeGreaterThan(0);
-    expect(capturedBody!.jacs_timestamp).toBeDefined();
-    expect(typeof capturedBody!.jacs_timestamp).toBe('number');
-  });
-
-  it('signature verifies against content hash and timestamp', async () => {
-    const keypair = generateKeypair();
-    const client = HaiClient.fromCredentials('test-agent', keypair.privateKeyPem, {
-      url: 'https://hai.example',
-    });
-    client.setAgentEmail('test-agent@hai.ai');
-    let capturedBody: Record<string, unknown> | null = null;
-
-    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
-      capturedBody = JSON.parse(init?.body as string);
-      return jsonResponse({ message_id: 'msg-2', status: 'queued' });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    const subject = 'Test Subject';
-    const body = 'Test Body';
-    await client.sendEmail({ to: 'bob@hai.ai', subject, body });
-
-    const expectedHash = 'sha256:' + createHash('sha256')
-      .update(subject + '\n' + body, 'utf8')
-      .digest('hex');
-    // v2 signing payload includes from email
-    const signInput = `${expectedHash}:test-agent@hai.ai:${capturedBody!.jacs_timestamp}`;
-
-    const valid = verifyString(
-      keypair.publicKeyPem,
-      signInput,
-      capturedBody!.jacs_signature as string,
-    );
-    expect(valid).toBe(true);
-  });
-
-  it('signature fails verification with tampered body', async () => {
-    const keypair = generateKeypair();
-    const client = HaiClient.fromCredentials('test-agent', keypair.privateKeyPem, {
-      url: 'https://hai.example',
-    });
-    client.setAgentEmail('test-agent@hai.ai');
-    let capturedBody: Record<string, unknown> | null = null;
-
-    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
-      capturedBody = JSON.parse(init?.body as string);
-      return jsonResponse({ message_id: 'msg-3', status: 'queued' });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    await client.sendEmail({ to: 'bob@hai.ai', subject: 'Hello', body: 'World' });
-
-    // Tamper: use different body text in the hash
-    const tamperedHash = 'sha256:' + createHash('sha256')
-      .update('Hello\nTampered', 'utf8')
-      .digest('hex');
-    const tamperedInput = `${tamperedHash}:${capturedBody!.jacs_timestamp}`;
-
-    const valid = verifyString(
-      keypair.publicKeyPem,
-      tamperedInput,
-      capturedBody!.jacs_signature as string,
-    );
-    expect(valid).toBe(false);
+    expect(capturedBody!.to).toBe('bob@hai.ai');
+    expect(capturedBody!.subject).toBe('Hello');
+    expect(capturedBody!.body).toBe('World');
+    // Server handles JACS signing -- client must NOT send these
+    expect(capturedBody!.jacs_signature).toBeUndefined();
+    expect(capturedBody!.jacs_timestamp).toBeUndefined();
   });
 });
 
@@ -309,8 +246,6 @@ describe('reply', () => {
       expect(body.subject).toBe('Re: Original Subject');
       expect(body.body).toBe('Thanks!');
       expect(body.in_reply_to).toBe('<msg-orig@hai.ai>');
-      expect(body.jacs_signature).toBeDefined();
-      expect(body.jacs_timestamp).toBeDefined();
       return jsonResponse({ message_id: 'msg-reply', status: 'queued' });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -496,12 +431,8 @@ describe('sendEmail with attachments', () => {
     vi.restoreAllMocks();
   });
 
-  it('includes sorted attachment hashes in content hash', async () => {
-    const keypair = generateKeypair();
-    const client = HaiClient.fromCredentials('att-agent', keypair.privateKeyPem, {
-      url: 'https://hai.example',
-    });
-    client.setAgentEmail('att-agent@hai.ai');
+  it('includes attachments as base64 without client-side signing', async () => {
+    const client = makeClient('att-agent');
     let capturedBody: Record<string, unknown> | null = null;
 
     const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
@@ -523,54 +454,13 @@ describe('sendEmail with attachments', () => {
     });
 
     expect(capturedBody).not.toBeNull();
-    // Verify attachments array present with data_base64
     const payloadAtts = capturedBody!.attachments as Array<Record<string, string>>;
     expect(payloadAtts).toHaveLength(2);
     expect(payloadAtts[0].data_base64).toBeDefined();
     expect(payloadAtts[1].data_base64).toBeDefined();
-
-    // Recompute expected v2 content hash and verify signature
-    const expectedHash = computeContentHash('With Attachments', 'See attached', attachments);
-    const signInput = `${expectedHash}:att-agent@hai.ai:${capturedBody!.jacs_timestamp}`;
-    const valid = verifyString(keypair.publicKeyPem, signInput, capturedBody!.jacs_signature as string);
-    expect(valid).toBe(true);
-  });
-
-  it('attachment order does not affect signature', async () => {
-    const keypair = generateKeypair();
-    const client = HaiClient.fromCredentials('order-agent', keypair.privateKeyPem, {
-      url: 'https://hai.example',
-    });
-    client.setAgentEmail('order-agent@hai.ai');
-
-    const captured: Record<string, unknown>[] = [];
-    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
-      captured.push(JSON.parse(init?.body as string));
-      return jsonResponse({ message_id: `msg-ord-${captured.length}`, status: 'queued' });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    const attA = { filename: 'a.txt', contentType: 'text/plain', data: Buffer.from('alpha') };
-    const attB = { filename: 'b.txt', contentType: 'text/plain', data: Buffer.from('bravo') };
-
-    // Send in order [a, b]
-    await client.sendEmail({
-      to: 'bob@hai.ai', subject: 'Order Test', body: 'body',
-      attachments: [attA, attB],
-    });
-    // Send in order [b, a]
-    await client.sendEmail({
-      to: 'bob@hai.ai', subject: 'Order Test', body: 'body',
-      attachments: [attB, attA],
-    });
-
-    // Both signatures should verify with the same expected hash
-    const expectedHash = computeContentHash('Order Test', 'body', [attA, attB]);
-    for (const body of captured) {
-      const signInput = `${expectedHash}:order-agent@hai.ai:${body.jacs_timestamp}`;
-      const valid = verifyString(keypair.publicKeyPem, signInput, body.jacs_signature as string);
-      expect(valid).toBe(true);
-    }
+    // Server handles JACS signing -- client must NOT send these
+    expect(capturedBody!.jacs_signature).toBeUndefined();
+    expect(capturedBody!.jacs_timestamp).toBeUndefined();
   });
 
   it('attachment data is base64 encoded in payload', async () => {
@@ -616,24 +506,3 @@ describe('sendEmail with attachments', () => {
   });
 });
 
-describe('computeContentHash dataBase64 fallback', () => {
-  it('computeContentHash uses dataBase64 when data is empty', () => {
-    const withData = computeContentHash('S', 'B', [
-      { filename: 'f.txt', contentType: 'text/plain', data: Buffer.from('hello') }
-    ]);
-    const withBase64 = computeContentHash('S', 'B', [
-      { filename: 'f.txt', contentType: 'text/plain', data: Buffer.alloc(0), dataBase64: Buffer.from('hello').toString('base64') }
-    ]);
-    expect(withData).toBe(withBase64);
-  });
-});
-
-describe('cross-SDK golden hash', () => {
-  it('matches Go/Rust/Python golden value', () => {
-    const hash = computeContentHash('Cross-SDK Test', 'Verify me', [
-      { filename: 'doc.pdf', contentType: 'application/pdf', data: Buffer.from('pdf-content') },
-      { filename: 'img.png', contentType: 'image/png', data: Buffer.from('png-content') },
-    ]);
-    expect(hash).toBe('sha256:a0222afb5f569cb89efd21f2bebdcf84e97c4c98cb31cb5ff54e6e4a2b88c8a1');
-  });
-});

@@ -45,8 +45,12 @@ from jacs.hai.models import (
     AgentVerificationResult,
     BaselineRunResult,
     BenchmarkResult,
+    ChainEntry,
     EmailMessage,
     EmailStatus,
+    EmailVerificationResultV2,
+    FieldResult,
+    FieldStatus,
     FreeChaoticResult,
     HaiEvent,
     HaiRegistrationPreview,
@@ -66,52 +70,6 @@ logger = logging.getLogger("jacs.hai.client")
 # Verify link constants (HAI / public verification URLs)
 MAX_VERIFY_URL_LEN = 2048
 MAX_VERIFY_DOCUMENT_BYTES = 1515
-
-
-# ---------------------------------------------------------------------------
-# Content hash computation (standalone, shared with verify side)
-# ---------------------------------------------------------------------------
-
-
-def compute_content_hash(
-    subject: str,
-    body: str,
-    attachments: Optional[list[dict[str, Any]]] = None,
-) -> str:
-    """Compute the JACS v2 content hash for email signing.
-
-    Formula:
-        - Per attachment: sha256(filename:content_type:raw_data) -> hex lowercase
-        - Sort the hex hashes alphabetically
-        - canonical = subject + "\\n" + body + "\\n" + "\\n".join(sorted_hashes)
-          (or just subject + "\\n" + body when no attachments)
-        - content_hash = "sha256:" + sha256(canonical)
-
-    Args:
-        subject: Email subject line.
-        body: Email body text.
-        attachments: Optional list of dicts with ``filename`` (str),
-            ``content_type`` (str), and ``data`` (bytes).
-
-    Returns:
-        Content hash string prefixed with ``sha256:``.
-    """
-    if attachments:
-        att_hashes = sorted(
-            hashlib.sha256(
-                att["filename"].encode("utf-8")
-                + b":"
-                + att["content_type"].encode("utf-8")
-                + b":"
-                + att["data"]  # raw bytes
-            ).hexdigest()
-            for att in attachments
-        )
-        canonical = subject + "\n" + body + "\n" + "\n".join(att_hashes)
-    else:
-        canonical = subject + "\n" + body
-
-    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -1567,20 +1525,12 @@ class HaiClient:
         headers = self._build_auth_headers()
         headers["Content-Type"] = "application/json"
 
-        # JACS content signing v2: hash includes attachments and email
-        from jacs.hai.config import get_private_key
-
-        content_hash = compute_content_hash(subject, body, attachments)
-        jacs_timestamp = int(time.time())
-        sign_input = f"{content_hash}:{self._agent_email}:{jacs_timestamp}"
-        jacs_signature = sign_string(get_private_key(), sign_input)
-
+        # Server handles JACS attachment signing (TASK_014/017).
+        # Client only sends content fields.
         payload: dict[str, Any] = {
             "to": to,
             "subject": subject,
             "body": body,
-            "jacs_signature": jacs_signature,
-            "jacs_timestamp": jacs_timestamp,
         }
         if in_reply_to is not None:
             payload["in_reply_to"] = in_reply_to
@@ -1681,6 +1631,115 @@ class HaiClient:
             raise
         except Exception as exc:
             raise HaiError(f"Email send failed: {exc}")
+
+    def sign_email(self, hai_url: str, raw_email: bytes) -> bytes:
+        """Sign a raw RFC 5322 email with a JACS attachment via the HAI API.
+
+        The server adds a ``jacs-signature.json`` MIME attachment containing
+        the detached JACS signature. The returned bytes are the signed email.
+
+        Also accepts ``email.message.EmailMessage`` objects -- they are
+        automatically converted to bytes via ``as_bytes()``.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            raw_email: Raw RFC 5322 email bytes (or EmailMessage).
+
+        Returns:
+            Signed email bytes with the JACS attachment added.
+        """
+        import email.message
+        if isinstance(raw_email, email.message.EmailMessage):
+            raw_email = raw_email.as_bytes()
+
+        url = self._make_url(hai_url, "/api/v1/email/sign")
+        headers = self._build_auth_headers()
+        headers["Content-Type"] = "message/rfc822"
+
+        try:
+            resp = httpx.post(url, content=raw_email, headers=headers, timeout=self._timeout)
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Email sign failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return resp.content
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email sign failed: {exc}")
+
+    def verify_email(self, hai_url: str, raw_email: bytes) -> EmailVerificationResultV2:
+        """Verify a JACS-signed email via the HAI API.
+
+        The server extracts the ``jacs-signature.json`` attachment, validates
+        the cryptographic signature and content hashes, and returns a
+        detailed verification result.
+
+        Also accepts ``email.message.EmailMessage`` objects -- they are
+        automatically converted to bytes via ``as_bytes()``.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            raw_email: Raw RFC 5322 email bytes (or EmailMessage).
+
+        Returns:
+            EmailVerificationResultV2 with field-level verification results.
+        """
+        import email.message
+        if isinstance(raw_email, email.message.EmailMessage):
+            raw_email = raw_email.as_bytes()
+
+        url = self._make_url(hai_url, "/api/v1/email/verify")
+        headers = self._build_auth_headers()
+        headers["Content-Type"] = "message/rfc822"
+
+        try:
+            resp = httpx.post(url, content=raw_email, headers=headers, timeout=self._timeout)
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Email verify failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            data = resp.json()
+            return EmailVerificationResultV2(
+                valid=data.get("valid", False),
+                jacs_id=data.get("jacs_id", ""),
+                algorithm=data.get("algorithm", ""),
+                reputation_tier=data.get("reputation_tier", ""),
+                dns_verified=data.get("dns_verified"),
+                field_results=[
+                    FieldResult(
+                        field=fr.get("field", ""),
+                        status=FieldStatus(fr.get("status", "unverifiable")),
+                        original_hash=fr.get("original_hash"),
+                        current_hash=fr.get("current_hash"),
+                        original_value=fr.get("original_value"),
+                        current_value=fr.get("current_value"),
+                    )
+                    for fr in data.get("field_results", [])
+                ],
+                chain=[
+                    ChainEntry(
+                        signer=ce.get("signer", ""),
+                        jacs_id=ce.get("jacs_id", ""),
+                        valid=ce.get("valid", False),
+                        forwarded=ce.get("forwarded", False),
+                    )
+                    for ce in data.get("chain", [])
+                ],
+                error=data.get("error"),
+            )
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email verify failed: {exc}")
 
     def list_messages(
         self,
@@ -2663,6 +2722,16 @@ def send_email(
     return _get_client().send_email(
         hai_url, to, subject, body, in_reply_to, attachments=attachments,
     )
+
+
+def sign_email(hai_url: str, raw_email: bytes) -> bytes:
+    """Sign a raw RFC 5322 email with a JACS attachment via the HAI API."""
+    return _get_client().sign_email(hai_url, raw_email)
+
+
+def verify_email(hai_url: str, raw_email: bytes) -> EmailVerificationResultV2:
+    """Verify a JACS-signed email via the HAI API."""
+    return _get_client().verify_email(hai_url, raw_email)
 
 
 def list_messages(

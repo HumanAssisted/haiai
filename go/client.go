@@ -21,7 +21,6 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -31,7 +30,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"sort"
 	"strings"
 	"time"
 )
@@ -769,40 +767,8 @@ func (c *Client) SendEmail(ctx context.Context, to, subject, body string) (*Send
 	return c.SendEmailWithOptions(ctx, SendEmailOptions{To: to, Subject: subject, Body: body})
 }
 
-// computeContentHash computes the JACS content hash for email signing.
-//
-// The hash covers the email subject, body, and any attachments:
-//
-//	sha256(subject + "\n" + body [+ "\n" + sorted_att_hashes...])
-//
-// Each attachment hash is: hex(sha256(filename + ":" + content_type + ":" + raw_data)).
-// Attachment hashes are sorted lexicographically before appending to ensure
-// order-independent results.
-func computeContentHash(subject, body string, attachments []EmailAttachment) string {
-	hasher := sha256.New()
-	hasher.Write([]byte(subject + "\n" + body))
-	if len(attachments) > 0 {
-		attHashes := make([]string, len(attachments))
-		for i, att := range attachments {
-			ah := sha256.New()
-			ah.Write([]byte(att.Filename))
-			ah.Write([]byte(":"))
-			ah.Write([]byte(att.ContentType))
-			ah.Write([]byte(":"))
-			ah.Write(att.Data)
-			attHashes[i] = hex.EncodeToString(ah.Sum(nil))
-		}
-		sort.Strings(attHashes)
-		for _, ah := range attHashes {
-			hasher.Write([]byte("\n"))
-			hasher.Write([]byte(ah))
-		}
-	}
-	return "sha256:" + hex.EncodeToString(hasher.Sum(nil))
-}
-
 // SendEmailWithOptions sends an email with full options (e.g. threading).
-// Automatically computes JACS content signature over subject+body.
+// The server handles JACS attachment signing; the client only sends content fields.
 //
 // Returns typed sentinel errors that callers can check with errors.Is:
 //   - ErrEmailNotActive: agent email is not provisioned or active
@@ -812,13 +778,6 @@ func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions
 	if c.agentEmail == "" {
 		return nil, fmt.Errorf("%w: agent email not set — call ClaimUsername first", ErrEmailNotActive)
 	}
-	contentHash := computeContentHash(opts.Subject, opts.Body, opts.Attachments)
-	timestamp := time.Now().Unix()
-	// v2 signing: "{content_hash}:{from_email}:{timestamp}"
-	signInput := fmt.Sprintf("%s:%s:%d", contentHash, c.agentEmail, timestamp)
-	sig := Sign(c.privateKey, []byte(signInput))
-	opts.JacsSignature = base64.StdEncoding.EncodeToString(sig)
-	opts.JacsTimestamp = timestamp
 
 	// Encode attachment data to base64 for JSON serialization
 	for i := range opts.Attachments {
@@ -877,6 +836,64 @@ func classifyEmailError(statusCode int, body []byte) error {
 		}
 	}
 	return classifyHTTPError(statusCode, body)
+}
+
+// SignEmail sends a raw RFC 5322 email to the HAI server for JACS attachment signing.
+// The server signs the email and returns the signed email bytes (with JACS signature
+// attachment added).
+func (c *Client) SignEmail(ctx context.Context, rawEmail []byte) ([]byte, error) {
+	url := c.endpoint + "/api/v1/email/sign"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(rawEmail))
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "failed to create sign email request")
+	}
+	SetAuthHeaders(req, c.jacsID, c.privateKey)
+	req.Header.Set("Content-Type", "message/rfc822")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "sign email request failed")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyHTTPError(resp.StatusCode, respBody)
+	}
+
+	return io.ReadAll(resp.Body)
+}
+
+// VerifyEmail sends a raw RFC 5322 email to the HAI server for JACS signature verification.
+// The server verifies the JACS attachment signature and returns a detailed result including
+// per-field verification status and the chain of custody.
+func (c *Client) VerifyEmail(ctx context.Context, rawEmail []byte) (*EmailVerificationResultV2, error) {
+	url := c.endpoint + "/api/v1/email/verify"
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(rawEmail))
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "failed to create verify email request")
+	}
+	SetAuthHeaders(req, c.jacsID, c.privateKey)
+	req.Header.Set("Content-Type", "message/rfc822")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "verify email request failed")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyHTTPError(resp.StatusCode, respBody)
+	}
+
+	var result EmailVerificationResultV2
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode verify email response")
+	}
+	return &result, nil
 }
 
 // ListMessages retrieves messages from the agent's mailbox.

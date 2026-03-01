@@ -463,16 +463,55 @@ export interface KeyRegistryResponse {
   registeredAt: string;
 }
 
-/** Result of verifying an email's JACS signature. */
-export interface EmailVerificationResult {
-  /** Whether the signature is valid. */
-  valid: boolean;
-  /** The signer's JACS ID. */
+/** Status of a single field in JACS email content verification. */
+export type FieldStatus = 'pass' | 'modified' | 'fail' | 'unverifiable';
+
+/** Result for a single field in content verification. */
+export interface FieldResult {
+  /** Field name (e.g., "subject", "body", "from"). */
+  field: string;
+  /** Verification status for this field. */
+  status: FieldStatus;
+  /** Original hash from the JACS signature, if available. */
+  originalHash?: string;
+  /** Current hash computed from the email, if available. */
+  currentHash?: string;
+  /** Original value (for short fields), if available. */
+  originalValue?: string;
+  /** Current value (for short fields), if available. */
+  currentValue?: string;
+}
+
+/** Entry in a JACS email forwarding chain. */
+export interface ChainEntry {
+  /** Signer identifier (e.g., email address). */
+  signer: string;
+  /** JACS ID of the signer. */
   jacsId: string;
-  /** The signer's reputation tier. */
+  /** Whether this chain entry's signature is valid. */
+  valid: boolean;
+  /** Whether this entry represents a forward (vs. original). */
+  forwarded: boolean;
+}
+
+/** Result of verifying a JACS attachment-signed email. */
+export interface EmailVerificationResultV2 {
+  /** Whether overall verification passed. */
+  valid: boolean;
+  /** JACS ID of the signer. */
+  jacsId: string;
+  /** Signature algorithm (e.g., "Ed25519"). */
+  algorithm: string;
+  /** Signer's reputation tier. */
   reputationTier: string;
+  /** Whether DNS verification passed, or null if not checked. */
+  dnsVerified?: boolean | null;
+  /** Per-field verification results. */
+  fieldResults: FieldResult[];
+  /** Forwarding chain entries. */
+  chain: ChainEntry[];
   /** Error message if verification failed, or null. */
-  error: string | null;
+  error?: string | null;
 }
 
 // =============================================================================

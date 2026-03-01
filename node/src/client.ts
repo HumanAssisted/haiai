@@ -33,6 +33,10 @@ import type {
   DocumentVerificationResult,
   AdvancedVerificationResult,
   VerifyAgentDocumentOnHaiOptions,
+  EmailVerificationResultV2,
+  FieldResult,
+  FieldStatus,
+  ChainEntry,
 } from './types.js';
 import {
   HaiError,
@@ -50,7 +54,7 @@ import {
   verify as verifySignature,
 } from 'node:crypto';
 import { signString, verifyString, generateKeypair } from './crypt.js';
-import { signResponse, canonicalJson, getServerKeys, unwrapSignedEvent, computeContentHash } from './signing.js';
+import { signResponse, canonicalJson, getServerKeys, unwrapSignedEvent } from './signing.js';
 import { loadConfig, loadPrivateKey, loadPrivateKeyPassphrase } from './config.js';
 import { parseSseStream } from './sse.js';
 import { openWebSocket, wsEventStream } from './ws.js';
@@ -1368,14 +1372,8 @@ export class HaiClient {
       throw new Error('agent email not set — call claimUsername first');
     }
 
-    // v2 content hash: sha256(subject + "\n" + body [+ sorted attachment hashes])
-    const contentHash = computeContentHash(options.subject, options.body, options.attachments);
-
-    // v2 signing: "{content_hash}:{from_email}:{timestamp}"
-    const jacsTimestamp = Math.floor(Date.now() / 1000);
-    const signInput = `${contentHash}:${this.agentEmail}:${jacsTimestamp}`;
-    const jacsSignature = signString(this.privateKeyPem, signInput, this.privateKeyPassphrase);
-
+    // Server handles JACS attachment signing (TASK_014/018).
+    // Client only sends content fields.
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
@@ -1389,8 +1387,6 @@ export class HaiClient {
           subject: options.subject,
           body: options.body,
           in_reply_to: options.inReplyTo,
-          jacs_signature: jacsSignature,
-          jacs_timestamp: jacsTimestamp,
           attachments: options.attachments?.map(a => ({
             filename: a.filename,
             content_type: a.contentType,
@@ -1437,6 +1433,90 @@ export class HaiClient {
     return {
       messageId: (data.message_id as string) || '',
       status: (data.status as string) || '',
+    };
+  }
+
+  /**
+   * Sign a raw RFC 5322 email with a JACS attachment via the HAI API.
+   *
+   * The server adds a `jacs-signature.json` MIME attachment containing
+   * the detached JACS signature. The returned Buffer is the signed email.
+   *
+   * @param rawEmail - Raw RFC 5322 email as a Buffer or string.
+   * @returns Signed email bytes with the JACS attachment added.
+   */
+  async signEmail(rawEmail: Buffer | string): Promise<Buffer> {
+    const url = this.makeUrl('/api/v1/email/sign');
+    const headers = this.buildAuthHeaders();
+    headers['Content-Type'] = 'message/rfc822';
+
+    const body = typeof rawEmail === 'string' ? Buffer.from(rawEmail) : rawEmail;
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers,
+      body,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new HaiApiError(`Email sign failed: HTTP ${response.status}`, response.status, undefined, '', text);
+    }
+
+    const arrayBuf = await response.arrayBuffer();
+    return Buffer.from(arrayBuf);
+  }
+
+  /**
+   * Verify a JACS-signed email via the HAI API.
+   *
+   * The server extracts the `jacs-signature.json` attachment, validates
+   * the cryptographic signature and content hashes, and returns a
+   * detailed verification result.
+   *
+   * @param rawEmail - Raw RFC 5322 email as a Buffer or string.
+   * @returns EmailVerificationResultV2 with field-level verification results.
+   */
+  async verifyEmail(rawEmail: Buffer | string): Promise<EmailVerificationResultV2> {
+    const url = this.makeUrl('/api/v1/email/verify');
+    const headers = this.buildAuthHeaders();
+    headers['Content-Type'] = 'message/rfc822';
+
+    const body = typeof rawEmail === 'string' ? Buffer.from(rawEmail) : rawEmail;
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers,
+      body,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new HaiApiError(`Email verify failed: HTTP ${response.status}`, response.status, undefined, '', text);
+    }
+
+    const data = await response.json() as Record<string, unknown>;
+    return {
+      valid: (data.valid as boolean) ?? false,
+      jacsId: (data.jacs_id as string) ?? '',
+      algorithm: (data.algorithm as string) ?? '',
+      reputationTier: (data.reputation_tier as string) ?? '',
+      dnsVerified: data.dns_verified as boolean | null | undefined,
+      fieldResults: ((data.field_results as Array<Record<string, unknown>>) ?? []).map(fr => ({
+        field: (fr.field as string) ?? '',
+        status: (fr.status as FieldStatus) ?? 'unverifiable',
+        originalHash: fr.original_hash as string | undefined,
+        currentHash: fr.current_hash as string | undefined,
+        originalValue: fr.original_value as string | undefined,
+        currentValue: fr.current_value as string | undefined,
+      })),
+      chain: ((data.chain as Array<Record<string, unknown>>) ?? []).map(ce => ({
+        signer: (ce.signer as string) ?? '',
+        jacsId: (ce.jacs_id as string) ?? '',
+        valid: (ce.valid as boolean) ?? false,
+        forwarded: (ce.forwarded as boolean) ?? false,
+      })),
+      error: data.error as string | null | undefined,
     };
   }
 
