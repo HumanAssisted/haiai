@@ -64,9 +64,11 @@ The signer and verifier MUST use identical canonicalization rules.
 Outer transport headers are not part of MIME body integrity in PGP/MIME-style systems.
 In this design they are treated as optional signed claims, not required for base MIME integrity.
 
-Claimed singleton headers: `From`, `To`, `Subject`, `Date`, `Message-ID`.
+Verified claimed headers: `From`, `To`, `Cc`, `Subject`, `Date`.
+Recorded (non-gating) header claim: `Message-ID`.
 Optional claims: `In-Reply-To`, `References`.
 `From` claim is mandatory for identity binding when verification policy enforces sender-email binding.
+BCC remains excluded.
 
 Normalize by:
 
@@ -81,6 +83,16 @@ Rules:
 - Duplicate claimed singleton headers => hard fail at sign time; `unverifiable` or `fail` at verify time per policy.
 - Missing optional singleton headers => `unverifiable` for that field only.
 - Outer-header claim mismatch does not invalidate MIME-part integrity unless policy requires strict header binding.
+- For `From`/`To`/`Cc`, store both canonical claim value and strict claim hash in JACS payload.
+- Store `Message-ID` value/hash in JACS payload for evidence, but do not use it as a verification gate.
+- Address-claim verification uses two-stage comparison:
+  1. strict hash comparison over canonical claim value
+  2. if strict fails, semantic mailbox fallback comparison:
+     - parse mailbox addresses
+     - compare normalized addr-spec values case-insensitively
+     - ignore display-name/comment differences
+     - for multi-recipient fields (`To`/`Cc`), iterate each observed mailbox and require a match in the signed mailbox set (case-insensitive), then require no unmatched signed mailboxes remain
+- Semantic fallback success is reported separately from strict success (`match_mode=semantic_fallback`), not silently treated as strict match.
 
 ### 4. Body canonicalization (`text/plain`, `text/html`)
 
@@ -123,7 +135,7 @@ Verification invariants:
 
 - Max age: 24h
 - Max future skew: 5m
-- Replay key: `issuer + message_id + metadata.hash`
+- Replay key: `issuer + metadata.hash`
 - Duplicate within TTL => `ReplayDetected`
 
 ## Forwarding Semantics
@@ -177,7 +189,9 @@ pub fn remove_jacs_signature_attachment(raw_email: &[u8]) -> Result<Vec<u8>>;
 3. Remove active JACS attachment from message bytes.
 4. Canonicalize message content the same way as sign path.
 5. Compare each content hash against JACS document fields.
-6. Return field-by-field statuses (`pass|fail|unverifiable`) plus summary verdict, including MIME-part header mismatch reporting.
+6. For claimed headers, attempt strict hash match first, then semantic mailbox fallback for `From`/`To`/`Cc` when strict fails.
+7. Evaluate `Message-ID` as an informational recorded-claim check only (never sole cause of invalid verdict).
+8. Return field-by-field statuses (`pass|fail|unverifiable`) plus summary verdict, including MIME-part header mismatch reporting.
 
 ## Rust Implementation Constraints
 
@@ -215,6 +229,7 @@ Resp: EmailVerificationResultV2
 - `UnsupportedFeature`
 - `MimePartHeaderMismatch`
 - `OuterHeaderClaimMismatch`
+- `AddressClaimMismatch`
 
 ## Verification Result Shape (Required)
 
@@ -225,6 +240,7 @@ Resp: EmailVerificationResultV2
 - `field_results[]` with:
   - `field`
   - `status` (`pass|fail|unverifiable`)
+  - `match_mode` (`strict|semantic_fallback|none`)
   - `expected_hash`
   - `actual_hash` (when computable)
   - `signed_value` (when available)
@@ -254,6 +270,10 @@ Must-have categories:
 8. Forward single-parent validation
 9. Field-level result shape consistency across SDKs
 10. MIME part content-header tamper detection (`Content-Type`, `Content-Transfer-Encoding`, `Content-Disposition`, `Content-ID`)
+11. `From`/`To`/`Cc` strict-hash mismatch but semantic mailbox fallback pass (case-only/display-name-only differences)
+12. `To`/`Cc` recipient reordering with identical mailbox set
+13. `Cc` comparison where each observed mailbox is matched against signed set, including missing/unexpected recipient detection
+14. `Message-ID` rewritten in transit: informational mismatch only, message remains valid if all gating checks pass
 
 ## Implementation Sequence
 

@@ -105,6 +105,7 @@ Email:
 ├── Headers
 │   ├── From: agent@example.com
 │   ├── To: recipient@example.com
+│   ├── CC: other@example.com                          (if present)
 │   ├── Subject: Monthly Report
 │   ├── Date: Thu, 27 Feb 2026 12:00:00 +0000
 │   ├── Message-ID: <abc123@example.com>
@@ -144,6 +145,10 @@ can display what was originally signed even if the email was tampered with).
       },
       "to": {
         "value": "recipient@example.com",
+        "hash": "sha256:<hex>"
+      },
+      "cc": {
+        "value": "cc1@example.com, cc2@example.com",
         "hash": "sha256:<hex>"
       },
       "subject": {
@@ -203,26 +208,40 @@ can display what was originally signed even if the email was tampered with).
 
 The following headers are included in the JACS document payload:
 
-| Header | Key in payload | Always present | Notes |
-|--------|---------------|----------------|-------|
-| From | `headers.from` | Yes | Domain lowercased before hashing |
-| To | `headers.to` | Yes | Domain lowercased before hashing |
-| Subject | `headers.subject` | Yes | |
-| Date | `headers.date` | Yes | Helps detect replay attacks |
-| Message-ID | `headers.message_id` | Yes | Unique message identifier |
-| In-Reply-To | `headers.in_reply_to` | No | Present only if replying |
-| References | `headers.references` | No | Present only if in a thread |
+| Header | Key in payload | Always present | Verified | Notes |
+|--------|---------------|----------------|----------|-------|
+| From | `headers.from` | Yes | Yes | Domain lowercased; fallback case-insensitive match |
+| To | `headers.to` | Yes | Yes | Domain lowercased; fallback case-insensitive match |
+| CC | `headers.cc` | No | Yes | Domain lowercased; per-address case-insensitive match |
+| Subject | `headers.subject` | Yes | Yes | |
+| Date | `headers.date` | Yes | Yes | Helps detect replay attacks |
+| Message-ID | `headers.message_id` | Yes | **No** | Stored for reference only — may change between signing and send |
+| In-Reply-To | `headers.in_reply_to` | No | Yes | Present only if replying |
+| References | `headers.references` | No | Yes | Present only if in a thread |
 
 BCC is intentionally excluded — it is stripped before delivery by mail servers.
-CC may be added in a future version.
+
+**Message-ID** is stored in the JACS document but **not verified** because
+MTAs may assign or rewrite the Message-ID after the sender signs. It is
+retained for forensics and correlation only.
 
 Each header entry contains:
 - `value`: the raw header value as the sender saw it (for display/forensics)
 - `hash`: `sha256(<header value>)` (for verification)
 
-For From and To, the **domain part** of each email address (after `@`) is
-lowercased before hashing. The local part (before `@`) is preserved as-is
-per RFC 5321 (local-part is technically case-sensitive).
+For address headers (From, To, CC), the **domain part** of each email address
+(after `@`) is lowercased before hashing. The local part (before `@`) is
+preserved as-is per RFC 5321 (local-part is technically case-sensitive).
+
+**Address verification fallback**: If the hash of an address header does not
+match, the verifier performs a case-insensitive comparison of the email
+addresses. If the addresses match case-insensitively, the field status is
+`modified` (not `fail`). For CC, this is done per-address — each address in
+the current CC list is matched against the stored CC addresses. This accounts
+for legitimate MTA case normalization while still detecting actual changes.
+
+**Message-ID**: Stored but skipped during verification. Its field status is
+always `unverifiable`.
 
 ### Body Parts
 
@@ -311,8 +330,10 @@ and verify paths.
   - trim leading/trailing WSP
 - For required singleton headers (`From`, `To`, `Subject`, `Date`,
   `Message-ID`): if duplicates exist, fail as ambiguous.
-- For optional headers (`In-Reply-To`, `References`): if absent, field is
-  `null`; if duplicated unexpectedly, fail as ambiguous.
+- For optional headers (`CC`, `In-Reply-To`, `References`): if absent, field
+  is `null`; if duplicated unexpectedly, fail as ambiguous.
+- `Message-ID` is canonicalized and stored but **not verified** (may change
+  after signing).
 - Decode RFC 2047 encoded words before hashing, then UTF-8 NFC normalize.
 
 ### 4. Body-Part Canonicalization (`text/plain`, `text/html`)
@@ -383,10 +404,11 @@ lexicographically.
    b. Apply the canonicalization profile to extract clean values
 
 3. Compute hashes:
-   a. For each header (From, To, Subject, Date, Message-ID,
+   a. For each header (From, To, CC, Subject, Date, Message-ID,
       In-Reply-To, References):
       - Store the canonicalized value
-      - Compute sha256(value) — lowercase From/To domain only before hashing
+      - Compute sha256(value) — lowercase From/To/CC domain only before hashing
+      - Message-ID: store hash but mark as not-verified
    b. For each body part (text/plain, text/html):
       - Hash canonicalized body content → content_hash
       - Hash canonical MIME part headers → mime_headers_hash
@@ -480,10 +502,17 @@ Content-Transfer-Encoding, which breaks hash verification.
 
 6. Validate email contents against the trusted payload:
    a. For each header in payload.headers:
+      - Skip Message-ID (stored but not verified → status: unverifiable)
       - Recompute sha256(canonicalized_header_value)
       - Compare to payload.headers.{field}.hash
-      - On mismatch: report tampered field, show original value
-        from payload.headers.{field}.value vs current value
+      - On match: status = pass
+      - On mismatch for address headers (From, To, CC):
+        - Compare email addresses case-insensitively
+        - For CC: match each address in the current list against stored
+        - If all addresses match case-insensitively: status = modified
+        - Otherwise: status = fail
+      - On mismatch for non-address headers: status = fail
+      - Include original value from payload vs current value in result
    b. Recompute body part hashes:
       - sha256(text/plain content) → compare to payload.body_plain.content_hash
       - sha256(text/html content)  → compare to payload.body_html.content_hash
@@ -502,8 +531,7 @@ Content-Transfer-Encoding, which breaks hash verification.
    - algorithm: the algorithm used
    - reputation_tier: from the registry
    - dns_verified: true/false/null
-   - tampered_fields: list of fields that don't match
-   - original_values: map of field → original value (from payload)
+   - field_results: list of per-field statuses (pass/modified/fail/unverifiable)
    - chain: list of signers if forwarding chain exists
 ```
 
@@ -961,8 +989,10 @@ jacs/tests/fixtures/email/expected/
 | `sign_multipart` | `multipart_alternative.eml` | Both body_plain and body_html entries are populated with content + MIME hashes |
 | `sign_attachments` | `with_attachments.eml` | Attachment hashes are sorted and correct |
 | `sign_inline_images` | `embedded_images.eml` | Inline images are hashed as attachments |
-| `tamper_header` | `simple_text.eml` | Sign, modify From, verify → `tampered_fields` contains `headers.from` |
-| `tamper_body` | `simple_text.eml` | Sign, modify body, verify → `tampered_fields` contains `body_plain` |
+| `tamper_header` | `simple_text.eml` | Sign, modify From, verify → `headers.from` status is `fail` |
+| `tamper_body` | `simple_text.eml` | Sign, modify body, verify → `body_plain` status is `fail` |
+| `case_change_from` | `simple_text.eml` | Sign, change From case only, verify → `headers.from` status is `modified` |
+| `message_id_change` | `simple_text.eml` | Sign, change Message-ID, verify → `headers.message_id` status is `unverifiable` |
 | `tamper_attachment` | `with_attachments.eml` | Sign, modify attachment, verify → attachment hash mismatch |
 | `strip_body_part` | `multipart_alternative.eml` | Sign, strip text/plain, verify → html valid, plain "unverifiable" |
 | `forwarding_chain` | `forwarded_chain.eml` | Verify full chain, both signers valid |
@@ -1035,9 +1065,10 @@ pub struct EmailSignaturePayload {
 pub struct EmailSignatureHeaders {
     pub from: SignedHeaderEntry,
     pub to: SignedHeaderEntry,
+    pub cc: Option<SignedHeaderEntry>,
     pub subject: SignedHeaderEntry,
     pub date: SignedHeaderEntry,
-    pub message_id: SignedHeaderEntry,
+    pub message_id: SignedHeaderEntry,   // stored but NOT verified
     pub in_reply_to: Option<SignedHeaderEntry>,
     pub references: Option<SignedHeaderEntry>,
 }
@@ -1058,16 +1089,23 @@ pub struct EmailVerificationResultV2 {
     pub algorithm: String,
     pub reputation_tier: String,
     pub dns_verified: Option<bool>,
-    pub tampered_fields: Vec<TamperedField>,
-    pub original_values: HashMap<String, String>,
+    pub field_results: Vec<FieldResult>,
     pub chain: Vec<ChainEntry>,
     pub error: Option<String>,
 }
 
-pub struct TamperedField {
-    pub field: String,           // e.g., "headers.from", "body_plain"
-    pub original_hash: String,
-    pub current_hash: String,
+pub enum FieldStatus {
+    Pass,          // hash matches exactly
+    Modified,      // hash mismatch but case-insensitive email match (address headers only)
+    Fail,          // content does not match
+    Unverifiable,  // field absent or not verified (e.g., Message-ID, stripped body part)
+}
+
+pub struct FieldResult {
+    pub field: String,           // e.g., "headers.from", "body_plain", "headers.message_id"
+    pub status: FieldStatus,
+    pub original_hash: Option<String>,
+    pub current_hash: Option<String>,
     pub original_value: Option<String>,
     pub current_value: Option<String>,
 }
@@ -1120,7 +1158,7 @@ pub struct ChainEntry {
 | File | Change |
 |------|--------|
 | `rust/haisdk/src/email.rs` | **NEW** — `verify_email()` wrapper (HAI trust chain) |
-| `rust/haisdk/src/types.rs` | Add `EmailVerificationResultV2`, `TamperedField`, `ChainEntry`; re-export JACS types |
+| `rust/haisdk/src/types.rs` | Add `EmailVerificationResultV2`, `FieldResult`, `FieldStatus`, `ChainEntry`; re-export JACS types |
 | `rust/haisdk/src/lib.rs` | Add `pub mod email;` + re-exports |
 | `rust/haisdk/src/jacs.rs` | Extend `JacsProvider` trait with `sign_bytes()`, `key_id()`, `algorithm()` |
 | `rust/haisdk/src/verify.rs` | Remove legacy `verify_email_signature()` header-based flow |
@@ -1174,11 +1212,18 @@ def verify_email(self, raw_email: bytes) -> EmailVerificationResultV2:
 New types in `models.py`:
 
 ```python
+class FieldStatus(Enum):
+    PASS = "pass"
+    MODIFIED = "modified"       # hash mismatch, case-insensitive email match
+    FAIL = "fail"
+    UNVERIFIABLE = "unverifiable"
+
 @dataclass
-class TamperedField:
+class FieldResult:
     field: str
-    original_hash: str
-    current_hash: str
+    status: FieldStatus
+    original_hash: Optional[str] = None
+    current_hash: Optional[str] = None
     original_value: Optional[str] = None
     current_value: Optional[str] = None
 
@@ -1196,8 +1241,7 @@ class EmailVerificationResultV2:
     algorithm: str
     reputation_tier: str
     dns_verified: Optional[bool] = None
-    tampered_fields: list[TamperedField] = field(default_factory=list)
-    original_values: dict[str, str] = field(default_factory=dict)
+    field_results: list[FieldResult] = field(default_factory=list)
     chain: list[ChainEntry] = field(default_factory=list)
     error: Optional[str] = None
 ```
@@ -1215,10 +1259,13 @@ async verifyEmail(rawEmail: Buffer): Promise<EmailVerificationResultV2>
 New types in `types.ts`:
 
 ```typescript
-interface TamperedField {
+type FieldStatus = "pass" | "modified" | "fail" | "unverifiable";
+
+interface FieldResult {
   field: string;
-  originalHash: string;
-  currentHash: string;
+  status: FieldStatus;
+  originalHash?: string;
+  currentHash?: string;
   originalValue?: string;
   currentValue?: string;
 }
@@ -1236,8 +1283,7 @@ interface EmailVerificationResultV2 {
   algorithm: string;
   reputationTier: string;
   dnsVerified: boolean | null;
-  tamperedFields: TamperedField[];
-  originalValues: Record<string, string>;
+  fieldResults: FieldResult[];
   chain: ChainEntry[];
   error: string | null;
 }
@@ -1266,7 +1312,7 @@ Each SDK must have these tests for the new attachment-based flow:
 |------|-------------------|
 | `test_sign_email_roundtrip` | Sign a raw email, verify the result contains `jacs-signature.json` |
 | `test_verify_email_valid` | Verify a pre-signed email returns `valid=True` with correct fields |
-| `test_verify_email_tampered` | Modify a signed email, verify returns `tampered_fields` |
+| `test_verify_email_tampered` | Modify a signed email, verify returns `field_results` |
 | `test_verify_email_chain` | Verify a forwarded email returns chain entries |
 | `test_verify_email_missing_signature` | Email without attachment returns `MissingJacsSignature` |
 | `test_verify_email_network_error` | Server unreachable returns error gracefully |
