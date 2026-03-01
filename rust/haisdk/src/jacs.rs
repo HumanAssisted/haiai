@@ -72,7 +72,7 @@ impl JacsProvider for NoopJacsProvider {
     }
 
     fn canonical_json(&self, value: &Value) -> Result<String> {
-        Ok(canonical_json_sorted(value))
+        Ok(canonicalize_json_rfc8785(value))
     }
 
     fn sign_response(&self, _payload: &Value) -> Result<SignedPayload> {
@@ -124,11 +124,11 @@ impl JacsProvider for StaticJacsProvider {
     }
 
     fn canonical_json(&self, value: &Value) -> Result<String> {
-        Ok(canonical_json_sorted(value))
+        Ok(canonicalize_json_rfc8785(value))
     }
 
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
-        let canonical_payload = canonical_json_sorted(payload);
+        let canonical_payload = canonicalize_json_rfc8785(payload);
         let data = serde_json::from_str::<Value>(&canonical_payload)?;
         let now = OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
@@ -165,6 +165,6 @@ impl JacsProvider for StaticJacsProvider {
 /// - IEEE 754 number serialization
 /// - Minimal Unicode escape handling
 /// - No unnecessary whitespace
-pub fn canonical_json_sorted(value: &Value) -> String {
+pub fn canonicalize_json_rfc8785(value: &Value) -> String {
     serde_json_canonicalizer::to_string(value).unwrap_or_else(|_| "null".to_string())
 }

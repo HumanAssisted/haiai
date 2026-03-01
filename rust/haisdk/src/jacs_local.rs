@@ -14,7 +14,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::error::{HaiError, Result};
-use crate::jacs::{canonical_json_sorted, JacsProvider};
+use crate::jacs::{canonicalize_json_rfc8785, JacsProvider};
 use crate::types::{CreateAgentOptions, CreateAgentResult, SignedPayload};
 
 /// Local JACS-backed provider using the canonical Rust `jacs` crate.
@@ -200,7 +200,7 @@ impl JacsProvider for LocalJacsProvider {
     fn canonical_json(&self, value: &Value) -> Result<String> {
         // Canonical JSON for HAISDK contract parity (sorted keys, compact JSON).
         // Signing itself remains delegated to JACS.
-        Ok(canonical_json_sorted(value))
+        Ok(canonicalize_json_rfc8785(value))
     }
 
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {

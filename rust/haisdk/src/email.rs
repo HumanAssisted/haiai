@@ -373,8 +373,12 @@ fn extract_domain(email: &str) -> String {
 
 /// Extract raw public key bytes from a PEM-encoded public key.
 ///
-/// For Ed25519: extracts the 32-byte raw key from SPKI DER encoding.
-/// For RSA: returns the full DER-encoded public key.
+/// Detects the algorithm from the SPKI DER structure:
+/// - Ed25519 (OID 1.3.101.112): extracts the 32-byte raw public key
+/// - RSA (OID 1.2.840.113549.1.1.1): returns the full DER-encoded SubjectPublicKeyInfo
+///
+/// The JACS verifier expects Ed25519 keys as 32 raw bytes and RSA keys
+/// as full DER.
 fn extract_public_key_bytes(pem: &str) -> Result<Vec<u8>> {
     let pem_lines: Vec<&str> = pem
         .lines()
@@ -387,14 +391,27 @@ fn extract_public_key_bytes(pem: &str) -> Result<Vec<u8>> {
                 HaiError::Provider(format!("Invalid PEM encoding: {e}"))
             })?;
 
-    if der_bytes.len() < 32 {
+    if der_bytes.len() < 12 {
         return Err(HaiError::Provider("Public key DER too short".into()));
     }
 
-    // For Ed25519 SPKI: the last 32 bytes are the raw public key
-    // For RSA: the full DER is needed. The JACS verifier handles both.
-    // Use the raw key extraction method from jacs if available.
-    Ok(der_bytes[der_bytes.len() - 32..].to_vec())
+    // Detect Ed25519 by looking for OID 1.3.101.112 (hex: 06 03 2b 65 70)
+    // in the SPKI AlgorithmIdentifier.
+    let ed25519_oid: &[u8] = &[0x06, 0x03, 0x2b, 0x65, 0x70];
+    let is_ed25519 = der_bytes
+        .windows(ed25519_oid.len())
+        .any(|w| w == ed25519_oid);
+
+    if is_ed25519 {
+        // Ed25519 SPKI: the last 32 bytes are the raw public key
+        if der_bytes.len() < 32 {
+            return Err(HaiError::Provider("Ed25519 DER too short for 32-byte key".into()));
+        }
+        Ok(der_bytes[der_bytes.len() - 32..].to_vec())
+    } else {
+        // RSA (or other algorithms): return full DER for the JACS verifier
+        Ok(der_bytes)
+    }
 }
 
 /// Check if two algorithm names refer to the same algorithm.

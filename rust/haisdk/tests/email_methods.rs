@@ -21,17 +21,19 @@ fn make_client(base_url: &str) -> HaiClient<StaticJacsProvider> {
 // --- Task #38: JACS content signing in send_email ---
 
 #[tokio::test]
-async fn send_email_includes_jacs_signature_and_timestamp() {
+async fn send_email_sends_content_fields() {
     let server = MockServer::start_async().await;
 
+    // Server handles JACS signing — client sends content fields only.
     let mock = server
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/api/agents/test-agent-001/email/send")
                 .header_exists("authorization")
                 .header("content-type", "application/json")
-                .body_contains("jacs_signature")
-                .body_contains("jacs_timestamp");
+                .body_contains("\"to\"")
+                .body_contains("\"subject\"")
+                .body_contains("\"body\"");
             then.status(200).json_body(json!({
                 "message_id": "msg-001",
                 "status": "queued"
@@ -389,8 +391,7 @@ async fn reply_fetches_original_and_sends_with_re_prefix() {
                 .path("/api/agents/test-agent-001/email/send")
                 .body_contains("alice@hai.ai")
                 .body_contains("Re: Original Subject")
-                .body_contains("orig-msg")
-                .body_contains("jacs_signature");
+                .body_contains("orig-msg");
             then.status(200).json_body(json!({
                 "message_id": "reply-msg",
                 "status": "queued"
