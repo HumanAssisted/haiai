@@ -68,7 +68,7 @@ impl JacsProvider for NoopJacsProvider {
     }
 
     fn algorithm(&self) -> &str {
-        "ed25519"
+        "none"
     }
 
     fn canonical_json(&self, value: &Value) -> Result<String> {
@@ -89,12 +89,23 @@ impl JacsProvider for NoopJacsProvider {
 #[derive(Debug, Clone)]
 pub struct StaticJacsProvider {
     jacs_id: String,
+    algorithm: String,
 }
 
 impl StaticJacsProvider {
     pub fn new(jacs_id: impl Into<String>) -> Self {
         Self {
             jacs_id: jacs_id.into(),
+            algorithm: "ed25519".to_string(),
+        }
+    }
+
+    /// Create a StaticJacsProvider with a specific algorithm for testing
+    /// multi-algorithm behavior.
+    pub fn with_algorithm(jacs_id: impl Into<String>, algorithm: impl Into<String>) -> Self {
+        Self {
+            jacs_id: jacs_id.into(),
+            algorithm: algorithm.into(),
         }
     }
 }
@@ -120,7 +131,7 @@ impl JacsProvider for StaticJacsProvider {
     }
 
     fn algorithm(&self) -> &str {
-        "ed25519"
+        &self.algorithm
     }
 
     fn canonical_json(&self, value: &Value) -> Result<String> {
