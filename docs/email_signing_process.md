@@ -698,7 +698,8 @@ Verification MUST enforce these invariants:
 
 - Max accepted age: 24 hours
 - Max future skew: 5 minutes
-- Replay cache key: `issuer + message_id + metadata.hash`
+- Replay cache key: `issuer + metadata.hash`
+  (Message-ID is excluded because it may change after signing)
 - On duplicate cache hit within TTL: fail with `ReplayDetected`
 
 ---
@@ -1170,12 +1171,19 @@ as the SDK clients — there is no separate server-side verification path.
 
 ```
 POST /api/v1/email/sign
-  Body: { "raw_email": "<base64-encoded RFC 5322 bytes>" }
-  Response: { "signed_email": "<base64-encoded RFC 5322 bytes with jacs-signature.json>" }
+  Content-Type: application/json
+    Body: { "raw_email": "<base64-encoded RFC 5322 bytes>" }
+    Response: { "signed_email": "<base64-encoded RFC 5322 bytes with jacs-signature.json>" }
+  Content-Type: message/rfc822
+    Body: raw RFC 5322 bytes
+    Response: raw RFC 5322 bytes with jacs-signature.json (Accept: message/rfc822)
 
 POST /api/v1/email/verify
-  Body: { "raw_email": "<base64-encoded RFC 5322 bytes>" }
-  Response: EmailVerificationResultV2
+  Content-Type: application/json
+    Body: { "raw_email": "<base64-encoded RFC 5322 bytes>" }
+  Content-Type: message/rfc822
+    Body: raw RFC 5322 bytes
+  Response: EmailVerificationResultV2 (always JSON)
 ```
 
 The existing `sendEmail()` flow must be updated to use `sign_email()` from
