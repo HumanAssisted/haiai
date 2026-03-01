@@ -5,6 +5,7 @@
 - Draft plan for implementation.
 - This document is normative for the attachment-only design.
 - Legacy `X-JACS-Signature` header signing/verification is deprecated immediately and removed from active roadmap.
+- Canonicalization model aligns with RFC 3156/RFC 9580 principles for robust in-transit email verification.
 
 ## Scope and Product Decisions (Resolved)
 
@@ -33,6 +34,8 @@
    - The email signature document stores per-field/per-part hashes.
    - The JACS document itself is signed once using the agent key.
    - No per-field asymmetric signatures are required.
+   - Signed units include canonical MIME parts (body/attachments/inline) and optional outer-header claims.
+   - MIME part hashes include selected MIME content headers plus canonicalized part content bytes.
 
 2. **Trust order**
    - Verify the attached JACS document signature first.
@@ -58,8 +61,12 @@ The signer and verifier MUST use identical canonicalization rules.
 
 ### 3. Header canonicalization
 
-Signed singleton headers: `From`, `To`, `Subject`, `Date`, `Message-ID`.
-Optional singleton headers: `In-Reply-To`, `References`.
+Outer transport headers are not part of MIME body integrity in PGP/MIME-style systems.
+In this design they are treated as optional signed claims, not required for base MIME integrity.
+
+Claimed singleton headers: `From`, `To`, `Subject`, `Date`, `Message-ID`.
+Optional claims: `In-Reply-To`, `References`.
+`From` claim is mandatory for identity binding when verification policy enforces sender-email binding.
 
 Normalize by:
 
@@ -71,25 +78,37 @@ Normalize by:
 
 Rules:
 
-- Duplicate required singleton headers => hard fail.
+- Duplicate claimed singleton headers => hard fail at sign time; `unverifiable` or `fail` at verify time per policy.
 - Missing optional singleton headers => `unverifiable` for that field only.
+- Outer-header claim mismatch does not invalidate MIME-part integrity unless policy requires strict header binding.
 
 ### 4. Body canonicalization (`text/plain`, `text/html`)
 
 - Decode `Content-Transfer-Encoding`.
-- Convert declared charset to UTF-8.
-- Normalize line endings to `\n` for text body hashing.
+- Decode bytes using declared charset (default `us-ascii` when absent per MIME defaults).
+- Normalize Unicode text to NFC.
+- Normalize line endings to canonical `\r\n` (CRLF).
+- Re-encode canonical text bytes for hashing in the declared charset.
+- Include canonicalized part content headers in the hashed unit: at minimum `Content-Type` (with charset) and `Content-Transfer-Encoding`.
+- If declared charset cannot be decoded/encoded deterministically, fail with `CanonicalizationFailed`.
 
-This handles cross-platform text differences (`\r\n` vs `\n`) without breaking signature comparison.
+This follows industry email-signing practice for surviving cross-platform newline changes (`\n` vs `\r\n`) while preserving semantic content.
 
 ### 5. Attachment and inline-image canonicalization
 
 - Decode transfer encoding to raw bytes.
 - Preserve decoded bytes exactly (no newline rewriting/transcoding).
-- Hash input: `filename_utf8_nfc + ":" + content_type_lower + ":" + raw_bytes`.
+- Hash input includes canonicalized MIME content headers + raw decoded bytes:
+  `content_type_lower + ":" + content_disposition_norm + ":" + content_id_norm + ":" + filename_utf8_nfc + ":" + raw_bytes`.
 - Inline images are treated as attachments for hashing.
 - Sort attachment hashes lexicographically.
 - Exclude the active `jacs-signature.json` from attachment hash list.
+
+### 6. Reconstruction and evidence expectations
+
+- The primary guarantee is authenticity/tamper detection over canonicalized signed units.
+- Exact SMTP wire-byte reconstruction from `jacs-signature.json` alone is not guaranteed.
+- For dispute/evidence workflows, retain the signed `.eml` artifact and use `signed_value` vs `observed_value` plus hash results.
 
 ## Identity Binding (P1, Normative)
 
@@ -113,6 +132,7 @@ Verification invariants:
 
 - Forwarder keeps previous content and signs the forwarded message as sent.
 - Prior signed content remains part of forwarded content.
+- The forwarder signs the fully composed forwarded email bytes (including quoted/attached prior content), not a reconstructed historical message.
 - `parent_signature_hash` references the immediate prior signature document bytes.
 - MVP requires single-parent validation; multi-hop recursive chain reporting is P2.
 
@@ -142,7 +162,7 @@ pub fn remove_jacs_signature_attachment(raw_email: &[u8]) -> Result<Vec<u8>>;
 ### Signing flow (`sign_email`)
 
 1. Parse + canonicalize raw email for edge cases.
-2. Compute per-field/per-part hashes.
+2. Compute per-field/per-part hashes over canonical MIME units (part headers + canonical part bytes).
 3. Build JACS email signature document containing:
    - canonical values (for forensics/comparison)
    - hashes for each signed unit
@@ -157,7 +177,7 @@ pub fn remove_jacs_signature_attachment(raw_email: &[u8]) -> Result<Vec<u8>>;
 3. Remove active JACS attachment from message bytes.
 4. Canonicalize message content the same way as sign path.
 5. Compare each content hash against JACS document fields.
-6. Return field-by-field statuses (`pass|fail|unverifiable`) plus summary verdict.
+6. Return field-by-field statuses (`pass|fail|unverifiable`) plus summary verdict, including MIME-part header mismatch reporting.
 
 ## Rust Implementation Constraints
 
@@ -193,6 +213,8 @@ Resp: EmailVerificationResultV2
 - `ChainValidationFailed`
 - `MessageTooLarge`
 - `UnsupportedFeature`
+- `MimePartHeaderMismatch`
+- `OuterHeaderClaimMismatch`
 
 ## Verification Result Shape (Required)
 
@@ -224,13 +246,14 @@ Must-have categories:
 
 1. Canonicalization determinism across Rust/Python/Node/Go
 2. Identity binding mismatches
-3. Duplicate singleton header rejection
-4. Charset/transfer-encoding equivalence
-5. Attachment/inline-image hash consistency
+3. LF/CRLF equivalence for text parts under canonical CRLF hashing
+4. Duplicate singleton outer-header claim handling
+5. Charset/transfer-encoding equivalence
 6. 25 MB limit boundary tests
 7. Replay-window tests
 8. Forward single-parent validation
 9. Field-level result shape consistency across SDKs
+10. MIME part content-header tamper detection (`Content-Type`, `Content-Transfer-Encoding`, `Content-Disposition`, `Content-ID`)
 
 ## Implementation Sequence
 

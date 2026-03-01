@@ -167,11 +167,20 @@ can display what was originally signed even if the email was tampered with).
         "hash": "sha256:<hex>"
       }
     },
-    "body_hash_plain": "sha256:<hex>",
-    "body_hash_html": "sha256:<hex>",
-    "attachment_hashes": [
-      "sha256:<hex>",
-      "sha256:<hex>"
+    "body_plain": {
+      "content_hash": "sha256:<hex>",
+      "mime_headers_hash": "sha256:<hex>"
+    },
+    "body_html": {
+      "content_hash": "sha256:<hex>",
+      "mime_headers_hash": "sha256:<hex>"
+    },
+    "attachments": [
+      {
+        "content_hash": "sha256:<hex>",
+        "mime_headers_hash": "sha256:<hex>",
+        "filename": "report.pdf"
+      }
     ],
     "parent_signature_hash": null
   },
@@ -196,8 +205,8 @@ The following headers are included in the JACS document payload:
 
 | Header | Key in payload | Always present | Notes |
 |--------|---------------|----------------|-------|
-| From | `headers.from` | Yes | Lowercased before hashing |
-| To | `headers.to` | Yes | Lowercased before hashing |
+| From | `headers.from` | Yes | Domain lowercased before hashing |
+| To | `headers.to` | Yes | Domain lowercased before hashing |
 | Subject | `headers.subject` | Yes | |
 | Date | `headers.date` | Yes | Helps detect replay attacks |
 | Message-ID | `headers.message_id` | Yes | Unique message identifier |
@@ -211,31 +220,52 @@ Each header entry contains:
 - `value`: the raw header value as the sender saw it (for display/forensics)
 - `hash`: `sha256(<header value>)` (for verification)
 
-For From and To, the value is lowercased before hashing to normalize case
-differences introduced by mail servers.
+For From and To, the **domain part** of each email address (after `@`) is
+lowercased before hashing. The local part (before `@`) is preserved as-is
+per RFC 5321 (local-part is technically case-sensitive).
 
-### Body Hashes
+### Body Parts
 
-Both text/plain and text/html parts are hashed separately:
+Both text/plain and text/html parts are stored with a content hash and a
+MIME headers hash:
 
 ```
-body_hash_plain = sha256(text/plain content)    # null if no text/plain part
-body_hash_html  = sha256(text/html content)     # null if no text/html part
+body_plain = {
+  content_hash: sha256(canonicalized text/plain bytes),   # null if absent
+  mime_headers_hash: sha256(canonical MIME part headers)   # null if absent
+}
+body_html = {
+  content_hash: sha256(canonicalized text/html bytes),    # null if absent
+  mime_headers_hash: sha256(canonical MIME part headers)   # null if absent
+}
 ```
+
+The `mime_headers_hash` covers `Content-Type`, `Content-Transfer-Encoding`,
+and `Content-Disposition` of the MIME part (see Canonicalization Profile §5).
+This prevents attacks that alter content type or encoding while preserving
+the raw body bytes.
 
 The verifier checks whichever part(s) are present. If a mail provider strips
 one format (e.g., drops text/plain), the other hash still allows partial
 verification. The verifier should report which body format(s) could be
 verified.
 
-### Attachment Hashes
+### Attachments
 
-Each non-JACS attachment is hashed — including inline/embedded images — and
-the list is sorted lexicographically for determinism:
+Each non-JACS attachment is stored with a content hash, MIME headers hash,
+and filename for identification. Inline/embedded images are treated as
+attachments. The list is sorted lexicographically by `content_hash` for
+determinism:
 
 ```
-attachment_hash = sha256(filename + ":" + content_type + ":" + raw_bytes)
-attachment_hashes = sort([hash_1, hash_2, ...])
+attachments = sort_by_content_hash([
+  {
+    content_hash: sha256(filename + ":" + content_type + ":" + raw_bytes),
+    mime_headers_hash: sha256(canonical MIME part headers),
+    filename: "report.pdf"
+  },
+  ...
+])
 ```
 
 The `jacs-signature.json` attachment itself is excluded from the list.
@@ -289,17 +319,45 @@ and verify paths.
 
 - MIME decode `Content-Transfer-Encoding`.
 - Convert charset to UTF-8 (if declared/parseable; else fail).
-- Normalize line endings to `\n`.
+- Normalize line endings to `\r\n` (CRLF — the RFC 5322 canonical form).
+- Strip trailing whitespace (SP, TAB) from each line.
+- Strip trailing blank lines at the end of the body part.
 - Hash resulting bytes exactly.
 
-### 5. Attachment Canonicalization
+### 5. MIME Part Header Hashing
+
+Each body part and attachment has MIME structural headers that affect
+interpretation. These MUST be hashed alongside the content to prevent
+attacks that alter content type or encoding metadata while preserving raw
+bytes. For each MIME part, hash the following headers (if present):
+
+- `Content-Type` (including parameters like `charset`, `boundary`)
+- `Content-Transfer-Encoding`
+- `Content-Disposition` (including `filename` parameter)
+
+Canonicalize each MIME part header the same way as top-level headers
+(lowercase name, unfold, compress WSP, trim). The hash is stored per
+body part / attachment entry in the JACS document as `mime_headers_hash`:
+
+```
+mime_headers_hash = sha256(
+  "content-type:" + canonical_content_type + "\n" +
+  "content-transfer-encoding:" + canonical_cte + "\n" +
+  "content-disposition:" + canonical_disposition + "\n"
+)
+```
+
+Omit lines for headers not present on the part. Sort remaining lines
+lexicographically.
+
+### 6. Attachment Canonicalization
 
 - MIME decode `Content-Transfer-Encoding` to raw attachment bytes.
 - Do not transcode payload bytes after decode.
 - Canonical hash input:
   `sha256(filename_utf8_nfc + ":" + content_type_lower + ":" + raw_bytes)`.
-- Exclude only the active `jacs-signature.json` attachment from
-  `attachment_hashes`.
+- Exclude only the active `jacs-signature.json` attachment from the
+  `attachments` list.
 - Inline/embedded images (Content-Disposition: inline) are treated as
   attachments for hashing purposes.
 
@@ -307,7 +365,11 @@ and verify paths.
 
 - Shared cross-language fixtures MUST include tricky cases:
   folded headers, RFC 2047 subjects, mixed charsets, quoted-printable vs
-  base64 bodies, duplicate headers, Unicode normalization edge cases.
+  base64 bodies, duplicate headers, Unicode normalization edge cases,
+  trailing whitespace on body lines, trailing blank lines at end of body,
+  mixed line endings (LF, CRLF, CR), MIME Content-Type parameter variations
+  (charset casing, boundary quoting), and email addresses with mixed-case
+  local parts and domains.
 
 ---
 
@@ -324,11 +386,14 @@ and verify paths.
    a. For each header (From, To, Subject, Date, Message-ID,
       In-Reply-To, References):
       - Store the canonicalized value
-      - Compute sha256(value) — lowercase From and To before hashing
-   b. Hash the text/plain body → body_hash_plain
-   c. Hash the text/html body  → body_hash_html
-   d. Hash each attachment including inline images
-      (filename:content_type:data), sort the hashes
+      - Compute sha256(value) — lowercase From/To domain only before hashing
+   b. For each body part (text/plain, text/html):
+      - Hash canonicalized body content → content_hash
+      - Hash canonical MIME part headers → mime_headers_hash
+   c. For each attachment (including inline images):
+      - Hash sha256(filename:content_type:data) → content_hash
+      - Hash canonical MIME part headers → mime_headers_hash
+      - Sort attachments by content_hash
    e. Set parent_signature_hash = null (unless forwarding, see below)
 
 4. Build the JACS document payload with headers (value + hash),
@@ -419,15 +484,16 @@ Content-Transfer-Encoding, which breaks hash verification.
       - Compare to payload.headers.{field}.hash
       - On mismatch: report tampered field, show original value
         from payload.headers.{field}.value vs current value
-   b. Recompute body hashes:
-      - sha256(text/plain) → compare to payload.body_hash_plain
-      - sha256(text/html)  → compare to payload.body_hash_html
+   b. Recompute body part hashes:
+      - sha256(text/plain content) → compare to payload.body_plain.content_hash
+      - sha256(text/html content)  → compare to payload.body_html.content_hash
+      - sha256(MIME part headers)  → compare to *.mime_headers_hash
       - If one part is missing (provider stripped it), report as
         "unverifiable" rather than "tampered"
    c. Recompute attachment hashes:
       - For each non-JACS attachment: sha256(filename:content_type:data)
-      - Sort lexicographically
-      - Compare to payload.attachment_hashes
+      - sha256(MIME part headers) for each attachment
+      - Sort by content_hash, compare to payload.attachments
    d. Check parent_signature_hash for forwarding chain (see below)
 
 7. Return verification result:
@@ -460,8 +526,8 @@ Original email from Agent A:
     {
       payload: {
         headers: { from: { value: "agentA@x.com", ... }, ... },
-        body_hash_plain: "sha256:aaa...",
-        attachment_hashes: ["sha256:bbb..."],
+        body_plain: { content_hash: "sha256:aaa...", mime_headers_hash: "sha256:..." },
+        attachments: [{ content_hash: "sha256:bbb...", mime_headers_hash: "sha256:...", filename: "report.pdf" }],
         parent_signature_hash: null      ← no parent (original)
       },
       signature: { ... by Agent A }
@@ -475,8 +541,8 @@ Agent B forwards to Agent C:
     {
       payload: {
         headers: { from: { value: "agentB@y.com", ... }, ... },
-        body_hash_plain: "sha256:ccc...",
-        attachment_hashes: ["sha256:bbb..."],
+        body_plain: { content_hash: "sha256:ccc...", mime_headers_hash: "sha256:..." },
+        attachments: [{ content_hash: "sha256:bbb...", mime_headers_hash: "sha256:...", filename: "report.pdf" }],
         parent_signature_hash: "sha256:ddd..."  ← hash of Agent A's doc
       },
       signature: { ... by Agent B }
@@ -892,7 +958,7 @@ jacs/tests/fixtures/email/expected/
 | Test | Fixture | What it validates |
 |------|---------|-------------------|
 | `sign_roundtrip` | `simple_text.eml` | Sign → verify → `valid: true`, zero tampered fields |
-| `sign_multipart` | `multipart_alternative.eml` | Both body_hash_plain and body_hash_html are populated |
+| `sign_multipart` | `multipart_alternative.eml` | Both body_plain and body_html entries are populated with content + MIME hashes |
 | `sign_attachments` | `with_attachments.eml` | Attachment hashes are sorted and correct |
 | `sign_inline_images` | `embedded_images.eml` | Inline images are hashed as attachments |
 | `tamper_header` | `simple_text.eml` | Sign, modify From, verify → `tampered_fields` contains `headers.from` |
@@ -947,11 +1013,22 @@ pub struct SignedHeaderEntry {
     pub hash: String,            // "sha256:<hex>"
 }
 
+pub struct BodyPartEntry {
+    pub content_hash: String,
+    pub mime_headers_hash: String,
+}
+
+pub struct AttachmentEntry {
+    pub content_hash: String,
+    pub mime_headers_hash: String,
+    pub filename: String,
+}
+
 pub struct EmailSignaturePayload {
     pub headers: EmailSignatureHeaders,
-    pub body_hash_plain: Option<String>,
-    pub body_hash_html: Option<String>,
-    pub attachment_hashes: Vec<String>,
+    pub body_plain: Option<BodyPartEntry>,
+    pub body_html: Option<BodyPartEntry>,
+    pub attachments: Vec<AttachmentEntry>,
     pub parent_signature_hash: Option<String>,
 }
 
