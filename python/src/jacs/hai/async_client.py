@@ -1156,6 +1156,103 @@ class AsyncHaiClient:
             raise HaiError(f"Key lookup failed: {exc}")
 
     # ------------------------------------------------------------------
+    # fetch_key_by_hash / fetch_key_by_email / fetch_key_by_domain / fetch_all_keys
+    # ------------------------------------------------------------------
+
+    async def fetch_key_by_hash(self, hai_url: str, public_key_hash: str) -> PublicKeyInfo:
+        """Fetch an agent's public key by its SHA-256 hash."""
+        http = await self._get_http()
+        safe_hash = self._escape_path_segment(public_key_hash)
+        url = self._make_url(hai_url, f"/jacs/v1/keys/by-hash/{safe_hash}")
+
+        try:
+            resp = await http.get(url)
+            if resp.status_code == 404:
+                raise HaiApiError(f"No key found for hash: {public_key_hash}", status_code=404, body=resp.text)
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(f"Key lookup failed: HTTP {resp.status_code}", status_code=resp.status_code, body=resp.text)
+            data = resp.json()
+            return PublicKeyInfo(
+                jacs_id=data.get("jacs_id", ""), version=data.get("version", ""),
+                public_key=data.get("public_key", ""), public_key_raw_b64=data.get("public_key_raw_b64", ""),
+                algorithm=data.get("algorithm", ""), public_key_hash=data.get("public_key_hash", ""),
+                status=data.get("status", ""), dns_verified=data.get("dns_verified", False),
+                created_at=data.get("created_at", ""),
+            )
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Key lookup failed: {exc}")
+
+    async def fetch_key_by_email(self, hai_url: str, email: str) -> PublicKeyInfo:
+        """Fetch an agent's public key by their @hai.ai email address."""
+        http = await self._get_http()
+        safe_email = self._escape_path_segment(email)
+        url = self._make_url(hai_url, f"/api/agents/keys/{safe_email}")
+
+        try:
+            resp = await http.get(url)
+            if resp.status_code == 404:
+                raise HaiApiError(f"No key found for email: {email}", status_code=404, body=resp.text)
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(f"Key lookup failed: HTTP {resp.status_code}", status_code=resp.status_code, body=resp.text)
+            data = resp.json()
+            return PublicKeyInfo(
+                jacs_id=data.get("jacs_id", ""), version=data.get("version", ""),
+                public_key=data.get("public_key", ""), public_key_raw_b64=data.get("public_key_raw_b64", ""),
+                algorithm=data.get("algorithm", ""), public_key_hash=data.get("public_key_hash", ""),
+                status=data.get("status", ""), dns_verified=data.get("dns_verified", False),
+                created_at=data.get("created_at", ""),
+            )
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Key lookup failed: {exc}")
+
+    async def fetch_key_by_domain(self, hai_url: str, domain: str) -> PublicKeyInfo:
+        """Fetch the latest DNS-verified agent key for a domain."""
+        http = await self._get_http()
+        safe_domain = self._escape_path_segment(domain)
+        url = self._make_url(hai_url, f"/jacs/v1/agents/by-domain/{safe_domain}")
+
+        try:
+            resp = await http.get(url)
+            if resp.status_code == 404:
+                raise HaiApiError(f"No verified agent for domain: {domain}", status_code=404, body=resp.text)
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(f"Key lookup failed: HTTP {resp.status_code}", status_code=resp.status_code, body=resp.text)
+            data = resp.json()
+            return PublicKeyInfo(
+                jacs_id=data.get("jacs_id", ""), version=data.get("version", ""),
+                public_key=data.get("public_key", ""), public_key_raw_b64=data.get("public_key_raw_b64", ""),
+                algorithm=data.get("algorithm", ""), public_key_hash=data.get("public_key_hash", ""),
+                status=data.get("status", ""), dns_verified=data.get("dns_verified", False),
+                created_at=data.get("created_at", ""),
+            )
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Key lookup failed: {exc}")
+
+    async def fetch_all_keys(self, hai_url: str, jacs_id: str) -> dict:
+        """Fetch all key versions for an agent."""
+        http = await self._get_http()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(hai_url, f"/jacs/v1/agents/{safe_jacs_id}/keys")
+
+        try:
+            resp = await http.get(url)
+            if resp.status_code == 404:
+                raise HaiApiError(f"Agent not found: {jacs_id}", status_code=404, body=resp.text)
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(f"Key history lookup failed: HTTP {resp.status_code}", status_code=resp.status_code, body=resp.text)
+            return resp.json()
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Key history lookup failed: {exc}")
+
+    # ------------------------------------------------------------------
     # advanced verification endpoints
     # ------------------------------------------------------------------
 

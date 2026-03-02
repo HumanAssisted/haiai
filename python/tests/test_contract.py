@@ -225,3 +225,43 @@ class TestDeserializeVerificationResult:
         assert result.jacs_id == "test-agent-jacs-id"
         assert result.reputation_tier == "established"
         assert result.error is None
+
+
+class TestDeserializeKeyLookupVersionedResponse:
+    """Validate key_lookup_versioned_response.json contract fixture.
+
+    Ensures the Python SDK can parse the versioned key lookup response
+    format into a PublicKeyInfo dataclass with all fields intact.
+    """
+
+    def test_deserialize_key_lookup_fixture(self) -> None:
+        from jacs.hai.models import PublicKeyInfo
+
+        data = _load("key_lookup_versioned_response.json")
+        resp = data["response"]
+
+        info = PublicKeyInfo(
+            jacs_id=resp["jacs_id"],
+            version=resp["version"],
+            public_key=resp["public_key"],
+            algorithm=resp["algorithm"],
+            public_key_hash=resp["public_key_hash"],
+            status=resp["status"],
+            dns_verified=resp["dns_verified"],
+            created_at=resp["created_at"],
+            public_key_raw_b64=resp.get("public_key_raw_b64", ""),
+        )
+
+        assert info.jacs_id == "fixture-agent-00000000-0000-0000-0000-000000000001"
+        assert info.version == "fixture-version-00000000-0000-0000-0000-000000000001"
+        assert info.public_key.startswith("-----BEGIN PUBLIC KEY-----")
+        assert info.public_key.endswith("-----END PUBLIC KEY-----")
+        assert info.algorithm == "ed25519"
+        assert info.public_key_hash.startswith("sha256:")
+        assert len(info.public_key_hash) == 7 + 64  # sha256: + 64 hex chars
+        assert info.status == "active"
+        assert info.dns_verified is True
+        assert info.created_at == "2026-01-01T00:00:00Z"
+        assert info.public_key_raw_b64 != ""
+        # Verify base64 fields are non-empty
+        assert resp["public_key_b64"] != ""

@@ -113,6 +113,9 @@ class HaiClient:
         self._last_event_id: Optional[str] = None
         self._hai_agent_id: Optional[str] = None
         self._agent_email: Optional[str] = None
+        # Agent key cache: maps cache_key -> (PublicKeyInfo, cached_at_monotonic)
+        self._key_cache: dict[str, tuple[Any, float]] = {}
+        self._KEY_CACHE_TTL: float = 300.0  # 5 minutes
 
     # ------------------------------------------------------------------
     # Properties
@@ -138,6 +141,25 @@ class HaiClient:
     def _escape_path_segment(value: str) -> str:
         """Escape a user-controlled URL path segment."""
         return quote(value, safe="")
+
+    def _get_cached_key(self, cache_key: str) -> Optional[Any]:
+        """Return a cached key if it exists and hasn't expired, else None."""
+        entry = self._key_cache.get(cache_key)
+        if entry is None:
+            return None
+        value, cached_at = entry
+        if time.monotonic() - cached_at >= self._KEY_CACHE_TTL:
+            del self._key_cache[cache_key]
+            return None
+        return value
+
+    def _set_cached_key(self, cache_key: str, value: Any) -> None:
+        """Store a key in the cache with the current timestamp."""
+        self._key_cache[cache_key] = (value, time.monotonic())
+
+    def invalidate_key_cache(self) -> None:
+        """Clear the agent key cache, forcing subsequent fetches to hit the API."""
+        self._key_cache.clear()
 
     def _get_jacs_id(self) -> str:
         """Return the loaded JACS ID, raising if not available."""
@@ -2254,6 +2276,11 @@ class HaiClient:
         Raises:
             HaiApiError: If the agent or key is not found (404).
         """
+        cache_key = f"remote:{jacs_id}:{version}"
+        cached = self._get_cached_key(cache_key)
+        if cached is not None:
+            return cached
+
         safe_jacs_id = self._escape_path_segment(jacs_id)
         safe_version = self._escape_path_segment(version)
         url = self._make_url(
@@ -2282,7 +2309,7 @@ class HaiClient:
                 logger.warning("HAI key service: %s", warning)
 
             data = resp.json()
-            return PublicKeyInfo(
+            result = PublicKeyInfo(
                 jacs_id=data.get("jacs_id", jacs_id),
                 version=data.get("version", version),
                 public_key=data.get("public_key", ""),
@@ -2293,6 +2320,8 @@ class HaiClient:
                 dns_verified=data.get("dns_verified", False),
                 created_at=data.get("created_at", ""),
             )
+            self._set_cached_key(cache_key, result)
+            return result
 
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
             raise HaiConnectionError(f"Connection failed: {exc}")
@@ -2300,6 +2329,252 @@ class HaiClient:
             raise
         except Exception as exc:
             raise HaiError(f"Key lookup failed: {exc}")
+
+    # ------------------------------------------------------------------
+    # fetch_key_by_hash / fetch_key_by_email / fetch_key_by_domain / fetch_all_keys
+    # ------------------------------------------------------------------
+
+    def fetch_key_by_hash(
+        self,
+        hai_url: str,
+        public_key_hash: str,
+    ) -> PublicKeyInfo:
+        """Fetch an agent's public key by its SHA-256 hash.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            public_key_hash: SHA-256 hash in ``sha256:<hex>`` format.
+
+        Returns:
+            PublicKeyInfo with the agent's public key and metadata.
+
+        Raises:
+            HaiApiError: If no key is found for the hash (404).
+        """
+        cache_key = f"hash:{public_key_hash}"
+        cached = self._get_cached_key(cache_key)
+        if cached is not None:
+            return cached
+
+        safe_hash = self._escape_path_segment(public_key_hash)
+        url = self._make_url(hai_url, f"/jacs/v1/keys/by-hash/{safe_hash}")
+
+        try:
+            resp = httpx.get(url, timeout=self._timeout)
+
+            if resp.status_code == 404:
+                raise HaiApiError(
+                    f"No key found for hash: {public_key_hash}",
+                    status_code=404,
+                    body=resp.text,
+                )
+
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Key lookup failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            data = resp.json()
+            result = PublicKeyInfo(
+                jacs_id=data.get("jacs_id", ""),
+                version=data.get("version", ""),
+                public_key=data.get("public_key", ""),
+                public_key_raw_b64=data.get("public_key_raw_b64", ""),
+                algorithm=data.get("algorithm", ""),
+                public_key_hash=data.get("public_key_hash", ""),
+                status=data.get("status", ""),
+                dns_verified=data.get("dns_verified", False),
+                created_at=data.get("created_at", ""),
+            )
+            self._set_cached_key(cache_key, result)
+            return result
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Key lookup failed: {exc}")
+
+    def fetch_key_by_email(
+        self,
+        hai_url: str,
+        email: str,
+    ) -> PublicKeyInfo:
+        """Fetch an agent's public key by their ``@hai.ai`` email address.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            email: The agent's email address (e.g., ``alice@hai.ai``).
+
+        Returns:
+            PublicKeyInfo with the agent's public key and metadata.
+
+        Raises:
+            HaiApiError: If no agent is found for the email (404).
+        """
+        cache_key = f"email:{email}"
+        cached = self._get_cached_key(cache_key)
+        if cached is not None:
+            return cached
+
+        safe_email = self._escape_path_segment(email)
+        url = self._make_url(hai_url, f"/api/agents/keys/{safe_email}")
+
+        try:
+            resp = httpx.get(url, timeout=self._timeout)
+
+            if resp.status_code == 404:
+                raise HaiApiError(
+                    f"No key found for email: {email}",
+                    status_code=404,
+                    body=resp.text,
+                )
+
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Key lookup failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            data = resp.json()
+            result = PublicKeyInfo(
+                jacs_id=data.get("jacs_id", ""),
+                version=data.get("version", ""),
+                public_key=data.get("public_key", ""),
+                public_key_raw_b64=data.get("public_key_raw_b64", ""),
+                algorithm=data.get("algorithm", ""),
+                public_key_hash=data.get("public_key_hash", ""),
+                status=data.get("status", ""),
+                dns_verified=data.get("dns_verified", False),
+                created_at=data.get("created_at", ""),
+            )
+            self._set_cached_key(cache_key, result)
+            return result
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Key lookup failed: {exc}")
+
+    def fetch_key_by_domain(
+        self,
+        hai_url: str,
+        domain: str,
+    ) -> PublicKeyInfo:
+        """Fetch the latest DNS-verified agent key for a domain.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            domain: DNS domain (e.g., ``example.com``).
+
+        Returns:
+            PublicKeyInfo with the agent's public key and metadata.
+
+        Raises:
+            HaiApiError: If no DNS-verified agent is found for the domain (404).
+        """
+        cache_key = f"domain:{domain}"
+        cached = self._get_cached_key(cache_key)
+        if cached is not None:
+            return cached
+
+        safe_domain = self._escape_path_segment(domain)
+        url = self._make_url(
+            hai_url, f"/jacs/v1/agents/by-domain/{safe_domain}"
+        )
+
+        try:
+            resp = httpx.get(url, timeout=self._timeout)
+
+            if resp.status_code == 404:
+                raise HaiApiError(
+                    f"No verified agent for domain: {domain}",
+                    status_code=404,
+                    body=resp.text,
+                )
+
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Key lookup failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            data = resp.json()
+            result = PublicKeyInfo(
+                jacs_id=data.get("jacs_id", ""),
+                version=data.get("version", ""),
+                public_key=data.get("public_key", ""),
+                public_key_raw_b64=data.get("public_key_raw_b64", ""),
+                algorithm=data.get("algorithm", ""),
+                public_key_hash=data.get("public_key_hash", ""),
+                status=data.get("status", ""),
+                dns_verified=data.get("dns_verified", False),
+                created_at=data.get("created_at", ""),
+            )
+            self._set_cached_key(cache_key, result)
+            return result
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Key lookup failed: {exc}")
+
+    def fetch_all_keys(
+        self,
+        hai_url: str,
+        jacs_id: str,
+    ) -> dict:
+        """Fetch all key versions for an agent.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            jacs_id: The target agent's JACS ID.
+
+        Returns:
+            Dict with ``jacs_id``, ``keys`` (list of key entries), and ``total``.
+
+        Raises:
+            HaiApiError: If the agent is not found (404).
+        """
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(
+            hai_url, f"/jacs/v1/agents/{safe_jacs_id}/keys"
+        )
+
+        try:
+            resp = httpx.get(url, timeout=self._timeout)
+
+            if resp.status_code == 404:
+                raise HaiApiError(
+                    f"Agent not found: {jacs_id}",
+                    status_code=404,
+                    body=resp.text,
+                )
+
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Key history lookup failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            return resp.json()
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Key history lookup failed: {exc}")
 
     # ------------------------------------------------------------------
     # connect (SSE + WS)

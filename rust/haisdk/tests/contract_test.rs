@@ -5,7 +5,7 @@
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use haisdk::types::{EmailMessage, EmailStatus, KeyRegistryResponse};
+use haisdk::types::{EmailMessage, EmailStatus, KeyRegistryResponse, PublicKeyInfo};
 
 /// Wrapper struct for the `list_messages_response.json` contract.
 /// The SDK client unpacks this internally, but the contract test validates
@@ -31,6 +31,8 @@ const CONTENT_HASH_JSON: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/content_hash_example.json"));
 const KEY_REGISTRY_JSON: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/key_registry_response.json"));
+const KEY_LOOKUP_VERSIONED_JSON: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/key_lookup_versioned_response.json"));
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -142,5 +144,49 @@ fn contract_sign_input_format() {
     assert_eq!(
         sign_input, expected_sign_input,
         "Sign input format mismatch.\n  computed: {sign_input}\n  expected: {expected_sign_input}"
+    );
+}
+
+#[test]
+fn contract_deserialize_key_lookup_versioned_response() {
+    let fixture: serde_json::Value = serde_json::from_str(KEY_LOOKUP_VERSIONED_JSON)
+        .expect("key_lookup_versioned_response.json parse failed");
+
+    let resp_json = &fixture["response"];
+    let info: PublicKeyInfo =
+        serde_json::from_value(resp_json.clone()).expect("PublicKeyInfo deserialization failed");
+
+    assert_eq!(
+        info.jacs_id,
+        "fixture-agent-00000000-0000-0000-0000-000000000001"
+    );
+    assert_eq!(
+        info.version,
+        "fixture-version-00000000-0000-0000-0000-000000000001"
+    );
+    assert!(
+        info.public_key.starts_with("-----BEGIN PUBLIC KEY-----"),
+        "public_key should be PEM-formatted"
+    );
+    assert!(
+        info.public_key.ends_with("-----END PUBLIC KEY-----"),
+        "public_key should end with PEM footer"
+    );
+    assert_eq!(info.algorithm, "ed25519");
+    assert!(
+        info.public_key_hash.starts_with("sha256:"),
+        "public_key_hash should start with sha256:"
+    );
+    assert_eq!(
+        info.public_key_hash.len(),
+        7 + 64,
+        "public_key_hash should be sha256: + 64 hex chars"
+    );
+    assert_eq!(info.status, "active");
+    assert!(info.dns_verified);
+    assert_eq!(info.created_at, "2026-01-01T00:00:00Z");
+    assert!(
+        !info.public_key_raw_b64.is_empty(),
+        "public_key_raw_b64 should not be empty"
     );
 }

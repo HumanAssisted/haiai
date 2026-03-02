@@ -313,3 +313,48 @@ describe('contract: sign input format', () => {
     expect(signInput).toBe(expectedSignInput);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Versioned key lookup contract fixture
+// ---------------------------------------------------------------------------
+
+function loadFixture(filename: string): Record<string, unknown> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const fixturePath = resolve(here, '../../contract', filename);
+  return JSON.parse(readFileSync(fixturePath, 'utf-8')) as Record<string, unknown>;
+}
+
+function parsePublicKeyInfo(data: Record<string, unknown>): PublicKeyInfo {
+  return {
+    jacsId: (data.jacs_id as string) || '',
+    version: (data.version as string) || '',
+    publicKey: (data.public_key as string) || '',
+    publicKeyRawB64: (data.public_key_raw_b64 as string) || '',
+    algorithm: (data.algorithm as string) || '',
+    publicKeyHash: (data.public_key_hash as string) || '',
+    status: (data.status as string) || '',
+    dnsVerified: (data.dns_verified as boolean) ?? false,
+    createdAt: (data.created_at as string) || '',
+  };
+}
+
+describe('contract: deserialize versioned key lookup response', () => {
+  it('maps all snake_case API fields to camelCase PublicKeyInfo', () => {
+    const fixture = loadFixture('key_lookup_versioned_response.json');
+    const resp = fixture.response as Record<string, unknown>;
+    const info = parsePublicKeyInfo(resp);
+
+    expect(info.jacsId).toBe('fixture-agent-00000000-0000-0000-0000-000000000001');
+    expect(info.version).toBe('fixture-version-00000000-0000-0000-0000-000000000001');
+    expect(info.publicKey).toMatch(/^-----BEGIN PUBLIC KEY-----/);
+    expect(info.publicKey).toMatch(/-----END PUBLIC KEY-----$/);
+    expect(info.algorithm).toBe('ed25519');
+    expect(info.publicKeyHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(info.status).toBe('active');
+    expect(info.dnsVerified).toBe(true);
+    expect(info.createdAt).toBe('2026-01-01T00:00:00Z');
+    expect(info.publicKeyRawB64).toBeTruthy();
+    // Verify base64 PEM field is present
+    expect(resp.public_key_b64).toBeTruthy();
+  });
+});

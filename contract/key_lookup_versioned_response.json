@@ -1,0 +1,16 @@
+{
+  "description": "Cross-language contract fixture for JACS key lookup versioned response. All SDKs must deserialize this identically.",
+  "note": "Field values computed from a synthetic Ed25519 SPKI public key. public_key_hash uses sha256:<hex(SHA256(pem_utf8_bytes))> format matching the API.",
+  "response": {
+    "jacs_id": "fixture-agent-00000000-0000-0000-0000-000000000001",
+    "version": "fixture-version-00000000-0000-0000-0000-000000000001",
+    "public_key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEARml4dHVyZVRlc3RLZXkxMjM0NTY3ODkwMTIzNAAAAAA=\n-----END PUBLIC KEY-----",
+    "public_key_b64": "LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUNvd0JRWURLMlZ3QXlFQVJtbDRkSFZ5WlZSbGMzUkxaWGt4TWpNME5UWTNPRGt3TVRJek5BQUFBQUE9Ci0tLS0tRU5EIFBVQkxJQyBLRVktLS0tLQ==",
+    "public_key_raw_b64": "Rml4dHVyZVRlc3RLZXkxMjM0NTY3ODkwMTIzNAAAAAA=",
+    "algorithm": "ed25519",
+    "public_key_hash": "sha256:8d29f44a43237af9986d7fe40883b51795c6903989ce2aebe8bca24894b2a1bd",
+    "status": "active",
+    "dns_verified": true,
+    "created_at": "2026-01-01T00:00:00Z"
+  }
+}

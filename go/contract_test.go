@@ -317,3 +317,71 @@ func TestContractDeserializeKeyRegistryResponse(t *testing.T) {
 	}
 }
 
+// keyLookupVersionedResponse is the raw API shape for the versioned key lookup endpoint.
+// The Go SDK maps a subset of these fields into PublicKeyInfo; this struct captures the full response.
+type keyLookupVersionedResponse struct {
+	JacsID          string `json:"jacs_id"`
+	Version         string `json:"version"`
+	PublicKey       string `json:"public_key"`
+	PublicKeyB64    string `json:"public_key_b64"`
+	PublicKeyRawB64 string `json:"public_key_raw_b64"`
+	Algorithm       string `json:"algorithm"`
+	PublicKeyHash   string `json:"public_key_hash"`
+	Status          string `json:"status"`
+	DNSVerified     bool   `json:"dns_verified"`
+	CreatedAt       string `json:"created_at"`
+}
+
+func TestContractDeserializeKeyLookupVersionedResponse(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(contractDir(), "key_lookup_versioned_response.json"))
+	if err != nil {
+		t.Fatalf("read key_lookup_versioned_response.json: %v", err)
+	}
+
+	var envelope struct {
+		Response keyLookupVersionedResponse `json:"response"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatalf("unmarshal key_lookup_versioned_response.json: %v", err)
+	}
+
+	resp := envelope.Response
+
+	if resp.JacsID != "fixture-agent-00000000-0000-0000-0000-000000000001" {
+		t.Fatalf("JacsID = %q, want %q", resp.JacsID, "fixture-agent-00000000-0000-0000-0000-000000000001")
+	}
+	if resp.Version != "fixture-version-00000000-0000-0000-0000-000000000001" {
+		t.Fatalf("Version = %q, want %q", resp.Version, "fixture-version-00000000-0000-0000-0000-000000000001")
+	}
+	if !strings.HasPrefix(resp.PublicKey, "-----BEGIN PUBLIC KEY-----") {
+		t.Fatalf("PublicKey should start with PEM header, got %q", resp.PublicKey[:40])
+	}
+	if !strings.HasSuffix(resp.PublicKey, "-----END PUBLIC KEY-----") {
+		t.Fatalf("PublicKey should end with PEM footer")
+	}
+	if resp.Algorithm != "ed25519" {
+		t.Fatalf("Algorithm = %q, want %q", resp.Algorithm, "ed25519")
+	}
+	if !strings.HasPrefix(resp.PublicKeyHash, "sha256:") {
+		t.Fatalf("PublicKeyHash should start with sha256:, got %q", resp.PublicKeyHash)
+	}
+	if len(resp.PublicKeyHash) != 7+64 {
+		t.Fatalf("PublicKeyHash length = %d, want %d (sha256: + 64 hex)", len(resp.PublicKeyHash), 7+64)
+	}
+	if resp.Status != "active" {
+		t.Fatalf("Status = %q, want %q", resp.Status, "active")
+	}
+	if !resp.DNSVerified {
+		t.Fatal("DNSVerified should be true")
+	}
+	if resp.CreatedAt != "2026-01-01T00:00:00Z" {
+		t.Fatalf("CreatedAt = %q, want %q", resp.CreatedAt, "2026-01-01T00:00:00Z")
+	}
+	if resp.PublicKeyB64 == "" {
+		t.Fatal("PublicKeyB64 should not be empty")
+	}
+	if resp.PublicKeyRawB64 == "" {
+		t.Fatal("PublicKeyRawB64 should not be empty")
+	}
+}
+

@@ -50,6 +50,7 @@ type Client struct {
 	agentEmail string // Agent's @hai.ai email address (set after ClaimUsername)
 	privateKey ed25519.PrivateKey
 	httpClient *http.Client
+	agentKeys  *keyCache // Agent key cache with 5-minute TTL
 }
 
 // Option configures a Client.
@@ -107,6 +108,7 @@ func NewClient(opts ...Option) (*Client, error) {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		agentKeys: newKeyCache(),
 	}
 
 	// Apply options first -- user-provided values take priority
@@ -1258,11 +1260,25 @@ func (c *Client) SignBenchmarkResult(result map[string]interface{}) (*SignedDocu
 
 // FetchRemoteKey fetches a public key from HAI's key distribution service.
 func (c *Client) FetchRemoteKey(ctx context.Context, agentID, version string) (*PublicKeyInfo, error) {
+	cacheKey := "remote:" + agentID + ":" + version
+	if cached := c.agentKeys.get(cacheKey); cached != nil {
+		return cached, nil
+	}
 	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
 	if baseURL == "" {
 		baseURL = DefaultKeysEndpoint
 	}
-	return FetchRemoteKeyFromURL(ctx, c.httpClient, baseURL, agentID, version)
+	result, err := FetchRemoteKeyFromURL(ctx, c.httpClient, baseURL, agentID, version)
+	if err != nil {
+		return nil, err
+	}
+	c.agentKeys.set(cacheKey, result)
+	return result, nil
+}
+
+// ClearAgentKeyCache clears the agent key cache, forcing subsequent fetches to hit the API.
+func (c *Client) ClearAgentKeyCache() {
+	c.agentKeys.clear()
 }
 
 // FetchRemoteKeyFromURL fetches a public key from a specific key service URL.
@@ -1347,4 +1363,49 @@ func FetchRemoteKeyFromURL(ctx context.Context, httpClient *http.Client, baseURL
 		AgentID:       agentIDResp,
 		Version:       keyResp.Version,
 	}, nil
+}
+
+// FetchKeyByEmail fetches an agent's public key by their @hai.ai email address.
+func (c *Client) FetchKeyByEmail(ctx context.Context, email string) (*PublicKeyInfo, error) {
+	cacheKey := "email:" + email
+	if cached := c.agentKeys.get(cacheKey); cached != nil {
+		return cached, nil
+	}
+	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
+	if baseURL == "" {
+		baseURL = DefaultKeysEndpoint
+	}
+	result, err := FetchKeyByEmailFromURL(ctx, c.httpClient, baseURL, email)
+	if err != nil {
+		return nil, err
+	}
+	c.agentKeys.set(cacheKey, result)
+	return result, nil
+}
+
+// FetchKeyByDomain fetches the latest DNS-verified agent key for a domain.
+func (c *Client) FetchKeyByDomain(ctx context.Context, domain string) (*PublicKeyInfo, error) {
+	cacheKey := "domain:" + domain
+	if cached := c.agentKeys.get(cacheKey); cached != nil {
+		return cached, nil
+	}
+	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
+	if baseURL == "" {
+		baseURL = DefaultKeysEndpoint
+	}
+	result, err := FetchKeyByDomainFromURL(ctx, c.httpClient, baseURL, domain)
+	if err != nil {
+		return nil, err
+	}
+	c.agentKeys.set(cacheKey, result)
+	return result, nil
+}
+
+// FetchAllKeys fetches all key versions for an agent.
+func (c *Client) FetchAllKeys(ctx context.Context, jacsID string) (*AgentKeyHistory, error) {
+	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
+	if baseURL == "" {
+		baseURL = DefaultKeysEndpoint
+	}
+	return FetchAllKeysFromURL(ctx, c.httpClient, baseURL, jacsID)
 }

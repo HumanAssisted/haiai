@@ -157,3 +157,153 @@ async fn delete_username_escapes_agent_id_path_segment() {
 
     mock.assert_async().await;
 }
+
+#[tokio::test]
+async fn fetch_key_by_hash_calls_correct_endpoint() {
+    let server = MockServer::start_async().await;
+
+    // httpmock matches against the decoded path, so we use the decoded form.
+    // The SDK correctly percent-encodes the colon: sha256:abc -> sha256%3Aabc
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/jacs/v1/keys/by-hash/sha256:abc123");
+            then.status(200).json_body(json!({
+                "jacs_id": "agent-1",
+                "version": "v1",
+                "public_key": "pem",
+                "algorithm": "ed25519",
+                "public_key_hash": "sha256:abc123",
+                "status": "active",
+                "dns_verified": true,
+                "created_at": "2026-01-01T00:00:00Z"
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url(), "test-agent");
+    let info = client
+        .fetch_key_by_hash("sha256:abc123")
+        .await
+        .expect("fetch key by hash");
+
+    assert_eq!(info.jacs_id, "agent-1");
+    assert_eq!(info.public_key_hash, "sha256:abc123");
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn fetch_key_by_email_calls_correct_endpoint() {
+    let server = MockServer::start_async().await;
+
+    // httpmock matches against the decoded path.
+    // The SDK percent-encodes the @: bot@hai.ai -> bot%40hai.ai
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/api/agents/keys/bot@hai.ai");
+            then.status(200).json_body(json!({
+                "jacs_id": "agent-2",
+                "version": "v1",
+                "public_key": "pem",
+                "algorithm": "ed25519",
+                "public_key_hash": "sha256:def456",
+                "status": "active",
+                "dns_verified": false,
+                "created_at": "2026-01-01T00:00:00Z"
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url(), "test-agent");
+    let info = client
+        .fetch_key_by_email("bot@hai.ai")
+        .await
+        .expect("fetch key by email");
+
+    assert_eq!(info.jacs_id, "agent-2");
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn fetch_key_by_domain_calls_correct_endpoint() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/jacs/v1/agents/by-domain/example.com");
+            then.status(200).json_body(json!({
+                "jacs_id": "agent-3",
+                "version": "v2",
+                "public_key": "pem",
+                "algorithm": "ed25519",
+                "public_key_hash": "sha256:ghi789",
+                "status": "active",
+                "dns_verified": true,
+                "created_at": "2026-01-01T00:00:00Z"
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url(), "test-agent");
+    let info = client
+        .fetch_key_by_domain("example.com")
+        .await
+        .expect("fetch key by domain");
+
+    assert_eq!(info.jacs_id, "agent-3");
+    assert!(info.dns_verified);
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn fetch_all_keys_calls_correct_endpoint() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/jacs/v1/agents/agent-4/keys");
+            then.status(200).json_body(json!({
+                "jacs_id": "agent-4",
+                "keys": [
+                    {
+                        "jacs_id": "agent-4",
+                        "version": "v2",
+                        "public_key": "pem2",
+                        "algorithm": "ed25519",
+                        "public_key_hash": "sha256:hash2",
+                        "status": "active",
+                        "dns_verified": true,
+                        "created_at": "2026-02-01T00:00:00Z"
+                    },
+                    {
+                        "jacs_id": "agent-4",
+                        "version": "v1",
+                        "public_key": "pem1",
+                        "algorithm": "ed25519",
+                        "public_key_hash": "sha256:hash1",
+                        "status": "active",
+                        "dns_verified": false,
+                        "created_at": "2026-01-01T00:00:00Z"
+                    }
+                ],
+                "total": 2
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url(), "test-agent");
+    let history = client
+        .fetch_all_keys("agent-4")
+        .await
+        .expect("fetch all keys");
+
+    assert_eq!(history.jacs_id, "agent-4");
+    assert_eq!(history.total, 2);
+    assert_eq!(history.keys.len(), 2);
+    assert_eq!(history.keys[0].version, "v2");
+    assert_eq!(history.keys[1].version, "v1");
+    mock.assert_async().await;
+}

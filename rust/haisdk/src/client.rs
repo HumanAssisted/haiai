@@ -15,11 +15,11 @@ use tungstenite::client::IntoClientRequest;
 use crate::error::{HaiError, Result};
 use crate::jacs::JacsProvider;
 use crate::types::{
-    AgentVerificationResult, CheckUsernameResult, ClaimUsernameResult, DeleteUsernameResult,
-    DnsCertifiedResult, DnsCertifiedRunOptions, DocumentVerificationResult, EmailMessage,
-    EmailStatus, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult, ListMessagesOptions,
-    PublicKeyInfo, RegisterAgentOptions, RegistrationResult, SearchOptions, SendEmailOptions,
-    SendEmailResult, TranscriptMessage, TransportType, UpdateUsernameResult,
+    AgentKeyHistory, AgentVerificationResult, CheckUsernameResult, ClaimUsernameResult,
+    DeleteUsernameResult, DnsCertifiedResult, DnsCertifiedRunOptions, DocumentVerificationResult,
+    EmailMessage, EmailStatus, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult,
+    ListMessagesOptions, PublicKeyInfo, RegisterAgentOptions, RegistrationResult, SearchOptions,
+    SendEmailOptions, SendEmailResult, TranscriptMessage, TransportType, UpdateUsernameResult,
     VerifyAgentDocumentRequest, VerifyAgentResult,
 };
 
@@ -663,6 +663,49 @@ impl<P: JacsProvider> HaiClient<P> {
         let url = self.url(&format!(
             "/jacs/v1/agents/{safe_jacs_id}/keys/{safe_version}"
         ));
+
+        let response = self.http.get(url).send().await?;
+        let data = response_json(response).await?;
+        Ok(serde_json::from_value(data)?)
+    }
+
+    /// Look up an agent's public key by its SHA-256 hash.
+    ///
+    /// The `hash` should be in `sha256:<hex>` format; the `sha256:` prefix
+    /// will be added automatically if missing.
+    pub async fn fetch_key_by_hash(&self, hash: &str) -> Result<PublicKeyInfo> {
+        let safe_hash = encode_path_segment(hash);
+        let url = self.url(&format!("/jacs/v1/keys/by-hash/{safe_hash}"));
+
+        let response = self.http.get(url).send().await?;
+        let data = response_json(response).await?;
+        Ok(serde_json::from_value(data)?)
+    }
+
+    /// Look up an agent's public key by its `@hai.ai` email address.
+    pub async fn fetch_key_by_email(&self, email: &str) -> Result<PublicKeyInfo> {
+        let safe_email = encode_path_segment(email);
+        let url = self.url(&format!("/api/agents/keys/{safe_email}"));
+
+        let response = self.http.get(url).send().await?;
+        let data = response_json(response).await?;
+        Ok(serde_json::from_value(data)?)
+    }
+
+    /// Look up the latest DNS-verified agent key for a domain.
+    pub async fn fetch_key_by_domain(&self, domain: &str) -> Result<PublicKeyInfo> {
+        let safe_domain = encode_path_segment(domain);
+        let url = self.url(&format!("/jacs/v1/agents/by-domain/{safe_domain}"));
+
+        let response = self.http.get(url).send().await?;
+        let data = response_json(response).await?;
+        Ok(serde_json::from_value(data)?)
+    }
+
+    /// List all key versions for an agent, ordered by `created_at` descending.
+    pub async fn fetch_all_keys(&self, jacs_id: &str) -> Result<AgentKeyHistory> {
+        let safe_jacs_id = encode_path_segment(jacs_id);
+        let url = self.url(&format!("/jacs/v1/agents/{safe_jacs_id}/keys"));
 
         let response = self.http.get(url).send().await?;
         let data = response_json(response).await?;

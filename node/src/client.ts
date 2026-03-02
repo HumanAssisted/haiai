@@ -88,6 +88,10 @@ export class HaiClient {
   private _haiAgentId: string | null = null;
   /** Agent's @hai.ai email address, set after claimUsername(). */
   private agentEmail?: string;
+  /** Agent key cache: maps cache key -> { value, cachedAt (ms since epoch) }. */
+  private keyCache = new Map<string, { value: PublicKeyInfo; cachedAt: number }>();
+  /** Agent key cache TTL in milliseconds (5 minutes). */
+  private static readonly KEY_CACHE_TTL = 300_000;
 
   private constructor(options?: HaiClientOptions) {
     this.baseUrl = (options?.url ?? 'https://hai.ai').replace(/\/+$/, '');
@@ -160,6 +164,31 @@ export class HaiClient {
   /** Set the agent's @hai.ai email address manually. */
   setAgentEmail(email: string): void {
     this.agentEmail = email;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Agent key cache
+  // ---------------------------------------------------------------------------
+
+  /** Get a cached key if it exists and hasn't expired. */
+  private getCachedKey(cacheKey: string): PublicKeyInfo | undefined {
+    const entry = this.keyCache.get(cacheKey);
+    if (!entry) return undefined;
+    if (Date.now() - entry.cachedAt >= HaiClient.KEY_CACHE_TTL) {
+      this.keyCache.delete(cacheKey);
+      return undefined;
+    }
+    return entry.value;
+  }
+
+  /** Store a key in the cache with the current timestamp. */
+  private setCachedKey(cacheKey: string, value: PublicKeyInfo): void {
+    this.keyCache.set(cacheKey, { value, cachedAt: Date.now() });
+  }
+
+  /** Clear the agent key cache, forcing subsequent fetches to hit the API. */
+  clearAgentKeyCache(): void {
+    this.keyCache.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -1718,6 +1747,10 @@ export class HaiClient {
    * @returns Public key information
    */
   async fetchRemoteKey(jacsId: string, version: string = 'latest'): Promise<PublicKeyInfo> {
+    const cacheKey = `remote:${jacsId}:${version}`;
+    const cached = this.getCachedKey(cacheKey);
+    if (cached) return cached;
+
     const safeJacsId = this.encodePathSegment(jacsId);
     const safeVersion = this.encodePathSegment(version);
     const url = this.makeUrl(`/jacs/v1/agents/${safeJacsId}/keys/${safeVersion}`);
@@ -1732,7 +1765,7 @@ export class HaiClient {
     }
 
     const data = await response.json() as Record<string, unknown>;
-    return {
+    const result: PublicKeyInfo = {
       jacsId: (data.jacs_id as string) || '',
       version: (data.version as string) || '',
       publicKey: (data.public_key as string) || '',
@@ -1742,6 +1775,161 @@ export class HaiClient {
       status: (data.status as string) || '',
       dnsVerified: (data.dns_verified as boolean) ?? false,
       createdAt: (data.created_at as string) || '',
+    };
+    this.setCachedKey(cacheKey, result);
+    return result;
+  }
+
+  // ---------------------------------------------------------------------------
+  // fetchKeyByHash()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Look up an agent's public key by its SHA-256 hash.
+   *
+   * @param publicKeyHash - Hash in `sha256:<hex>` format
+   * @returns Public key information
+   */
+  async fetchKeyByHash(publicKeyHash: string): Promise<PublicKeyInfo> {
+    const cacheKey = `hash:${publicKeyHash}`;
+    const cached = this.getCachedKey(cacheKey);
+    if (cached) return cached;
+
+    const safeHash = this.encodePathSegment(publicKeyHash);
+    const url = this.makeUrl(`/jacs/v1/keys/by-hash/${safeHash}`);
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    const result: PublicKeyInfo = {
+      jacsId: (data.jacs_id as string) || '',
+      version: (data.version as string) || '',
+      publicKey: (data.public_key as string) || '',
+      publicKeyRawB64: (data.public_key_raw_b64 as string) || '',
+      algorithm: (data.algorithm as string) || '',
+      publicKeyHash: (data.public_key_hash as string) || '',
+      status: (data.status as string) || '',
+      dnsVerified: (data.dns_verified as boolean) ?? false,
+      createdAt: (data.created_at as string) || '',
+    };
+    this.setCachedKey(cacheKey, result);
+    return result;
+  }
+
+  // ---------------------------------------------------------------------------
+  // fetchKeyByEmail()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Look up an agent's public key by their @hai.ai email address.
+   *
+   * @param email - The agent's email address (e.g., "alice@hai.ai")
+   * @returns Public key information
+   */
+  async fetchKeyByEmail(email: string): Promise<PublicKeyInfo> {
+    const cacheKey = `email:${email}`;
+    const cached = this.getCachedKey(cacheKey);
+    if (cached) return cached;
+
+    const safeEmail = this.encodePathSegment(email);
+    const url = this.makeUrl(`/api/agents/keys/${safeEmail}`);
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    const result: PublicKeyInfo = {
+      jacsId: (data.jacs_id as string) || '',
+      version: (data.version as string) || '',
+      publicKey: (data.public_key as string) || '',
+      publicKeyRawB64: (data.public_key_raw_b64 as string) || '',
+      algorithm: (data.algorithm as string) || '',
+      publicKeyHash: (data.public_key_hash as string) || '',
+      status: (data.status as string) || '',
+      dnsVerified: (data.dns_verified as boolean) ?? false,
+      createdAt: (data.created_at as string) || '',
+    };
+    this.setCachedKey(cacheKey, result);
+    return result;
+  }
+
+  // ---------------------------------------------------------------------------
+  // fetchKeyByDomain()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Look up the latest DNS-verified agent key for a domain.
+   *
+   * @param domain - DNS domain (e.g., "example.com")
+   * @returns Public key information
+   */
+  async fetchKeyByDomain(domain: string): Promise<PublicKeyInfo> {
+    const cacheKey = `domain:${domain}`;
+    const cached = this.getCachedKey(cacheKey);
+    if (cached) return cached;
+
+    const safeDomain = this.encodePathSegment(domain);
+    const url = this.makeUrl(`/jacs/v1/agents/by-domain/${safeDomain}`);
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    const result: PublicKeyInfo = {
+      jacsId: (data.jacs_id as string) || '',
+      version: (data.version as string) || '',
+      publicKey: (data.public_key as string) || '',
+      publicKeyRawB64: (data.public_key_raw_b64 as string) || '',
+      algorithm: (data.algorithm as string) || '',
+      publicKeyHash: (data.public_key_hash as string) || '',
+      status: (data.status as string) || '',
+      dnsVerified: (data.dns_verified as boolean) ?? false,
+      createdAt: (data.created_at as string) || '',
+    };
+    this.setCachedKey(cacheKey, result);
+    return result;
+  }
+
+  // ---------------------------------------------------------------------------
+  // fetchAllKeys()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fetch all key versions for an agent, ordered by creation date descending.
+   *
+   * @param jacsId - The JACS ID of the agent to look up
+   * @returns Object with jacs_id, keys array, and total count
+   */
+  async fetchAllKeys(jacsId: string): Promise<{ jacsId: string; keys: PublicKeyInfo[]; total: number }> {
+    const safeJacsId = this.encodePathSegment(jacsId);
+    const url = this.makeUrl(`/jacs/v1/agents/${safeJacsId}/keys`);
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    const rawKeys = (data.keys as Array<Record<string, unknown>>) || [];
+    const keys = rawKeys.map((k) => ({
+      jacsId: (k.jacs_id as string) || '',
+      version: (k.version as string) || '',
+      publicKey: (k.public_key as string) || '',
+      publicKeyRawB64: (k.public_key_raw_b64 as string) || '',
+      algorithm: (k.algorithm as string) || '',
+      publicKeyHash: (k.public_key_hash as string) || '',
+      status: (k.status as string) || '',
+      dnsVerified: (k.dns_verified as boolean) ?? false,
+      createdAt: (k.created_at as string) || '',
+    }));
+
+    return {
+      jacsId: (data.jacs_id as string) || '',
+      keys,
+      total: (data.total as number) || 0,
     };
   }
 

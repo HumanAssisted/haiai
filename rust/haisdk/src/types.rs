@@ -365,6 +365,17 @@ pub struct PublicKeyInfo {
     pub created_at: String,
 }
 
+/// Response from `GET /jacs/v1/agents/{jacs_id}/keys` — all key versions for an agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentKeyHistory {
+    #[serde(default)]
+    pub jacs_id: String,
+    #[serde(default)]
+    pub keys: Vec<PublicKeyInfo>,
+    #[serde(default)]
+    pub total: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DocumentVerificationResult {
     #[serde(default)]
