@@ -5,6 +5,8 @@ import type {
   BenchmarkJob,
   HelloWorldResult,
   RegistrationResult,
+  RotateKeysOptions,
+  RotationResult,
   FreeChaoticResult,
   DnsCertifiedResult,
   FullyCertifiedResult,
@@ -403,6 +405,165 @@ export class HaiClient {
       registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
       registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
       rawResponse: data,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // rotateKeys()
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Rotate the agent's cryptographic keys.
+   *
+   * Archives old keys, generates a new Ed25519 keypair, builds a new
+   * self-signed agent document, updates config, and optionally re-registers
+   * with HAI.
+   *
+   * @param options - Rotation options (registerWithHai, haiUrl).
+   * @returns RotationResult with old/new versions and registration status.
+   */
+  async rotateKeys(options?: RotateKeysOptions): Promise<RotationResult> {
+    const { rename, writeFile } = await import('node:fs/promises');
+    const { randomUUID } = await import('node:crypto');
+    const { join, resolve } = await import('node:path');
+    const { encryptPrivateKeyPem } = await import('./crypt.js');
+
+    const registerWithHai = options?.registerWithHai ?? true;
+    const haiUrl = options?.haiUrl ?? this.baseUrl;
+
+    if (!this.config.jacsId) {
+      throw new AuthenticationError('Cannot rotate keys: no jacsId in config. Register first.');
+    }
+
+    const jacsId = this.config.jacsId;
+    const oldVersion = this.config.jacsAgentVersion;
+    const keyDir = this.config.jacsKeyDir;
+
+    // Find existing private key file
+    const candidates = [
+      join(keyDir, 'agent_private_key.pem'),
+      join(keyDir, `${this.config.jacsAgentName}.private.pem`),
+      join(keyDir, 'private_key.pem'),
+    ];
+
+    let privKeyPath: string | null = null;
+    for (const candidate of candidates) {
+      try {
+        const { stat } = await import('node:fs/promises');
+        await stat(candidate);
+        privKeyPath = candidate;
+        break;
+      } catch {
+        // continue
+      }
+    }
+
+    if (!privKeyPath) {
+      throw new AuthenticationError(
+        `Cannot rotate keys: private key not found. Searched: ${candidates.join(', ')}`,
+      );
+    }
+
+    // Derive public key path
+    const pubKeyPath = privKeyPath.replace('private', 'public');
+
+    // 1. Archive old keys
+    const archivePriv = privKeyPath.replace('.pem', `.${oldVersion}.pem`);
+    const archivePub = pubKeyPath.replace('.pem', `.${oldVersion}.pem`);
+
+    await rename(privKeyPath, archivePriv);
+    try {
+      await rename(pubKeyPath, archivePub);
+    } catch {
+      // Public key might not exist as separate file; continue
+    }
+
+    // 2. Generate new keypair
+    let newKeypair: { publicKeyPem: string; privateKeyPem: string };
+    try {
+      newKeypair = generateKeypair();
+    } catch (err) {
+      // Rollback: restore archived keys
+      await rename(archivePriv, privKeyPath).catch(() => {});
+      try { await rename(archivePub, pubKeyPath); } catch { /* noop */ }
+      throw new AuthenticationError(`Key generation failed: ${err}`);
+    }
+
+    // 3. Write new keys (encrypted if passphrase available)
+    if (this.privateKeyPassphrase) {
+      const encrypted = encryptPrivateKeyPem(newKeypair.privateKeyPem, this.privateKeyPassphrase);
+      await writeFile(privKeyPath, encrypted, { mode: 0o600 });
+    } else {
+      await writeFile(privKeyPath, newKeypair.privateKeyPem, { mode: 0o600 });
+    }
+    await writeFile(pubKeyPath, newKeypair.publicKeyPem, { mode: 0o644 });
+
+    // 4. Build new agent document
+    const newVersion = randomUUID();
+    const agentDoc: Record<string, unknown> = {
+      jacsId,
+      jacsVersion: newVersion,
+      jacsPreviousVersion: oldVersion,
+      jacsPublicKey: newKeypair.publicKeyPem,
+      name: this.config.jacsAgentName,
+      description: `Agent registered via Node SDK`,
+      jacsSignature: {
+        agentID: jacsId,
+        date: new Date().toISOString(),
+      },
+    };
+
+    const canonical = canonicalJson(agentDoc);
+    const signature = signString(newKeypair.privateKeyPem, canonical);
+    (agentDoc.jacsSignature as Record<string, string>).signature = signature;
+    const signedAgentJson = JSON.stringify(agentDoc, null, 2);
+
+    // 5. Compute new public key hash
+    const pubKeyDer = createPublicKey(newKeypair.publicKeyPem)
+      .export({ type: 'spki', format: 'der' });
+    const newPublicKeyHash = createHash('sha256').update(pubKeyDer).digest('hex');
+
+    // 6. Update in-memory state
+    this.privateKeyPem = newKeypair.privateKeyPem;
+    this.config = {
+      ...this.config,
+      jacsAgentVersion: newVersion,
+    };
+
+    // 7. Update config file
+    const configPath = resolve(
+      process.env.JACS_CONFIG_PATH ?? './jacs.config.json',
+    );
+    try {
+      const { readFile: readF } = await import('node:fs/promises');
+      const raw = JSON.parse(await readF(configPath, 'utf-8')) as Record<string, unknown>;
+      raw.jacsAgentVersion = newVersion;
+      await writeFile(configPath, JSON.stringify(raw, null, 2) + '\n');
+    } catch {
+      // Config update failure is non-fatal for rotation
+    }
+
+    // 8. Optionally re-register with HAI
+    let registeredWithHai = false;
+    if (registerWithHai && haiUrl) {
+      try {
+        await this.register({
+          agentJson: signedAgentJson,
+          publicKeyPem: newKeypair.publicKeyPem,
+        });
+        registeredWithHai = true;
+      } catch {
+        // HAI failure is non-fatal — local rotation is preserved
+      }
+    }
+
+    return {
+      jacsId,
+      oldVersion,
+      newVersion,
+      newPublicKeyHash,
+      registeredWithHai,
+      signedAgentJson,
     };
   }
 

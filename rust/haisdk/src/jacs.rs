@@ -4,7 +4,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::error::{HaiError, Result};
-use crate::types::SignedPayload;
+use crate::types::{RotationResult, SignedPayload};
 
 /// Bridge trait for JACS operations that HAI SDK depends on.
 ///
@@ -30,6 +30,20 @@ pub trait JacsProvider: Send + Sync {
 
     /// Return a signed payload accepted by `/api/v1/agents/jobs/{job_id}/response`.
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload>;
+
+    /// Rotate the agent's keys locally.
+    ///
+    /// Archives old keys, generates a new keypair, builds a new self-signed
+    /// agent document, and updates config on disk. Returns a RotationResult
+    /// with old/new versions and the signed agent document.
+    ///
+    /// Default implementation returns an error; override in providers
+    /// that support local key management (e.g., LocalJacsProvider).
+    fn rotate(&self) -> Result<RotationResult> {
+        Err(HaiError::Provider(
+            "key rotation not supported by this provider; use LocalJacsProvider".to_string(),
+        ))
+    }
 }
 
 /// Provider that permits unauthenticated methods only.

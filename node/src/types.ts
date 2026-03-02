@@ -136,6 +136,30 @@ export interface RegistrationResult {
   rawResponse: Record<string, unknown>;
 }
 
+/** Options for key rotation. */
+export interface RotateKeysOptions {
+  /** Whether to re-register with HAI after local rotation. Default: true. */
+  registerWithHai?: boolean;
+  /** HAI server URL (required if registerWithHai is true). */
+  haiUrl?: string;
+}
+
+/** Result of a key rotation operation. */
+export interface RotationResult {
+  /** Agent's stable JACS ID (unchanged). */
+  jacsId: string;
+  /** Version before rotation. */
+  oldVersion: string;
+  /** New version assigned during rotation. */
+  newVersion: string;
+  /** SHA-256 hash of the new public key (hex). */
+  newPublicKeyHash: string;
+  /** Whether re-registration with HAI succeeded. */
+  registeredWithHai: boolean;
+  /** Complete self-signed agent JSON string. */
+  signedAgentJson: string;
+}
+
 /** Result of a free chaotic benchmark run. No score, transcript only. */
 export interface FreeChaoticResult {
   /** Whether the run completed. */

@@ -383,6 +383,176 @@ func (c *Client) Register(ctx context.Context, opts RegisterOptions) (*Registrat
 	return &result, nil
 }
 
+// RotateKeys rotates the agent's cryptographic keys.
+//
+// It archives old keys, generates a new Ed25519 keypair, builds a new
+// self-signed agent document, updates config, and optionally re-registers
+// with HAI.
+//
+// The config file (jacs.config.json) is updated with the new version.
+// If opts is nil, defaults are used (registerWithHai=true).
+func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*RotationResult, error) {
+	if c.jacsID == "" {
+		return nil, newError(ErrConfigInvalid, "cannot rotate keys: no jacsId")
+	}
+
+	registerWithHai := true
+	configPath := ""
+	if opts != nil {
+		if opts.RegisterWithHai != nil {
+			registerWithHai = *opts.RegisterWithHai
+		}
+		configPath = opts.ConfigPath
+	}
+
+	// Discover config to find key paths
+	var cfg *Config
+	if configPath != "" {
+		var err error
+		cfg, err = LoadConfig(configPath)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		var cfgPath string
+		var err error
+		cfg, cfgPath, err = discoverConfigWithPath()
+		if err != nil {
+			return nil, err
+		}
+		configPath = cfgPath
+	}
+
+	oldVersion := cfg.JacsAgentVersion
+
+	// Resolve key paths
+	privKeyPath := ResolveKeyPath(cfg, configPath)
+	pubKeyPath := ResolvePublicKeyPath(cfg, configPath)
+
+	// 1. Archive old keys
+	archivePriv := strings.TrimSuffix(privKeyPath, ".pem") + "." + oldVersion + ".pem"
+	archivePub := strings.TrimSuffix(pubKeyPath, ".pem") + "." + oldVersion + ".pem"
+
+	if err := os.Rename(privKeyPath, archivePriv); err != nil {
+		return nil, wrapError(ErrSigningFailed, err, "failed to archive private key")
+	}
+	// Public key might not exist as a separate file
+	_ = os.Rename(pubKeyPath, archivePub)
+
+	// 2. Generate new keypair
+	newPub, newPriv, err := GenerateKeyPair()
+	if err != nil {
+		// Rollback: restore archived keys
+		_ = os.Rename(archivePriv, privKeyPath)
+		_ = os.Rename(archivePub, pubKeyPath)
+		return nil, wrapError(ErrSigningFailed, err, "key generation failed")
+	}
+
+	// 3. Write new keys to disk
+	pubDER, err := x509.MarshalPKIXPublicKey(newPub)
+	if err != nil {
+		_ = os.Rename(archivePriv, privKeyPath)
+		_ = os.Rename(archivePub, pubKeyPath)
+		return nil, wrapError(ErrSigningFailed, err, "failed to marshal new public key")
+	}
+	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
+
+	// Write private key as PKCS8 PEM (unencrypted; Go SDK doesn't write encrypted keys yet)
+	privDER, err := x509.MarshalPKCS8PrivateKey(newPriv)
+	if err != nil {
+		_ = os.Rename(archivePriv, privKeyPath)
+		_ = os.Rename(archivePub, pubKeyPath)
+		return nil, wrapError(ErrSigningFailed, err, "failed to marshal new private key")
+	}
+	privPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})
+
+	if err := os.WriteFile(privKeyPath, privPEM, 0o600); err != nil {
+		_ = os.Rename(archivePriv, privKeyPath)
+		_ = os.Rename(archivePub, pubKeyPath)
+		return nil, wrapError(ErrSigningFailed, err, "failed to write new private key")
+	}
+	if err := os.WriteFile(pubKeyPath, pubPEM, 0o644); err != nil {
+		// Best-effort cleanup
+		_ = os.Rename(archivePriv, privKeyPath)
+		_ = os.Rename(archivePub, pubKeyPath)
+		return nil, wrapError(ErrSigningFailed, err, "failed to write new public key")
+	}
+
+	// 4. Build new signed agent document
+	newVersion := generateUUID()
+	pubPEMStr := string(pubPEM)
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	doc := map[string]interface{}{
+		"jacsId":              c.jacsID,
+		"jacsVersion":         newVersion,
+		"jacsPreviousVersion": oldVersion,
+		"jacsPublicKey":       pubPEMStr,
+		"name":                cfg.JacsAgentName,
+		"description":         "Agent registered via Go SDK",
+		"jacsSignature": map[string]interface{}{
+			"agentID": c.jacsID,
+			"date":    now,
+		},
+	}
+
+	// Canonical JSON (Go encoding/json sorts map keys by default)
+	canonical, err := json.Marshal(doc)
+	if err != nil {
+		return nil, wrapError(ErrSigningFailed, err, "failed to marshal agent document")
+	}
+
+	sig := Sign(newPriv, canonical)
+	sigB64 := base64.StdEncoding.EncodeToString(sig)
+	doc["jacsSignature"].(map[string]interface{})["signature"] = sigB64
+
+	agentJSON, err := json.Marshal(doc)
+	if err != nil {
+		return nil, wrapError(ErrSigningFailed, err, "failed to marshal signed agent document")
+	}
+	signedAgentJSON := string(agentJSON)
+
+	// 5. Compute new public key hash
+	newPublicKeyHash := fmt.Sprintf("%x", sha256.Sum256(pubDER))
+
+	// 6. Update in-memory state
+	c.privateKey = newPriv
+
+	// 7. Update config file
+	cfgData, err := os.ReadFile(configPath)
+	if err == nil {
+		var rawCfg map[string]interface{}
+		if json.Unmarshal(cfgData, &rawCfg) == nil {
+			rawCfg["jacsAgentVersion"] = newVersion
+			if updated, err := json.MarshalIndent(rawCfg, "", "  "); err == nil {
+				_ = os.WriteFile(configPath, append(updated, '\n'), 0o644)
+			}
+		}
+	}
+
+	// 8. Optionally re-register with HAI
+	registeredWithHai := false
+	if registerWithHai {
+		_, regErr := c.Register(ctx, RegisterOptions{
+			AgentJSON: signedAgentJSON,
+			PublicKey: pubPEMStr,
+		})
+		if regErr == nil {
+			registeredWithHai = true
+		}
+		// HAI registration failure is non-fatal
+	}
+
+	return &RotationResult{
+		JacsID:            c.jacsID,
+		OldVersion:        oldVersion,
+		NewVersion:        newVersion,
+		NewPublicKeyHash:  newPublicKeyHash,
+		RegisteredWithHai: registeredWithHai,
+		SignedAgentJSON:   signedAgentJSON,
+	}, nil
+}
+
 // registerWithoutAuth registers an agent document without JACS request auth.
 // New-agent registration is self-authenticated by the signed agent document.
 func (c *Client) registerWithoutAuth(ctx context.Context, opts RegisterOptions) (*RegistrationResult, error) {

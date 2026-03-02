@@ -70,6 +70,30 @@ pub struct CreateAgentResult {
     pub dns_record: String,
 }
 
+/// Options for key rotation.
+#[derive(Debug, Clone, Default)]
+pub struct RotateKeysOptions {
+    /// Whether to re-register with HAI after local rotation. Default: true.
+    pub register_with_hai: Option<bool>,
+}
+
+/// Result of a key rotation operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RotationResult {
+    /// Agent's stable JACS ID (unchanged).
+    pub jacs_id: String,
+    /// Version before rotation.
+    pub old_version: String,
+    /// New version assigned during rotation.
+    pub new_version: String,
+    /// SHA-256 hash of the new public key (hex).
+    pub new_public_key_hash: String,
+    /// Whether re-registration with HAI succeeded.
+    pub registered_with_hai: bool,
+    /// Complete self-signed agent JSON string.
+    pub signed_agent_json: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckUsernameResult {
     #[serde(default)]

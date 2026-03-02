@@ -16,6 +16,8 @@ use uuid::Uuid;
 use crate::error::{HaiError, Result};
 use crate::jacs::{canonicalize_json_rfc8785, JacsProvider};
 use crate::types::{CreateAgentOptions, CreateAgentResult, SignedPayload};
+#[cfg(feature = "jacs-local")]
+use crate::types::RotationResult;
 
 /// Local JACS-backed provider using the canonical Rust `jacs` crate.
 ///
@@ -244,6 +246,38 @@ impl JacsProvider for LocalJacsProvider {
         Ok(SignedPayload {
             signed_document: serde_json::to_string(&doc)?,
             agent_jacs_id: self.jacs_id.clone(),
+        })
+    }
+
+    #[cfg(feature = "jacs-local")]
+    fn rotate(&self) -> Result<RotationResult> {
+        let simple = self.load_simple_agent()?;
+        let jacs_result = simple.rotate().map_err(|e| {
+            HaiError::Provider(format!("JACS key rotation failed: {e}"))
+        })?;
+
+        // Reload the agent so in-memory state reflects the rotated keys
+        let mut agent = self
+            .agent
+            .lock()
+            .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
+        let mut new_agent = jacs::get_empty_agent();
+        new_agent
+            .load_by_config(self.config_path.display().to_string())
+            .map_err(|e| {
+                HaiError::Provider(format!(
+                    "failed to reload JACS agent after rotation: {e}"
+                ))
+            })?;
+        *agent = new_agent;
+
+        Ok(RotationResult {
+            jacs_id: jacs_result.jacs_id,
+            old_version: jacs_result.old_version,
+            new_version: jacs_result.new_version,
+            new_public_key_hash: jacs_result.new_public_key_hash,
+            registered_with_hai: false,
+            signed_agent_json: jacs_result.signed_agent_json,
         })
     }
 }

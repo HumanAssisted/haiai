@@ -1,0 +1,61 @@
+{
+  "$schema": "https://hai.ai/schemas/header/v1/header.schema.json",
+  "content": {
+    "attachments": [],
+    "body_plain": {
+      "content_hash": "sha256:a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e",
+      "mime_headers_hash": "sha256:7a8b563a060844cb4a50d90f51b79876fd1e2c5535f9d2f5756d4e64c35db470"
+    },
+    "headers": {
+      "date": {
+        "hash": "sha256:1d19baf84bfeb79f10181b742968f20b2f093af631f6f7b49a4e8df9a5920b86",
+        "value": "Fri, 28 Feb 2026 12:00:00 +0000"
+      },
+      "from": {
+        "hash": "sha256:e380137de07fe29bf510b746f479adc8b81531d8b25d24008a9f890f80835dc2",
+        "value": "sender@example.com"
+      },
+      "message_id": {
+        "hash": "sha256:37664ec9add7c327bad396820489833950d615fa3ff25cdfe198343e0d397292",
+        "value": "<test@example.com>"
+      },
+      "subject": {
+        "hash": "sha256:532eaabd9574880dbf76b9b8cc00832c20a6ec113d682299550d7a6e0f345e25",
+        "value": "Test"
+      },
+      "to": {
+        "hash": "sha256:5efba3df1c3be499380cf0c59ceda286171b90abc05cfac25b882fc4368b391c",
+        "value": "recipient@example.com"
+      }
+    }
+  },
+  "jacsId": "3ba521fa-f42b-4c3c-b6ed-f0825fd88205",
+  "jacsLevel": "raw",
+  "jacsOriginalDate": "2026-03-02T18:03:59.829991+00:00",
+  "jacsOriginalVersion": "c14a3d82-064a-4783-989b-9a9b66929351",
+  "jacsSha256": "e85684ebcdd9ee393c7fdf0a46caa913823cfc9155465fc8fbbbcf677c6afa9e",
+  "jacsSignature": {
+    "agentID": "c2d2c4ba-2ecb-410e-9687-4b746f3ee052",
+    "agentVersion": "0cf805a8-2cac-4c8c-a49d-f82ef48355f7",
+    "date": "2026-03-02T18:04:04.520533+00:00",
+    "fields": [
+      "$schema",
+      "content",
+      "jacsId",
+      "jacsLevel",
+      "jacsOriginalDate",
+      "jacsOriginalVersion",
+      "jacsType",
+      "jacsVersion",
+      "jacsVersionDate"
+    ],
+    "iat": 1772474644,
+    "jti": "019cafb8-b828-7bd0-a8e2-bb31ef0cffda",
+    "publicKeyHash": "810944ef368f96a4dffe1f1979e38432287b2061545985727b4cfb7dd2cacd4a",
+    "signature": "KdJi1QxhdhEQlv18s/1kLiyIHvj7wwXIbBL1nwhrrc1A88YLjEBZVF1tSKPREzyPGsd3wPd7So7gYNub81eCBg==",
+    "signingAlgorithm": "ring-Ed25519"
+  },
+  "jacsType": "message",
+  "jacsVersion": "c14a3d82-064a-4783-989b-9a9b66929351",
+  "jacsVersionDate": "2026-03-02T18:03:59.829991+00:00"
+}

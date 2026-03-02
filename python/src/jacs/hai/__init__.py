@@ -89,6 +89,7 @@ from jacs.hai.models import (
     KeyRegistryResponse,
     PublicKeyInfo,
     RegistrationResult,
+    RotationResult,
     SendEmailResult,
     TranscriptMessage,
 )
@@ -130,6 +131,7 @@ __all__ = [
     "KeyRegistryResponse",
     "PublicKeyInfo",
     "RegistrationResult",
+    "RotationResult",
     "SendEmailResult",
     "TranscriptMessage",
     # Constants

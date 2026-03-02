@@ -18,6 +18,22 @@ class AgentConfig:
 
 
 @dataclass
+class RotationResult:
+    """Result of a key rotation operation.
+
+    Returned by ``HaiClient.rotate_keys()`` after generating new keys,
+    archiving old keys, and producing a new self-signed agent document.
+    """
+
+    jacs_id: str
+    old_version: str
+    new_version: str
+    new_public_key_hash: str
+    registered_with_hai: bool
+    signed_agent_json: str
+
+
+@dataclass
 class HaiEvent:
     """An event received from the HAI server over SSE or WebSocket.
 

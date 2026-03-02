@@ -18,7 +18,8 @@ use crate::types::{
     AgentKeyHistory, AgentVerificationResult, CheckUsernameResult, ClaimUsernameResult,
     DeleteUsernameResult, DnsCertifiedResult, DnsCertifiedRunOptions, DocumentVerificationResult,
     EmailMessage, EmailStatus, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult,
-    ListMessagesOptions, PublicKeyInfo, RegisterAgentOptions, RegistrationResult, SearchOptions,
+    ListMessagesOptions, PublicKeyInfo, RegisterAgentOptions, RegistrationResult, RotateKeysOptions,
+    RotationResult, SearchOptions,
     SendEmailOptions, SendEmailResult, TranscriptMessage, TransportType, UpdateUsernameResult,
     VerifyAgentDocumentRequest, VerifyAgentResult,
 };
@@ -268,6 +269,45 @@ impl<P: JacsProvider> HaiClient<P> {
                 .and_then(Value::as_str)
                 .map(ToString::to_string),
         })
+    }
+
+    /// Rotate the agent's cryptographic keys.
+    ///
+    /// Delegates local key rotation to the [`JacsProvider::rotate()`] method,
+    /// which archives old keys, generates a new keypair, builds a new
+    /// self-signed agent document, and updates config on disk.
+    ///
+    /// When `register_with_hai` is true (the default), re-registers the new
+    /// key with HAI. HAI registration failure is non-fatal -- local rotation
+    /// is preserved.
+    pub async fn rotate_keys(&self, options: Option<&RotateKeysOptions>) -> Result<RotationResult> {
+        let register_with_hai = options
+            .and_then(|o| o.register_with_hai)
+            .unwrap_or(true);
+
+        // Perform local rotation via the JACS provider
+        let mut result = self.jacs.rotate()?;
+
+        // Optionally re-register with HAI
+        if register_with_hai {
+            let reg_opts = RegisterAgentOptions {
+                agent_json: result.signed_agent_json.clone(),
+                public_key_pem: None,
+                owner_email: None,
+                domain: None,
+                description: None,
+            };
+            match self.register(&reg_opts).await {
+                Ok(_) => {
+                    result.registered_with_hai = true;
+                }
+                Err(_) => {
+                    // HAI registration failure is non-fatal
+                }
+            }
+        }
+
+        Ok(result)
     }
 
     pub async fn submit_response(
@@ -1374,6 +1414,85 @@ mod tests {
 
         let _result = client.claim_username("test-agent-001", "myagent").await.expect("claim");
         assert!(client.agent_email().is_none(), "empty email should not be stored");
+    }
+
+    // ── Key rotation tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_rotate_keys_noop_provider_returns_error() {
+        let provider = StaticJacsProvider::new("test-agent-001");
+        let client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: "https://hai.example".to_string(),
+                ..HaiClientOptions::default()
+            },
+        )
+        .expect("client");
+
+        let result = client.rotate_keys(None).await;
+        assert!(result.is_err(), "rotation with StaticJacsProvider should fail");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("not supported") || err_msg.contains("provider"),
+            "error should mention provider not supporting rotation: {err_msg}",
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rotate_keys_with_hai_registration_on_error() {
+        // When provider rotate() fails, rotate_keys() should propagate the error
+        let provider = StaticJacsProvider::new("test-agent-001");
+        let client = HaiClient::new(
+            provider,
+            HaiClientOptions::default(),
+        )
+        .expect("client");
+
+        let opts = RotateKeysOptions {
+            register_with_hai: Some(true),
+        };
+        let result = client.rotate_keys(Some(&opts)).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rotation_result_fixture_contract() {
+        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("fixtures")
+            .join("rotation_result.json");
+
+        if !fixture_path.exists() {
+            // Skip if fixture not found
+            return;
+        }
+
+        let data = std::fs::read_to_string(&fixture_path).expect("read fixture");
+        let fixture: serde_json::Value = serde_json::from_str(&data).expect("parse fixture");
+        let obj = fixture.as_object().expect("fixture should be object");
+
+        let expected_fields = vec![
+            "jacs_id",
+            "old_version",
+            "new_version",
+            "new_public_key_hash",
+            "registered_with_hai",
+            "signed_agent_json",
+        ];
+
+        for field in &expected_fields {
+            assert!(
+                obj.contains_key(*field),
+                "fixture missing field: {field}",
+            );
+        }
+        assert_eq!(
+            obj.len(),
+            expected_fields.len(),
+            "fixture field count mismatch",
+        );
     }
 
 }

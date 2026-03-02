@@ -246,6 +246,32 @@ type DeleteUsernameResult struct {
 	Message          string `json:"message"`
 }
 
+// RotateKeysOptions configures key rotation behavior.
+type RotateKeysOptions struct {
+	// RegisterWithHai controls whether to re-register with HAI after local
+	// rotation. Default: true (when called with nil options).
+	RegisterWithHai *bool
+	// ConfigPath overrides the jacs.config.json path for config updates.
+	// If empty, the standard discovery order is used.
+	ConfigPath string
+}
+
+// RotationResult contains the outcome of a key rotation operation.
+type RotationResult struct {
+	// JacsID is the agent's stable JACS identifier (unchanged by rotation).
+	JacsID string `json:"jacs_id"`
+	// OldVersion is the agent version before rotation.
+	OldVersion string `json:"old_version"`
+	// NewVersion is the newly assigned agent version.
+	NewVersion string `json:"new_version"`
+	// NewPublicKeyHash is the SHA-256 hex digest of the new public key (SPKI DER).
+	NewPublicKeyHash string `json:"new_public_key_hash"`
+	// RegisteredWithHai indicates whether re-registration with HAI succeeded.
+	RegisteredWithHai bool `json:"registered_with_hai"`
+	// SignedAgentJSON is the complete self-signed JACS agent document (JSON string).
+	SignedAgentJSON string `json:"signed_agent_json"`
+}
+
 // RegisterNewAgentOptions configures RegisterNewAgent behavior.
 type RegisterNewAgentOptions struct {
 	Domain      string

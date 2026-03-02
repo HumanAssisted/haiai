@@ -138,6 +138,8 @@ export type {
   AdvancedBadgeLevel,
   AdvancedVerificationStatus,
   AdvancedVerificationResult,
+  RotateKeysOptions,
+  RotationResult,
   VerifyAgentDocumentOnHaiOptions,
   HaiErrorCode,
   ApiErrorResponse,

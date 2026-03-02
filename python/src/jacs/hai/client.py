@@ -60,6 +60,7 @@ from jacs.hai.models import (
     JobResponseResult,
     PublicKeyInfo,
     RegistrationResult,
+    RotationResult,
     SendEmailResult,
     TranscriptMessage,
 )
@@ -550,6 +551,212 @@ class HaiClient:
                 time.sleep(2**attempt)
 
         raise last_error or RegistrationError("Registration failed after all retries")
+
+    # ------------------------------------------------------------------
+    # key rotation
+    # ------------------------------------------------------------------
+
+    def rotate_keys(
+        self,
+        hai_url: Optional[str] = None,
+        register_with_hai: bool = True,
+        config_path: Optional[str] = None,
+    ) -> RotationResult:
+        """Rotate the agent's cryptographic keys.
+
+        This generates a new Ed25519 keypair, archives the old keys
+        (with a version suffix), builds a new self-signed agent document,
+        updates the config, and optionally re-registers with HAI.
+
+        The old keys are preserved on disk so that previously signed
+        documents can still be verified.
+
+        Args:
+            hai_url: Base URL of the HAI server (required if
+                ``register_with_hai=True``).
+            register_with_hai: If True (default), re-register the agent
+                with HAI after local rotation. A network failure here
+                does NOT rollback the local rotation.
+            config_path: Path to jacs.config.json. Defaults to the path
+                used by ``config.load()`` (or ``./jacs.config.json``).
+
+        Returns:
+            RotationResult with old/new versions, public key hash, and
+            whether re-registration succeeded.
+
+        Raises:
+            HaiAuthError: If no agent is currently loaded.
+            RegistrationError: Only if re-registration fails and
+                ``register_with_hai=True``, but the local rotation is
+                still preserved.
+        """
+        import hashlib
+        import shutil
+        import uuid
+
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import (
+            BestAvailableEncryption,
+            Encoding,
+            NoEncryption,
+            PrivateFormat,
+            PublicFormat,
+        )
+
+        from jacs.hai import config as config_mod
+        from jacs.hai.crypt import create_agent_document
+
+        cfg = config_mod.get_config()
+        old_key = config_mod.get_private_key()
+
+        if cfg.jacs_id is None:
+            raise HaiAuthError(
+                "Cannot rotate keys: no jacsId in config. "
+                "Register an agent first."
+            )
+
+        old_version = cfg.version
+        jacs_id = cfg.jacs_id
+        key_dir = Path(cfg.key_dir)
+
+        # 1. Determine archive paths
+        # Look for the private key file (same search order as config.load)
+        priv_candidates = [
+            key_dir / "agent_private_key.pem",
+            key_dir / f"{cfg.name}.private.pem",
+            key_dir / "private_key.pem",
+        ]
+        priv_path: Optional[Path] = None
+        for p in priv_candidates:
+            if p.is_file():
+                priv_path = p
+                break
+
+        if priv_path is None:
+            raise HaiAuthError(
+                "Cannot rotate keys: private key file not found. "
+                f"Searched: {', '.join(str(p) for p in priv_candidates)}"
+            )
+
+        archive_priv = priv_path.with_suffix(f".{old_version}.pem")
+
+        # Find matching public key
+        pub_path = key_dir / priv_path.name.replace("private", "public")
+        if not pub_path.is_file():
+            # Try common alternatives
+            for name in ["agent_public_key.pem", f"{cfg.name}.public.pem", "public_key.pem"]:
+                alt = key_dir / name
+                if alt.is_file():
+                    pub_path = alt
+                    break
+
+        archive_pub = pub_path.with_suffix(f".{old_version}.pem") if pub_path.is_file() else None
+
+        # 2. Archive old keys
+        logger.info("Archiving old private key: %s -> %s", priv_path, archive_priv)
+        shutil.move(str(priv_path), str(archive_priv))
+
+        if pub_path.is_file() and archive_pub is not None:
+            logger.info("Archiving old public key: %s -> %s", pub_path, archive_pub)
+            shutil.move(str(pub_path), str(archive_pub))
+
+        # 3. Generate new Ed25519 keypair
+        try:
+            new_private_key = Ed25519PrivateKey.generate()
+        except Exception as exc:
+            # Rollback: restore archived keys
+            logger.error("Key generation failed, rolling back: %s", exc)
+            shutil.move(str(archive_priv), str(priv_path))
+            if archive_pub is not None and archive_pub.is_file():
+                shutil.move(str(archive_pub), str(pub_path))
+            raise HaiAuthError(f"Key generation failed: {exc}") from exc
+
+        # 4. Write new keys to disk
+        password = config_mod.load_private_key_password()
+        new_priv_pem = new_private_key.private_bytes(
+            Encoding.PEM,
+            PrivateFormat.PKCS8,
+            BestAvailableEncryption(password),
+        )
+        new_pub_pem = new_private_key.public_key().public_bytes(
+            Encoding.PEM,
+            PublicFormat.SubjectPublicKeyInfo,
+        )
+
+        priv_path.write_bytes(new_priv_pem)
+        os.chmod(str(priv_path), 0o600)
+
+        pub_path.write_bytes(new_pub_pem)
+        os.chmod(str(pub_path), 0o644)
+
+        # 5. Build new agent document
+        new_version = str(uuid.uuid4())
+        pub_pem_str = new_pub_pem.decode("utf-8")
+        agent_doc = create_agent_document(
+            name=cfg.name,
+            version=new_version,
+            public_key_pem=pub_pem_str,
+            private_key=new_private_key,
+            jacs_id=jacs_id,
+            extra_fields={"jacsPreviousVersion": old_version},
+        )
+        signed_agent_json = json.dumps(agent_doc, indent=2)
+
+        # 6. Compute new public key hash
+        pub_key_raw = new_private_key.public_key().public_bytes(
+            Encoding.Raw, PublicFormat.Raw,
+        )
+        new_public_key_hash = hashlib.sha256(pub_key_raw).hexdigest()
+
+        # 7. Update config
+        cfg_path = config_path or os.environ.get(
+            "JACS_CONFIG_PATH", "./jacs.config.json"
+        )
+        config_mod._config = AgentConfig(
+            name=cfg.name,
+            version=new_version,
+            key_dir=cfg.key_dir,
+            jacs_id=jacs_id,
+        )
+        config_mod._private_key = new_private_key
+        config_mod.save(cfg_path)
+
+        logger.info(
+            "Key rotation complete: %s -> %s (agent=%s)",
+            old_version, new_version, jacs_id,
+        )
+
+        # 8. Optionally re-register with HAI
+        registered = False
+        if register_with_hai:
+            if hai_url is None:
+                logger.warning(
+                    "register_with_hai=True but no hai_url provided; "
+                    "skipping registration"
+                )
+            else:
+                try:
+                    self.register(
+                        hai_url=hai_url,
+                        agent_json=signed_agent_json,
+                        public_key=pub_pem_str,
+                    )
+                    registered = True
+                    logger.info("Re-registered with HAI after rotation")
+                except Exception as exc:
+                    logger.warning(
+                        "HAI re-registration failed (local rotation preserved): %s",
+                        exc,
+                    )
+
+        return RotationResult(
+            jacs_id=jacs_id,
+            old_version=old_version,
+            new_version=new_version,
+            new_public_key_hash=new_public_key_hash,
+            registered_with_hai=registered,
+            signed_agent_json=signed_agent_json,
+        )
 
     # ------------------------------------------------------------------
     # status
