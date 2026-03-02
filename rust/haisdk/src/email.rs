@@ -93,9 +93,11 @@ pub async fn verify_email(
         }
     };
 
-    // Step 2: Parse the JACS document to get signer info
-    let doc: JacsEmailSignatureDocument = match serde_json::from_slice(&jacs_bytes) {
-        Ok(d) => d,
+    // Step 2: Parse the JACS envelope to get signer info.
+    // The JACS attachment is a JACS envelope (jacsType, content, jacsSignature, ...)
+    // not a JacsEmailSignatureDocument. We extract the fields we need directly.
+    let jacs_value: serde_json::Value = match serde_json::from_slice(&jacs_bytes) {
+        Ok(v) => v,
         Err(e) => {
             return EmailVerificationResultV2::err(
                 "",
@@ -105,16 +107,49 @@ pub async fn verify_email(
         }
     };
 
-    let jacs_id = &doc.metadata.issuer;
-    let from_email = &doc.payload.headers.from.value;
-    let sig_algorithm = &doc.signature.algorithm;
+    let jacs_id = jacs_value
+        .get("jacsSignature")
+        .and_then(|sig| sig.get("agentID"))
+        .and_then(|id| id.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let content = match jacs_value.get("content") {
+        Some(c) => c,
+        None => {
+            return EmailVerificationResultV2::err(
+                &jacs_id,
+                "",
+                "JACS document missing 'content' field",
+            );
+        }
+    };
+
+    let pre_payload: EmailSignaturePayload = match serde_json::from_value(content.clone()) {
+        Ok(p) => p,
+        Err(e) => {
+            return EmailVerificationResultV2::err(
+                &jacs_id,
+                "",
+                &format!("Invalid email payload in JACS document: {e}"),
+            );
+        }
+    };
+
+    let from_email = pre_payload.headers.from.value.clone();
+    let sig_algorithm = jacs_value
+        .get("jacsSignature")
+        .and_then(|sig| sig.get("signingAlgorithm"))
+        .and_then(|a| a.as_str())
+        .unwrap_or("")
+        .to_string();
 
     // Step 3: Fetch public key from HAI registry
-    let registry = match fetch_public_key_from_registry(hai_url, from_email).await {
+    let registry = match fetch_public_key_from_registry(hai_url, &from_email).await {
         Ok(r) => r,
         Err(e) => {
             return EmailVerificationResultV2::err(
-                jacs_id,
+                &jacs_id,
                 "",
                 &format!("Registry lookup failed: {e}"),
             );
@@ -125,9 +160,9 @@ pub async fn verify_email(
 
     // Step 4: Identity binding checks (PRD lines 681-694)
     // 4a: metadata.issuer must match registry.jacs_id
-    if *jacs_id != registry.jacs_id {
+    if jacs_id != registry.jacs_id {
         return EmailVerificationResultV2::err(
-            jacs_id,
+            &jacs_id,
             reputation_tier,
             &format!(
                 "Identity mismatch: document issuer '{}' does not match registry jacs_id '{}'",
@@ -137,9 +172,9 @@ pub async fn verify_email(
     }
 
     // 4b: payload.headers.from.value must match registry email
-    if *from_email != registry.email {
+    if from_email != registry.email {
         return EmailVerificationResultV2::err(
-            jacs_id,
+            &jacs_id,
             reputation_tier,
             &format!(
                 "Identity mismatch: From '{}' does not match registry email '{}'",
@@ -149,9 +184,9 @@ pub async fn verify_email(
     }
 
     // 4c: signature.algorithm must match registry algorithm
-    if !algorithms_match(sig_algorithm, &registry.algorithm) {
+    if !algorithms_match(&sig_algorithm, &registry.algorithm) {
         return EmailVerificationResultV2::err(
-            jacs_id,
+            &jacs_id,
             reputation_tier,
             &format!(
                 "Algorithm mismatch: signature uses '{}' but registry has '{}'",
@@ -165,7 +200,7 @@ pub async fn verify_email(
         Ok(k) => k,
         Err(e) => {
             return EmailVerificationResultV2::err(
-                jacs_id,
+                &jacs_id,
                 reputation_tier,
                 &format!("Failed to parse public key: {e}"),
             );
@@ -178,7 +213,7 @@ pub async fn verify_email(
         Ok(a) => a,
         Err(e) => {
             return EmailVerificationResultV2::err(
-                jacs_id,
+                &jacs_id,
                 reputation_tier,
                 &format!("Failed to create verification agent: {e}"),
             );
@@ -189,7 +224,7 @@ pub async fn verify_email(
             Ok(result) => result,
             Err(e) => {
                 return EmailVerificationResultV2::err(
-                    jacs_id,
+                    &jacs_id,
                     reputation_tier,
                     &format!("JACS signature verification failed: {e}"),
                 );
@@ -199,12 +234,12 @@ pub async fn verify_email(
     // Step 7: DNS verification (for dns_certified and fully_certified tiers)
     let dns_verified = if reputation_tier == "dns_certified" || reputation_tier == "fully_certified"
     {
-        let domain = extract_domain(from_email);
+        let domain = extract_domain(&from_email);
         match verify_dns_public_key(&domain, &registry.public_key).await {
             Ok(verified) => {
                 if !verified {
                     return EmailVerificationResultV2::err(
-                        jacs_id,
+                        &jacs_id,
                         reputation_tier,
                         "DNS public key hash does not match registry key",
                     );
@@ -213,7 +248,7 @@ pub async fn verify_email(
             }
             Err(e) => {
                 return EmailVerificationResultV2::err(
-                    jacs_id,
+                    &jacs_id,
                     reputation_tier,
                     &format!("DNS verification failed: {e}"),
                 );
@@ -242,8 +277,8 @@ pub async fn verify_email(
 
     EmailVerificationResultV2 {
         valid,
-        jacs_id: jacs_id.clone(),
-        algorithm: sig_algorithm.clone(),
+        jacs_id,
+        algorithm: sig_algorithm,
         reputation_tier: reputation_tier.clone(),
         dns_verified,
         field_results: content_result.field_results,
@@ -266,38 +301,68 @@ async fn verify_parent_chain_entries(
             continue; // Already verified
         }
 
-        // Find the parent JACS attachment raw bytes that match this signer
+        // Find the parent JACS attachment raw bytes that match this signer.
+        // Parent attachments are JACS envelopes, not JacsEmailSignatureDocuments.
         let parent_att = parts.jacs_attachments.iter().find(|att| {
-            serde_json::from_slice::<JacsEmailSignatureDocument>(&att.content)
+            serde_json::from_slice::<serde_json::Value>(&att.content)
                 .ok()
-                .map_or(false, |doc| doc.metadata.issuer == entry.jacs_id)
+                .and_then(|v| {
+                    v.get("jacsSignature")
+                        .and_then(|sig| sig.get("agentID"))
+                        .and_then(|id| id.as_str())
+                        .map(|id| id == entry.jacs_id)
+                })
+                .unwrap_or(false)
         });
 
         let Some(parent_att) = parent_att else {
             continue; // Can't find the parent document
         };
 
-        // Parse the parent document for identity/algorithm checks
-        let parent_doc: JacsEmailSignatureDocument =
+        // Parse the parent JACS envelope for identity/algorithm checks
+        let parent_value: serde_json::Value =
             match serde_json::from_slice(&parent_att.content) {
-                Ok(d) => d,
+                Ok(v) => v,
                 Err(_) => continue,
             };
 
+        let parent_issuer = parent_value
+            .get("jacsSignature")
+            .and_then(|sig| sig.get("agentID"))
+            .and_then(|id| id.as_str())
+            .unwrap_or("");
+
+        let parent_content = match parent_value.get("content") {
+            Some(c) => c,
+            None => continue,
+        };
+
+        let parent_payload: EmailSignaturePayload =
+            match serde_json::from_value(parent_content.clone()) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+        let parent_algorithm = parent_value
+            .get("jacsSignature")
+            .and_then(|sig| sig.get("signingAlgorithm"))
+            .and_then(|a| a.as_str())
+            .unwrap_or("");
+
         // Look up the parent signer's public key from the registry
-        let parent_email = &parent_doc.payload.headers.from.value;
+        let parent_email = &parent_payload.headers.from.value;
         let registry = match fetch_public_key_from_registry(hai_url, parent_email).await {
             Ok(r) => r,
             Err(_) => continue, // Registry lookup failed, leave as invalid
         };
 
         // Check identity binding
-        if parent_doc.metadata.issuer != registry.jacs_id {
+        if parent_issuer != registry.jacs_id {
             continue; // issuer mismatch -- leave as invalid
         }
 
         // Check algorithm binding (matches top-level check)
-        if !algorithms_match(&parent_doc.signature.algorithm, &registry.algorithm) {
+        if !algorithms_match(parent_algorithm, &registry.algorithm) {
             continue; // algorithm mismatch -- leave as invalid
         }
 
@@ -639,13 +704,24 @@ mod tests {
         let (agent, _tmp) = create_test_agent("test-agent");
         let signed = sign_email(email, &agent).unwrap();
 
+        // The JACS attachment is a JACS envelope, not a JacsEmailSignatureDocument.
         let doc_bytes = get_jacs_attachment(&signed).unwrap();
-        let doc: JacsEmailSignatureDocument = serde_json::from_slice(&doc_bytes).unwrap();
+        let jacs_doc: serde_json::Value = serde_json::from_slice(&doc_bytes).unwrap();
 
-        assert_eq!(doc.version, "1.0");
-        assert_eq!(doc.document_type, "email_signature");
+        // Verify JACS envelope structure
+        assert_eq!(jacs_doc["jacsType"].as_str(), Some("message"));
+        assert!(jacs_doc.get("jacsId").is_some(), "should have jacsId");
+        assert!(jacs_doc.get("jacsSignature").is_some(), "should have jacsSignature");
+        assert!(jacs_doc.get("content").is_some(), "should have content field");
+
+        // Verify the email payload is in the content field
+        let payload: EmailSignaturePayload =
+            serde_json::from_value(jacs_doc["content"].clone()).unwrap();
+        assert!(!payload.headers.from.value.is_empty());
+
         // The JACS agent ID is assigned by SimpleAgent, not a fixed string.
-        assert!(!doc.metadata.issuer.is_empty());
+        let agent_id = jacs_doc["jacsSignature"]["agentID"].as_str().unwrap_or("");
+        assert!(!agent_id.is_empty());
     }
 
     #[tokio::test]
@@ -705,6 +781,15 @@ mod tests {
         let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
         let signed = sign_email(email, &agent).unwrap();
 
+        // Extract the real JACS agent ID from the signed document so the
+        // issuer check passes and only the email mismatch check triggers.
+        let doc_bytes = get_jacs_attachment(&signed).unwrap();
+        let jacs_doc: serde_json::Value = serde_json::from_slice(&doc_bytes).unwrap();
+        let real_agent_id = jacs_doc["jacsSignature"]["agentID"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
+
         let server = httpmock::MockServer::start();
         server.mock(|when, then| {
             when.method("GET")
@@ -712,7 +797,7 @@ mod tests {
             then.status(200)
                 .json_body(serde_json::json!({
                     "email": "different@example.com",  // Doesn't match From
-                    "jacs_id": "test-agent:v1",
+                    "jacs_id": real_agent_id,
                     "public_key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjA=\n-----END PUBLIC KEY-----",
                     "algorithm": "ed25519",
                     "reputation_tier": "free_chaotic",
