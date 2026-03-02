@@ -174,9 +174,18 @@ pub async fn verify_email(
 
     // Step 6: Verify the JACS document (crypto verification + hash check)
     // This internally removes the JACS attachment before parsing (PRD line 473)
-    let default_verifier = jacs::email::DefaultEmailVerifier;
+    let agent = match create_verification_agent() {
+        Ok(a) => a,
+        Err(e) => {
+            return EmailVerificationResultV2::err(
+                jacs_id,
+                reputation_tier,
+                &format!("Failed to create verification agent: {e}"),
+            );
+        }
+    };
     let (trusted_doc, parts) =
-        match verify_email_document(raw_email, &raw_pub_key, &default_verifier) {
+        match verify_email_document(raw_email, &agent, &raw_pub_key) {
             Ok(result) => result,
             Err(e) => {
                 return EmailVerificationResultV2::err(
@@ -222,7 +231,7 @@ pub async fn verify_email(
     // the parent signers' public keys. We upgrade them here by looking up
     // each parent signer from the registry and verifying their signature.
     let mut chain = content_result.chain;
-    verify_parent_chain_entries(&mut chain, &parts, hai_url).await;
+    verify_parent_chain_entries(&mut chain, &parts, hai_url, &agent).await;
 
     // Recompute overall validity: fields must pass AND all chain entries valid
     let fields_valid = !content_result.field_results.iter().any(|r| {
@@ -249,6 +258,7 @@ async fn verify_parent_chain_entries(
     chain: &mut [ChainEntry],
     parts: &ParsedEmailParts,
     hai_url: &str,
+    agent: &SimpleAgent,
 ) {
     // Skip the first chain entry (the current signer, already verified)
     for entry in chain.iter_mut().skip(1) {
@@ -256,16 +266,23 @@ async fn verify_parent_chain_entries(
             continue; // Already verified
         }
 
-        // Find the parent JACS attachment that matches this signer
-        let parent_doc = parts.jacs_attachments.iter().find_map(|att| {
+        // Find the parent JACS attachment raw bytes that match this signer
+        let parent_att = parts.jacs_attachments.iter().find(|att| {
             serde_json::from_slice::<JacsEmailSignatureDocument>(&att.content)
                 .ok()
-                .filter(|doc| doc.metadata.issuer == entry.jacs_id)
+                .map_or(false, |doc| doc.metadata.issuer == entry.jacs_id)
         });
 
-        let Some(parent_doc) = parent_doc else {
+        let Some(parent_att) = parent_att else {
             continue; // Can't find the parent document
         };
+
+        // Parse the parent document for identity/algorithm checks
+        let parent_doc: JacsEmailSignatureDocument =
+            match serde_json::from_slice(&parent_att.content) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
 
         // Look up the parent signer's public key from the registry
         let parent_email = &parent_doc.payload.headers.from.value;
@@ -276,12 +293,12 @@ async fn verify_parent_chain_entries(
 
         // Check identity binding
         if parent_doc.metadata.issuer != registry.jacs_id {
-            continue; // issuer mismatch — leave as invalid
+            continue; // issuer mismatch -- leave as invalid
         }
 
-        // Check algorithm binding (matches top-level check at line 115)
+        // Check algorithm binding (matches top-level check)
         if !algorithms_match(&parent_doc.signature.algorithm, &registry.algorithm) {
-            continue; // algorithm mismatch — leave as invalid
+            continue; // algorithm mismatch -- leave as invalid
         }
 
         // Extract public key bytes
@@ -290,46 +307,52 @@ async fn verify_parent_chain_entries(
             Err(_) => continue,
         };
 
-        // Verify the parent document's cryptographic signature
-        let payload_json = match serde_json::to_value(&parent_doc.payload) {
-            Ok(v) => v,
+        // Verify the parent document using SimpleAgent::verify_with_key.
+        // This handles hash verification AND cryptographic signature check.
+        let parent_json = match std::str::from_utf8(&parent_att.content) {
+            Ok(s) => s,
             Err(_) => continue,
         };
-        let canonical_payload = jacs::email::canonicalize_json_rfc8785(&payload_json);
-
-        // Verify hash
-        let computed_hash = {
-            let mut hasher = Sha256::new();
-            hasher.update(canonical_payload.as_bytes());
-            let digest = hasher.finalize();
-            let hex_str: String = digest.iter().map(|b| format!("{:02x}", b)).collect();
-            format!("sha256:{}", hex_str)
-        };
-        if computed_hash != parent_doc.metadata.hash {
-            continue; // Hash mismatch
-        }
-
-        // Verify crypto signature
-        let sig_bytes = match base64::engine::general_purpose::STANDARD
-            .decode(&parent_doc.signature.signature)
-        {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-
-        let default_verifier = jacs::email::DefaultEmailVerifier;
-        if default_verifier
-            .verify_bytes(
-                canonical_payload.as_bytes(),
-                &sig_bytes,
-                &raw_pub_key,
-                &parent_doc.signature.algorithm,
-            )
-            .is_ok()
+        if agent
+            .verify_with_key(parent_json, raw_pub_key)
+            .map_or(false, |r| r.valid)
         {
             entry.valid = true;
         }
     }
+}
+
+/// Create an ephemeral `SimpleAgent` for verification infrastructure.
+///
+/// The agent's own key material is not used during `verify_with_key` or
+/// `verify_email_document` -- only the caller-supplied public key matters.
+/// We create a lightweight Ed25519 agent in a temp directory to satisfy
+/// the JACS infrastructure requirements (schema loading, document parsing).
+fn create_verification_agent() -> Result<SimpleAgent> {
+    let tmp = tempfile::tempdir().map_err(|e| {
+        HaiError::Provider(format!("Failed to create temp directory for verification agent: {e}"))
+    })?;
+    let tmp_path = tmp.path().to_string_lossy().to_string();
+
+    let params = CreateAgentParams::builder()
+        .name("hai-verifier")
+        .password("hai-verify-ephemeral")
+        .algorithm("ring-Ed25519")
+        .data_directory(&format!("{}/jacs_data", tmp_path))
+        .key_directory(&format!("{}/jacs_keys", tmp_path))
+        .config_path(&format!("{}/jacs.config.json", tmp_path))
+        .build();
+
+    let (agent, _info) = SimpleAgent::create_with_params(params).map_err(|e| {
+        HaiError::Provider(format!("Failed to create verification agent: {e}"))
+    })?;
+
+    // Keep the temp directory alive for the agent's lifetime by leaking it.
+    // The OS will reclaim it when the process exits. This avoids the temp dir
+    // being deleted while the agent still references files in it.
+    std::mem::forget(tmp);
+
+    Ok(agent)
 }
 
 /// Fetch the public key and metadata from the HAI registry for a given email.
@@ -478,9 +501,8 @@ fn extract_domain(email: &str) -> String {
 /// - Ed25519 (OID 1.3.101.112): extracts the 32-byte raw public key
 /// - Everything else (RSA, PQ2025): returns the full DER-encoded SubjectPublicKeyInfo
 ///
-/// The JACS `DefaultEmailVerifier` handles per-algorithm format conversion
-/// internally (PEM re-wrapping for RSA, SPKI stripping for PQ2025), so
-/// callers can pass these bytes directly.
+/// The JACS `SimpleAgent::verify_with_key()` handles per-algorithm format
+/// conversion internally, so callers can pass these bytes directly.
 fn extract_public_key_bytes(pem: &str) -> Result<Vec<u8>> {
     let pem_lines: Vec<&str> = pem
         .lines()
@@ -575,53 +597,55 @@ mod tests {
         assert!(r.dns_verified.is_none());
     }
 
-    // -- Tests that use JACS email functions with TestSigner/TestVerifier --
+    // -- Tests that use JACS email functions with SimpleAgent --
 
-    // Use the re-exported EmailSigner from the parent module to avoid
-    // ambiguity between jacs_local_path (aliased as jacs) and the jacs crate.
-    use super::EmailSigner;
+    use super::{SimpleAgent, CreateAgentParams};
 
-    struct TestSigner {
-        id: String,
-    }
+    /// Create a test SimpleAgent for email signing/verification tests.
+    ///
+    /// Returns the agent and a TempDir that must be kept alive for the
+    /// agent's lifetime (dropping it deletes the key files).
+    fn create_test_agent(name: &str) -> (SimpleAgent, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let tmp_path = tmp.path().to_string_lossy().to_string();
 
-    impl TestSigner {
-        fn new(id: &str) -> Self {
-            Self {
-                id: id.to_string(),
-            }
-        }
-    }
+        let params = CreateAgentParams::builder()
+            .name(name)
+            .password("TestHaiSdk!2026")
+            .algorithm("ring-Ed25519")
+            .data_directory(&format!("{}/jacs_data", tmp_path))
+            .key_directory(&format!("{}/jacs_keys", tmp_path))
+            .config_path(&format!("{}/jacs.config.json", tmp_path))
+            .build();
 
-    impl EmailSigner for TestSigner {
-        fn sign_bytes(&self, data: &[u8]) -> std::result::Result<Vec<u8>, Box<dyn std::error::Error>> {
-            let mut result = b"sig:".to_vec();
-            result.extend_from_slice(data);
-            Ok(result)
+        let (agent, _info) = SimpleAgent::create_with_params(params)
+            .expect("create test agent");
+
+        // Set env vars needed by the keystore at signing time.
+        // SAFETY: tests that sign emails must not run in parallel
+        // or they will stomp on each other's env vars.
+        unsafe {
+            std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "TestHaiSdk!2026");
+            std::env::set_var("JACS_KEY_DIRECTORY", format!("{}/jacs_keys", tmp_path));
+            std::env::set_var("JACS_AGENT_PRIVATE_KEY_FILENAME", "jacs.private.pem.enc");
         }
-        fn jacs_id(&self) -> &str {
-            &self.id
-        }
-        fn key_id(&self) -> &str {
-            &self.id
-        }
-        fn algorithm(&self) -> &str {
-            "ed25519"
-        }
+
+        (agent, tmp)
     }
 
     #[test]
     fn sign_email_and_extract_doc() {
         let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
-        let signer = TestSigner::new("test-agent:v1");
-        let signed = sign_email(email, &signer).unwrap();
+        let (agent, _tmp) = create_test_agent("test-agent");
+        let signed = sign_email(email, &agent).unwrap();
 
         let doc_bytes = get_jacs_attachment(&signed).unwrap();
         let doc: JacsEmailSignatureDocument = serde_json::from_slice(&doc_bytes).unwrap();
 
         assert_eq!(doc.version, "1.0");
         assert_eq!(doc.document_type, "email_signature");
-        assert_eq!(doc.metadata.issuer, "test-agent:v1");
+        // The JACS agent ID is assigned by SimpleAgent, not a fixed string.
+        assert!(!doc.metadata.issuer.is_empty());
     }
 
     #[tokio::test]
@@ -636,8 +660,8 @@ mod tests {
     #[tokio::test]
     async fn verify_email_registry_unreachable() {
         let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
-        let signer = TestSigner::new("test-agent:v1");
-        let signed = sign_email(email, &signer).unwrap();
+        let (agent, _tmp) = create_test_agent("test-agent");
+        let signed = sign_email(email, &agent).unwrap();
 
         let result = verify_email(&signed, "http://127.0.0.1:1").await;
         assert!(!result.valid);
@@ -646,6 +670,12 @@ mod tests {
 
     #[tokio::test]
     async fn verify_email_with_mock_registry_identity_mismatch() {
+        let (agent, _tmp) = create_test_agent("test-agent");
+
+        // Get the agent's JACS ID so we can set up a mismatching registry
+        let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
+        let signed = sign_email(email, &agent).unwrap();
+
         // This test uses httpmock to simulate a registry that returns a different jacs_id
         let server = httpmock::MockServer::start();
         server.mock(|when, then| {
@@ -662,10 +692,6 @@ mod tests {
                 }));
         });
 
-        let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
-        let signer = TestSigner::new("test-agent:v1");
-        let signed = sign_email(email, &signer).unwrap();
-
         let result = verify_email(&signed, &server.base_url()).await;
         assert!(!result.valid);
         assert!(result.error.as_deref().unwrap().contains("Identity mismatch"));
@@ -674,6 +700,11 @@ mod tests {
 
     #[tokio::test]
     async fn verify_email_with_mock_registry_email_mismatch() {
+        let (agent, _tmp) = create_test_agent("test-agent");
+
+        let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
+        let signed = sign_email(email, &agent).unwrap();
+
         let server = httpmock::MockServer::start();
         server.mock(|when, then| {
             when.method("GET")
@@ -688,10 +719,6 @@ mod tests {
                     "registered_at": "2026-01-01T00:00:00Z"
                 }));
         });
-
-        let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
-        let signer = TestSigner::new("test-agent:v1");
-        let signed = sign_email(email, &signer).unwrap();
 
         let result = verify_email(&signed, &server.base_url()).await;
         assert!(!result.valid);
