@@ -209,6 +209,23 @@ class HaiClient:
         return {"Authorization": self._build_jacs_auth_header()}
 
     @staticmethod
+    def _build_jacs_auth_header_with_key(
+        jacs_id: str,
+        version: str,
+        private_key: Any,
+    ) -> str:
+        """Build a 4-part JACS auth header signed by an explicit key.
+
+        Returns ``JACS {jacsId}:{version}:{timestamp}:{signature}``.
+        Used during key rotation to authenticate re-registration with
+        the OLD key (chain of trust).
+        """
+        timestamp = int(time.time())
+        message = f"{jacs_id}:{version}:{timestamp}"
+        signature = sign_string(private_key, message)
+        return f"JACS {jacs_id}:{version}:{timestamp}:{signature}"
+
+    @staticmethod
     def _parse_transcript(
         raw_messages: list[dict[str, Any]],
     ) -> list[TranscriptMessage]:
@@ -726,7 +743,8 @@ class HaiClient:
             old_version, new_version, jacs_id,
         )
 
-        # 8. Optionally re-register with HAI
+        # 8. Optionally re-register with HAI using the OLD key for auth
+        # (chain of trust: old key vouches for new key)
         registered = False
         if register_with_hai:
             if hai_url is None:
@@ -736,13 +754,33 @@ class HaiClient:
                 )
             else:
                 try:
-                    self.register(
-                        hai_url=hai_url,
-                        agent_json=signed_agent_json,
-                        public_key=pub_pem_str,
+                    # Build 4-part auth header signed by the OLD key
+                    old_auth = self._build_jacs_auth_header_with_key(
+                        jacs_id, old_version, old_key,
                     )
-                    registered = True
-                    logger.info("Re-registered with HAI after rotation")
+                    url = self._make_url(hai_url, "/api/v1/agents/register")
+                    payload: dict[str, Any] = {
+                        "agent_json": signed_agent_json,
+                    }
+                    if pub_pem_str:
+                        payload["public_key"] = base64.b64encode(
+                            pub_pem_str.encode("utf-8")
+                        ).decode("utf-8")
+                    headers = {
+                        "Authorization": old_auth,
+                        "Content-Type": "application/json",
+                    }
+                    resp = httpx.post(
+                        url, json=payload, headers=headers, timeout=self._timeout,
+                    )
+                    if resp.status_code in (200, 201):
+                        registered = True
+                        logger.info("Re-registered with HAI after rotation")
+                    else:
+                        logger.warning(
+                            "HAI re-registration returned HTTP %d (local rotation preserved)",
+                            resp.status_code,
+                        )
                 except Exception as exc:
                     logger.warning(
                         "HAI re-registration failed (local rotation preserved): %s",

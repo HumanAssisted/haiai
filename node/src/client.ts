@@ -439,6 +439,9 @@ export class HaiClient {
     const oldVersion = this.config.jacsAgentVersion;
     const keyDir = this.config.jacsKeyDir;
 
+    // Save old key for chain-of-trust auth during re-registration
+    const oldPrivateKeyPem = this.privateKeyPem;
+
     // Find existing private key file
     const candidates = [
       join(keyDir, 'agent_private_key.pem'),
@@ -473,9 +476,14 @@ export class HaiClient {
 
     await rename(privKeyPath, archivePriv);
     try {
+      const { stat: fsStat } = await import('node:fs/promises');
+      await fsStat(pubKeyPath);
       await rename(pubKeyPath, archivePub);
-    } catch {
-      // Public key might not exist as separate file; continue
+    } catch (err) {
+      // Only ignore file-not-found; warn on other errors
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn('Failed to archive public key:', err);
+      }
     }
 
     // 2. Generate new keypair
@@ -498,7 +506,7 @@ export class HaiClient {
     }
     await writeFile(pubKeyPath, newKeypair.publicKeyPem, { mode: 0o644 });
 
-    // 4. Build new agent document
+    // 4. Build new agent document (preserve metadata from config)
     const newVersion = randomUUID();
     const agentDoc: Record<string, unknown> = {
       jacsId,
@@ -506,7 +514,9 @@ export class HaiClient {
       jacsPreviousVersion: oldVersion,
       jacsPublicKey: newKeypair.publicKeyPem,
       name: this.config.jacsAgentName,
-      description: `Agent registered via Node SDK`,
+      description: (this.config as unknown as Record<string, unknown>).description
+        ?? (this.config as unknown as Record<string, unknown>).jacsAgentDescription
+        ?? `Agent registered via Node SDK`,
       jacsSignature: {
         agentID: jacsId,
         date: new Date().toISOString(),
@@ -543,15 +553,34 @@ export class HaiClient {
       // Config update failure is non-fatal for rotation
     }
 
-    // 8. Optionally re-register with HAI
+    // 8. Optionally re-register with HAI using the OLD key for auth
+    // (chain of trust: old key vouches for new key)
     let registeredWithHai = false;
     if (registerWithHai && haiUrl) {
       try {
-        await this.register({
-          agentJson: signedAgentJson,
-          publicKeyPem: newKeypair.publicKeyPem,
+        // Build 4-part auth header signed by the OLD key
+        const timestamp = Math.floor(Date.now() / 1000).toString();
+        const authMessage = `${jacsId}:${oldVersion}:${timestamp}`;
+        const authSig = signString(oldPrivateKeyPem, authMessage, this.privateKeyPassphrase);
+        const authHeader = `JACS ${jacsId}:${oldVersion}:${timestamp}:${authSig}`;
+
+        const url = this.makeUrl('/api/v1/agents/register');
+        const publicKeyB64 = Buffer.from(newKeypair.publicKeyPem, 'utf-8').toString('base64');
+        const body = JSON.stringify({
+          agent_json: signedAgentJson,
+          public_key: publicKeyB64,
         });
-        registeredWithHai = true;
+        const resp = await this.fetchWithRetry(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': authHeader,
+            'Content-Type': 'application/json',
+          },
+          body,
+        });
+        if (resp.ok) {
+          registeredWithHai = true;
+        }
       } catch {
         // HAI failure is non-fatal — local rotation is preserved
       }

@@ -285,24 +285,43 @@ impl<P: JacsProvider> HaiClient<P> {
             .and_then(|o| o.register_with_hai)
             .unwrap_or(true);
 
+        // Build 4-part auth header with the OLD key BEFORE rotation
+        // (chain of trust: old key vouches for new key)
+        let old_auth_header = if register_with_hai {
+            Some(self.build_auth_header()?)
+        } else {
+            None
+        };
+
         // Perform local rotation via the JACS provider
         let mut result = self.jacs.rotate()?;
 
-        // Optionally re-register with HAI
+        // Optionally re-register with HAI using the OLD key for auth
         if register_with_hai {
-            let reg_opts = RegisterAgentOptions {
-                agent_json: result.signed_agent_json.clone(),
-                public_key_pem: None,
-                owner_email: None,
-                domain: None,
-                description: None,
-            };
-            match self.register(&reg_opts).await {
-                Ok(_) => {
-                    result.registered_with_hai = true;
-                }
-                Err(_) => {
-                    // HAI registration failure is non-fatal
+            if let Some(auth_header) = old_auth_header {
+                let url = self.url("/api/v1/agents/register");
+
+                let mut payload = serde_json::Map::new();
+                payload.insert(
+                    "agent_json".to_string(),
+                    Value::String(result.signed_agent_json.clone()),
+                );
+
+                match self
+                    .http
+                    .post(url)
+                    .header("Authorization", &auth_header)
+                    .header("Content-Type", "application/json")
+                    .json(&Value::Object(payload))
+                    .send()
+                    .await
+                {
+                    Ok(response) if response.status().is_success() => {
+                        result.registered_with_hai = true;
+                    }
+                    _ => {
+                        // HAI registration failure is non-fatal
+                    }
                 }
             }
         }

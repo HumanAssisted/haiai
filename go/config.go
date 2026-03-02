@@ -23,6 +23,7 @@ type Config struct {
 	JacsAgentVersion string `json:"jacsAgentVersion"`
 	JacsKeyDir       string `json:"jacsKeyDir"`
 	JacsID           string `json:"jacsId"`
+	Description      string `json:"description,omitempty"`
 }
 
 // LoadConfig loads a JACS config from the given path.

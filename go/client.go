@@ -425,6 +425,9 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 
 	oldVersion := cfg.JacsAgentVersion
 
+	// Save old private key for chain-of-trust auth during re-registration
+	oldPrivateKey := c.privateKey
+
 	// Resolve key paths
 	privKeyPath := ResolveKeyPath(cfg, configPath)
 	pubKeyPath := ResolvePublicKeyPath(cfg, configPath)
@@ -436,8 +439,11 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 	if err := os.Rename(privKeyPath, archivePriv); err != nil {
 		return nil, wrapError(ErrSigningFailed, err, "failed to archive private key")
 	}
-	// Public key might not exist as a separate file
-	_ = os.Rename(pubKeyPath, archivePub)
+	// Only ignore file-not-found for public key; warn on other errors
+	if err := os.Rename(pubKeyPath, archivePub); err != nil && !os.IsNotExist(err) {
+		// Non-fatal but log a warning
+		fmt.Fprintf(os.Stderr, "warning: failed to archive public key: %v\n", err)
+	}
 
 	// 2. Generate new keypair
 	newPub, newPriv, err := GenerateKeyPair()
@@ -483,13 +489,18 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 	pubPEMStr := string(pubPEM)
 	now := time.Now().UTC().Format(time.RFC3339)
 
+	// Preserve description from config if available, otherwise use default
+	description := "Agent registered via Go SDK"
+	if cfg.Description != "" {
+		description = cfg.Description
+	}
 	doc := map[string]interface{}{
 		"jacsId":              c.jacsID,
 		"jacsVersion":         newVersion,
 		"jacsPreviousVersion": oldVersion,
 		"jacsPublicKey":       pubPEMStr,
 		"name":                cfg.JacsAgentName,
-		"description":         "Agent registered via Go SDK",
+		"description":         description,
 		"jacsSignature": map[string]interface{}{
 			"agentID": c.jacsID,
 			"date":    now,
@@ -525,20 +536,40 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 		if json.Unmarshal(cfgData, &rawCfg) == nil {
 			rawCfg["jacsAgentVersion"] = newVersion
 			if updated, err := json.MarshalIndent(rawCfg, "", "  "); err == nil {
-				_ = os.WriteFile(configPath, append(updated, '\n'), 0o644)
+				_ = os.WriteFile(configPath, append(updated, '\n'), 0o600)
 			}
 		}
 	}
 
-	// 8. Optionally re-register with HAI
+	// 8. Optionally re-register with HAI using the OLD key for auth
+	// (chain of trust: old key vouches for new key)
 	registeredWithHai := false
 	if registerWithHai {
-		_, regErr := c.Register(ctx, RegisterOptions{
+		regBody := RegisterOptions{
 			AgentJSON: signedAgentJSON,
 			PublicKey: pubPEMStr,
-		})
-		if regErr == nil {
-			registeredWithHai = true
+		}
+		wireOpts := regBody
+		if wireOpts.PublicKey != "" {
+			wireOpts.PublicKey = base64.StdEncoding.EncodeToString([]byte(regBody.PublicKey))
+		}
+		bodyData, err := json.Marshal(wireOpts)
+		if err == nil {
+			regURL := c.endpoint + "/api/v1/agents/register"
+			req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, regURL, bytes.NewReader(bodyData))
+			if reqErr == nil {
+				// Build 4-part auth header signed by OLD key
+				authHeader := Build4PartAuthHeader(c.jacsID, oldVersion, oldPrivateKey)
+				req.Header.Set("Authorization", authHeader)
+				req.Header.Set("Content-Type", "application/json")
+				resp, doErr := c.httpClient.Do(req)
+				if doErr == nil {
+					defer resp.Body.Close()
+					if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+						registeredWithHai = true
+					}
+				}
+			}
 		}
 		// HAI registration failure is non-fatal
 	}
