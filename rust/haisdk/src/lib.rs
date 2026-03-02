@@ -44,7 +44,7 @@ pub use email::{
     verify_email, EmailVerificationResultV2,
     // JACS email types re-exported for consumer convenience
     sign_email, AttachmentEntry, BodyPartEntry, ChainEntry, ContentVerificationResult,
-    EmailSignatureHeaders, EmailSignaturePayload, EmailSigner, EmailVerifier, FieldResult,
+    EmailSignatureHeaders, EmailSignaturePayload, FieldResult,
     FieldStatus, JacsEmailMetadata, JacsEmailSignature, JacsEmailSignatureDocument,
     ParsedAttachment, ParsedBodyPart, ParsedEmailParts, SignedHeaderEntry,
 };

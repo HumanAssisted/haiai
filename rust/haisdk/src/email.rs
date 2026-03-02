@@ -17,13 +17,14 @@ use sha2::{Digest, Sha256};
 use crate::error::{HaiError, Result};
 use crate::types::KeyRegistryResponse;
 
+use jacs::simple::{CreateAgentParams, SimpleAgent};
+
 // Re-export JACS email types for consumer convenience.
 pub use jacs::email::{
     sign_email, AttachmentEntry, BodyPartEntry, ChainEntry, ContentVerificationResult,
-    EmailSignatureHeaders, EmailSignaturePayload, EmailSigner, EmailVerifier,
-    FieldResult, FieldStatus, JacsEmailMetadata, JacsEmailSignature,
-    JacsEmailSignatureDocument, ParsedAttachment, ParsedBodyPart, ParsedEmailParts,
-    SignedHeaderEntry,
+    EmailSignatureHeaders, EmailSignaturePayload, FieldResult, FieldStatus,
+    JacsEmailMetadata, JacsEmailSignature, JacsEmailSignatureDocument,
+    ParsedAttachment, ParsedBodyPart, ParsedEmailParts, SignedHeaderEntry,
 };
 
 use jacs::email::{get_jacs_attachment, verify_email_content, verify_email_document};
