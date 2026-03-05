@@ -19,10 +19,8 @@ from __future__ import annotations
 
 import base64
 import json
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from jacs.client import JacsClient
-from jacs.hai.config import get_private_key
 
 from haisdk import HaiClient
 from haisdk.a2a import (
@@ -37,13 +35,10 @@ HAI_URL = "https://hai.ai"
 TRUST_POLICY = "verified"
 
 
-def _public_key_b64() -> str:
-    private_key = get_private_key()
-    public_pem = private_key.public_key().public_bytes(
-        Encoding.PEM,
-        PublicFormat.SubjectPublicKeyInfo,
-    )
-    return base64.urlsafe_b64encode(public_pem).decode("utf-8").rstrip("=")
+def _public_key_b64(jacs_client: JacsClient) -> str:
+    """Get the agent's public key as a URL-safe base64 string."""
+    pem = jacs_client.get_public_key()
+    return base64.urlsafe_b64encode(pem.encode("utf-8")).decode("utf-8").rstrip("=")
 
 
 def main() -> None:
@@ -127,7 +122,7 @@ def main() -> None:
         jacs,
         agent_card,
         "",
-        _public_key_b64(),
+        _public_key_b64(jacs),
         agent_data,
         trust_policy=TRUST_POLICY,
     )

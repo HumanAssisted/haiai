@@ -1,0 +1,243 @@
+//go:build cgo && jacs
+
+package haisdk
+
+import (
+	"crypto/ed25519"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"os"
+
+	jacs "github.com/HumanAssisted/jacsgo"
+)
+
+func init() {
+	cryptoBackend = &jacsBackend{}
+}
+
+// jacsBackend implements CryptoBackend using the JACS Rust core via CGo.
+// The package-level instance provides GenerateKeyPair and standalone verify.
+type jacsBackend struct{}
+
+func (b *jacsBackend) SignString(message string) (string, error) {
+	return "", fmt.Errorf("jacs backend: SignString requires a loaded agent; use Client.crypto instead")
+}
+
+func (b *jacsBackend) SignBytes(data []byte) ([]byte, error) {
+	return nil, fmt.Errorf("jacs backend: SignBytes requires a loaded agent; use Client.crypto instead")
+}
+
+func (b *jacsBackend) VerifyBytes(data, signature []byte, publicKeyPEM string) error {
+	// Use the JACS standalone verify path
+	sigB64 := base64.StdEncoding.EncodeToString(signature)
+	return jacs.VerifyString(string(data), sigB64, []byte(publicKeyPEM), "pem")
+}
+
+func (b *jacsBackend) SignRequest(payloadJSON string) (string, error) {
+	return jacs.SignRequest(json.RawMessage(payloadJSON))
+}
+
+func (b *jacsBackend) VerifyResponse(documentJSON string) (string, error) {
+	result, err := jacs.VerifyResponse(documentJSON)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return "", fmt.Errorf("jacs backend: failed to marshal verify result: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func (b *jacsBackend) GenerateKeyPair() ([]byte, []byte, error) {
+	// Generate an Ed25519 keypair and return PEM-encoded bytes.
+	// The JACS Go binding's Create API does not expose the private key path,
+	// so we generate raw keys here. The actual signing with these keys still
+	// goes through the CryptoBackend (JACS agent or Ed25519 fallback).
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("jacs backend: key generation failed: %w", err)
+	}
+
+	pubDER, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return nil, nil, fmt.Errorf("jacs backend: failed to marshal public key: %w", err)
+	}
+	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
+
+	privDER, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return nil, nil, fmt.Errorf("jacs backend: failed to marshal private key: %w", err)
+	}
+	privPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})
+
+	return pubPEM, privPEM, nil
+}
+
+func (b *jacsBackend) Algorithm() string {
+	return "JACS"
+}
+
+// clientJacsBackend implements CryptoBackend bound to a loaded JACS agent for
+// a specific Client.
+type clientJacsBackend struct {
+	agent  *jacs.JacsAgent
+	jacsID string
+}
+
+func (b *clientJacsBackend) SignString(message string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.SignString(message)
+}
+
+func (b *clientJacsBackend) SignBytes(data []byte) ([]byte, error) {
+	if b.agent == nil {
+		return nil, fmt.Errorf("jacs backend: agent not loaded")
+	}
+	sigB64, err := b.agent.SignString(string(data))
+	if err != nil {
+		return nil, err
+	}
+	return base64.StdEncoding.DecodeString(sigB64)
+}
+
+func (b *clientJacsBackend) VerifyBytes(data, signature []byte, publicKeyPEM string) error {
+	if b.agent == nil {
+		return fmt.Errorf("jacs backend: agent not loaded")
+	}
+	sigB64 := base64.StdEncoding.EncodeToString(signature)
+	return b.agent.VerifyString(string(data), sigB64, []byte(publicKeyPEM), "pem")
+}
+
+func (b *clientJacsBackend) SignRequest(payloadJSON string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.SignRequest(json.RawMessage(payloadJSON))
+}
+
+func (b *clientJacsBackend) VerifyResponse(documentJSON string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	result, err := b.agent.VerifyResponse(documentJSON)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return "", fmt.Errorf("jacs backend: failed to marshal verify result: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func (b *clientJacsBackend) GenerateKeyPair() ([]byte, []byte, error) {
+	return cryptoBackend.GenerateKeyPair()
+}
+
+func (b *clientJacsBackend) Algorithm() string {
+	return "JACS"
+}
+
+// newClientCryptoBackend creates a per-client JACS CryptoBackend.
+// In JACS mode, it attempts to load a JACS agent from config.
+// Falls back to wrapping the Ed25519 private key if agent loading fails.
+func newClientCryptoBackend(privateKey ed25519.PrivateKey, jacsID string) CryptoBackend {
+	// Try loading a JACS agent from config
+	agent, err := jacs.NewJacsAgent()
+	if err == nil {
+		configPath := discoverConfigPath()
+		if configPath != "" {
+			if loadErr := agent.Load(configPath); loadErr == nil {
+				return &clientJacsBackend{
+					agent:  agent,
+					jacsID: jacsID,
+				}
+			}
+		}
+		agent.Close()
+	}
+
+	// Fall back to Ed25519 wrapper if JACS agent cannot be loaded.
+	// This can happen when the client is created with WithPrivateKey()
+	// without a jacs.config.json present.
+	return &clientEd25519FallbackInJacs{
+		privateKey: privateKey,
+		jacsID:     jacsID,
+	}
+}
+
+// clientEd25519FallbackInJacs is used in jacs-tagged builds when the JACS agent
+// cannot be loaded (e.g., test code using WithPrivateKey directly).
+type clientEd25519FallbackInJacs struct {
+	privateKey ed25519.PrivateKey
+	jacsID     string
+}
+
+func (b *clientEd25519FallbackInJacs) SignString(message string) (string, error) {
+	if b.privateKey == nil {
+		return "", fmt.Errorf("jacs fallback: private key not loaded")
+	}
+	sig := ed25519.Sign(b.privateKey, []byte(message))
+	return base64.StdEncoding.EncodeToString(sig), nil
+}
+
+func (b *clientEd25519FallbackInJacs) SignBytes(data []byte) ([]byte, error) {
+	if b.privateKey == nil {
+		return nil, fmt.Errorf("jacs fallback: private key not loaded")
+	}
+	return ed25519.Sign(b.privateKey, data), nil
+}
+
+func (b *clientEd25519FallbackInJacs) VerifyBytes(data, signature []byte, publicKeyPEM string) error {
+	pubKey, err := ParsePublicKey([]byte(publicKeyPEM))
+	if err != nil {
+		return err
+	}
+	if !ed25519.Verify(pubKey, data, signature) {
+		return fmt.Errorf("signature verification failed")
+	}
+	return nil
+}
+
+func (b *clientEd25519FallbackInJacs) SignRequest(payloadJSON string) (string, error) {
+	return "", fmt.Errorf("jacs fallback: SignRequest requires loaded JACS agent")
+}
+
+func (b *clientEd25519FallbackInJacs) VerifyResponse(documentJSON string) (string, error) {
+	return "", fmt.Errorf("jacs fallback: VerifyResponse requires loaded JACS agent")
+}
+
+func (b *clientEd25519FallbackInJacs) GenerateKeyPair() ([]byte, []byte, error) {
+	return cryptoBackend.GenerateKeyPair()
+}
+
+func (b *clientEd25519FallbackInJacs) Algorithm() string {
+	return "Ed25519"
+}
+
+// discoverConfigPath returns the first existing jacs config path, or empty string.
+func discoverConfigPath() string {
+	candidates := []string{
+		os.Getenv("JACS_CONFIG_PATH"),
+		"./jacs.config.json",
+	}
+	home, err := os.UserHomeDir()
+	if err == nil {
+		candidates = append(candidates, home+"/.jacs/jacs.config.json")
+	}
+	for _, p := range candidates {
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}

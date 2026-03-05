@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
-import { generateKeypair } from '../src/crypt.js';
+import { generateTestKeypair as generateKeypair } from './setup.js';
 
 describe('client register bootstrap', () => {
   afterEach(() => {
@@ -10,10 +10,10 @@ describe('client register bootstrap', () => {
 
   it('registerNewAgent works without loading jacs.config.json', async () => {
     const bootstrap = generateKeypair();
-    const client = HaiClient.fromCredentials(
+    const client = await HaiClient.fromCredentials(
       'bootstrap-agent',
       bootstrap.privateKeyPem,
-      { url: 'https://hai.example' },
+      { url: 'https://hai.example', privateKeyPassphrase: 'keygen-password' },
     );
 
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
@@ -50,9 +50,9 @@ describe('client register bootstrap', () => {
     expect(result.registrationId).toBe('reg-1');
   });
 
-  it('exportKeys derives the public key from private key material', () => {
+  it('exportKeys derives the public key from private key material', async () => {
     const keypair = generateKeypair();
-    const client = HaiClient.fromCredentials('agent-1', keypair.privateKeyPem);
+    const client = await HaiClient.fromCredentials('agent-1', keypair.privateKeyPem, { privateKeyPassphrase: 'keygen-password' });
     const exported = client.exportKeys();
     expect(exported.publicKeyPem).toContain('-----BEGIN PUBLIC KEY-----');
     expect(exported.privateKeyPem).toContain('-----BEGIN PRIVATE KEY-----');

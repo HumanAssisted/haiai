@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
-import { generateKeypair } from '../src/crypt.js';
+import { generateTestKeypair as generateKeypair } from './setup.js';
 import {
   HaiApiError,
   EmailNotActiveError,
@@ -8,9 +8,9 @@ import {
   RateLimitedError,
 } from '../src/errors.js';
 
-function makeClient(jacsId: string = 'test-agent-001'): HaiClient {
+async function makeClient(jacsId: string = 'test-agent-001'): Promise<HaiClient> {
   const keypair = generateKeypair();
-  const client = HaiClient.fromCredentials(jacsId, keypair.privateKeyPem, { url: 'https://hai.example' });
+  const client = await HaiClient.fromCredentials(jacsId, keypair.privateKeyPem, { url: 'https://hai.example', privateKeyPassphrase: 'keygen-password' });
   client.setAgentEmail(`${jacsId}@hai.ai`);
   return client;
 }
@@ -29,7 +29,7 @@ describe('sendEmail server-side signing', () => {
   });
 
   it('does not include jacs_signature or jacs_timestamp in send request body', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     let capturedBody: Record<string, unknown> | null = null;
 
     const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
@@ -57,7 +57,7 @@ describe('getMessage', () => {
   });
 
   it('GETs the correct URL and returns parsed EmailMessage', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     const fetchMock = vi.fn(async (url: string | URL) => {
       expect(String(url)).toBe(
         'https://hai.example/api/agents/test-agent-001/email/messages/msg-abc',
@@ -102,7 +102,7 @@ describe('deleteMessage', () => {
   });
 
   it('sends DELETE to the correct URL', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       expect(String(url)).toBe(
         'https://hai.example/api/agents/test-agent-001/email/messages/msg-del',
@@ -124,7 +124,7 @@ describe('markUnread', () => {
   });
 
   it('POSTs to the unread endpoint', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       expect(String(url)).toBe(
         'https://hai.example/api/agents/test-agent-001/email/messages/msg-unr/unread',
@@ -146,7 +146,7 @@ describe('searchMessages', () => {
   });
 
   it('GETs search endpoint with query params and returns messages', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     const fetchMock = vi.fn(async (url: string | URL) => {
       const urlStr = String(url);
       expect(urlStr).toContain('/api/agents/test-agent-001/email/search?');
@@ -189,7 +189,7 @@ describe('getUnreadCount', () => {
   });
 
   it('GETs unread-count endpoint and returns number', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     const fetchMock = vi.fn(async (url: string | URL) => {
       expect(String(url)).toBe(
         'https://hai.example/api/agents/test-agent-001/email/unread-count',
@@ -210,7 +210,7 @@ describe('reply', () => {
   });
 
   it('fetches original message then sends reply with Re: subject', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     let callCount = 0;
 
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
@@ -256,7 +256,7 @@ describe('reply', () => {
   });
 
   it('uses subjectOverride when provided', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     let callCount = 0;
 
     const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
@@ -296,7 +296,7 @@ describe('email method path escaping', () => {
   });
 
   it('escapes special characters in messageId for getMessage', async () => {
-    const client = makeClient('agent/special');
+    const client = await makeClient('agent/special');
     const fetchMock = vi.fn(async (url: string | URL) => {
       expect(String(url)).toBe(
         'https://hai.example/api/agents/agent%2Fspecial/email/messages/msg%2F..%2Fhack',
@@ -331,7 +331,7 @@ describe('sendEmail error codes', () => {
   });
 
   it('throws EmailNotActiveError when error_code is EMAIL_NOT_ACTIVE', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     const fetchMock = vi.fn(async () => {
       return new Response(
         JSON.stringify({
@@ -357,7 +357,7 @@ describe('sendEmail error codes', () => {
   });
 
   it('throws RecipientNotFoundError when error_code is RECIPIENT_NOT_FOUND', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     const fetchMock = vi.fn(async () => {
       return new Response(
         JSON.stringify({
@@ -376,7 +376,7 @@ describe('sendEmail error codes', () => {
   });
 
   it('throws RateLimitedError when error_code is RATE_LIMITED', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     const fetchMock = vi.fn(async () => {
       return new Response(
         JSON.stringify({
@@ -395,7 +395,7 @@ describe('sendEmail error codes', () => {
   });
 
   it('throws HaiApiError for unknown error_code', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     const fetchMock = vi.fn(async () => {
       return new Response(
         JSON.stringify({
@@ -432,7 +432,7 @@ describe('sendEmail with attachments', () => {
   });
 
   it('includes attachments as base64 without client-side signing', async () => {
-    const client = makeClient('att-agent');
+    const client = await makeClient('att-agent');
     let capturedBody: Record<string, unknown> | null = null;
 
     const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
@@ -464,7 +464,7 @@ describe('sendEmail with attachments', () => {
   });
 
   it('attachment data is base64 encoded in payload', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     let capturedBody: Record<string, unknown> | null = null;
 
     const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
@@ -495,8 +495,9 @@ describe('sendEmail with attachments', () => {
 
   it('throws when agentEmail not set', async () => {
     const keypair = generateKeypair();
-    const client = HaiClient.fromCredentials('no-email-agent', keypair.privateKeyPem, {
+    const client = await HaiClient.fromCredentials('no-email-agent', keypair.privateKeyPem, {
       url: 'https://hai.example',
+      privateKeyPassphrase: 'keygen-password',
     });
     // Do NOT call setAgentEmail
 

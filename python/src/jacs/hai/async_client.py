@@ -29,7 +29,7 @@ import httpx
 
 from jacs.hai._retry import RETRY_MAX_ATTEMPTS, backoff, should_retry
 from jacs.hai._sse import flatten_benchmark_job, parse_sse_lines
-from jacs.hai.crypt import canonicalize_json, create_agent_document, sign_string
+from jacs.hai.signing import canonicalize_json, create_agent_document  # noqa: F401
 from jacs.hai.errors import (
     BenchmarkError,
     BodyTooLarge,
@@ -144,14 +144,14 @@ class AsyncHaiClient:
         return self._hai_agent_id or self._get_jacs_id()
 
     def _build_jacs_auth_header(self) -> str:
-        from jacs.hai.config import get_config, get_private_key
+        from jacs.hai.config import get_config, get_agent
         cfg = get_config()
-        key = get_private_key()
+        agent = get_agent()
         if cfg.jacs_id is None:
             raise HaiAuthError("jacsId is required for JACS authentication")
         timestamp = int(time.time())
         message = f"{cfg.jacs_id}:{timestamp}"
-        signature = sign_string(key, message)
+        signature = agent.sign_string(message)
         return f"JACS {cfg.jacs_id}:{timestamp}:{signature}"
 
     def _build_auth_headers(self) -> dict[str, str]:
@@ -261,16 +261,13 @@ class AsyncHaiClient:
         cfg = get_config()
 
         if agent_json is None:
-            from jacs.hai.config import get_private_key
-            from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+            from jacs.hai.config import get_agent
+            from jacs.hai.client import _read_public_key_pem
 
-            priv_key = get_private_key()
-            pub_pem = priv_key.public_key().public_bytes(
-                Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
-            ).decode()
+            agent = get_agent()
+            pub_pem = _read_public_key_pem(cfg)
             agent_doc = create_agent_document(
-                name=cfg.name, version=cfg.version,
-                public_key_pem=pub_pem, private_key=priv_key,
+                agent=agent, name=cfg.name, version=cfg.version,
             )
             agent_json = json.dumps(agent_doc, indent=2)
             if public_key is None:

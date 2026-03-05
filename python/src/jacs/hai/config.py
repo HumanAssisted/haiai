@@ -1,12 +1,15 @@
 """JACS config loader and module-level agent state.
 
+ALL cryptographic operations delegate to JACS binding-core via JacsAgent.
+There is zero local crypto in this module.
+
 Usage::
 
-    from jacs.hai.config import load, get_config, get_private_key
+    from jacs.hai.config import load, get_config, get_agent
 
     load("./jacs.config.json")
     config = get_config()
-    key = get_private_key()
+    agent = get_agent()
 """
 
 from __future__ import annotations
@@ -15,10 +18,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional
-
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.serialization import load_pem_private_key
+from typing import Any, Optional
 
 from jacs.hai.models import AgentConfig
 
@@ -28,7 +28,7 @@ logger = logging.getLogger("jacs.hai.config")
 # Module-level state
 # ---------------------------------------------------------------------------
 _config: Optional[AgentConfig] = None
-_private_key: Optional[Ed25519PrivateKey] = None
+_agent: Any = None  # JacsAgent instance from JACS binding-core
 
 _REQUIRED_FIELDS = ("jacsAgentName", "jacsAgentVersion", "jacsKeyDir")
 
@@ -138,8 +138,72 @@ def load_private_key_password() -> bytes:
     return _read_password_file_strict(file_path)
 
 
+def _create_jacs_config(
+    name: str,
+    version: str,
+    key_dir: str,
+    jacs_id: Optional[str],
+    config_dir: Path,
+) -> str:
+    """Create a temporary JACS config file that JacsAgent.load() can consume.
+
+    JacsAgent.load() expects a JSON config with specific field names.
+    We build a config that points to the existing key files.
+
+    Returns:
+        Path to the generated config file (in config_dir).
+    """
+    key_dir_path = Path(key_dir)
+
+    # Find the private key file (includes JACS-native naming)
+    priv_candidates = [
+        key_dir_path / "agent_private_key.pem",
+        key_dir_path / "jacs.private.pem.enc",
+        key_dir_path / f"{name}.private.pem",
+        key_dir_path / "private_key.pem",
+    ]
+    priv_file = None
+    for p in priv_candidates:
+        if p.is_file():
+            priv_file = p.name
+            break
+
+    # Find the public key file (includes JACS-native naming)
+    pub_candidates = [
+        key_dir_path / "agent_public_key.pem",
+        key_dir_path / "jacs.public.pem",
+        key_dir_path / f"{name}.public.pem",
+        key_dir_path / "public_key.pem",
+    ]
+    pub_file = None
+    for p in pub_candidates:
+        if p.is_file():
+            pub_file = p.name
+            break
+
+    jacs_config = {
+        # Empty string skips agent document loading in load_by_config
+        "jacs_agent_id_and_version": "",
+        "jacs_data_directory": str(config_dir / "jacs_data"),
+        "jacs_key_directory": str(key_dir_path),
+        "jacs_agent_private_key_filename": priv_file or "agent_private_key.pem",
+        "jacs_agent_public_key_filename": pub_file or "agent_public_key.pem",
+        "jacs_agent_key_algorithm": "ring-Ed25519",
+        "jacs_default_storage": "fs",
+        "name": name,
+    }
+
+    # Write the JACS config
+    jacs_config_path = config_dir / ".jacs_agent_config.json"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    with open(jacs_config_path, "w", encoding="utf-8") as f:
+        json.dump(jacs_config, f, indent=2)
+
+    return str(jacs_config_path)
+
+
 def load(config_path: str | None = None) -> None:
-    """Load JACS config and the Ed25519 private key from disk.
+    """Load JACS config and initialize a JacsAgent via binding-core.
 
     Discovery order:
       1. Explicit ``config_path`` argument
@@ -153,7 +217,7 @@ def load(config_path: str | None = None) -> None:
     Exactly one password source must be configured.
     Keys must be encrypted at rest.
     """
-    global _config, _private_key
+    global _config, _agent
 
     if config_path is None:
         config_path = os.environ.get("JACS_CONFIG_PATH", "./jacs.config.json")
@@ -174,15 +238,6 @@ def load(config_path: str | None = None) -> None:
     if not key_dir.is_absolute():
         key_dir = path.parent / key_dir
 
-    private_key_path_raw = raw.get("jacsPrivateKeyPath") or raw.get(
-        "jacs_private_key_path"
-    )
-    explicit_private_key_path: Optional[Path] = None
-    if private_key_path_raw:
-        explicit_private_key_path = Path(str(private_key_path_raw))
-        if not explicit_private_key_path.is_absolute():
-            explicit_private_key_path = path.parent / explicit_private_key_path
-
     _config = AgentConfig(
         name=raw["jacsAgentName"],
         version=raw["jacsAgentVersion"],
@@ -190,59 +245,38 @@ def load(config_path: str | None = None) -> None:
         jacs_id=raw.get("jacsId"),
     )
 
-    candidate_paths: list[Path] = []
-    if explicit_private_key_path is not None:
-        candidate_paths.append(explicit_private_key_path)
+    # Validate password is configured (fail early)
+    load_private_key_password()
 
-    candidate_paths.extend(
-        [
-            key_dir / "agent_private_key.pem",
-            key_dir / f"{raw['jacsAgentName']}.private.pem",
-            key_dir / "private_key.pem",
-        ]
+    # Load agent from binding-core using SimpleAgent (handles key loading)
+    try:
+        from jacs import SimpleAgent as _SimpleAgent
+    except ImportError:
+        from jacs.jacs import SimpleAgent as _SimpleAgent  # type: ignore[no-redef]
+
+    # Create a JACS-format config for SimpleAgent.load()
+    jacs_cfg_path = _create_jacs_config(
+        name=_config.name,
+        version=_config.version,
+        key_dir=str(key_dir),
+        jacs_id=_config.jacs_id,
+        config_dir=path.parent,
     )
 
-    if explicit_private_key_path is not None and not explicit_private_key_path.is_file():
-        raise FileNotFoundError(
-            f"Configured jacsPrivateKeyPath does not exist: {explicit_private_key_path}"
-        )
+    # Ensure data directory exists
+    data_dir = path.parent / "jacs_data"
+    data_dir.mkdir(parents=True, exist_ok=True)
 
-    pem_path: Optional[Path] = None
-    for candidate in candidate_paths:
-        if candidate.is_file():
-            pem_path = candidate
-            break
+    native_agent = _SimpleAgent.load(jacs_cfg_path)
 
-    if pem_path is None:
-        raise FileNotFoundError(
-            "No .pem private key file found. Searched: "
-            + ", ".join(str(p) for p in candidate_paths)
-        )
-
-    logger.info("Loading private key from %s", pem_path)
-
-    pem_data = pem_path.read_bytes()
-    # Strip comment lines (e.g. "# WARNING: TEST-ONLY KEY ...")
-    pem_lines = [
-        line for line in pem_data.split(b"\n") if not line.startswith(b"#")
-    ]
-    pem_data = b"\n".join(pem_lines)
-
-    password = load_private_key_password()
-
+    # Wrap in adapter for JacsAgent API compatibility
     try:
-        loaded_key = load_pem_private_key(pem_data, password=password)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"Failed to load encrypted private key from {pem_path}: {exc}"
-        ) from exc
+        from jacs.simple import _EphemeralAgentAdapter
+        _agent = _EphemeralAgentAdapter(native_agent)
+    except ImportError:
+        _agent = native_agent
 
-    if not isinstance(loaded_key, Ed25519PrivateKey):
-        raise TypeError(
-            f"Expected Ed25519 private key, got {type(loaded_key).__name__}"
-        )
-    _private_key = loaded_key
-    logger.info("JACS agent '%s' v%s loaded", _config.name, _config.version)
+    logger.info("JACS agent '%s' v%s loaded via binding-core", _config.name, _config.version)
 
 
 def get_config() -> AgentConfig:
@@ -252,16 +286,29 @@ def get_config() -> AgentConfig:
     return _config
 
 
-def get_private_key() -> Ed25519PrivateKey:
-    """Return the loaded private key. Raises if ``load()`` has not been called."""
-    if _private_key is None:
+def get_agent() -> Any:
+    """Return the loaded JacsAgent. Raises if ``load()`` has not been called."""
+    if _agent is None:
         raise RuntimeError("jacs.hai.config.load() has not been called")
-    return _private_key
+    return _agent
+
+
+# Backward compatibility alias
+def get_private_key() -> Any:
+    """Return the loaded JacsAgent (backward compat for code using get_private_key).
+
+    Returns:
+        The loaded JacsAgent instance, which provides sign_string() etc.
+
+    Raises:
+        RuntimeError: If ``load()`` has not been called.
+    """
+    return get_agent()
 
 
 def is_loaded() -> bool:
-    """Return True if the config and key have been loaded."""
-    return _config is not None and _private_key is not None
+    """Return True if the config and agent have been loaded."""
+    return _config is not None and _agent is not None
 
 
 def save(config_path: str = "./jacs.config.json") -> None:
@@ -288,6 +335,17 @@ def save(config_path: str = "./jacs.config.json") -> None:
 
 def reset() -> None:
     """Reset module state (useful for testing)."""
-    global _config, _private_key
+    global _config, _agent
     _config = None
-    _private_key = None
+    _agent = None
+
+
+# Keep _private_key as a module-level attribute alias for backward compat
+# (some code does `config_mod._private_key = ...` during rotation)
+@property
+def _private_key_property():
+    return _agent
+
+
+# For direct attribute assignment compatibility in rotate_keys
+_private_key: Any = None

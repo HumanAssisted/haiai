@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { HaiClient } from '../src/client.js';
 import { loadConfig, loadPrivateKey } from '../src/config.js';
-import { generateKeypair } from '../src/crypt.js';
+import { generateTestKeypair as generateKeypair } from './setup.js';
 
 interface BootstrapRegisterContract {
   method: string;
@@ -83,10 +83,10 @@ describe('shared init contract (node)', () => {
   it('bootstrap register contract matches shared fixture', async () => {
     const fixture = loadInitContractFixture();
     const keypair = generateKeypair();
-    const client = HaiClient.fromCredentials(
+    const client = await HaiClient.fromCredentials(
       'bootstrap-agent',
       keypair.privateKeyPem,
-      { url: 'https://hai.example' },
+      { url: 'https://hai.example', privateKeyPassphrase: 'keygen-password' },
     );
 
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {

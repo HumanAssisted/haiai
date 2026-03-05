@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HaiClient } from '../src/client.js';
-import { generateKeypair } from '../src/crypt.js';
+import { generateTestKeypair as generateKeypair } from './setup.js';
 import {
   EmailNotActiveError,
   RecipientNotFoundError,
@@ -37,9 +37,9 @@ function loadConformanceFixture(): ConformanceFixture {
   return JSON.parse(readFileSync(fixturePath, 'utf-8')) as ConformanceFixture;
 }
 
-function makeClient(baseUrl: string): HaiClient {
+async function makeClient(baseUrl: string): Promise<HaiClient> {
   const keypair = generateKeypair();
-  const client = HaiClient.fromCredentials('test-agent-001', keypair.privateKeyPem, { url: baseUrl });
+  const client = await HaiClient.fromCredentials('test-agent-001', keypair.privateKeyPem, { url: baseUrl, privateKeyPassphrase: 'keygen-password' });
   client.agentEmail = 'test@hai.ai';
   return client;
 }
@@ -64,7 +64,7 @@ describe('email conformance: mock verify response deserialization', () => {
       json: () => Promise.resolve(mockJson),
     }));
 
-    const client = makeClient('https://mock.hai.ai');
+    const client = await makeClient('https://mock.hai.ai');
     const result: EmailVerificationResultV2 = await client.verifyEmail('raw email content');
 
     expect(result.valid).toBe(true);
@@ -134,7 +134,7 @@ describe('email conformance: signEmail API contract', () => {
       });
     }));
 
-    const client = makeClient('https://mock.hai.ai');
+    const client = await makeClient('https://mock.hai.ai');
     await client.signEmail('raw email');
 
     expect(gotMethod).toBe(fixture.api_contracts.sign_email.method);
@@ -171,7 +171,7 @@ describe('email conformance: verifyEmail API contract', () => {
       });
     }));
 
-    const client = makeClient('https://mock.hai.ai');
+    const client = await makeClient('https://mock.hai.ai');
     await client.verifyEmail('raw email');
 
     expect(gotMethod).toBe(fixture.api_contracts.verify_email.method);
@@ -205,7 +205,7 @@ describe('email conformance: sendEmail excluded fields', () => {
       });
     }));
 
-    const client = makeClient('https://mock.hai.ai');
+    const client = await makeClient('https://mock.hai.ai');
     await client.sendEmail({ to: 'bob@hai.ai', subject: 'Test', body: 'Body' });
 
     for (const excluded of fixture.api_contracts.send_email.excluded_fields) {

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HaiClient } from '../src/client.js';
-import { generateKeypair } from '../src/crypt.js';
+import { generateTestKeypair as generateKeypair } from './setup.js';
 import type { EmailMessage, EmailStatus, KeyRegistryResponse, EmailVerificationResult } from '../src/types.js';
 
 interface EndpointContract {
@@ -26,9 +26,9 @@ function loadContractFixture(): ContractFixture {
   return JSON.parse(readFileSync(fixturePath, 'utf-8')) as ContractFixture;
 }
 
-function makeClient(baseUrl: string): HaiClient {
+async function makeClient(baseUrl: string): Promise<HaiClient> {
   const keypair = generateKeypair();
-  return HaiClient.fromCredentials('test-agent-001', keypair.privateKeyPem, { url: baseUrl });
+  return HaiClient.fromCredentials('test-agent-001', keypair.privateKeyPem, { url: baseUrl, privateKeyPassphrase: 'keygen-password' });
 }
 
 describe('mock API contract (node)', () => {
@@ -39,7 +39,7 @@ describe('mock API contract (node)', () => {
 
   it('hello uses the shared method/path/auth contract', async () => {
     const contract = loadContractFixture();
-    const client = makeClient(contract.base_url);
+    const client = await makeClient(contract.base_url);
 
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       expect(String(url)).toBe(`${contract.base_url}${contract.hello.path}`);
@@ -68,7 +68,7 @@ describe('mock API contract (node)', () => {
 
   it('checkUsername uses the shared method/path/auth contract', async () => {
     const contract = loadContractFixture();
-    const client = makeClient(contract.base_url);
+    const client = await makeClient(contract.base_url);
 
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       const parsed = new URL(String(url));
@@ -97,7 +97,7 @@ describe('mock API contract (node)', () => {
 
   it('submitResponse uses the shared method/path/auth contract', async () => {
     const contract = loadContractFixture();
-    const client = makeClient(contract.base_url);
+    const client = await makeClient(contract.base_url);
     const jobId = 'job-123';
     const expectedPath = contract.submit_response.path.replace('{job_id}', jobId);
 

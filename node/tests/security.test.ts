@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
-import { generateKeypair } from '../src/crypt.js';
+import { generateTestKeypair as generateKeypair } from './setup.js';
 
-function makeClient(): HaiClient {
+async function makeClient(): Promise<HaiClient> {
   const kp = generateKeypair();
   return HaiClient.fromCredentials('security-agent', kp.privateKeyPem, {
     url: 'https://hai.example',
+    privateKeyPassphrase: 'keygen-password',
   });
 }
 
@@ -16,7 +17,7 @@ describe('security behaviors (node)', () => {
   });
 
   it('register does not send private key material and keeps bootstrap request unauthenticated', async () => {
-    const client = makeClient();
+    const client = await makeClient();
 
     const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
@@ -49,7 +50,7 @@ describe('security behaviors (node)', () => {
   });
 
   it('checkUsername remains unauthenticated public endpoint', async () => {
-    const client = makeClient();
+    const client = await makeClient();
 
     const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
@@ -70,7 +71,7 @@ describe('security behaviors (node)', () => {
   });
 
   it('registerNewAgent omits Authorization and sends base64 public key only', async () => {
-    const client = makeClient();
+    const client = await makeClient();
 
     const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);

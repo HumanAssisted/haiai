@@ -9,7 +9,8 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { HaiClient, generateKeypair } from '../src/index.js';
+import { HaiClient } from '../src/index.js';
+import { generateTestKeypair as generateKeypair } from './setup.js';
 
 const LIVE = process.env.HAI_LIVE_TEST === '1';
 const API_URL = process.env.HAI_URL || 'http://localhost:3000';
@@ -26,8 +27,9 @@ describe.skipIf(!LIVE)('Key integration (live API)', () => {
 
   beforeAll(async () => {
     const keypair = generateKeypair();
-    client = HaiClient.fromCredentials(agentName, keypair.privateKeyPem, {
+    client = await HaiClient.fromCredentials(agentName, keypair.privateKeyPem, {
       url: API_URL,
+      privateKeyPassphrase: 'keygen-password',
     });
 
     const ownerEmail = process.env.HAI_OWNER_EMAIL || 'jonathan@hai.io';

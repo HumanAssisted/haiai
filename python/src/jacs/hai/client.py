@@ -2,7 +2,7 @@
 
 Ports every public method from the JACS monolith (jacs.hai) with:
   - JACS-only authentication (no API key / Bearer fallback)
-  - Local Ed25519 signing via jacs.hai.crypt (no PyO3 dependency)
+  - All signing via JACS binding-core (zero local crypto)
   - SSE and WebSocket transports
   - Retry with exponential backoff
 """
@@ -24,7 +24,7 @@ import httpx
 
 from jacs.hai._retry import RETRY_MAX_ATTEMPTS, backoff, should_retry
 from jacs.hai._sse import flatten_benchmark_job, parse_sse_lines
-from jacs.hai.crypt import canonicalize_json, create_agent_document, sign_string
+from jacs.hai.signing import canonicalize_json, create_agent_document
 from jacs.hai.errors import (
     BenchmarkError,
     BodyTooLarge,
@@ -73,6 +73,22 @@ logger = logging.getLogger("jacs.hai.client")
 # Verify link constants (HAI / public verification URLs)
 MAX_VERIFY_URL_LEN = 2048
 MAX_VERIFY_DOCUMENT_BYTES = 1515
+
+
+def _read_public_key_pem(cfg: "AgentConfig") -> str:
+    """Read the agent's public key PEM from the key directory."""
+    key_dir = Path(cfg.key_dir)
+    candidates = [
+        key_dir / "agent_public_key.pem",
+        key_dir / f"{cfg.name}.public.pem",
+        key_dir / "public_key.pem",
+    ]
+    for p in candidates:
+        if p.is_file():
+            return p.read_text(encoding="utf-8")
+    raise FileNotFoundError(
+        f"Public key not found. Searched: {', '.join(str(p) for p in candidates)}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -185,18 +201,19 @@ class HaiClient:
 
         The signed message is ``"{jacsId}:{timestamp}"`` matching the Rust
         ``extract_jacs_credentials`` parser.
+        Signing delegates to JACS binding-core via the loaded JacsAgent.
         """
-        from jacs.hai.config import get_config, get_private_key
+        from jacs.hai.config import get_config, get_agent
 
         cfg = get_config()
-        key = get_private_key()
+        agent = get_agent()
 
         if cfg.jacs_id is None:
             raise HaiAuthError("jacsId is required for JACS authentication")
 
         timestamp = int(time.time())
         message = f"{cfg.jacs_id}:{timestamp}"
-        signature = sign_string(key, message)
+        signature = agent.sign_string(message)
         return f"JACS {cfg.jacs_id}:{timestamp}:{signature}"
 
     def _build_auth_headers(self) -> dict[str, str]:
@@ -214,17 +231,18 @@ class HaiClient:
     def _build_jacs_auth_header_with_key(
         jacs_id: str,
         version: str,
-        private_key: Any,
+        agent: Any,
     ) -> str:
-        """Build a 4-part JACS auth header signed by an explicit key.
+        """Build a 4-part JACS auth header signed by an explicit agent.
 
         Returns ``JACS {jacsId}:{version}:{timestamp}:{signature}``.
         Used during key rotation to authenticate re-registration with
-        the OLD key (chain of trust).
+        the OLD agent's key (chain of trust).
+        Signing delegates to JACS binding-core.
         """
         timestamp = int(time.time())
         message = f"{jacs_id}:{version}:{timestamp}"
-        signature = sign_string(private_key, message)
+        signature = agent.sign_string(message)
         return f"JACS {jacs_id}:{version}:{timestamp}:{signature}"
 
     @staticmethod
@@ -370,10 +388,13 @@ class HaiClient:
     ) -> bool:
         """Verify a message signed by HAI.
 
+        Verification delegates to JACS binding-core.
+
         Args:
             message: The message string that was signed.
             signature: Base64-encoded signature.
-            hai_public_key: HAI's public key (PEM or base64).
+            hai_public_key: HAI's public key (PEM, base64 raw, or key ID).
+            hai_url: HAI server URL (for key ID lookup).
 
         Returns:
             True if signature is valid.
@@ -384,33 +405,25 @@ class HaiClient:
         if not hai_public_key:
             return False
 
+        from jacs.hai.signing import verify_string as _verify_string
+
         try:
-            import base64
-
-            from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-                Ed25519PublicKey,
-            )
-            from cryptography.hazmat.primitives.serialization import (
-                load_pem_public_key,
-            )
-
-            try:
-                sig_bytes = base64.b64decode(signature)
-            except Exception:
-                sig_bytes = signature.encode("utf-8")
-
-            msg_bytes = message.encode("utf-8")
-
-            pub_key: Any
             if hai_public_key.startswith("-----"):
-                pub_key = load_pem_public_key(hai_public_key.encode("utf-8"))
+                # PEM-encoded public key
+                return _verify_string(message, signature, hai_public_key)
             else:
+                # Try base64 raw key first, then treat as key ID
                 try:
-                    key_bytes = base64.b64decode(hai_public_key)
-                    pub_key = Ed25519PublicKey.from_public_bytes(key_bytes)
+                    base64.b64decode(hai_public_key)
+                    # Wrap raw base64 as PEM
+                    pem_key = (
+                        "-----BEGIN PUBLIC KEY-----\n"
+                        + hai_public_key
+                        + "\n-----END PUBLIC KEY-----\n"
+                    )
+                    return _verify_string(message, signature, pem_key)
                 except Exception:
-                    # Treat non-key values as key IDs/fingerprints and look up
-                    # active HAI signing keys from the server.
+                    # Treat as key ID/fingerprint -- look up from server
                     if not hai_url:
                         return False
                     from jacs.hai.signing import fetch_server_keys
@@ -419,12 +432,9 @@ class HaiClient:
                     match = next((k for k in keys if k.key_id == hai_public_key), None)
                     if match is None:
                         return False
-                    pub_key = match.public_key
-
-            pub_key.verify(sig_bytes, msg_bytes)  # type: ignore[union-attr]
-            return True
+                    return _verify_string(message, signature, match.public_key_pem)
         except Exception as exc:
-            logger.debug("Ed25519 verification failed: %s", exc)
+            logger.debug("Signature verification failed: %s", exc)
             return False
 
     # ------------------------------------------------------------------
@@ -472,21 +482,15 @@ class HaiClient:
 
         # Build agent_json from config if not provided
         if agent_json is None:
-            from jacs.hai.config import get_private_key
+            from jacs.hai.config import get_agent
 
-            priv_key = get_private_key()
-            from cryptography.hazmat.primitives.serialization import (
-                Encoding,
-                PublicFormat,
-            )
-            pub_pem = priv_key.public_key().public_bytes(
-                Encoding.PEM, PublicFormat.SubjectPublicKeyInfo,
-            ).decode()
+            agent = get_agent()
+            # Get public key PEM from the agent's key files
+            pub_pem = _read_public_key_pem(cfg)
             agent_doc = create_agent_document(
+                agent=agent,
                 name=cfg.name,
                 version=cfg.version,
-                public_key_pem=pub_pem,
-                private_key=priv_key,
             )
             agent_json = json.dumps(agent_doc, indent=2)
             if public_key is None:
@@ -580,10 +584,11 @@ class HaiClient:
         hai_url: Optional[str] = None,
         register_with_hai: bool = True,
         config_path: Optional[str] = None,
+        algorithm: str = "ring-Ed25519",
     ) -> RotationResult:
         """Rotate the agent's cryptographic keys.
 
-        This generates a new Ed25519 keypair, archives the old keys
+        This generates a new keypair via JACS, archives the old keys
         (with a version suffix), builds a new self-signed agent document,
         updates the config, and optionally re-registers with HAI.
 
@@ -598,6 +603,8 @@ class HaiClient:
                 does NOT rollback the local rotation.
             config_path: Path to jacs.config.json. Defaults to the path
                 used by ``config.load()`` (or ``./jacs.config.json``).
+            algorithm: Signing algorithm for the new key (default
+                ``"ring-Ed25519"``). Pass ``"pq2025"`` for post-quantum.
 
         Returns:
             RotationResult with old/new versions, public key hash, and
@@ -611,22 +618,14 @@ class HaiClient:
         """
         import hashlib
         import shutil
+        import tempfile
         import uuid
 
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-        from cryptography.hazmat.primitives.serialization import (
-            BestAvailableEncryption,
-            Encoding,
-            NoEncryption,
-            PrivateFormat,
-            PublicFormat,
-        )
-
         from jacs.hai import config as config_mod
-        from jacs.hai.crypt import create_agent_document
+        from jacs.hai.signing import create_agent_document
 
         cfg = config_mod.get_config()
-        old_key = config_mod.get_private_key()
+        old_agent = config_mod.get_agent()
 
         if cfg.jacs_id is None:
             raise HaiAuthError(
@@ -642,6 +641,7 @@ class HaiClient:
         # Look for the private key file (same search order as config.load)
         priv_candidates = [
             key_dir / "agent_private_key.pem",
+            key_dir / "jacs.private.pem.enc",
             key_dir / f"{cfg.name}.private.pem",
             key_dir / "private_key.pem",
         ]
@@ -663,7 +663,7 @@ class HaiClient:
         pub_path = key_dir / priv_path.name.replace("private", "public")
         if not pub_path.is_file():
             # Try common alternatives
-            for name in ["agent_public_key.pem", f"{cfg.name}.public.pem", "public_key.pem"]:
+            for name in ["agent_public_key.pem", "jacs.public.pem", f"{cfg.name}.public.pem", "public_key.pem"]:
                 alt = key_dir / name
                 if alt.is_file():
                     pub_path = alt
@@ -679,9 +679,48 @@ class HaiClient:
             logger.info("Archiving old public key: %s -> %s", pub_path, archive_pub)
             shutil.move(str(pub_path), str(archive_pub))
 
-        # 3. Generate new Ed25519 keypair
+        # 3. Generate new keypair via JACS SimpleAgent.create_agent()
         try:
-            new_private_key = Ed25519PrivateKey.generate()
+            from jacs import SimpleAgent as _SimpleAgent
+        except ImportError:
+            from jacs.jacs import SimpleAgent as _SimpleAgent  # type: ignore[no-redef]
+
+        password_bytes = config_mod.load_private_key_password()
+        password_str = password_bytes.decode("utf-8")
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_path = Path(tmp_dir)
+                tmp_key_dir = tmp_path / "keys"
+                tmp_key_dir.mkdir()
+                tmp_data_dir = tmp_path / "data"
+                tmp_data_dir.mkdir()
+                tmp_config = tmp_path / "jacs.config.json"
+
+                # Generate new agent with keys via JACS
+                _new_agent, new_info = _SimpleAgent.create_agent(
+                    name=cfg.name,
+                    password=password_str,
+                    algorithm=algorithm,
+                    data_directory=str(tmp_data_dir),
+                    key_directory=str(tmp_key_dir),
+                    config_path=str(tmp_config),
+                    description="",
+                    domain="",
+                    default_storage="fs",
+                )
+
+                # Copy new key files to original locations
+                new_priv_src = Path(new_info.get("private_key_path", ""))
+                new_pub_src = Path(new_info.get("public_key_path", ""))
+
+                if new_priv_src.is_file():
+                    shutil.copy2(str(new_priv_src), str(priv_path))
+                    os.chmod(str(priv_path), 0o600)
+                if new_pub_src.is_file():
+                    shutil.copy2(str(new_pub_src), str(pub_path))
+                    os.chmod(str(pub_path), 0o644)
+
         except Exception as exc:
             # Rollback: restore archived keys
             logger.error("Key generation failed, rolling back: %s", exc)
@@ -690,63 +729,55 @@ class HaiClient:
                 shutil.move(str(archive_pub), str(pub_path))
             raise HaiAuthError(f"Key generation failed: {exc}") from exc
 
-        # 4. Write new keys to disk
-        password = config_mod.load_private_key_password()
-        new_priv_pem = new_private_key.private_bytes(
-            Encoding.PEM,
-            PrivateFormat.PKCS8,
-            BestAvailableEncryption(password),
-        )
-        new_pub_pem = new_private_key.public_key().public_bytes(
-            Encoding.PEM,
-            PublicFormat.SubjectPublicKeyInfo,
-        )
-
-        priv_path.write_bytes(new_priv_pem)
-        os.chmod(str(priv_path), 0o600)
-
-        pub_path.write_bytes(new_pub_pem)
-        os.chmod(str(pub_path), 0o644)
-
-        # 5. Build new agent document
+        # 4. Use the newly-created agent directly for signing
         new_version = str(uuid.uuid4())
-        pub_pem_str = new_pub_pem.decode("utf-8")
-        agent_doc = create_agent_document(
-            name=cfg.name,
-            version=new_version,
-            public_key_pem=pub_pem_str,
-            private_key=new_private_key,
-            jacs_id=jacs_id,
-            extra_fields={"jacsPreviousVersion": old_version},
-        )
-        signed_agent_json = json.dumps(agent_doc, indent=2)
 
-        # 6. Compute new public key hash
-        pub_key_raw = new_private_key.public_key().public_bytes(
-            Encoding.Raw, PublicFormat.Raw,
-        )
-        new_public_key_hash = hashlib.sha256(pub_key_raw).hexdigest()
-
-        # 7. Update config
         cfg_path = config_path or os.environ.get(
             "JACS_CONFIG_PATH", "./jacs.config.json"
         )
+
+        # Wrap the new agent for JacsAgent API compatibility
+        try:
+            from jacs.simple import _EphemeralAgentAdapter
+            new_agent = _EphemeralAgentAdapter(_new_agent)
+        except ImportError:
+            new_agent = _new_agent
+
+        # Update module state with new agent and config
         config_mod._config = AgentConfig(
             name=cfg.name,
             version=new_version,
             key_dir=cfg.key_dir,
             jacs_id=jacs_id,
         )
-        config_mod._private_key = new_private_key
+        config_mod._agent = new_agent
         config_mod.save(cfg_path)
+
+        # 5. Build new agent document signed by the new agent
+        agent_doc = create_agent_document(
+            agent=new_agent,
+            name=cfg.name,
+            version=new_version,
+            jacs_id=jacs_id,
+            extra_fields={"jacsPreviousVersion": old_version},
+        )
+        signed_agent_json = json.dumps(agent_doc, indent=2)
+
+        # 6. Compute new public key hash
+        # Read raw bytes from the JACS key file for public key hash
+        if pub_path.is_file():
+            pub_key_raw = pub_path.read_bytes()
+            new_public_key_hash = hashlib.sha256(pub_key_raw).hexdigest()
+        else:
+            new_public_key_hash = ""
 
         logger.info(
             "Key rotation complete: %s -> %s (agent=%s)",
             old_version, new_version, jacs_id,
         )
 
-        # 8. Optionally re-register with HAI using the OLD key for auth
-        # (chain of trust: old key vouches for new key)
+        # 7. Optionally re-register with HAI using the OLD agent for auth
+        # (chain of trust: old agent vouches for new key)
         registered = False
         if register_with_hai:
             if hai_url is None:
@@ -756,9 +787,9 @@ class HaiClient:
                 )
             else:
                 try:
-                    # Build 4-part auth header signed by the OLD key
+                    # Build 4-part auth header signed by the OLD agent
                     old_auth = self._build_jacs_auth_header_with_key(
-                        jacs_id, old_version, old_key,
+                        jacs_id, old_version, old_agent,
                     )
                     url = self._make_url(hai_url, "/api/v1/agents/register")
                     payload: dict[str, Any] = {
@@ -1785,7 +1816,7 @@ class HaiClient:
         Returns:
             JobResponseResult with acknowledgment.
         """
-        from jacs.hai.config import get_config, get_private_key
+        from jacs.hai.config import get_config, get_agent
 
         headers = self._build_auth_headers()
         headers["Content-Type"] = "application/json"
@@ -1797,10 +1828,10 @@ class HaiClient:
 
         job_response_payload = {"response": response_body}
 
-        # Always wrap as signed JACS document
+        # Always wrap as signed JACS document (signing via JACS binding-core)
         cfg = get_config()
         payload: dict[str, Any] = sign_response(
-            job_response_payload, get_private_key(), cfg.jacs_id or "",
+            job_response_payload, get_agent(), cfg.jacs_id or "",
         )
 
         safe_job_id = self._escape_path_segment(job_id)
@@ -1894,7 +1925,7 @@ class HaiClient:
         Returns:
             Dict with ``signed_document`` (JSON string) and ``agent_jacs_id``.
         """
-        from jacs.hai.config import get_config, get_private_key
+        from jacs.hai.config import get_config, get_agent
 
         cfg = get_config()
         payload: dict[str, Any] = {
@@ -1912,7 +1943,7 @@ class HaiClient:
         if metadata is not None:
             payload["metadata"] = metadata
 
-        return sign_response(payload, get_private_key(), cfg.jacs_id or "")
+        return sign_response(payload, get_agent(), cfg.jacs_id or "")
 
     # ------------------------------------------------------------------
     # Email CRUD
@@ -3607,11 +3638,12 @@ def register_new_agent(
     domain: Optional[str] = None,
     description: Optional[str] = None,
     quiet: bool = False,
+    algorithm: str = "ring-Ed25519",
 ) -> RegistrationResult:
     """Generate a keypair, self-sign, register with HAI, and save config.
 
     This is the one-call setup for a new agent.  It:
-    1. Generates an Ed25519 keypair and writes PEM files to *key_dir*.
+    1. Generates a keypair via JACS and writes key files to *key_dir*.
     2. Creates a self-signed JACS agent document.
     3. POSTs the document to ``/api/v1/agents/register``.
     4. Saves ``jacs.config.json`` with the returned ``jacsId``.
@@ -3627,6 +3659,8 @@ def register_new_agent(
         domain: Optional domain for DNS verification.
         description: Optional agent description.
         quiet: Suppress post-registration messaging.
+        algorithm: Signing algorithm (default ``"ring-Ed25519"``).
+            Pass ``"pq2025"`` for post-quantum.
 
     Returns:
         RegistrationResult with ``agent_id``, ``jacs_id``.
@@ -3638,21 +3672,17 @@ def register_new_agent(
         raise ValueError(
             "owner_email is required -- agents must be associated with a verified HAI user"
         )
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-    from cryptography.hazmat.primitives.serialization import (
-        BestAvailableEncryption,
-        Encoding,
-        PrivateFormat,
-        PublicFormat,
-    )
+    import shutil
 
     from jacs.hai import config as hai_config
 
-    # 1. Generate keypair
-    private_key = Ed25519PrivateKey.generate()
-    public_key = private_key.public_key()
+    try:
+        from jacs import SimpleAgent as _SimpleAgent
+    except ImportError:
+        from jacs.jacs import SimpleAgent as _SimpleAgent  # type: ignore[no-redef]
 
     private_key_password = hai_config.load_private_key_password()
+    password_str = private_key_password.decode("utf-8")
 
     kd = Path(key_dir).expanduser() if key_dir else (Path.home() / ".jacs" / "keys")
     kd.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -3661,34 +3691,89 @@ def register_new_agent(
     except OSError:
         pass
 
-    private_key_path = kd / "agent_private_key.pem"
-    private_key_path.write_bytes(
-        private_key.private_bytes(
-            Encoding.PEM,
-            PrivateFormat.PKCS8,
-            BestAvailableEncryption(private_key_password),
-        )
+    # 1. Generate keypair + agent via JACS SimpleAgent.create_agent()
+    data_dir = kd.parent / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    _new_agent, new_info = _SimpleAgent.create_agent(
+        name=name,
+        password=password_str,
+        algorithm=algorithm,
+        data_directory=str(data_dir),
+        key_directory=str(kd),
+        config_path=str(Path(config_path).resolve()),
+        description=description or "Agent registered via Python SDK",
+        domain=domain or "",
+        default_storage="fs",
     )
-    # Keep private key permissions restrictive even if umask is permissive.
+
+    # Copy JACS-generated key files to standard names expected by the SDK
+    private_key_path = kd / "agent_private_key.pem"
+    if not private_key_path.is_file():
+        priv_src = Path(new_info.get("private_key_path", ""))
+        if priv_src.is_file():
+            shutil.copy2(str(priv_src), str(private_key_path))
     try:
         private_key_path.chmod(0o600)
     except OSError:
         pass
-    public_pem = public_key.public_bytes(
-        Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
-    ).decode()
-    (kd / "agent_public_key.pem").write_text(public_pem)
 
-    # 2. Self-sign agent document (include description/domain before signing
-    #    so the signature covers all fields the server will verify)
+    # Get public key PEM from the agent
+    # JACS may store keys as raw byte files, so get_public_key_pem()
+    # may fail. Fall back to reading the raw key and constructing PEM manually.
+    public_pem = ""
+    try:
+        public_pem = _new_agent.get_public_key_pem()
+    except Exception:
+        pub_src = Path(new_info.get("public_key_path", ""))
+        if pub_src.is_file():
+            raw_key = pub_src.read_bytes()
+            if len(raw_key) == 32:
+                # Wrap raw key in ASN.1 SubjectPublicKeyInfo (Ed25519 format)
+                # Prefix: 30 2a 30 05 06 03 2b 65 70 03 21 00
+                asn1_prefix = bytes([
+                    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03,
+                    0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+                ])
+                der = asn1_prefix + raw_key
+                b64 = base64.b64encode(der).decode("ascii")
+                public_pem = f"-----BEGIN PUBLIC KEY-----\n{b64}\n-----END PUBLIC KEY-----\n"
+
+    # Also write the public key in PEM format at the expected path
+    pub_key_path = kd / "agent_public_key.pem"
+    if not pub_key_path.is_file() and public_pem:
+        pub_key_path.write_text(public_pem, encoding="utf-8")
+
+    logger.debug(
+        "register_new_agent: key_dir=%s, private_key exists=%s, "
+        "public_key exists=%s, public_pem len=%d",
+        kd, private_key_path.is_file(), pub_key_path.is_file(), len(public_pem),
+    )
+
+    # 2. Set up module state directly from the created agent
+    # (Avoids JacsAgent.load() which needs pre-existing agent data files)
+    try:
+        from jacs.simple import _EphemeralAgentAdapter
+        wrapped_agent = _EphemeralAgentAdapter(_new_agent)
+    except ImportError:
+        wrapped_agent = _new_agent  # Fallback if adapter not available
+
+    hai_config._config = hai_config.AgentConfig(
+        name=name,
+        version=version,
+        key_dir=str(kd.resolve()),
+        jacs_id=None,  # Will be set after registration
+    )
+    hai_config._agent = wrapped_agent
+    agent = wrapped_agent
+
     extra_fields: dict = {"description": description or "Agent registered via Python SDK"}
     if domain:
         extra_fields["domain"] = domain
     agent_doc = create_agent_document(
+        agent=agent,
         name=name,
         version=version,
-        public_key_pem=public_pem,
-        private_key=private_key,
         extra_fields=extra_fields,
     )
     agent_json_str = json.dumps(agent_doc, indent=2)
@@ -3718,7 +3803,7 @@ def register_new_agent(
     agent_id = str(data.get("agent_id", ""))
     jacs_id = str(data.get("jacs_id", agent_doc.get("jacsId", "")))
 
-    # 4. Save config and load it
+    # 4. Update config with returned jacsId and reload
     config_data = {
         "jacsAgentName": name,
         "jacsAgentVersion": version,
@@ -3731,8 +3816,14 @@ def register_new_agent(
         json.dump(config_data, f, indent=2)
         f.write("\n")
 
-    # 5. Load into module state and reset singleton
-    hai_config.load(config_path)
+    # 5. Update module state with jacsId (agent is already loaded)
+    hai_config._config = hai_config.AgentConfig(
+        name=name,
+        version=version,
+        key_dir=str(kd.resolve()),
+        jacs_id=jacs_id,
+    )
+    # _agent was already set above; keep it
     global _client
     _client = None
 
@@ -3828,7 +3919,7 @@ def verify_agent(
     Returns:
         AgentVerificationResult with verification status at all levels.
     """
-    from jacs.hai.crypt import verify_string as _verify_string
+    from jacs.hai.signing import verify_string as _verify_string
 
     errors: list[str] = []
     agent_id = ""
@@ -3864,12 +3955,6 @@ def verify_agent(
 
     if sig_b64 and pub_key_pem:
         try:
-            from cryptography.hazmat.primitives.serialization import (
-                load_pem_public_key,
-            )
-
-            pub_key = load_pem_public_key(pub_key_pem.encode("utf-8"))
-
             # Reconstruct canonical form: include jacsSignature minus .signature
             import copy
             signing_doc = copy.deepcopy(doc)
@@ -3878,7 +3963,8 @@ def verify_agent(
             else:
                 del signing_doc["jacsSignature"]
             canonical = canonicalize_json(signing_doc)
-            jacs_valid = _verify_string(pub_key, canonical, sig_b64)  # type: ignore[arg-type]
+            # Delegate verification to JACS binding-core
+            jacs_valid = _verify_string(canonical, sig_b64, pub_key_pem)
             if not jacs_valid:
                 errors.append("JACS signature invalid")
         except Exception as exc:

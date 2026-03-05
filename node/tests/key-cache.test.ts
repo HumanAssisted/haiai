@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
-import { generateKeypair } from '../src/crypt.js';
+import { generateTestKeypair as generateKeypair } from './setup.js';
 
-function makeClient(): HaiClient {
+async function makeClient(): Promise<HaiClient> {
   const keypair = generateKeypair();
-  return HaiClient.fromCredentials('test-agent', keypair.privateKeyPem, { url: 'https://hai.example' });
+  return HaiClient.fromCredentials('test-agent', keypair.privateKeyPem, { url: 'https://hai.example', privateKeyPassphrase: 'keygen-password' });
 }
 
 const KEY_RESPONSE_V1 = {
@@ -38,7 +38,7 @@ describe('agent key cache', () => {
 
   describe('fetchRemoteKey cache', () => {
     it('caches result and avoids second HTTP call', async () => {
-      const client = makeClient();
+      const client = await makeClient();
       const fetchMock = vi.fn()
         .mockResolvedValueOnce(new Response(JSON.stringify(KEY_RESPONSE_V1), {
           status: 200,
@@ -60,7 +60,7 @@ describe('agent key cache', () => {
 
     it('refetches after cache TTL expires', async () => {
       vi.useFakeTimers();
-      const client = makeClient();
+      const client = await makeClient();
 
       const fetchMock = vi.fn()
         .mockResolvedValueOnce(new Response(JSON.stringify(KEY_RESPONSE_V1), {
@@ -85,7 +85,7 @@ describe('agent key cache', () => {
     });
 
     it('clearAgentKeyCache forces refetch', async () => {
-      const client = makeClient();
+      const client = await makeClient();
 
       const fetchMock = vi.fn()
         .mockResolvedValueOnce(new Response(JSON.stringify(KEY_RESPONSE_V1), {
@@ -109,7 +109,7 @@ describe('agent key cache', () => {
     });
 
     it('caches different (id, version) pairs separately', async () => {
-      const client = makeClient();
+      const client = await makeClient();
 
       const fetchMock = vi.fn()
         .mockResolvedValueOnce(new Response(JSON.stringify(KEY_RESPONSE_V1), {
@@ -142,7 +142,7 @@ describe('agent key cache', () => {
 
   describe('fetchKeyByHash cache', () => {
     it('caches result on second call', async () => {
-      const client = makeClient();
+      const client = await makeClient();
       const fetchMock = vi.fn()
         .mockResolvedValue(new Response(JSON.stringify(KEY_RESPONSE_V1), {
           status: 200,
@@ -163,7 +163,7 @@ describe('agent key cache', () => {
 
   describe('fetchKeyByEmail cache', () => {
     it('caches result on second call', async () => {
-      const client = makeClient();
+      const client = await makeClient();
       const fetchMock = vi.fn()
         .mockResolvedValue(new Response(JSON.stringify(KEY_RESPONSE_V1), {
           status: 200,
@@ -184,7 +184,7 @@ describe('agent key cache', () => {
 
   describe('fetchKeyByDomain cache', () => {
     it('caches result on second call', async () => {
-      const client = makeClient();
+      const client = await makeClient();
       const fetchMock = vi.fn()
         .mockResolvedValue(new Response(JSON.stringify(KEY_RESPONSE_V1), {
           status: 200,

@@ -32,12 +32,12 @@ def test_haisdk_cli_reexports_legacy_main() -> None:
 def test_haisdk_library_passthrough_maps_to_legacy_functions() -> None:
     from haisdk.crypt import canonicalize_json as public_canonicalize_json
     from haisdk.signing import sign_response as public_sign_response
-    from jacs.hai.crypt import canonicalize_json as legacy_canonicalize_json
-    from jacs.hai.signing import sign_response as legacy_sign_response
+    from jacs.hai.signing import canonicalize_json as signing_canonicalize_json
+    from jacs.hai.signing import sign_response as signing_sign_response
 
     payload = {"z": 1, "a": {"b": 2}}
-    assert public_sign_response is legacy_sign_response
-    assert public_canonicalize_json(payload) == legacy_canonicalize_json(payload)
+    assert public_sign_response is signing_sign_response
+    assert public_canonicalize_json(payload) == signing_canonicalize_json(payload)
 
 
 def test_haisdk_step2_modules_import() -> None:

@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
-import { generateKeypair } from '../src/crypt.js';
+import { generateTestKeypair as generateKeypair } from './setup.js';
 
-function makeClient(jacsId: string = 'agent/with/slash'): HaiClient {
+async function makeClient(jacsId: string = 'agent/with/slash'): Promise<HaiClient> {
   const keypair = generateKeypair();
-  return HaiClient.fromCredentials(jacsId, keypair.privateKeyPem, { url: 'https://hai.example' });
+  return HaiClient.fromCredentials(jacsId, keypair.privateKeyPem, { url: 'https://hai.example', privateKeyPassphrase: 'keygen-password' });
 }
 
 function stubJsonFetch(expectedUrl: string, payload: Record<string, unknown> = {}): void {
@@ -25,7 +25,7 @@ describe('client path escaping', () => {
   });
 
   it('escapes claimUsername agentId path segments', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     stubJsonFetch(
       'https://hai.example/api/v1/agents/agent%2F..%2Fescape/username',
       { username: 'agent', email: 'agent@hai.ai', agent_id: 'agent/../escape' },
@@ -35,7 +35,7 @@ describe('client path escaping', () => {
   });
 
   it('escapes submitResponse jobId path segments', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     stubJsonFetch(
       'https://hai.example/api/v1/agents/jobs/job%2Fwith%2Fslash/response',
       { success: true, job_id: 'job/with/slash', message: 'ok' },
@@ -45,7 +45,7 @@ describe('client path escaping', () => {
   });
 
   it('escapes markRead jacsId and messageId path segments', async () => {
-    const client = makeClient('agent/with/slash');
+    const client = await makeClient('agent/with/slash');
     stubJsonFetch(
       'https://hai.example/api/agents/agent%2Fwith%2Fslash/email/messages/msg%2Fwith%2Fslash/read',
       {},
@@ -55,7 +55,7 @@ describe('client path escaping', () => {
   });
 
   it('escapes fetchRemoteKey jacsId and version path segments', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     stubJsonFetch(
       'https://hai.example/jacs/v1/agents/agent%2Fwith%2Fslash/keys/2026%2F01',
       {
@@ -69,7 +69,7 @@ describe('client path escaping', () => {
   });
 
   it('escapes getAgentAttestation agentId path segments', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     stubJsonFetch(
       'https://hai.example/api/v1/agents/other%2Fagent/verify',
       { jacs_id: 'other/agent', registered: false, registrations: [] },

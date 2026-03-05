@@ -1,5 +1,6 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { signString, verifyString } from './crypt.js';
+import { randomUUID } from 'node:crypto';
+import { JacsAgent, hashString, verifyDocumentStandalone } from '@hai.ai/jacs';
+
 /** JACS document envelope wrapping data with metadata and jacsSignature. */
 export interface JacsDocument {
   version: string;
@@ -67,7 +68,8 @@ export function canonicalJson(obj: unknown): string {
 }
 
 /**
- * Unwrap a JACS-signed event, verifying the signature if server keys are provided.
+ * Unwrap a JACS-signed event, verifying the signature via JACS if server keys
+ * are provided.
  *
  * Supports both the canonical format (version/document_type/data/metadata/jacsSignature)
  * and the legacy format (payload/metadata/signature). If the event is not a
@@ -78,6 +80,7 @@ export function canonicalJson(obj: unknown): string {
 export function unwrapSignedEvent(
   eventData: Record<string, unknown>,
   serverPublicKeys: Record<string, string>,
+  agent?: JacsAgent,
 ): unknown {
   // Canonical JacsDocument format: {version, document_type, data, metadata, jacsSignature}
   if (eventData.jacsSignature && eventData.metadata && eventData.data !== undefined) {
@@ -87,7 +90,27 @@ export function unwrapSignedEvent(
 
     if (publicKeyPem) {
       const signedContent = canonicalJson(doc.data);
-      const valid = verifyString(publicKeyPem, signedContent, doc.jacsSignature.signature);
+      let valid = false;
+      if (agent) {
+        try {
+          valid = agent.verifyStringSync(
+            signedContent,
+            doc.jacsSignature.signature,
+            Buffer.from(publicKeyPem, 'utf-8'),
+            'pem',
+          );
+        } catch {
+          valid = false;
+        }
+      } else {
+        // Attempt standalone verification via JACS
+        try {
+          const standaloneResult = verifyDocumentStandalone(JSON.stringify(eventData));
+          valid = standaloneResult.valid;
+        } catch {
+          valid = false;
+        }
+      }
       if (!valid) {
         throw new Error(`JACS signature verification failed for agentID="${agentID}"`);
       }
@@ -108,7 +131,19 @@ export function unwrapSignedEvent(
         metadata: eventData.metadata,
         payload: eventData.payload,
       });
-      const valid = verifyString(publicKeyPem, signedContent, (sig.signature as string) || '');
+      let valid = false;
+      if (agent) {
+        try {
+          valid = agent.verifyStringSync(
+            signedContent,
+            (sig.signature as string) || '',
+            Buffer.from(publicKeyPem, 'utf-8'),
+            'pem',
+          );
+        } catch {
+          valid = false;
+        }
+      }
       if (!valid) {
         throw new Error(`JACS signature verification failed for key_id="${keyId}"`);
       }
@@ -122,7 +157,7 @@ export function unwrapSignedEvent(
 }
 
 /**
- * Sign a job response as a JACS document.
+ * Sign a job response as a JACS document via JACS core.
  *
  * Creates a JacsDocument matching the Python SDK format:
  *   {version, document_type, data, metadata, jacsSignature}
@@ -132,22 +167,21 @@ export function unwrapSignedEvent(
  */
 export function signResponse(
   jobResponse: unknown,
-  privateKeyPem: string,
+  agent: JacsAgent,
   jacsId: string,
-  privateKeyPassphrase?: string,
 ): { signed_document: string; agent_jacs_id: string } {
   const now = new Date().toISOString();
   const documentId = randomUUID();
 
   // Canonical JSON of the payload for signing and hashing
   const canonicalPayload = canonicalJson(jobResponse);
-  const hash = createHash('sha256').update(canonicalPayload).digest('hex');
+  const hash = hashString(canonicalPayload);
 
   // Store data in canonical (sorted-key) form for cross-language compat
   const sortedData: unknown = JSON.parse(canonicalPayload);
 
-  // Sign the canonical payload data (matching Python)
-  const signature = signString(privateKeyPem, canonicalPayload, privateKeyPassphrase);
+  // Sign the canonical payload data via JACS
+  const signature = agent.signStringSync(canonicalPayload);
 
   const jacsDoc: JacsDocument = {
     version: '1.0.0',

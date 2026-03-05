@@ -1,13 +1,19 @@
 """JACS envelope signing and verification for HAI transport.
 
+ALL cryptographic operations delegate to JACS binding-core.
+There is zero local crypto in this module.
+
 Handles:
+  - Canonical JSON for cross-language signature compatibility
   - Detecting JACS-signed events from SSE/WS
   - Verifying server signatures using cached HAI public keys
   - Signing job responses as JACS documents
+  - Creating self-signed JACS agent documents
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -19,14 +25,143 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
-from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-    Ed25519PrivateKey,
-    Ed25519PublicKey,
-)
-from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
-from jacs.hai.crypt import canonicalize_json, sign_string, verify_string
 logger = logging.getLogger("jacs.hai.signing")
+
+
+# ---------------------------------------------------------------------------
+# Canonical JSON
+# ---------------------------------------------------------------------------
+
+
+def canonicalize_json(obj: dict) -> str:
+    """Produce canonical JSON matching Rust serde_json::to_string() with BTreeMap.
+
+    Sorted keys, compact separators, no trailing newline.
+    """
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"))
+
+
+# ---------------------------------------------------------------------------
+# Signature verification (delegates to JACS binding-core)
+# ---------------------------------------------------------------------------
+
+
+def _extract_raw_key_from_pem(pem_str: str) -> bytes:
+    """Extract raw key bytes from a PEM-encoded public key.
+
+    Handles keys by stripping the ASN.1 SubjectPublicKeyInfo wrapper
+    to get the raw key bytes, and also handles raw base64 keys that
+    aren't wrapped in PEM armor.
+    """
+    lines = pem_str.strip().splitlines()
+    if lines[0].startswith("-----BEGIN"):
+        # Standard PEM format
+        b64_data = "".join(
+            line for line in lines
+            if not line.startswith("-----") and not line.startswith("#")
+        )
+        der_bytes = base64.b64decode(b64_data)
+
+        # Ed25519 SubjectPublicKeyInfo has a 12-byte ASN.1 prefix
+        # before the 32-byte raw key. Total DER = 44 bytes.
+        if len(der_bytes) == 44:
+            return der_bytes[12:]  # Strip ASN.1 wrapper
+        # For other key types, return full DER
+        return der_bytes
+    else:
+        # Not PEM-wrapped -- try raw base64
+        return base64.b64decode(pem_str)
+
+
+def verify_string(
+    data: str,
+    signature_b64: str,
+    public_key_pem: str,
+    algorithm: str = "ring-Ed25519",
+) -> bool:
+    """Verify a base64-encoded signature using JACS binding-core.
+
+    This is a stateless operation that uses the module-level JACS
+    verify_string function (no agent needed).
+
+    Args:
+        data: The UTF-8 message that was signed.
+        signature_b64: Base64-encoded signature to verify.
+        public_key_pem: PEM-encoded public key.
+        algorithm: Signing algorithm (default "ring-Ed25519").
+
+    Returns:
+        True if the signature is valid, False otherwise.
+    """
+    try:
+        from jacs.jacs import verify_string as _jacs_verify_string
+    except ImportError:
+        import jacs as _jacs_module
+        _jacs_verify_string = _jacs_module.verify_string
+
+    try:
+        # JACS verify_string expects raw key bytes, not PEM.
+        key_bytes = _extract_raw_key_from_pem(public_key_pem)
+        return _jacs_verify_string(data, signature_b64, key_bytes, algorithm)
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Agent document creation (delegates signing to JACS binding-core)
+# ---------------------------------------------------------------------------
+
+
+def create_agent_document(
+    agent: Any,
+    name: str,
+    version: str,
+    jacs_id: Optional[str] = None,
+    extra_fields: Optional[dict] = None,
+) -> dict:
+    """Create a self-signed JACS agent document via binding-core.
+
+    The agent must be loaded with a private key capable of signing.
+
+    Args:
+        agent: A loaded JacsAgent instance.
+        name: Agent name (ASCII-only).
+        version: Agent version string.
+        jacs_id: Optional pre-assigned JACS ID. Generated if omitted.
+        extra_fields: Optional dict of additional fields to include in the
+            document before signing (e.g. ``description``, ``domain``).
+
+    Returns:
+        Agent document dict with ``jacsSignature`` field populated.
+    """
+    if jacs_id is None:
+        jacs_id = str(uuid.uuid4())
+
+    doc: dict = {
+        "jacsAgentName": name,
+        "jacsAgentVersion": version,
+        "jacsId": jacs_id,
+        "jacsVersion": version,
+    }
+
+    # Include extra fields before signing so the signature covers them
+    if extra_fields:
+        doc.update(extra_fields)
+
+    # Build jacsSignature WITHOUT .signature first (matches Rust canonical form)
+    doc["jacsSignature"] = {
+        "agentID": jacs_id,
+        "date": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Sign the canonical form (includes jacsSignature with agentID+date, no signature)
+    canonical = canonicalize_json(doc)
+    signature = agent.sign_string(canonical)
+
+    # Insert signature into the jacsSignature object
+    doc["jacsSignature"]["signature"] = signature
+    return doc
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +175,6 @@ _KEY_CACHE_TTL = 3600  # 1 hour
 class _CachedKey:
     key_id: str
     algorithm: str
-    public_key: Ed25519PublicKey
     public_key_pem: str
 
 
@@ -84,19 +218,14 @@ def fetch_server_keys(hai_url: str) -> list[_CachedKey]:
         if not key_data.get("is_active", False):
             continue
         pem_str = key_data.get("public_key", "")
-        try:
-            loaded = load_pem_public_key(pem_str.encode())
-            if isinstance(loaded, Ed25519PublicKey):
-                parsed.append(
-                    _CachedKey(
-                        key_id=key_data.get("key_id", ""),
-                        algorithm=key_data.get("algorithm", "ed25519"),
-                        public_key=loaded,
-                        public_key_pem=pem_str,
-                    )
+        if pem_str:
+            parsed.append(
+                _CachedKey(
+                    key_id=key_data.get("key_id", ""),
+                    algorithm=key_data.get("algorithm", ""),
+                    public_key_pem=pem_str,
                 )
-        except Exception:
-            logger.debug("Skipping non-Ed25519 key: %s", key_data.get("key_id"))
+            )
 
     with _key_cache_lock:
         _key_cache = _KeyCache(
@@ -136,6 +265,8 @@ def unwrap_signed_event(
 ) -> tuple[dict[str, Any], bool]:
     """Unwrap a JACS-signed event, optionally verifying the server signature.
 
+    Verification delegates to JACS binding-core via verify_string.
+
     Args:
         data: The parsed JSON from SSE/WS.
         hai_url: HAI server URL (needed to fetch keys for verification).
@@ -159,7 +290,7 @@ def unwrap_signed_event(
                 canonical = canonicalize_json(payload)
                 keys = fetch_server_keys(hai_url)
                 for cached_key in keys:
-                    if verify_string(cached_key.public_key, canonical, sig_value):
+                    if verify_string(canonical, sig_value, cached_key.public_key_pem):
                         verified = True
                         break
 
@@ -168,7 +299,7 @@ def unwrap_signed_event(
                     if payload_hash:
                         for cached_key in keys:
                             if verify_string(
-                                cached_key.public_key, payload_hash, sig_value
+                                payload_hash, sig_value, cached_key.public_key_pem
                             ):
                                 verified = True
                                 break
@@ -197,10 +328,10 @@ def unwrap_signed_event(
 
 def sign_response(
     job_response_payload: dict[str, Any],
-    private_key: Ed25519PrivateKey,
+    agent: Any,
     jacs_id: str,
 ) -> dict[str, str]:
-    """Sign a job response and return a ``SignedJobResponse`` dict.
+    """Sign a job response using the loaded JACS agent.
 
     The returned dict matches the server's ``SignedJobResponse`` schema::
 
@@ -208,7 +339,7 @@ def sign_response(
 
     Args:
         job_response_payload: The ``JobResponseRequest`` dict.
-        private_key: Agent's Ed25519 private key.
+        agent: A loaded JacsAgent instance (from JACS binding-core).
         jacs_id: Agent's JACS identity ID.
 
     Returns:
@@ -239,7 +370,7 @@ def sign_response(
         },
     }
 
-    signature = sign_string(private_key, canonical_payload)
+    signature = agent.sign_string(canonical_payload)
     jacs_doc["jacsSignature"]["signature"] = signature
 
     return {

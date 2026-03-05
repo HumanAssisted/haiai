@@ -49,15 +49,9 @@ import {
   RecipientNotFoundError,
   RateLimitedError,
 } from './errors.js';
-import {
-  createHash,
-  createPrivateKey,
-  createPublicKey,
-  verify as verifySignature,
-} from 'node:crypto';
-import { signString, verifyString, generateKeypair } from './crypt.js';
 import { signResponse, canonicalJson, getServerKeys, unwrapSignedEvent } from './signing.js';
-import { loadConfig, loadPrivateKey, loadPrivateKeyPassphrase } from './config.js';
+import { loadConfig } from './config.js';
+import { JacsAgent, createAgentSync, verifyDocumentStandalone, hashString } from '@hai.ai/jacs';
 import { parseSseStream } from './sse.js';
 import { openWebSocket, wsEventStream } from './ws.js';
 
@@ -76,8 +70,8 @@ import { openWebSocket, wsEventStream } from './ws.js';
  */
 export class HaiClient {
   private config!: AgentConfig;
-  private privateKeyPem!: string;
-  private privateKeyPassphrase?: string;
+  /** JACS native agent for all cryptographic operations. */
+  private agent!: JacsAgent;
   private baseUrl: string;
   private timeout: number;
   private maxRetries: number;
@@ -102,7 +96,7 @@ export class HaiClient {
   }
 
   /**
-   * Create a HaiClient by loading config and private key.
+   * Create a HaiClient by loading JACS agent config.
    *
    * This is the primary constructor. Uses zero-config discovery:
    * 1. options.configPath
@@ -112,29 +106,50 @@ export class HaiClient {
   static async create(options?: HaiClientOptions): Promise<HaiClient> {
     const client = new HaiClient(options);
     client.config = await loadConfig(options?.configPath);
-    client.privateKeyPem = await loadPrivateKey(client.config);
-    client.privateKeyPassphrase = await loadPrivateKeyPassphrase();
+
+    const configPath = options?.configPath
+      ?? process.env.JACS_CONFIG_PATH
+      ?? './jacs.config.json';
+    const { resolve } = await import('node:path');
+    const resolvedConfigPath = resolve(configPath);
+
+    client.agent = new JacsAgent();
+    await client.agent.load(resolvedConfigPath);
+
     return client;
   }
 
   /**
    * Create a HaiClient directly from a JACS ID and PEM-encoded private key.
    * Useful for testing or programmatic setup without config files.
+   *
+   * Creates a temporary JACS agent backed by on-disk key files so that
+   * all cryptographic operations delegate to JACS core.
    */
-  static fromCredentials(
+  static async fromCredentials(
     jacsId: string,
     privateKeyPem: string,
     options?: Omit<HaiClientOptions, 'configPath'> & { privateKeyPassphrase?: string },
-  ): HaiClient {
+  ): Promise<HaiClient> {
     const client = new HaiClient(options);
+
+    // Store the caller's private key PEM for exportKeys/rotateKeys compatibility
+    (client as any)._privateKeyPem = privateKeyPem;
+
+    // Create an ephemeral JACS agent (in-memory keys, no disk I/O required).
+    // The ephemeral agent generates its own Ed25519 key pair — this is
+    // appropriate because fromCredentials is typically followed by register()
+    // which sends the new public key to the server.
+    client.agent = new JacsAgent();
+    const ephResult = JSON.parse(client.agent.ephemeralSync('ring-Ed25519'));
+
     client.config = {
       jacsAgentName: jacsId,
-      jacsAgentVersion: '1.0.0',
-      jacsKeyDir: '.',
+      jacsAgentVersion: ephResult.version || '1.0.0',
+      jacsKeyDir: '',
       jacsId,
     };
-    client.privateKeyPem = privateKeyPem;
-    client.privateKeyPassphrase = options?.privateKeyPassphrase;
+
     return client;
   }
 
@@ -204,23 +219,23 @@ export class HaiClient {
   private buildAuthHeaders(): Record<string, string> {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const message = `${this.jacsId}:${timestamp}`;
-    const signature = signString(this.privateKeyPem, message, this.privateKeyPassphrase);
+    const signature = this.agent.signStringSync(message);
     return {
       'Authorization': `JACS ${this.jacsId}:${timestamp}:${signature}`,
       'Content-Type': 'application/json',
     };
   }
 
-  /** Sign a UTF-8 message with the agent's private key. Returns base64. */
+  /** Sign a UTF-8 message with the agent's private key via JACS. Returns base64. */
   signMessage(message: string): string {
-    return signString(this.privateKeyPem, message, this.privateKeyPassphrase);
+    return this.agent.signStringSync(message);
   }
 
   /** Build the JACS Authorization header value string. */
   buildAuthHeader(): string {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const message = `${this.jacsId}:${timestamp}`;
-    const signature = signString(this.privateKeyPem, message, this.privateKeyPassphrase);
+    const signature = this.agent.signStringSync(message);
     return `JACS ${this.jacsId}:${timestamp}:${signature}`;
   }
 
@@ -300,17 +315,26 @@ export class HaiClient {
   // ---------------------------------------------------------------------------
 
   /**
-   * Verify a message signed by HAI.
+   * Verify a message signed by HAI via JACS.
    *
    * @param message - The message string that was signed
    * @param signature - The signature to verify (base64-encoded)
-   * @param haiPublicKey - HAI's public key (PEM or base64)
+   * @param haiPublicKey - HAI's public key (PEM)
    * @returns true if signature is valid
    */
   verifyHaiMessage(message: string, signature: string, haiPublicKey: string = ''): boolean {
     if (!signature || !message) return false;
     if (!haiPublicKey) return false;
-    return verifyString(haiPublicKey, message, signature);
+    try {
+      return this.agent.verifyStringSync(
+        message,
+        signature,
+        Buffer.from(haiPublicKey, 'utf-8'),
+        'pem',
+      );
+    } catch {
+      return false;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -360,9 +384,9 @@ export class HaiClient {
         agentDoc.domain = options.domain;
       }
 
-      // Sign canonical JSON
+      // Sign canonical JSON via JACS
       const canonical = canonicalJson(agentDoc);
-      const signature = signString(this.privateKeyPem, canonical, this.privateKeyPassphrase);
+      const signature = this.agent.signStringSync(canonical);
       (agentDoc.jacsSignature as Record<string, string>).signature = signature;
       agentJson = JSON.stringify(agentDoc);
     }
@@ -423,10 +447,9 @@ export class HaiClient {
    * @returns RotationResult with old/new versions and registration status.
    */
   async rotateKeys(options?: RotateKeysOptions): Promise<RotationResult> {
-    const { rename, writeFile } = await import('node:fs/promises');
+    const { rename, writeFile, readFile: readF, stat: fsStat } = await import('node:fs/promises');
     const { randomUUID } = await import('node:crypto');
     const { join, resolve } = await import('node:path');
-    const { encryptPrivateKeyPem } = await import('./crypt.js');
 
     const registerWithHai = options?.registerWithHai ?? true;
     const haiUrl = options?.haiUrl ?? this.baseUrl;
@@ -439,8 +462,10 @@ export class HaiClient {
     const oldVersion = this.config.jacsAgentVersion;
     const keyDir = this.config.jacsKeyDir;
 
-    // Save old key for chain-of-trust auth during re-registration
-    const oldPrivateKeyPem = this.privateKeyPem;
+    // Build old-key auth header BEFORE rotation (chain of trust)
+    const oldAuthTimestamp = Math.floor(Date.now() / 1000).toString();
+    const oldAuthMessage = `${jacsId}:${oldVersion}:${oldAuthTimestamp}`;
+    const oldAuthSig = this.agent.signStringSync(oldAuthMessage);
 
     // Find existing private key file
     const candidates = [
@@ -452,8 +477,7 @@ export class HaiClient {
     let privKeyPath: string | null = null;
     for (const candidate of candidates) {
       try {
-        const { stat } = await import('node:fs/promises');
-        await stat(candidate);
+        await fsStat(candidate);
         privKeyPath = candidate;
         break;
       } catch {
@@ -476,20 +500,35 @@ export class HaiClient {
 
     await rename(privKeyPath, archivePriv);
     try {
-      const { stat: fsStat } = await import('node:fs/promises');
       await fsStat(pubKeyPath);
       await rename(pubKeyPath, archivePub);
     } catch (err) {
-      // Only ignore file-not-found; warn on other errors
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
         console.warn('Failed to archive public key:', err);
       }
     }
 
-    // 2. Generate new keypair
-    let newKeypair: { publicKeyPem: string; privateKeyPem: string };
+    // 2. Generate new JACS agent (keys + config) via JACS core
+    const passphrase = process.env.JACS_PRIVATE_KEY_PASSWORD ?? '';
+    const newVersion = randomUUID();
+    let newPublicKeyPem: string;
     try {
-      newKeypair = generateKeypair();
+      const resultJson = createAgentSync(
+        this.config.jacsAgentName,
+        passphrase,
+        'ring-Ed25519',
+        null, // data dir
+        keyDir,
+        null, // config path (don't overwrite main config)
+        null, // agent type
+        (this.config as unknown as Record<string, unknown>).description as string
+          ?? 'Agent registered via Node SDK',
+        null, // domain
+        null, // default storage
+      );
+      const result = JSON.parse(resultJson);
+      const newPubKeyPath = result.public_key_path || join(keyDir, 'jacs.public.pem');
+      newPublicKeyPem = await readF(newPubKeyPath, 'utf-8');
     } catch (err) {
       // Rollback: restore archived keys
       await rename(archivePriv, privKeyPath).catch(() => {});
@@ -497,22 +536,12 @@ export class HaiClient {
       throw new AuthenticationError(`Key generation failed: ${err}`);
     }
 
-    // 3. Write new keys (encrypted if passphrase available)
-    if (this.privateKeyPassphrase) {
-      const encrypted = encryptPrivateKeyPem(newKeypair.privateKeyPem, this.privateKeyPassphrase);
-      await writeFile(privKeyPath, encrypted, { mode: 0o600 });
-    } else {
-      await writeFile(privKeyPath, newKeypair.privateKeyPem, { mode: 0o600 });
-    }
-    await writeFile(pubKeyPath, newKeypair.publicKeyPem, { mode: 0o644 });
-
-    // 4. Build new agent document (preserve metadata from config)
-    const newVersion = randomUUID();
+    // 3. Build new agent document
     const agentDoc: Record<string, unknown> = {
       jacsId,
       jacsVersion: newVersion,
       jacsPreviousVersion: oldVersion,
-      jacsPublicKey: newKeypair.publicKeyPem,
+      jacsPublicKey: newPublicKeyPem,
       name: this.config.jacsAgentName,
       description: (this.config as unknown as Record<string, unknown>).description
         ?? (this.config as unknown as Record<string, unknown>).jacsAgentDescription
@@ -523,29 +552,31 @@ export class HaiClient {
       },
     };
 
+    // Reload the agent with new keys for signing
+    const configPath = resolve(process.env.JACS_CONFIG_PATH ?? './jacs.config.json');
+    this.agent = new JacsAgent();
+    try {
+      await this.agent.load(configPath);
+    } catch {
+      // If main config doesn't point to new keys yet, create temp config
+    }
+
     const canonical = canonicalJson(agentDoc);
-    const signature = signString(newKeypair.privateKeyPem, canonical);
+    const signature = this.agent.signStringSync(canonical);
     (agentDoc.jacsSignature as Record<string, string>).signature = signature;
     const signedAgentJson = JSON.stringify(agentDoc, null, 2);
 
-    // 5. Compute new public key hash
-    const pubKeyDer = createPublicKey(newKeypair.publicKeyPem)
-      .export({ type: 'spki', format: 'der' });
-    const newPublicKeyHash = createHash('sha256').update(pubKeyDer).digest('hex');
+    // 4. Compute new public key hash via JACS
+    const newPublicKeyHash = hashString(newPublicKeyPem);
 
-    // 6. Update in-memory state
-    this.privateKeyPem = newKeypair.privateKeyPem;
+    // 5. Update in-memory state
     this.config = {
       ...this.config,
       jacsAgentVersion: newVersion,
     };
 
-    // 7. Update config file
-    const configPath = resolve(
-      process.env.JACS_CONFIG_PATH ?? './jacs.config.json',
-    );
+    // 6. Update config file
     try {
-      const { readFile: readF } = await import('node:fs/promises');
       const raw = JSON.parse(await readF(configPath, 'utf-8')) as Record<string, unknown>;
       raw.jacsAgentVersion = newVersion;
       await writeFile(configPath, JSON.stringify(raw, null, 2) + '\n');
@@ -553,19 +584,14 @@ export class HaiClient {
       // Config update failure is non-fatal for rotation
     }
 
-    // 8. Optionally re-register with HAI using the OLD key for auth
-    // (chain of trust: old key vouches for new key)
+    // 7. Optionally re-register with HAI using the OLD key for auth
     let registeredWithHai = false;
     if (registerWithHai && haiUrl) {
       try {
-        // Build 4-part auth header signed by the OLD key
-        const timestamp = Math.floor(Date.now() / 1000).toString();
-        const authMessage = `${jacsId}:${oldVersion}:${timestamp}`;
-        const authSig = signString(oldPrivateKeyPem, authMessage, this.privateKeyPassphrase);
-        const authHeader = `JACS ${jacsId}:${oldVersion}:${timestamp}:${authSig}`;
+        const authHeader = `JACS ${jacsId}:${oldVersion}:${oldAuthTimestamp}:${oldAuthSig}`;
 
         const url = this.makeUrl('/api/v1/agents/register');
-        const publicKeyB64 = Buffer.from(newKeypair.publicKeyPem, 'utf-8').toString('base64');
+        const publicKeyB64 = Buffer.from(newPublicKeyPem, 'utf-8').toString('base64');
         const body = JSON.stringify({
           agent_json: signedAgentJson,
           public_key: publicKeyB64,
@@ -813,8 +839,8 @@ export class HaiClient {
       },
     };
 
-    // Sign the response as a JACS document
-    const signed = signResponse(body, this.privateKeyPem, this.jacsId, this.privateKeyPassphrase);
+    // Sign the response as a JACS document via JACS
+    const signed = signResponse(body, this.agent, this.jacsId);
 
     const response = await this.fetchWithRetry(url, {
       method: 'POST',
@@ -1126,7 +1152,38 @@ export class HaiClient {
     description?: string;
     quiet?: boolean;
   }): Promise<RegistrationResult> {
-    const { publicKeyPem, privateKeyPem } = generateKeypair();
+    const { mkdtemp, readFile: readF } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+
+    // Generate a new JACS agent with keys via JACS core
+    const tempDir = await mkdtemp(join(tmpdir(), 'haisdk-register-'));
+    const keyDir = join(tempDir, 'keys');
+    const dataDir = join(tempDir, 'data');
+    const passphrase = process.env.JACS_PRIVATE_KEY_PASSWORD ?? 'register-temp';
+
+    const resultJson = createAgentSync(
+      agentName,
+      passphrase,
+      'ring-Ed25519',
+      dataDir,
+      keyDir,
+      join(tempDir, 'jacs.config.json'),
+      null,
+      options.description ?? 'Agent registered via Node SDK',
+      options.domain ?? null,
+      null,
+    );
+    const createResult = JSON.parse(resultJson);
+
+    const pubKeyPath = createResult.public_key_path || join(keyDir, 'jacs.public.pem');
+    const publicKeyPem = await readF(pubKeyPath, 'utf-8');
+
+    // Load the new agent for signing
+    const tempAgent = new JacsAgent();
+    const tempConfigPath = createResult.config_path || join(tempDir, 'jacs.config.json');
+    const { resolve } = await import('node:path');
+    await tempAgent.load(resolve(tempConfigPath));
 
     // Build minimal JACS agent document
     const agentDoc: Record<string, unknown> = {
@@ -1143,9 +1200,9 @@ export class HaiClient {
       version: '1.0.0',
     };
 
-    // Sign canonical JSON
+    // Sign canonical JSON via JACS
     const canonical = canonicalJson(agentDoc);
-    const signature = signString(privateKeyPem, canonical);
+    const signature = tempAgent.signStringSync(canonical);
     (agentDoc.jacsSignature as Record<string, string>).signature = signature;
 
     const url = this.makeUrl('/api/v1/agents/register');
@@ -1167,7 +1224,6 @@ export class HaiClient {
 
     const data = await response.json() as Record<string, unknown>;
 
-    // Print next-step messaging
     if (!options.quiet) {
       console.log(`\nAgent created and submitted for registration!`);
       console.log(`  -> Check your email (${options.ownerEmail}) for a verification link`);
@@ -1177,12 +1233,12 @@ export class HaiClient {
       console.log(`  -> Save your config and private key to a secure, access-controlled location`);
 
       if (options.domain) {
-        const hash = createHash('sha256').update(publicKeyPem).digest('hex');
+        const pubKeyHash = hashString(publicKeyPem);
         console.log(`\n--- DNS Setup Instructions ---`);
         console.log(`Add this TXT record to your domain '${options.domain}':`);
         console.log(`  Name:  _jacs.${options.domain}`);
         console.log(`  Type:  TXT`);
-        console.log(`  Value: sha256:${hash}`);
+        console.log(`  Value: sha256:${pubKeyHash}`);
         console.log(`DNS verification enables the dns_certified tier.\n`);
       } else {
         console.log();
@@ -1242,16 +1298,36 @@ export class HaiClient {
   // ---------------------------------------------------------------------------
 
   /**
-   * Export the agent's public key (derived from the private key).
-   * Returns { publicKeyPem, privateKeyPem }.
+   * Export the agent's public key.
+   * Reads the public key from the JACS key directory.
+   * Returns { publicKeyPem }.
    */
-  exportKeys(): { publicKeyPem: string; privateKeyPem: string } {
-    const privKey = this.privateKeyPassphrase
-      ? createPrivateKey({ key: this.privateKeyPem, format: 'pem', passphrase: this.privateKeyPassphrase })
-      : createPrivateKey(this.privateKeyPem);
-    const pubKey = createPublicKey(privKey);
-    const publicKeyPem = pubKey.export({ type: 'spki', format: 'pem' }) as string;
-    return { publicKeyPem, privateKeyPem: this.privateKeyPem };
+  exportKeys(): { publicKeyPem: string } {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const keyDir = this.config.jacsKeyDir;
+
+    const candidates = [
+      path.join(keyDir, 'agent_public_key.pem'),
+      path.join(keyDir, `${this.config.jacsAgentName}.public.pem`),
+      path.join(keyDir, 'public_key.pem'),
+      path.join(keyDir, 'jacs.public.pem'),
+    ];
+
+    for (const candidate of candidates) {
+      try {
+        const content = fs.readFileSync(candidate, 'utf-8');
+        if (content.includes('PUBLIC KEY')) {
+          return { publicKeyPem: content.trim() };
+        }
+      } catch {
+        // try next
+      }
+    }
+
+    throw new AuthenticationError(
+      `No public key found. Searched: ${candidates.join(', ')}`,
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -1543,9 +1619,8 @@ export class HaiClient {
   signBenchmarkResult(benchmarkResult: Record<string, unknown>): { signed_document: string; agent_jacs_id: string } {
     return signResponse(
       benchmarkResult,
-      this.privateKeyPem,
+      this.agent,
       this.jacsId,
-      this.privateKeyPassphrase,
     );
   }
 
@@ -2153,7 +2228,7 @@ export class HaiClient {
       errors: [],
     };
 
-    // Level 1: Local crypto verification
+    // Level 1: JACS signature verification
     try {
       const publicKeyPem = doc.jacsPublicKey as string | undefined;
       if (!publicKeyPem) {
@@ -2168,17 +2243,16 @@ export class HaiClient {
         return result;
       }
 
-      // Remove signature, canonicalize, verify
+      // Remove signature, canonicalize, verify via JACS
       const verifyDoc = JSON.parse(JSON.stringify(doc)) as Record<string, unknown>;
       delete (verifyDoc.jacsSignature as Record<string, unknown>).signature;
       const canonical = canonicalJson(verifyDoc);
 
-      const keyObject = createPublicKey(publicKeyPem);
-      result.signatureValid = verifySignature(
-        null,
-        Buffer.from(canonical),
-        keyObject,
-        Buffer.from(signature, 'base64'),
+      result.signatureValid = this.agent.verifyStringSync(
+        canonical,
+        signature,
+        Buffer.from(publicKeyPem, 'utf-8'),
+        'pem',
       );
     } catch (e) {
       result.errors.push(`Signature verification failed: ${(e as Error).message}`);

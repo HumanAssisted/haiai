@@ -1,10 +1,7 @@
 // Client
 export { HaiClient } from './client.js';
 
-// Crypto
-export { signString, verifyString, generateKeypair } from './crypt.js';
-
-// Signing
+// Signing (all crypto delegated to JACS core)
 export {
   unwrapSignedEvent,
   signResponse,

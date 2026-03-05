@@ -49,6 +49,7 @@ type Client struct {
 	haiAgentID string // HAI-assigned agent UUID for email URL paths (set after registration)
 	agentEmail string // Agent's @hai.ai email address (set after ClaimUsername)
 	privateKey ed25519.PrivateKey
+	crypto     CryptoBackend // signing/verification backend (JACS or Ed25519 fallback)
 	httpClient *http.Client
 	agentKeys  *keyCache // Agent key cache with 5-minute TTL
 }
@@ -151,6 +152,9 @@ func NewClient(opts ...Option) (*Client, error) {
 		return nil, newError(ErrConfigInvalid, "jacsId is empty in config")
 	}
 
+	// Initialize crypto backend (JACS CGo or Ed25519 fallback based on build tags)
+	cl.crypto = newClientCryptoBackend(cl.privateKey, cl.jacsID)
+
 	return cl, nil
 }
 
@@ -195,7 +199,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 		return wrapError(ErrConnection, err, "failed to create request")
 	}
 
-	SetAuthHeaders(req, c.jacsID, c.privateKey)
+	c.setAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -445,8 +449,8 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 		fmt.Fprintf(os.Stderr, "warning: failed to archive public key: %v\n", err)
 	}
 
-	// 2. Generate new keypair
-	newPub, newPriv, err := GenerateKeyPair()
+	// 2. Generate new keypair via CryptoBackend
+	pubPEM, privPEM, err := c.crypto.GenerateKeyPair()
 	if err != nil {
 		// Rollback: restore archived keys
 		_ = os.Rename(archivePriv, privKeyPath)
@@ -454,23 +458,31 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 		return nil, wrapError(ErrSigningFailed, err, "key generation failed")
 	}
 
-	// 3. Write new keys to disk
+	// Parse the generated keys for local use
+	newPriv, err := ParsePrivateKey(privPEM)
+	if err != nil {
+		_ = os.Rename(archivePriv, privKeyPath)
+		_ = os.Rename(archivePub, pubKeyPath)
+		return nil, wrapError(ErrSigningFailed, err, "failed to parse generated private key")
+	}
+	newPub := PublicKeyFromPrivate(newPriv)
+
+	// Re-encode to canonical PEM formats for disk storage
 	pubDER, err := x509.MarshalPKIXPublicKey(newPub)
 	if err != nil {
 		_ = os.Rename(archivePriv, privKeyPath)
 		_ = os.Rename(archivePub, pubKeyPath)
 		return nil, wrapError(ErrSigningFailed, err, "failed to marshal new public key")
 	}
-	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
+	pubPEM = pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
 
-	// Write private key as PKCS8 PEM (unencrypted; Go SDK doesn't write encrypted keys yet)
 	privDER, err := x509.MarshalPKCS8PrivateKey(newPriv)
 	if err != nil {
 		_ = os.Rename(archivePriv, privKeyPath)
 		_ = os.Rename(archivePub, pubKeyPath)
 		return nil, wrapError(ErrSigningFailed, err, "failed to marshal new private key")
 	}
-	privPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})
+	privPEM = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})
 
 	if err := os.WriteFile(privKeyPath, privPEM, 0o600); err != nil {
 		_ = os.Rename(archivePriv, privKeyPath)
@@ -513,7 +525,12 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 		return nil, wrapError(ErrSigningFailed, err, "failed to marshal agent document")
 	}
 
-	sig := Sign(newPriv, canonical)
+	// Sign with the NEW key via a temporary CryptoBackend
+	newKeyBackend := newClientCryptoBackend(newPriv, c.jacsID)
+	sig, signErr := newKeyBackend.SignBytes(canonical)
+	if signErr != nil {
+		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign agent document with new key")
+	}
 	sigB64 := base64.StdEncoding.EncodeToString(sig)
 	doc["jacsSignature"].(map[string]interface{})["signature"] = sigB64
 
@@ -528,6 +545,7 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 
 	// 6. Update in-memory state
 	c.privateKey = newPriv
+	c.crypto = newClientCryptoBackend(newPriv, c.jacsID)
 
 	// 7. Update config file
 	cfgData, err := os.ReadFile(configPath)
@@ -558,8 +576,9 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 			regURL := c.endpoint + "/api/v1/agents/register"
 			req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, regURL, bytes.NewReader(bodyData))
 			if reqErr == nil {
-				// Build 4-part auth header signed by OLD key
-				authHeader := Build4PartAuthHeader(c.jacsID, oldVersion, oldPrivateKey)
+				// Build 4-part auth header signed by OLD key via CryptoBackend
+				oldKeyBackend := newClientCryptoBackend(oldPrivateKey, c.jacsID)
+				authHeader := build4PartAuthHeaderWithBackend(c.jacsID, oldVersion, oldKeyBackend, oldPrivateKey)
 				req.Header.Set("Authorization", authHeader)
 				req.Header.Set("Content-Type", "application/json")
 				resp, doErr := c.httpClient.Do(req)
@@ -632,7 +651,7 @@ func (c *Client) Status(ctx context.Context) (*StatusResult, error) {
 	if err != nil {
 		return nil, wrapError(ErrConnection, err, "failed to create request")
 	}
-	SetAuthHeaders(req, c.jacsID, c.privateKey)
+	c.setAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -810,7 +829,10 @@ func (c *Client) signResponse(response interface{}) (map[string]interface{}, err
 		return nil, wrapError(ErrSigningFailed, err, "failed to marshal response for signing")
 	}
 
-	sig := Sign(c.privateKey, canonical)
+	sig, signErr := c.crypto.SignBytes(canonical)
+	if signErr != nil {
+		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign response")
+	}
 	doc["jacsSignature"].(map[string]interface{})["signature"] = base64.StdEncoding.EncodeToString(sig)
 
 	return doc, nil
@@ -1000,7 +1022,7 @@ func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions
 	if err != nil {
 		return nil, wrapError(ErrConnection, err, "failed to create request")
 	}
-	SetAuthHeaders(req, c.jacsID, c.privateKey)
+	c.setAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -1051,7 +1073,7 @@ func (c *Client) SignEmail(ctx context.Context, rawEmail []byte) ([]byte, error)
 	if err != nil {
 		return nil, wrapError(ErrConnection, err, "failed to create sign email request")
 	}
-	SetAuthHeaders(req, c.jacsID, c.privateKey)
+	c.setAuthHeaders(req)
 	req.Header.Set("Content-Type", "message/rfc822")
 
 	resp, err := c.httpClient.Do(req)
@@ -1078,7 +1100,7 @@ func (c *Client) VerifyEmail(ctx context.Context, rawEmail []byte) (*EmailVerifi
 	if err != nil {
 		return nil, wrapError(ErrConnection, err, "failed to create verify email request")
 	}
-	SetAuthHeaders(req, c.jacsID, c.privateKey)
+	c.setAuthHeaders(req)
 	req.Header.Set("Content-Type", "message/rfc822")
 
 	resp, err := c.httpClient.Do(req)
@@ -1254,17 +1276,30 @@ func (c *Client) Reply(ctx context.Context, messageID, body, subjectOverride str
 //	    ...
 //	}
 func (c *Client) RegisterNewAgent(ctx context.Context, agentName string, opts *RegisterNewAgentOptions) (*RegisterResult, error) {
-	pub, priv, err := GenerateKeyPair()
+	// Generate keypair via CryptoBackend
+	backend := c.crypto
+	if backend == nil {
+		backend = cryptoBackend
+	}
+	pubPEMBytes, privPEMBytes, err := backend.GenerateKeyPair()
 	if err != nil {
-		return nil, err
+		return nil, wrapError(ErrSigningFailed, err, "key generation failed")
 	}
 
-	// Marshal public key to SPKI PEM (matches Rust verifier expectation).
+	// Parse the generated private key so we can create a signing backend for it
+	priv, err := ParsePrivateKey(privPEMBytes)
+	if err != nil {
+		return nil, wrapError(ErrSigningFailed, err, "failed to parse generated private key")
+	}
+	pub := PublicKeyFromPrivate(priv)
+
+	// Re-encode public key to canonical SPKI PEM (matches Rust verifier expectation)
 	pubDER, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
 		return nil, wrapError(ErrSigningFailed, err, "failed to marshal public key")
 	}
-	pubPEMStr := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}))
+	pubPEMBytes = pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
+	pubPEMStr := string(pubPEMBytes)
 
 	jacsID := generateUUID()
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -1298,8 +1333,12 @@ func (c *Client) RegisterNewAgent(ctx context.Context, agentName string, opts *R
 		return nil, wrapError(ErrSigningFailed, err, "failed to marshal agent document")
 	}
 
-	// Sign the canonical JSON with Ed25519.
-	sig := Sign(priv, canonical)
+	// Sign the canonical JSON via CryptoBackend
+	newKeyBackend := newClientCryptoBackend(priv, jacsID)
+	sig, signErr := newKeyBackend.SignBytes(canonical)
+	if signErr != nil {
+		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign agent document")
+	}
 	sigB64 := base64.StdEncoding.EncodeToString(sig)
 
 	// Insert signature into jacsSignature and re-serialize.
@@ -1435,8 +1474,11 @@ func (c *Client) SignBenchmarkResult(result map[string]interface{}) (*SignedDocu
 	hashBytes := sha256.Sum256(dataJSON)
 	hash := fmt.Sprintf("%x", hashBytes)
 
-	// Sign the canonical data payload
-	sig := Sign(c.privateKey, dataJSON)
+	// Sign the canonical data payload via CryptoBackend
+	sig, signErr := c.crypto.SignBytes(dataJSON)
+	if signErr != nil {
+		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign benchmark result")
+	}
 	sigB64 := base64.StdEncoding.EncodeToString(sig)
 
 	doc := &SignedDocument{

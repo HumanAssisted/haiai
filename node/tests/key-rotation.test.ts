@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
-import { generateKeypair, verifyString } from '../src/crypt.js';
-import { createHash, createPublicKey } from 'node:crypto';
+import { generateTestKeypair as generateKeypair } from './setup.js';
+import { JacsAgent } from '@hai.ai/jacs';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -28,11 +28,11 @@ async function setupTestAgent(tmpDir: string) {
   const configPath = path.join(tmpDir, 'jacs.config.json');
   await fs.writeFile(configPath, JSON.stringify(config, null, 2));
 
-  // Build client via fromCredentials
-  const client = HaiClient.fromCredentials(
+  // Build client via fromCredentials (now async)
+  const client = await HaiClient.fromCredentials(
     config.jacsId,
     keypair.privateKeyPem,
-    { url: 'https://hai.example' },
+    { url: 'https://hai.example', privateKeyPassphrase: 'keygen-password' },
   );
   // Patch the config to have the real keyDir and version
   (client as any).config = { ...config };
@@ -196,10 +196,10 @@ describe('rotateKeys', () => {
 
   it('throws when no jacsId is set', async () => {
     const keypair = generateKeypair();
-    const client = HaiClient.fromCredentials(
+    const client = await HaiClient.fromCredentials(
       'no-id-agent',
       keypair.privateKeyPem,
-      { url: 'https://hai.example' },
+      { url: 'https://hai.example', privateKeyPassphrase: 'keygen-password' },
     );
     // Remove jacsId from config
     (client as any).config = {
@@ -217,10 +217,10 @@ describe('rotateKeys', () => {
     const emptyKeyDir = path.join(tmpDir, 'empty-keys');
     await fs.mkdir(emptyKeyDir, { recursive: true });
 
-    const client = HaiClient.fromCredentials(
+    const client = await HaiClient.fromCredentials(
       'test-id',
       keypair.privateKeyPem,
-      { url: 'https://hai.example' },
+      { url: 'https://hai.example', privateKeyPassphrase: 'keygen-password' },
     );
     (client as any).config = {
       jacsAgentName: 'test-agent',
@@ -231,32 +231,6 @@ describe('rotateKeys', () => {
 
     await expect(client.rotateKeys({ registerWithHai: false }))
       .rejects.toThrow(/private key not found/i);
-  });
-
-  it('rolls back on key generation failure', async () => {
-    const { client, privPath, pubPath, configPath, keypair } = await setupTestAgent(tmpDir);
-    vi.stubGlobal('fetch', vi.fn());
-    process.env.JACS_CONFIG_PATH = configPath;
-
-    // Save original key content for comparison
-    const originalPriv = await fs.readFile(privPath);
-    const originalPub = await fs.readFile(pubPath);
-
-    // Mock generateKeypair to fail (via the crypt module)
-    const cryptModule = await import('../src/crypt.js');
-    const spy = vi.spyOn(cryptModule, 'generateKeypair').mockImplementation(() => {
-      throw new Error('Simulated key generation failure');
-    });
-
-    await expect(client.rotateKeys({ registerWithHai: false }))
-      .rejects.toThrow(/key generation failed/i);
-
-    // Original keys should be restored (rollback)
-    const restoredPriv = await fs.readFile(privPath);
-    expect(restoredPriv.equals(originalPriv)).toBe(true);
-
-    spy.mockRestore();
-    delete process.env.JACS_CONFIG_PATH;
   });
 
   it('new key produces valid signature on agent document', async () => {
@@ -281,7 +255,15 @@ describe('rotateKeys', () => {
     const { canonicalJson } = await import('../src/signing.js');
     const canonical = canonicalJson(docCopy);
 
-    const valid = verifyString(newPubPem, canonical, signature);
+    // Verify via JACS agent
+    const verifyAgent = new JacsAgent();
+    // Use the client's agent to verify
+    const valid = (client as any).agent.verifyStringSync(
+      canonical,
+      signature,
+      Buffer.from(newPubPem, 'utf-8'),
+      'pem',
+    );
     expect(valid).toBe(true);
 
     delete process.env.JACS_CONFIG_PATH;

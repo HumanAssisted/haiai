@@ -5,10 +5,10 @@
  * Usage: npx haisdk <command> [options]
  */
 import { HaiClient } from './client.js';
-import { generateKeypair, encryptPrivateKeyPem } from './crypt.js';
+import { createAgentSync } from '@hai.ai/jacs';
 import { loadPrivateKeyPassphrase } from './config.js';
 import { runJacsCli } from './jacs.js';
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
@@ -179,39 +179,56 @@ async function cmdRegister(args: string[]) {
   const keyDir = resolve(getArg(args, '--key-dir') ?? join(homedir(), '.jacs', 'keys'));
   const configPath = resolve(getArg(args, '--config-path') ?? './jacs.config.json');
 
-  // Bootstrap registration must work before any local config exists.
+  // Generate JACS agent (keys + config) via JACS core
   const keyPassphrase = await loadPrivateKeyPassphrase();
-  const keypair = generateKeypair();
-  const encryptedPrivateKeyPem = encryptPrivateKeyPem(keypair.privateKeyPem, keyPassphrase);
-  const client = HaiClient.fromCredentials(
+  const dataDir = join(dirname(configPath), 'jacs_data');
+
+  const resultJson = createAgentSync(
     name,
-    keypair.privateKeyPem,
-    url ? { url } : undefined,
+    keyPassphrase,
+    'ring-Ed25519',
+    dataDir,
+    keyDir,
+    configPath,
+    null,
+    description,
+    dns,
+    null,
+  );
+  const createResult = JSON.parse(resultJson);
+
+  // Read the generated public key
+  const pubKeyPath = createResult.public_key_path || join(keyDir, 'jacs.public.pem');
+  const privKeyPath = createResult.private_key_path || join(keyDir, 'jacs.private.pem.enc');
+  const publicKeyPem = await readFile(pubKeyPath, 'utf-8');
+  const privateKeyPem = await readFile(privKeyPath, 'utf-8');
+
+  const client = await HaiClient.fromCredentials(
+    name,
+    privateKeyPem,
+    url ? { url, privateKeyPassphrase: keyPassphrase } : { privateKeyPassphrase: keyPassphrase },
   );
 
   const result = await client.register({
     ownerEmail,
     description,
     domain: dns,
+    publicKeyPem,
   });
 
-  await mkdir(keyDir, { recursive: true, mode: 0o700 });
+  // Ensure key dir permissions
   try {
     await chmod(keyDir, 0o700);
   } catch {
     // Best effort on non-POSIX filesystems.
   }
-
-  const privateKeyPath = join(keyDir, 'agent_private_key.pem');
-  const publicKeyPath = join(keyDir, 'agent_public_key.pem');
-  await writeFile(privateKeyPath, encryptedPrivateKeyPem, { mode: 0o600 });
   try {
-    await chmod(privateKeyPath, 0o600);
+    await chmod(privKeyPath, 0o600);
   } catch {
     // Best effort on non-POSIX filesystems.
   }
-  await writeFile(publicKeyPath, keypair.publicKeyPem, { mode: 0o644 });
 
+  // Update config for haisdk format
   const configData = {
     jacsAgentName: name,
     jacsAgentVersion: '1.0.0',

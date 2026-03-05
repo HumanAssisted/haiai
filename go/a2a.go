@@ -242,8 +242,8 @@ func (a *A2AIntegration) SignArtifact(
 	artifactType string,
 	parentSignatures []map[string]interface{},
 ) (*A2AWrappedArtifact, error) {
-	if a.client.privateKey == nil {
-		return nil, newError(ErrSigningFailed, "private key not configured on client")
+	if a.client.crypto == nil && a.client.privateKey == nil {
+		return nil, newError(ErrSigningFailed, "crypto backend or private key not configured on client")
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -263,7 +263,11 @@ func (a *A2AIntegration) SignArtifact(
 	if err != nil {
 		return nil, wrapError(ErrSigningFailed, err, "failed to canonicalize artifact")
 	}
-	sig := Sign(a.client.privateKey, canonical)
+
+	sig, signErr := a.client.crypto.SignBytes(canonical)
+	if signErr != nil {
+		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign artifact")
+	}
 	wrapped.JacsSignature = &A2AArtifactSignature{
 		AgentID:   a.client.jacsID,
 		Date:      now,
@@ -315,15 +319,17 @@ func (a *A2AIntegration) VerifyArtifact(
 		return result, nil
 	}
 
-	pubKey, err := resolveVerificationKey(a.client, wrapped, publicKeyPEM...)
+	pubKeyPEM, err := resolveVerificationKeyPEM(a.client, wrapped, publicKeyPEM...)
 	if err != nil {
 		result.Error = err.Error()
 		return result, nil
 	}
 
-	result.Valid = Verify(pubKey, canonical, sigBytes)
-	if !result.Valid {
+	if verifyErr := a.client.crypto.VerifyBytes(canonical, sigBytes, pubKeyPEM); verifyErr != nil {
+		result.Valid = false
 		result.Error = "signature verification failed"
+	} else {
+		result.Valid = true
 	}
 	return result, nil
 }
@@ -467,9 +473,9 @@ func (a *A2AIntegration) AssessRemoteAgent(
 
 	trustLevel := "untrusted"
 	if inTrustStore {
-		trustLevel = "trusted"
+		trustLevel = "explicitly_trusted"
 	} else if jacsRegistered {
-		trustLevel = "jacs_registered"
+		trustLevel = "jacs_verified"
 	}
 
 	result := &A2ATrustAssessment{
@@ -793,17 +799,21 @@ func canonicalArtifactBytes(wrapped *A2AWrappedArtifact) ([]byte, error) {
 	return json.Marshal(clone)
 }
 
-func resolveVerificationKey(client *Client, wrapped *A2AWrappedArtifact, publicKeyPEM ...string) (ed25519.PublicKey, error) {
+func resolveVerificationKeyPEM(client *Client, wrapped *A2AWrappedArtifact, publicKeyPEM ...string) (string, error) {
 	if len(publicKeyPEM) > 0 && strings.TrimSpace(publicKeyPEM[0]) != "" {
-		return ParsePublicKey([]byte(publicKeyPEM[0]))
+		return publicKeyPEM[0], nil
 	}
 	if wrapped.JacsSignature != nil && wrapped.JacsSignature.AgentID == client.jacsID {
 		if client.privateKey == nil {
-			return nil, fmt.Errorf("client private key is not configured")
+			return "", fmt.Errorf("client private key is not configured")
 		}
-		return PublicKeyFromPrivate(client.privateKey), nil
+		pemStr, err := MarshalPublicKeyPEM(PublicKeyFromPrivate(client.privateKey))
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal client public key: %w", err)
+		}
+		return pemStr, nil
 	}
-	return nil, fmt.Errorf("no verification key available for signer '%s'", wrapped.JacsSignature.AgentID)
+	return "", fmt.Errorf("no verification key available for signer '%s'", wrapped.JacsSignature.AgentID)
 }
 
 func hasJACSExtension(card map[string]interface{}) bool {

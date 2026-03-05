@@ -113,8 +113,8 @@ func (c *Client) ConnectWS(ctx context.Context) (*WSConnection, error) {
 	wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
 
-	// Build auth headers
-	authHeader := BuildAuthHeader(c.jacsID, c.privateKey)
+	// Build auth headers via CryptoBackend
+	authHeader := c.buildAuthHeader()
 	requestHeader := http.Header{}
 	requestHeader.Set("Authorization", authHeader)
 

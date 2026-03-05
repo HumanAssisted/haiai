@@ -1,47 +1,67 @@
 import { describe, it, expect } from 'vitest';
-import { signString, verifyString, generateKeypair } from '../src/crypt.js';
+import { JacsAgent, createAgentSync } from '@hai.ai/jacs';
 import {
   canonicalJson,
   signResponse,
   unwrapSignedEvent,
   clearServerKeysCache,
 } from '../src/signing.js';
-import { TEST_KEYPAIR, TEST_JACS_ID } from './setup.js';
+import { TEST_AGENT, TEST_JACS_ID, TEST_PUBLIC_KEY_PEM } from './setup.js';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
-describe('crypt', () => {
-  it('generates an Ed25519 keypair', () => {
-    const kp = generateKeypair();
-    expect(kp.publicKeyPem).toContain('-----BEGIN PUBLIC KEY-----');
-    expect(kp.privateKeyPem).toContain('-----BEGIN PRIVATE KEY-----');
-  });
-
-  it('signs and verifies a message', () => {
+describe('JACS agent signing', () => {
+  it('signs and verifies a message via JACS', () => {
     const message = 'hello world';
-    const sig = signString(TEST_KEYPAIR.privateKeyPem, message);
+    const sig = TEST_AGENT.signStringSync(message);
     expect(sig).toBeTruthy();
     expect(typeof sig).toBe('string');
 
-    const valid = verifyString(TEST_KEYPAIR.publicKeyPem, message, sig);
+    const valid = TEST_AGENT.verifyStringSync(
+      message,
+      sig,
+      Buffer.from(TEST_PUBLIC_KEY_PEM, 'utf-8'),
+      'pem',
+    );
     expect(valid).toBe(true);
   });
 
   it('rejects tampered message', () => {
-    const sig = signString(TEST_KEYPAIR.privateKeyPem, 'original');
-    const valid = verifyString(TEST_KEYPAIR.publicKeyPem, 'tampered', sig);
+    const sig = TEST_AGENT.signStringSync('original');
+    const valid = TEST_AGENT.verifyStringSync(
+      'tampered',
+      sig,
+      Buffer.from(TEST_PUBLIC_KEY_PEM, 'utf-8'),
+      'pem',
+    );
     expect(valid).toBe(false);
   });
 
   it('rejects wrong key', () => {
-    const other = generateKeypair();
-    const sig = signString(TEST_KEYPAIR.privateKeyPem, 'message');
-    const valid = verifyString(other.publicKeyPem, 'message', sig);
-    expect(valid).toBe(false);
-  });
+    // Create a second agent with different keys
+    const tempDir = mkdtempSync(join(tmpdir(), 'haisdk-test-other-'));
+    createAgentSync(
+      'other-agent',
+      'test-password-456',
+      'ring-Ed25519',
+      join(tempDir, 'data'),
+      join(tempDir, 'keys'),
+      join(tempDir, 'jacs.config.json'),
+      null, null, null, null,
+    );
+    const otherAgent = new JacsAgent();
+    otherAgent.loadSync(join(tempDir, 'jacs.config.json'));
+    const otherPubKey = readFileSync(join(tempDir, 'keys', 'jacs.public.pem'), 'utf-8');
 
-  it('signString returns base64', () => {
-    const sig = signString(TEST_KEYPAIR.privateKeyPem, 'test');
-    // Ed25519 signatures are 64 bytes -> ~88 chars in base64
-    expect(Buffer.from(sig, 'base64').length).toBe(64);
+    const sig = TEST_AGENT.signStringSync('message');
+    const valid = TEST_AGENT.verifyStringSync(
+      'message',
+      sig,
+      Buffer.from(otherPubKey, 'utf-8'),
+      'pem',
+    );
+    expect(valid).toBe(false);
   });
 });
 
@@ -71,7 +91,7 @@ describe('canonicalJson', () => {
 describe('signResponse', () => {
   it('creates a signed JACS document', () => {
     const payload = { response: { message: 'test', metadata: null, processing_time_ms: 0 } };
-    const result = signResponse(payload, TEST_KEYPAIR.privateKeyPem, TEST_JACS_ID);
+    const result = signResponse(payload, TEST_AGENT, TEST_JACS_ID);
 
     expect(result.agent_jacs_id).toBe(TEST_JACS_ID);
     expect(typeof result.signed_document).toBe('string');
@@ -87,13 +107,18 @@ describe('signResponse', () => {
 
   it('signed response verifies correctly', () => {
     const payload = { message: 'verify me' };
-    const result = signResponse(payload, TEST_KEYPAIR.privateKeyPem, TEST_JACS_ID);
+    const result = signResponse(payload, TEST_AGENT, TEST_JACS_ID);
     const doc = JSON.parse(result.signed_document);
 
     // The signed content is canonical JSON of the data payload
     const signedContent = canonicalJson(doc.data);
 
-    const valid = verifyString(TEST_KEYPAIR.publicKeyPem, signedContent, doc.jacsSignature.signature);
+    const valid = TEST_AGENT.verifyStringSync(
+      signedContent,
+      doc.jacsSignature.signature,
+      Buffer.from(TEST_PUBLIC_KEY_PEM, 'utf-8'),
+      'pem',
+    );
     expect(valid).toBe(true);
   });
 });
@@ -117,21 +142,21 @@ describe('unwrapSignedEvent', () => {
 
   it('verifies and unwraps with known key', () => {
     const payload = { hello: 'world' };
-    const result = signResponse(payload, TEST_KEYPAIR.privateKeyPem, TEST_JACS_ID);
+    const result = signResponse(payload, TEST_AGENT, TEST_JACS_ID);
     const doc = JSON.parse(result.signed_document);
 
-    const unwrapped = unwrapSignedEvent(doc, { [TEST_JACS_ID]: TEST_KEYPAIR.publicKeyPem });
+    const unwrapped = unwrapSignedEvent(doc, { [TEST_JACS_ID]: TEST_PUBLIC_KEY_PEM }, TEST_AGENT);
     expect(unwrapped).toEqual(payload);
   });
 
   it('throws on invalid signature with known key', () => {
     const payload = { hello: 'world' };
-    const result = signResponse(payload, TEST_KEYPAIR.privateKeyPem, TEST_JACS_ID);
+    const result = signResponse(payload, TEST_AGENT, TEST_JACS_ID);
     const doc = JSON.parse(result.signed_document);
     doc.jacsSignature.signature = 'invalid-signature';
 
     expect(() => {
-      unwrapSignedEvent(doc, { [TEST_JACS_ID]: TEST_KEYPAIR.publicKeyPem });
+      unwrapSignedEvent(doc, { [TEST_JACS_ID]: TEST_PUBLIC_KEY_PEM }, TEST_AGENT);
     }).toThrow('JACS signature verification failed');
   });
 });

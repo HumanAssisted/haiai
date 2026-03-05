@@ -9,7 +9,8 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { HaiClient, generateKeypair } from '../src/index.js';
+import { HaiClient } from '../src/index.js';
+import { generateTestKeypair as generateKeypair } from './setup.js';
 import type { SendEmailResult, EmailMessage, EmailStatus } from '../src/types.js';
 
 const LIVE = process.env.HAI_LIVE_TEST === '1';
@@ -35,8 +36,9 @@ describe.skipIf(!LIVE)('Email integration (live API)', () => {
     const keypair = generateKeypair();
 
     // 2. Build client from credentials (no jacs.config.json needed).
-    client = HaiClient.fromCredentials(agentName, keypair.privateKeyPem, {
+    client = await HaiClient.fromCredentials(agentName, keypair.privateKeyPem, {
       url: API_URL,
+      privateKeyPassphrase: 'keygen-password',
     });
 
     // 3. Register the agent with the local API (bootstrap registration).

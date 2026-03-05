@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
-import { generateKeypair } from '../src/crypt.js';
+import { generateTestKeypair as generateKeypair } from './setup.js';
 
-function makeClient(jacsId: string = 'agent/with/slash'): HaiClient {
+async function makeClient(jacsId: string = 'agent/with/slash'): Promise<HaiClient> {
   const keypair = generateKeypair();
-  return HaiClient.fromCredentials(jacsId, keypair.privateKeyPem, { url: 'https://hai.example' });
+  return HaiClient.fromCredentials(jacsId, keypair.privateKeyPem, { url: 'https://hai.example', privateKeyPassphrase: 'keygen-password' });
 }
 
 describe('client additional API methods', () => {
@@ -14,7 +14,7 @@ describe('client additional API methods', () => {
   });
 
   it('escapes updateUsername agentId and uses PUT', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       expect(String(url)).toBe('https://hai.example/api/v1/agents/agent%2F..%2Fescape/username');
       expect(init?.method).toBe('PUT');
@@ -39,7 +39,7 @@ describe('client additional API methods', () => {
   });
 
   it('escapes deleteUsername agentId and uses DELETE', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       expect(String(url)).toBe('https://hai.example/api/v1/agents/agent%2F..%2Fescape/username');
       expect(init?.method).toBe('DELETE');
@@ -63,7 +63,7 @@ describe('client additional API methods', () => {
   });
 
   it('verifyDocument POSTs to public /api/jacs/verify without auth header', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       expect(String(url)).toBe('https://hai.example/api/jacs/verify');
       expect(init?.method).toBe('POST');
@@ -95,7 +95,7 @@ describe('client additional API methods', () => {
   });
 
   it('getVerification GETs public advanced verification endpoint without auth header', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       expect(String(url)).toBe('https://hai.example/api/v1/agents/agent%2F..%2Fescape/verification');
       expect(init?.method).toBe('GET');
@@ -132,7 +132,7 @@ describe('client additional API methods', () => {
   });
 
   it('verifyAgentDocumentOnHai POSTs public /api/v1/agents/verify without auth header', async () => {
-    const client = makeClient();
+    const client = await makeClient();
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
       expect(String(url)).toBe('https://hai.example/api/v1/agents/verify');
       expect(init?.method).toBe('POST');

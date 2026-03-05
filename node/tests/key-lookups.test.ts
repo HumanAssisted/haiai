@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
-import { generateKeypair } from '../src/crypt.js';
+import { generateTestKeypair as generateKeypair } from './setup.js';
 
-function makeClient(jacsId: string = 'test-agent'): HaiClient {
+async function makeClient(jacsId: string = 'test-agent'): Promise<HaiClient> {
   const keypair = generateKeypair();
-  return HaiClient.fromCredentials(jacsId, keypair.privateKeyPem, { url: 'https://hai.example' });
+  return HaiClient.fromCredentials(jacsId, keypair.privateKeyPem, { url: 'https://hai.example', privateKeyPassphrase: 'keygen-password' });
 }
 
 function stubFetch(expectedUrl: string, payload: Record<string, unknown> = {}): void {
@@ -62,7 +62,7 @@ describe('key lookup methods', () => {
 
   describe('fetchKeyByHash', () => {
     it('calls correct URL and parses response', async () => {
-      const client = makeClient();
+      const client = await makeClient();
       stubFetch(
         'https://hai.example/jacs/v1/keys/by-hash/sha256%3Aabcdef1234567890',
         KEY_RESPONSE,
@@ -77,7 +77,7 @@ describe('key lookup methods', () => {
     });
 
     it('escapes path-traversal characters in hash', async () => {
-      const client = makeClient();
+      const client = await makeClient();
       stubFetch(
         'https://hai.example/jacs/v1/keys/by-hash/sha256%3A..%2F..%2Fetc%2Fpasswd',
         KEY_RESPONSE,
@@ -87,7 +87,7 @@ describe('key lookup methods', () => {
     });
 
     it('rejects on 404', async () => {
-      const client = makeClient();
+      const client = await makeClient();
       stubFetch404('https://hai.example/jacs/v1/keys/by-hash/sha256%3Amissing');
 
       await expect(client.fetchKeyByHash('sha256:missing')).rejects.toThrow();
@@ -100,7 +100,7 @@ describe('key lookup methods', () => {
 
   describe('fetchKeyByEmail', () => {
     it('calls correct URL and parses response', async () => {
-      const client = makeClient();
+      const client = await makeClient();
       stubFetch(
         'https://hai.example/api/agents/keys/alice%40hai.ai',
         KEY_RESPONSE,
@@ -113,7 +113,7 @@ describe('key lookup methods', () => {
     });
 
     it('rejects on 404', async () => {
-      const client = makeClient();
+      const client = await makeClient();
       stubFetch404('https://hai.example/api/agents/keys/nobody%40hai.ai');
 
       await expect(client.fetchKeyByEmail('nobody@hai.ai')).rejects.toThrow();
@@ -126,7 +126,7 @@ describe('key lookup methods', () => {
 
   describe('fetchKeyByDomain', () => {
     it('calls correct URL and parses response', async () => {
-      const client = makeClient();
+      const client = await makeClient();
       stubFetch(
         'https://hai.example/jacs/v1/agents/by-domain/example.com',
         KEY_RESPONSE,
@@ -139,7 +139,7 @@ describe('key lookup methods', () => {
     });
 
     it('rejects on 404', async () => {
-      const client = makeClient();
+      const client = await makeClient();
       stubFetch404('https://hai.example/jacs/v1/agents/by-domain/nonexistent.test');
 
       await expect(client.fetchKeyByDomain('nonexistent.test')).rejects.toThrow();
@@ -152,7 +152,7 @@ describe('key lookup methods', () => {
 
   describe('fetchAllKeys', () => {
     it('calls correct URL and returns structured result', async () => {
-      const client = makeClient();
+      const client = await makeClient();
       stubFetch(
         'https://hai.example/jacs/v1/agents/agent-abc/keys',
         KEY_HISTORY_RESPONSE,
@@ -168,7 +168,7 @@ describe('key lookup methods', () => {
     });
 
     it('escapes jacs_id with slashes', async () => {
-      const client = makeClient();
+      const client = await makeClient();
       stubFetch(
         'https://hai.example/jacs/v1/agents/agent%2Fwith%2Fslashes/keys',
         KEY_HISTORY_RESPONSE,
@@ -178,7 +178,7 @@ describe('key lookup methods', () => {
     });
 
     it('rejects on 404', async () => {
-      const client = makeClient();
+      const client = await makeClient();
       stubFetch404('https://hai.example/jacs/v1/agents/missing-agent/keys');
 
       await expect(client.fetchAllKeys('missing-agent')).rejects.toThrow();

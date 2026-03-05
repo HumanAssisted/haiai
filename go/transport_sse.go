@@ -46,7 +46,7 @@ func (c *Client) ConnectSSE(ctx context.Context) (*SSEConnection, error) {
 		return nil, wrapError(ErrTransport, err, "failed to create SSE request")
 	}
 
-	SetAuthHeaders(req, c.jacsID, c.privateKey)
+	c.setAuthHeaders(req)
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
 

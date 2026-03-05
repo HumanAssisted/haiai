@@ -9,13 +9,9 @@ import (
 	"os"
 )
 
-// CRYPTO POLICY:
-// This module is transitional. Cryptographic operations in haisdk must
-// delegate to JACS functions. Do not add new local cryptographic implementations.
-
 // LoadPrivateKey loads an Ed25519 private key from a PEM file.
 //
-// Supports two PEM formats:
+// Supports multiple PEM formats:
 //   - PKCS8 (48 bytes DER): standard "PRIVATE KEY" PEM with ASN.1 wrapper
 //   - Raw seed (32 bytes): just the seed bytes in PEM
 //   - Full key (64 bytes): seed + public key concatenated
@@ -112,11 +108,17 @@ func parsePrivateKeyDER(der []byte) (ed25519.PrivateKey, error) {
 }
 
 // Sign signs a message using the Ed25519 private key and returns the raw signature.
+//
+// Deprecated: Use CryptoBackend.SignBytes instead. This function is retained for
+// backward compatibility with tests and the Ed25519 fallback backend.
 func Sign(key ed25519.PrivateKey, message []byte) []byte {
 	return ed25519.Sign(key, message)
 }
 
 // Verify checks an Ed25519 signature against a public key and message.
+//
+// Deprecated: Use CryptoBackend.VerifyBytes instead. This function is retained for
+// backward compatibility with tests and the Ed25519 fallback backend.
 func Verify(publicKey ed25519.PublicKey, message, signature []byte) bool {
 	if len(publicKey) != ed25519.PublicKeySize {
 		return false
@@ -131,6 +133,9 @@ func PublicKeyFromPrivate(key ed25519.PrivateKey) ed25519.PublicKey {
 
 // GenerateKeyPair generates a new Ed25519 key pair.
 // Returns (publicKey, privateKey, error).
+//
+// Deprecated: Use CryptoBackend.GenerateKeyPair instead. This function is retained
+// for backward compatibility with tests.
 func GenerateKeyPair() (ed25519.PublicKey, ed25519.PrivateKey, error) {
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -171,6 +176,8 @@ func ParsePublicKey(pemData []byte) (ed25519.PublicKey, error) {
 // VerifyHaiMessage verifies a message signed by HAI or another agent.
 // The signature is expected to be base64-encoded. The publicKeyPem
 // should be a PEM-encoded Ed25519 public key.
+//
+// Deprecated: Use CryptoBackend.VerifyBytes instead.
 func VerifyHaiMessage(message string, signatureB64 string, publicKeyPem string) (bool, error) {
 	if message == "" || signatureB64 == "" || publicKeyPem == "" {
 		return false, nil
