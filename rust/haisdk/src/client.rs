@@ -160,6 +160,10 @@ impl<P: JacsProvider> HaiClient<P> {
         self.jacs.canonical_json(value)
     }
 
+    pub fn verify_a2a_artifact(&self, wrapped_json: &str) -> Result<String> {
+        self.jacs.verify_a2a_artifact(wrapped_json)
+    }
+
     pub async fn hello(&self, include_test: bool) -> Result<HelloResult> {
         let mut payload = json!({ "agent_id": self.jacs.jacs_id() });
         if include_test {

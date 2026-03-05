@@ -302,35 +302,50 @@ impl<'a, P: JacsProvider> A2AIntegration<'a, P> {
             .as_ref()
             .map(|s| s.agent_id.clone())
             .unwrap_or_default();
-        let mut result = A2AArtifactVerificationResult {
-            valid: false,
-            signer_id,
-            artifact_type: wrapped.jacs_type.clone(),
-            timestamp: wrapped.jacs_version_date.clone(),
-            original_artifact: wrapped.a2a_artifact.clone(),
-            error: None,
-        };
 
-        let Some(signature) = wrapped.jacs_signature.as_ref() else {
-            result.error = Some("no signature found".to_string());
-            return Ok(result);
-        };
-
-        if signature.agent_id != self.client.jacs_id() {
-            result.error = Some(format!(
-                "no verification key available for signer '{}'",
-                signature.agent_id
-            ));
-            return Ok(result);
+        // Delegate to JACS provider for proper cryptographic verification.
+        // This replaces the broken `signature == expected` comparison that
+        // fails for non-deterministic algorithms (e.g., pq2025).
+        let wrapped_json = serde_json::to_string(wrapped)?;
+        match self.client.verify_a2a_artifact(&wrapped_json) {
+            Ok(result_json) => {
+                let jacs_result: Value = serde_json::from_str(&result_json)?;
+                Ok(A2AArtifactVerificationResult {
+                    valid: jacs_result.get("valid").and_then(Value::as_bool).unwrap_or(false),
+                    signer_id: jacs_result
+                        .get("signerId")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&signer_id)
+                        .to_string(),
+                    artifact_type: jacs_result
+                        .get("artifactType")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&wrapped.jacs_type)
+                        .to_string(),
+                    timestamp: jacs_result
+                        .get("timestamp")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&wrapped.jacs_version_date)
+                        .to_string(),
+                    original_artifact: jacs_result
+                        .get("originalArtifact")
+                        .cloned()
+                        .unwrap_or_else(|| wrapped.a2a_artifact.clone()),
+                    error: jacs_result
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                })
+            }
+            Err(e) => Ok(A2AArtifactVerificationResult {
+                valid: false,
+                signer_id,
+                artifact_type: wrapped.jacs_type.clone(),
+                timestamp: wrapped.jacs_version_date.clone(),
+                original_artifact: wrapped.a2a_artifact.clone(),
+                error: Some(format!("verification failed: {e}")),
+            }),
         }
-
-        let canonical = canonical_artifact_json(self.client, wrapped)?;
-        let expected = self.client.sign_message(&canonical)?;
-        result.valid = signature.signature == expected;
-        if !result.valid {
-            result.error = Some("signature verification failed".to_string());
-        }
-        Ok(result)
     }
 
     pub fn create_chain_of_custody(&self, artifacts: &[A2AWrappedArtifact]) -> A2AChainOfCustody {
@@ -421,9 +436,9 @@ impl<'a, P: JacsProvider> A2AIntegration<'a, P> {
         let in_trust_store = self.is_trusted_a2a_agent(&agent_id);
 
         let trust_level = if in_trust_store {
-            "trusted"
+            "explicitly_trusted"
         } else if jacs_registered {
-            "jacs_registered"
+            "jacs_verified"
         } else {
             "untrusted"
         };

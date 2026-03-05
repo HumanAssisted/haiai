@@ -210,6 +210,25 @@ impl JacsProvider for LocalJacsProvider {
         Ok(canonicalize_json_rfc8785(value))
     }
 
+    fn verify_a2a_artifact(&self, wrapped_json: &str) -> Result<String> {
+        // Delegate to JACS core for proper cryptographic verification.
+        // Uses the underlying Agent directly since SimpleAgent::verify_a2a_artifact
+        // may not be available in all jacs crate versions.
+        let wrapped: Value = serde_json::from_str(wrapped_json)?;
+        let agent = self
+            .agent
+            .lock()
+            .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
+
+        let result =
+            jacs::a2a::provenance::verify_wrapped_artifact(&agent, &wrapped).map_err(|e| {
+                HaiError::Provider(format!("JACS A2A artifact verification failed: {e}"))
+            })?;
+
+        serde_json::to_string(&result)
+            .map_err(|e| HaiError::Provider(format!("failed to serialize verification result: {e}")))
+    }
+
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
         let canonical_payload = self.canonical_json(payload)?;
         let sorted_data: Value = serde_json::from_str(&canonical_payload)?;

@@ -31,6 +31,50 @@ pub trait JacsProvider: Send + Sync {
     /// Return a signed payload accepted by `/api/v1/agents/jobs/{job_id}/response`.
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload>;
 
+    /// Verify a wrapped A2A artifact using JACS cryptographic verification.
+    ///
+    /// Returns a JSON string containing the verification result with fields:
+    /// `valid`, `status`, `signerId`, `artifactType`, `timestamp`, `originalArtifact`.
+    ///
+    /// Default implementation falls back to deterministic signature comparison
+    /// (BROKEN for non-deterministic algorithms like pq2025). Providers that
+    /// wrap a real JACS agent MUST override this.
+    fn verify_a2a_artifact(&self, wrapped_json: &str) -> Result<String> {
+        // Fallback: sign the same content and compare signatures.
+        // This is WRONG for non-deterministic algorithms but preserved for
+        // test providers (StaticJacsProvider) that use deterministic signing.
+        let wrapped: Value = serde_json::from_str(wrapped_json)?;
+        let signature = wrapped
+            .get("jacsSignature")
+            .and_then(|s| s.get("signature"))
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+        let signer_id = wrapped
+            .get("jacsSignature")
+            .and_then(|s| s.get("agentID"))
+            .and_then(|s| s.as_str())
+            .unwrap_or("");
+
+        // Strip signature for canonical form
+        let mut clone = wrapped.clone();
+        if let Some(obj) = clone.as_object_mut() {
+            obj.remove("jacsSignature");
+        }
+        let canonical = self.canonical_json(&clone)?;
+        let expected = self.sign_string(&canonical)?;
+        let valid = signature == expected;
+
+        let result = serde_json::json!({
+            "valid": valid,
+            "status": if valid { "verified" } else { "invalid" },
+            "signerId": signer_id,
+            "artifactType": wrapped.get("jacsType").and_then(|v| v.as_str()).unwrap_or(""),
+            "timestamp": wrapped.get("jacsVersionDate").and_then(|v| v.as_str()).unwrap_or(""),
+            "originalArtifact": wrapped.get("a2aArtifact").cloned().unwrap_or(Value::Null),
+        });
+        Ok(serde_json::to_string(&result)?)
+    }
+
     /// Rotate the agent's keys locally.
     ///
     /// Archives old keys, generates a new keypair, builds a new self-signed
