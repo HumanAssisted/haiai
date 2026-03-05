@@ -35,6 +35,34 @@ type CryptoBackend interface {
 
 	// Algorithm returns the signing algorithm name (e.g., "Ed25519", "pq2025").
 	Algorithm() string
+
+	// --- A2A Protocol Methods ---
+	// These methods delegate to the JACS Rust core for A2A operations.
+	// Fallback backends return descriptive errors since A2A requires JACS core.
+
+	// SignA2AArtifact wraps an artifact with a JACS signature for A2A exchange.
+	// artifactJSON is the JSON payload to sign, artifactType identifies the artifact kind
+	// (e.g., "task", "task-result"). Returns the signed wrapped artifact JSON.
+	SignA2AArtifact(artifactJSON string, artifactType string) (string, error)
+
+	// VerifyA2AArtifact verifies a JACS-wrapped A2A artifact (crypto-only).
+	// wrappedJSON is the full signed wrapper. Returns the verification result JSON.
+	VerifyA2AArtifact(wrappedJSON string) (string, error)
+
+	// VerifyA2AArtifactWithPolicy verifies a JACS-wrapped artifact with trust policy.
+	// agentCardJSON is the remote agent's card, policyJSON is the trust policy to enforce.
+	// Returns the verification result JSON.
+	VerifyA2AArtifactWithPolicy(wrappedJSON, agentCardJSON, policyJSON string) (string, error)
+
+	// AssessA2AAgent evaluates a remote agent's trustworthiness against a policy.
+	// agentCardJSON is the agent card to assess, policyJSON is the trust policy.
+	// Returns the assessment result JSON.
+	AssessA2AAgent(agentCardJSON, policyJSON string) (string, error)
+
+	// ExportAgentCard exports an A2A Agent Card for the loaded agent.
+	// agentDataJSON provides optional agent metadata to include in the card.
+	// Returns the agent card JSON.
+	ExportAgentCard(agentDataJSON string) (string, error)
 }
 
 // cryptoBackend is the package-level crypto backend, set at init time based on

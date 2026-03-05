@@ -20,7 +20,7 @@ const (
 	ErrConfigNotFound
 	// ErrConfigInvalid indicates the JACS config file is invalid.
 	ErrConfigInvalid
-	// ErrSigningFailed indicates Ed25519 signing failed.
+	// ErrSigningFailed indicates cryptographic signing failed.
 	ErrSigningFailed
 	// ErrTimeout indicates a request or operation timed out.
 	ErrTimeout

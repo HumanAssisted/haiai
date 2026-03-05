@@ -81,6 +81,26 @@ func (b *jacsBackend) Algorithm() string {
 	return "JACS"
 }
 
+func (b *jacsBackend) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
+	return "", fmt.Errorf("jacs backend: SignA2AArtifact requires a loaded agent; use Client.crypto instead")
+}
+
+func (b *jacsBackend) VerifyA2AArtifact(wrappedJSON string) (string, error) {
+	return "", fmt.Errorf("jacs backend: VerifyA2AArtifact requires a loaded agent; use Client.crypto instead")
+}
+
+func (b *jacsBackend) VerifyA2AArtifactWithPolicy(wrappedJSON, agentCardJSON, policyJSON string) (string, error) {
+	return "", fmt.Errorf("jacs backend: VerifyA2AArtifactWithPolicy requires a loaded agent; use Client.crypto instead")
+}
+
+func (b *jacsBackend) AssessA2AAgent(agentCardJSON, policyJSON string) (string, error) {
+	return "", fmt.Errorf("jacs backend: AssessA2AAgent requires a loaded agent; use Client.crypto instead")
+}
+
+func (b *jacsBackend) ExportAgentCard(agentDataJSON string) (string, error) {
+	return "", fmt.Errorf("jacs backend: ExportAgentCard requires a loaded agent; use Client.crypto instead")
+}
+
 // clientJacsBackend implements CryptoBackend bound to a loaded JACS agent for
 // a specific Client.
 type clientJacsBackend struct {
@@ -142,6 +162,44 @@ func (b *clientJacsBackend) GenerateKeyPair() ([]byte, []byte, error) {
 
 func (b *clientJacsBackend) Algorithm() string {
 	return "JACS"
+}
+
+func (b *clientJacsBackend) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.SignA2AArtifact(artifactJSON, artifactType)
+}
+
+func (b *clientJacsBackend) VerifyA2AArtifact(wrappedJSON string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.VerifyA2AArtifact(wrappedJSON)
+}
+
+func (b *clientJacsBackend) VerifyA2AArtifactWithPolicy(wrappedJSON, agentCardJSON, policyJSON string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.VerifyA2AArtifactWithPolicy(wrappedJSON, agentCardJSON, policyJSON)
+}
+
+func (b *clientJacsBackend) AssessA2AAgent(agentCardJSON, policyJSON string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.AssessA2AAgent(agentCardJSON, policyJSON)
+}
+
+func (b *clientJacsBackend) ExportAgentCard(agentDataJSON string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	// The JACS core ExportAgentCard uses the loaded agent's own metadata.
+	// The agentDataJSON parameter is used by the Go-side orchestration in a2a.go
+	// to overlay additional fields; the JACS core ignores it.
+	return b.agent.ExportAgentCard()
 }
 
 // newClientCryptoBackend creates a per-client JACS CryptoBackend.
@@ -219,6 +277,26 @@ func (b *clientEd25519FallbackInJacs) GenerateKeyPair() ([]byte, []byte, error) 
 
 func (b *clientEd25519FallbackInJacs) Algorithm() string {
 	return "Ed25519"
+}
+
+func (b *clientEd25519FallbackInJacs) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
+	return "", fmt.Errorf("jacs fallback: SignA2AArtifact requires loaded JACS agent")
+}
+
+func (b *clientEd25519FallbackInJacs) VerifyA2AArtifact(wrappedJSON string) (string, error) {
+	return "", fmt.Errorf("jacs fallback: VerifyA2AArtifact requires loaded JACS agent")
+}
+
+func (b *clientEd25519FallbackInJacs) VerifyA2AArtifactWithPolicy(wrappedJSON, agentCardJSON, policyJSON string) (string, error) {
+	return "", fmt.Errorf("jacs fallback: VerifyA2AArtifactWithPolicy requires loaded JACS agent")
+}
+
+func (b *clientEd25519FallbackInJacs) AssessA2AAgent(agentCardJSON, policyJSON string) (string, error) {
+	return "", fmt.Errorf("jacs fallback: AssessA2AAgent requires loaded JACS agent")
+}
+
+func (b *clientEd25519FallbackInJacs) ExportAgentCard(agentDataJSON string) (string, error) {
+	return "", fmt.Errorf("jacs fallback: ExportAgentCard requires loaded JACS agent")
 }
 
 // discoverConfigPath returns the first existing jacs config path, or empty string.

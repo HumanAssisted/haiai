@@ -584,7 +584,7 @@ class HaiClient:
         hai_url: Optional[str] = None,
         register_with_hai: bool = True,
         config_path: Optional[str] = None,
-        algorithm: str = "ring-Ed25519",
+        algorithm: str = "pq2025",
     ) -> RotationResult:
         """Rotate the agent's cryptographic keys.
 
@@ -604,7 +604,7 @@ class HaiClient:
             config_path: Path to jacs.config.json. Defaults to the path
                 used by ``config.load()`` (or ``./jacs.config.json``).
             algorithm: Signing algorithm for the new key (default
-                ``"ring-Ed25519"``). Pass ``"pq2025"`` for post-quantum.
+                ``"pq2025"``). Pass ``"ring-Ed25519"`` for Ed25519.
 
         Returns:
             RotationResult with old/new versions, public key hash, and
@@ -3522,6 +3522,26 @@ def fetch_remote_key(
     return _get_client().fetch_remote_key(hai_url, jacs_id, version)
 
 
+def fetch_key_by_hash(hai_url: str, public_key_hash: str) -> PublicKeyInfo:
+    """Fetch an agent's public key by its SHA-256 hash."""
+    return _get_client().fetch_key_by_hash(hai_url, public_key_hash)
+
+
+def fetch_key_by_email(hai_url: str, email: str) -> PublicKeyInfo:
+    """Fetch an agent's public key by their ``@hai.ai`` email address."""
+    return _get_client().fetch_key_by_email(hai_url, email)
+
+
+def fetch_key_by_domain(hai_url: str, domain: str) -> PublicKeyInfo:
+    """Fetch the latest DNS-verified agent key for a domain."""
+    return _get_client().fetch_key_by_domain(hai_url, domain)
+
+
+def fetch_all_keys(hai_url: str, jacs_id: str) -> dict:
+    """Fetch all key versions for an agent."""
+    return _get_client().fetch_all_keys(hai_url, jacs_id)
+
+
 def verify_document(
     hai_url: str,
     document: Union[str, dict[str, Any]],
@@ -3638,7 +3658,7 @@ def register_new_agent(
     domain: Optional[str] = None,
     description: Optional[str] = None,
     quiet: bool = False,
-    algorithm: str = "ring-Ed25519",
+    algorithm: str = "pq2025",
 ) -> RegistrationResult:
     """Generate a keypair, self-sign, register with HAI, and save config.
 
@@ -3659,8 +3679,8 @@ def register_new_agent(
         domain: Optional domain for DNS verification.
         description: Optional agent description.
         quiet: Suppress post-registration messaging.
-        algorithm: Signing algorithm (default ``"ring-Ed25519"``).
-            Pass ``"pq2025"`` for post-quantum.
+        algorithm: Signing algorithm (default ``"pq2025"``).
+            Pass ``"ring-Ed25519"`` for Ed25519.
 
     Returns:
         RegistrationResult with ``agent_id``, ``jacs_id``.

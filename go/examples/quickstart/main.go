@@ -16,7 +16,7 @@
 //	jacs quickstart --algorithm pq2025
 //	go run . --existing
 //
-// Legacy bootstrap usage (transitional, local keygen path):
+// Legacy bootstrap usage (local keygen path, prefer `jacs quickstart` instead):
 //
 //	export JACS_PRIVATE_KEY_PASSWORD=dev-password
 //	go run . --bootstrap-local

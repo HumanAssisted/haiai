@@ -1519,6 +1519,24 @@ func (c *Client) FetchRemoteKey(ctx context.Context, agentID, version string) (*
 	return result, nil
 }
 
+// FetchKeyByHash fetches a public key by its SHA-256 hash.
+func (c *Client) FetchKeyByHash(ctx context.Context, publicKeyHash string) (*PublicKeyInfo, error) {
+	cacheKey := "hash:" + publicKeyHash
+	if cached := c.agentKeys.get(cacheKey); cached != nil {
+		return cached, nil
+	}
+	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
+	if baseURL == "" {
+		baseURL = DefaultKeysEndpoint
+	}
+	result, err := FetchKeyByHashFromURL(ctx, c.httpClient, baseURL, publicKeyHash)
+	if err != nil {
+		return nil, err
+	}
+	c.agentKeys.set(cacheKey, result)
+	return result, nil
+}
+
 // ClearAgentKeyCache clears the agent key cache, forcing subsequent fetches to hit the API.
 func (c *Client) ClearAgentKeyCache() {
 	c.agentKeys.clear()

@@ -186,7 +186,7 @@ async function cmdRegister(args: string[]) {
   const resultJson = createAgentSync(
     name,
     keyPassphrase,
-    'ring-Ed25519',
+    'pq2025',
     dataDir,
     keyDir,
     configPath,

@@ -50,27 +50,37 @@ def canonicalize_json(obj: dict) -> str:
 def _extract_raw_key_from_pem(pem_str: str) -> bytes:
     """Extract raw key bytes from a PEM-encoded public key.
 
-    Handles keys by stripping the ASN.1 SubjectPublicKeyInfo wrapper
-    to get the raw key bytes, and also handles raw base64 keys that
-    aren't wrapped in PEM armor.
+    Delegates ASN.1 parsing to JACS binding-core when available so that
+    all key formats (Ed25519, pq2025, future algorithms) are supported.
+    Falls back to manual DER stripping only when JACS is unavailable.
     """
+    try:
+        from jacs.jacs import extract_public_key_bytes as _jacs_extract
+        return _jacs_extract(pem_str)
+    except (ImportError, AttributeError):
+        pass
+
+    # Fallback: manual PEM → DER → raw key extraction
     lines = pem_str.strip().splitlines()
     if lines[0].startswith("-----BEGIN"):
-        # Standard PEM format
         b64_data = "".join(
             line for line in lines
             if not line.startswith("-----") and not line.startswith("#")
         )
         der_bytes = base64.b64decode(b64_data)
 
-        # Ed25519 SubjectPublicKeyInfo has a 12-byte ASN.1 prefix
-        # before the 32-byte raw key. Total DER = 44 bytes.
-        if len(der_bytes) == 44:
-            return der_bytes[12:]  # Strip ASN.1 wrapper
-        # For other key types, return full DER
+        # SubjectPublicKeyInfo: strip the ASN.1 header to get raw key.
+        # Ed25519 = 44 bytes total (12 header + 32 key).
+        # Other algorithms have different sizes — return full DER
+        # and let the caller/JACS handle it.
+        if len(der_bytes) > 32 and len(der_bytes) <= 64:
+            # Heuristic: find the BIT STRING (03) or OCTET STRING (04)
+            # containing the raw key at the end of the structure.
+            # For Ed25519: 12-byte prefix. For others, return full DER.
+            if len(der_bytes) == 44:
+                return der_bytes[12:]
         return der_bytes
     else:
-        # Not PEM-wrapped -- try raw base64
         return base64.b64decode(pem_str)
 
 
@@ -78,7 +88,7 @@ def verify_string(
     data: str,
     signature_b64: str,
     public_key_pem: str,
-    algorithm: str = "ring-Ed25519",
+    algorithm: str = "pq2025",
 ) -> bool:
     """Verify a base64-encoded signature using JACS binding-core.
 
@@ -89,7 +99,7 @@ def verify_string(
         data: The UTF-8 message that was signed.
         signature_b64: Base64-encoded signature to verify.
         public_key_pem: PEM-encoded public key.
-        algorithm: Signing algorithm (default "ring-Ed25519").
+        algorithm: Signing algorithm (default "pq2025").
 
     Returns:
         True if the signature is valid, False otherwise.

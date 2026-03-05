@@ -188,7 +188,7 @@ def _create_jacs_config(
         "jacs_key_directory": str(key_dir_path),
         "jacs_agent_private_key_filename": priv_file or "agent_private_key.pem",
         "jacs_agent_public_key_filename": pub_file or "agent_public_key.pem",
-        "jacs_agent_key_algorithm": "ring-Ed25519",
+        "jacs_agent_key_algorithm": "pq2025",
         "jacs_default_storage": "fs",
         "name": name,
     }

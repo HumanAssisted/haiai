@@ -85,6 +85,26 @@ func (f *ed25519Fallback) Algorithm() string {
 	return "Ed25519"
 }
 
+func (f *ed25519Fallback) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
+	return "", fmt.Errorf("ed25519 fallback: SignA2AArtifact requires JACS backend; build with '-tags jacs'")
+}
+
+func (f *ed25519Fallback) VerifyA2AArtifact(wrappedJSON string) (string, error) {
+	return "", fmt.Errorf("ed25519 fallback: VerifyA2AArtifact requires JACS backend; build with '-tags jacs'")
+}
+
+func (f *ed25519Fallback) VerifyA2AArtifactWithPolicy(wrappedJSON, agentCardJSON, policyJSON string) (string, error) {
+	return "", fmt.Errorf("ed25519 fallback: VerifyA2AArtifactWithPolicy requires JACS backend; build with '-tags jacs'")
+}
+
+func (f *ed25519Fallback) AssessA2AAgent(agentCardJSON, policyJSON string) (string, error) {
+	return "", fmt.Errorf("ed25519 fallback: AssessA2AAgent requires JACS backend; build with '-tags jacs'")
+}
+
+func (f *ed25519Fallback) ExportAgentCard(agentDataJSON string) (string, error) {
+	return "", fmt.Errorf("ed25519 fallback: ExportAgentCard requires JACS backend; build with '-tags jacs'")
+}
+
 // clientEd25519Backend implements CryptoBackend bound to a specific Client's
 // private key. This is the per-client backend used in fallback mode.
 type clientEd25519Backend struct {
@@ -132,6 +152,26 @@ func (b *clientEd25519Backend) GenerateKeyPair() ([]byte, []byte, error) {
 
 func (b *clientEd25519Backend) Algorithm() string {
 	return "Ed25519"
+}
+
+func (b *clientEd25519Backend) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
+	return "", fmt.Errorf("ed25519 fallback: SignA2AArtifact requires JACS backend; build with '-tags jacs'")
+}
+
+func (b *clientEd25519Backend) VerifyA2AArtifact(wrappedJSON string) (string, error) {
+	return "", fmt.Errorf("ed25519 fallback: VerifyA2AArtifact requires JACS backend; build with '-tags jacs'")
+}
+
+func (b *clientEd25519Backend) VerifyA2AArtifactWithPolicy(wrappedJSON, agentCardJSON, policyJSON string) (string, error) {
+	return "", fmt.Errorf("ed25519 fallback: VerifyA2AArtifactWithPolicy requires JACS backend; build with '-tags jacs'")
+}
+
+func (b *clientEd25519Backend) AssessA2AAgent(agentCardJSON, policyJSON string) (string, error) {
+	return "", fmt.Errorf("ed25519 fallback: AssessA2AAgent requires JACS backend; build with '-tags jacs'")
+}
+
+func (b *clientEd25519Backend) ExportAgentCard(agentDataJSON string) (string, error) {
+	return "", fmt.Errorf("ed25519 fallback: ExportAgentCard requires JACS backend; build with '-tags jacs'")
 }
 
 // newClientCryptoBackend creates a per-client CryptoBackend for fallback mode.

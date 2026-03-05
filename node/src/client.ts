@@ -137,11 +137,11 @@ export class HaiClient {
     (client as any)._privateKeyPem = privateKeyPem;
 
     // Create an ephemeral JACS agent (in-memory keys, no disk I/O required).
-    // The ephemeral agent generates its own Ed25519 key pair — this is
-    // appropriate because fromCredentials is typically followed by register()
-    // which sends the new public key to the server.
+    // The ephemeral agent generates its own key pair — this is appropriate
+    // because fromCredentials is typically followed by register() which sends
+    // the new public key to the server.
     client.agent = new JacsAgent();
-    const ephResult = JSON.parse(client.agent.ephemeralSync('ring-Ed25519'));
+    const ephResult = JSON.parse(client.agent.ephemeralSync('pq2025'));
 
     client.config = {
       jacsAgentName: jacsId,
@@ -439,7 +439,7 @@ export class HaiClient {
   /**
    * Rotate the agent's cryptographic keys.
    *
-   * Archives old keys, generates a new Ed25519 keypair, builds a new
+   * Archives old keys, generates a new keypair via JACS core, builds a new
    * self-signed agent document, updates config, and optionally re-registers
    * with HAI.
    *
@@ -516,7 +516,7 @@ export class HaiClient {
       const resultJson = createAgentSync(
         this.config.jacsAgentName,
         passphrase,
-        'ring-Ed25519',
+        'pq2025',
         null, // data dir
         keyDir,
         null, // config path (don't overwrite main config)
@@ -1165,7 +1165,7 @@ export class HaiClient {
     const resultJson = createAgentSync(
       agentName,
       passphrase,
-      'ring-Ed25519',
+      'pq2025',
       dataDir,
       keyDir,
       join(tempDir, 'jacs.config.json'),

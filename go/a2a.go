@@ -167,7 +167,30 @@ func (c *Client) GetA2A(policy ...A2ATrustPolicy) *A2AIntegration {
 }
 
 // ExportAgentCard builds an A2A card from JACS/agent metadata.
+//
+// When the JACS CGo backend is loaded, this delegates to the Rust core for card
+// generation, falling back to local Go logic when the backend is unavailable.
 func (a *A2AIntegration) ExportAgentCard(agentData map[string]interface{}) *A2AAgentCard {
+	// Try JACS core delegation first.
+	if a.client.crypto != nil {
+		agentDataJSON, marshalErr := json.Marshal(agentData)
+		if marshalErr == nil {
+			cardJSON, err := a.client.crypto.ExportAgentCard(string(agentDataJSON))
+			if err == nil {
+				var card A2AAgentCard
+				if json.Unmarshal([]byte(cardJSON), &card) == nil {
+					return &card
+				}
+			}
+		}
+		// Fall through to local logic on any error.
+	}
+
+	return a.exportAgentCardLocal(agentData)
+}
+
+// exportAgentCardLocal is the pure-Go fallback for ExportAgentCard.
+func (a *A2AIntegration) exportAgentCardLocal(agentData map[string]interface{}) *A2AAgentCard {
 	agentID := stringValue(agentData["jacsId"])
 	if agentID == "" {
 		agentID = a.client.jacsID
@@ -237,6 +260,9 @@ func (a *A2AIntegration) ExportAgentCard(agentData map[string]interface{}) *A2AA
 }
 
 // SignArtifact wraps and signs an A2A artifact with JACS provenance.
+//
+// When the JACS CGo backend is loaded, this delegates to the Rust core for
+// artifact wrapping and signing, falling back to local Ed25519 logic otherwise.
 func (a *A2AIntegration) SignArtifact(
 	artifact map[string]interface{},
 	artifactType string,
@@ -246,6 +272,37 @@ func (a *A2AIntegration) SignArtifact(
 		return nil, newError(ErrSigningFailed, "crypto backend or private key not configured on client")
 	}
 
+	// Try JACS core delegation first.
+	if a.client.crypto != nil {
+		// Build the input artifact JSON, including parent signatures if provided.
+		inputPayload := map[string]interface{}{
+			"a2aArtifact": artifact,
+		}
+		if len(parentSignatures) > 0 {
+			inputPayload["jacsParentSignatures"] = parentSignatures
+		}
+		artifactJSON, marshalErr := json.Marshal(inputPayload)
+		if marshalErr == nil {
+			resultJSON, err := a.client.crypto.SignA2AArtifact(string(artifactJSON), artifactType)
+			if err == nil {
+				var wrapped A2AWrappedArtifact
+				if json.Unmarshal([]byte(resultJSON), &wrapped) == nil {
+					return &wrapped, nil
+				}
+			}
+			// Fall through to local logic on any error.
+		}
+	}
+
+	return a.signArtifactLocal(artifact, artifactType, parentSignatures)
+}
+
+// signArtifactLocal is the pure-Go Ed25519 fallback for SignArtifact.
+func (a *A2AIntegration) signArtifactLocal(
+	artifact map[string]interface{},
+	artifactType string,
+	parentSignatures []map[string]interface{},
+) (*A2AWrappedArtifact, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	wrapped := &A2AWrappedArtifact{
 		JacsID:          generateUUID(),
@@ -278,9 +335,43 @@ func (a *A2AIntegration) SignArtifact(
 
 // VerifyArtifact verifies a wrapped artifact signature.
 //
+// When the JACS CGo backend is loaded, this delegates to the Rust core for
+// verification. Falls back to local Ed25519 logic otherwise.
+//
 // If no explicit public key is provided, verification falls back to:
 // 1) this client's own public key (when signerId matches this client)
 func (a *A2AIntegration) VerifyArtifact(
+	wrapped *A2AWrappedArtifact,
+	publicKeyPEM ...string,
+) (*A2AArtifactVerificationResult, error) {
+	if wrapped == nil {
+		return &A2AArtifactVerificationResult{
+			Valid:            false,
+			Error:            "wrapped artifact is nil",
+			OriginalArtifact: map[string]interface{}{},
+		}, nil
+	}
+
+	// Try JACS core delegation first.
+	if a.client.crypto != nil {
+		wrappedJSON, marshalErr := json.Marshal(wrapped)
+		if marshalErr == nil {
+			resultJSON, err := a.client.crypto.VerifyA2AArtifact(string(wrappedJSON))
+			if err == nil {
+				var result A2AArtifactVerificationResult
+				if json.Unmarshal([]byte(resultJSON), &result) == nil {
+					return &result, nil
+				}
+			}
+			// Fall through to local logic on any error.
+		}
+	}
+
+	return a.verifyArtifactLocal(wrapped, publicKeyPEM...)
+}
+
+// verifyArtifactLocal is the pure-Go Ed25519 fallback for VerifyArtifact.
+func (a *A2AIntegration) verifyArtifactLocal(
 	wrapped *A2AWrappedArtifact,
 	publicKeyPEM ...string,
 ) (*A2AArtifactVerificationResult, error) {
@@ -290,10 +381,6 @@ func (a *A2AIntegration) VerifyArtifact(
 		ArtifactType:     "",
 		Timestamp:        "",
 		OriginalArtifact: map[string]interface{}{},
-	}
-	if wrapped == nil {
-		result.Error = "wrapped artifact is nil"
-		return result, nil
 	}
 
 	result.ArtifactType = wrapped.JacsType
@@ -453,18 +540,54 @@ func (a *A2AIntegration) RegisterWithAgentCard(
 }
 
 // AssessRemoteAgent applies trust policy to a remote A2A agent card.
+//
+// When the JACS CGo backend is loaded, this delegates to the Rust core for
+// trust assessment. Falls back to local Go logic otherwise.
 func (a *A2AIntegration) AssessRemoteAgent(
 	agentCardJSON string,
 	policy ...A2ATrustPolicy,
 ) (*A2ATrustAssessment, error) {
-	var card map[string]interface{}
-	if err := json.Unmarshal([]byte(agentCardJSON), &card); err != nil {
-		return nil, fmt.Errorf("invalid agent card json: %w", err)
-	}
-
 	resolvedPolicy := a.trustPolicy
 	if len(policy) > 0 {
 		resolvedPolicy = normalizeTrustPolicy(policy[0])
+	}
+
+	// Try JACS core delegation first.
+	if a.client.crypto != nil {
+		policyJSON := fmt.Sprintf(`{"policy":"%s"}`, resolvedPolicy)
+		resultJSON, err := a.client.crypto.AssessA2AAgent(agentCardJSON, policyJSON)
+		if err == nil {
+			var assessment A2ATrustAssessment
+			if json.Unmarshal([]byte(resultJSON), &assessment) == nil {
+				// Overlay local trust-store awareness, since JACS core does not
+				// have visibility into the in-process trust store.
+				var card map[string]interface{}
+				if json.Unmarshal([]byte(agentCardJSON), &card) == nil {
+					agentID := extractCardAgentID(card)
+					if agentID != "" && a.IsTrustedA2AAgent(agentID) {
+						assessment.InTrustStore = true
+						if assessment.TrustLevel == "untrusted" {
+							assessment.TrustLevel = "explicitly_trusted"
+						}
+					}
+				}
+				return &assessment, nil
+			}
+		}
+		// Fall through to local logic on any error.
+	}
+
+	return a.assessRemoteAgentLocal(agentCardJSON, resolvedPolicy)
+}
+
+// assessRemoteAgentLocal is the pure-Go fallback for AssessRemoteAgent.
+func (a *A2AIntegration) assessRemoteAgentLocal(
+	agentCardJSON string,
+	resolvedPolicy A2ATrustPolicy,
+) (*A2ATrustAssessment, error) {
+	var card map[string]interface{}
+	if err := json.Unmarshal([]byte(agentCardJSON), &card); err != nil {
+		return nil, fmt.Errorf("invalid agent card json: %w", err)
 	}
 
 	jacsRegistered := hasJACSExtension(card)
