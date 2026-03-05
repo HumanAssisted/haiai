@@ -175,7 +175,7 @@ impl JacsProvider for LocalJacsProvider {
             .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
 
         // Use Agent::sign_bytes when available (jacs-local path with our changes).
-        // For the crates.io jacs-crate path (0.8.0), fall back to sign_string
+        // For the crates.io jacs-crate path, fall back to sign_string
         // with base64 encoding as a bridge.
         #[cfg(feature = "jacs-local")]
         {

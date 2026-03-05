@@ -132,5 +132,5 @@ async fn register_bootstrap_matches_shared_fixture() {
         .expect("register");
 
     expected.assert_async().await;
-    assert_eq!(auth_guard.hits_async().await, 0);
+    assert_eq!(auth_guard.calls_async().await, 0);
 }

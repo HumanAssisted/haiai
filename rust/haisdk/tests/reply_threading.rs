@@ -54,7 +54,7 @@ async fn reply_uses_message_id_for_threading_when_present() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/api/agents/test-agent-001/email/send")
-                .json_body_partial(
+                .json_body_includes(
                     r#"{"in_reply_to": "<db-uuid-123.bot@hai.ai>"}"#,
                 );
             then.status(200).json_body(json!({
@@ -105,7 +105,7 @@ async fn reply_falls_back_to_id_when_message_id_is_none() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/api/agents/test-agent-001/email/send")
-                .json_body_partial(r#"{"in_reply_to": "db-uuid-456"}"#);
+                .json_body_includes(r#"{"in_reply_to": "db-uuid-456"}"#);
             then.status(200).json_body(json!({
                 "message_id": "reply-msg-002",
                 "status": "queued"

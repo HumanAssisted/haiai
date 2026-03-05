@@ -57,7 +57,7 @@ async fn get_verification_uses_public_endpoint_without_auth() {
     assert!(!result.verification.hai_registered);
 
     expected.assert_async().await;
-    assert_eq!(with_auth.hits_async().await, 0);
+    assert_eq!(with_auth.calls_async().await, 0);
 }
 
 #[tokio::test]
@@ -111,5 +111,5 @@ async fn verify_agent_document_posts_public_payload_without_auth() {
     assert!(result.verification.hai_registered);
 
     expected.assert_async().await;
-    assert_eq!(with_auth.hits_async().await, 0);
+    assert_eq!(with_auth.calls_async().await, 0);
 }

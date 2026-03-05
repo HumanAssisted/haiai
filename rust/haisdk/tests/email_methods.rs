@@ -31,9 +31,9 @@ async fn send_email_sends_content_fields() {
                 .path("/api/agents/test-agent-001/email/send")
                 .header_exists("authorization")
                 .header("content-type", "application/json")
-                .body_contains("\"to\"")
-                .body_contains("\"subject\"")
-                .body_contains("\"body\"");
+                .body_includes("\"to\"")
+                .body_includes("\"subject\"")
+                .body_includes("\"body\"");
             then.status(200).json_body(json!({
                 "message_id": "msg-001",
                 "status": "queued"
@@ -105,7 +105,7 @@ async fn send_email_includes_in_reply_to_when_set() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/api/agents/test-agent-001/email/send")
-                .body_contains("in_reply_to");
+                .body_includes("in_reply_to");
             then.status(200).json_body(json!({
                 "message_id": "msg-003",
                 "status": "queued"
@@ -389,9 +389,9 @@ async fn reply_fetches_original_and_sends_with_re_prefix() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/api/agents/test-agent-001/email/send")
-                .body_contains("alice@hai.ai")
-                .body_contains("Re: Original Subject")
-                .body_contains("orig-msg");
+                .body_includes("alice@hai.ai")
+                .body_includes("Re: Original Subject")
+                .body_includes("orig-msg");
             then.status(200).json_body(json!({
                 "message_id": "reply-msg",
                 "status": "queued"
@@ -433,7 +433,7 @@ async fn reply_does_not_double_re_prefix() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/api/agents/test-agent-001/email/send")
-                .body_contains("Re: Already replied");
+                .body_includes("Re: Already replied");
             then.status(200).json_body(json!({
                 "message_id": "reply-2",
                 "status": "queued"
@@ -474,7 +474,7 @@ async fn reply_with_subject_override() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/api/agents/test-agent-001/email/send")
-                .body_contains("Custom Subject");
+                .body_includes("Custom Subject");
             then.status(200).json_body(json!({
                 "message_id": "reply-3",
                 "status": "queued"

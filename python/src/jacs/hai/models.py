@@ -411,6 +411,40 @@ class EmailVerificationResultV2:
 
 
 @dataclass
+class AttestationResult:
+    """Result of creating an attestation via HAI.
+
+    Attributes:
+        doc_id: The attestation document ID.
+        attestation: The signed attestation document.
+        hai_signature: HAI's co-signature on the attestation.
+        verification: Optional verification result (when retrieved).
+    """
+
+    doc_id: str
+    attestation: dict[str, Any] = field(default_factory=dict)
+    hai_signature: dict[str, Any] = field(default_factory=dict)
+    verification: Optional[dict[str, Any]] = None
+
+
+@dataclass
+class AttestationVerifyResult:
+    """Result of verifying an attestation via HAI.
+
+    Attributes:
+        crypto_valid: Whether the cryptographic signature is valid.
+        evidence_valid: Per-evidence verification results.
+        hai_signed: Whether HAI co-signed this attestation.
+        badge_level: The badge level for the agent.
+    """
+
+    crypto_valid: bool
+    evidence_valid: list[dict[str, Any]] = field(default_factory=list)
+    hai_signed: bool = False
+    badge_level: str = "none"
+
+
+@dataclass
 class PublicKeyInfo:
     """Public key information from a remote agent lookup."""
 

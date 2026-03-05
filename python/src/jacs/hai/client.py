@@ -43,6 +43,8 @@ from jacs.hai.errors import (
 from jacs.hai.models import (
     AgentConfig,
     AgentVerificationResult,
+    AttestationResult,
+    AttestationVerifyResult,
     BaselineRunResult,
     BenchmarkResult,
     ChainEntry,
@@ -1208,6 +1210,164 @@ class HaiClient:
             raise
         except Exception as exc:
             raise HaiError(f"Agent document verification failed: {exc}")
+
+    # ------------------------------------------------------------------
+    # attestation
+    # ------------------------------------------------------------------
+
+    def create_attestation(
+        self,
+        hai_url: str,
+        agent_id: str,
+        subject: dict,
+        claims: list,
+        evidence: list | None = None,
+    ) -> dict:
+        """Create a signed attestation document for a registered agent.
+
+        HAI co-signs the attestation using its signing authority.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            agent_id: The agent's JACS ID.
+            subject: Attestation subject (type, id, digests).
+            claims: Array of claim objects (name, value, confidence, etc).
+            evidence: Optional array of evidence references.
+
+        Returns:
+            Dict with attestation, hai_signature, and doc_id.
+        """
+        escaped = self._escape_path_segment(agent_id)
+        url = self._make_url(hai_url, f"/api/v1/agents/{escaped}/attestations")
+        headers = self._build_auth_headers()
+        headers["Content-Type"] = "application/json"
+
+        payload = {
+            "subject": subject,
+            "claims": claims,
+            "evidence": evidence or [],
+        }
+
+        try:
+            resp = httpx.post(
+                url, json=payload, headers=headers, timeout=self._timeout,
+            )
+            if resp.status_code == 404:
+                raise HaiError(f"Agent '{agent_id}' not registered with HAI")
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(f"Authentication failed: {resp.text}")
+            resp.raise_for_status()
+            return resp.json()
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Failed to create attestation: {exc}")
+
+    def list_attestations(
+        self,
+        hai_url: str,
+        agent_id: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> dict:
+        """List attestations for a registered agent.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            agent_id: The agent's JACS ID.
+            limit: Max number of results (default 20).
+            offset: Pagination offset.
+
+        Returns:
+            Dict with attestations array and total count.
+        """
+        escaped = self._escape_path_segment(agent_id)
+        url = self._make_url(
+            hai_url,
+            f"/api/v1/agents/{escaped}/attestations?limit={limit}&offset={offset}",
+        )
+        headers = self._build_auth_headers()
+
+        try:
+            resp = httpx.get(url, headers=headers, timeout=self._timeout)
+            resp.raise_for_status()
+            return resp.json()
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Failed to list attestations: {exc}")
+
+    def get_attestation(
+        self,
+        hai_url: str,
+        agent_id: str,
+        doc_id: str,
+    ) -> dict:
+        """Get a specific attestation document.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            agent_id: The agent's JACS ID.
+            doc_id: The attestation document ID.
+
+        Returns:
+            Dict with attestation, hai_signature, and verification.
+        """
+        escaped_agent = self._escape_path_segment(agent_id)
+        escaped_doc = self._escape_path_segment(doc_id)
+        url = self._make_url(
+            hai_url,
+            f"/api/v1/agents/{escaped_agent}/attestations/{escaped_doc}",
+        )
+        headers = self._build_auth_headers()
+
+        try:
+            resp = httpx.get(url, headers=headers, timeout=self._timeout)
+            if resp.status_code == 404:
+                raise HaiError(
+                    f"Attestation '{doc_id}' not found for agent '{agent_id}'"
+                )
+            resp.raise_for_status()
+            return resp.json()
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Failed to get attestation: {exc}")
+
+    def verify_attestation(
+        self,
+        hai_url: str,
+        document: str,
+    ) -> dict:
+        """Verify an attestation document via HAI.
+
+        Checks cryptographic validity and whether HAI has co-signed the
+        attestation.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            document: The attestation JSON document as a string.
+
+        Returns:
+            Dict with crypto_valid, evidence_valid, hai_signed, badge_level.
+        """
+        url = self._make_url(hai_url, "/api/v1/attestations/verify")
+        headers = self._build_auth_headers()
+        headers["Content-Type"] = "application/json"
+
+        try:
+            resp = httpx.post(
+                url,
+                json={"document": document},
+                headers=headers,
+                timeout=self._timeout,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Failed to verify attestation: {exc}")
 
     # ------------------------------------------------------------------
     # benchmark

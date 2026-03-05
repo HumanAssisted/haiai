@@ -23,7 +23,7 @@ implementations backed by JACS.
 
 ## JACS dependency source
 
-Default builds use the published `jacs` crate pinned to `0.8.1`.
+Default builds use the published `jacs` crate pinned to `0.8.0`.
 
 For local development against a checkout at `../../../JACS/jacs`, disable
 default features and enable `jacs-local`:

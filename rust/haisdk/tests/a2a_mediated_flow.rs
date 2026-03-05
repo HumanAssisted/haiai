@@ -179,8 +179,8 @@ async fn mediated_sse_signs_and_submits_wrapped_artifacts() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/api/v1/agents/jobs/job-42/response")
-                .body_contains("a2aTask")
-                .body_contains("a2aResult");
+                .body_includes("a2aTask")
+                .body_includes("a2aResult");
             then.status(200).json_body(json!({
                 "success": true,
                 "job_id": "job-42",

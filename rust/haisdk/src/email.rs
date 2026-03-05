@@ -6,7 +6,8 @@
 //! or cryptography (those live in JACS).
 
 // This module requires the jacs-local feature (path dependency to the JACS
-// repo) because the email module is not yet available on crates.io (jacs 0.8.0).
+// repo) because the email module is not yet available in the published jacs
+// crate version this SDK consumes.
 // Once a new jacs version is published with the email module, this can be
 // relaxed to also support the jacs-crate feature.
 use jacs_local_path as jacs;
@@ -756,7 +757,7 @@ mod tests {
         let server = httpmock::MockServer::start();
         server.mock(|when, then| {
             when.method("GET")
-                .path_contains("/api/agents/keys/");
+                .path_includes("/api/agents/keys/");
             then.status(200)
                 .json_body(serde_json::json!({
                     "email": "sender@example.com",
@@ -793,7 +794,7 @@ mod tests {
         let server = httpmock::MockServer::start();
         server.mock(|when, then| {
             when.method("GET")
-                .path_contains("/api/agents/keys/");
+                .path_includes("/api/agents/keys/");
             then.status(200)
                 .json_body(serde_json::json!({
                     "email": "different@example.com",  // Doesn't match From
