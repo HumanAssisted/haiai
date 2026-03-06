@@ -56,6 +56,10 @@ Signed message is:
 
 `{jacsId}:{timestamp}`
 
+`fixtures/cross_lang_test.json` is the shared wrapper-level fixture for this
+shape plus canonical JSON selection cases. It should not carry raw private keys
+or JACS-owned signature vectors.
+
 ### Shared endpoint contract fixture
 
 `fixtures/contract_endpoints.json` is the minimum shared endpoint contract.
@@ -67,6 +71,12 @@ Current required parity checks:
 3. `submit_response`: `POST /api/v1/agents/jobs/{job_id}/response` with auth
 
 Each language must have tests that assert method + path + auth behavior from this fixture.
+
+### Shared MCP tool contract fixture
+
+`fixtures/mcp_tool_contract.json` defines the minimum shared HAISDK MCP tool
+surface. Languages may expose additional tools, but the required tool names and
+input fields in that fixture must stay aligned.
 
 ### Path escaping
 
@@ -154,10 +164,12 @@ When HAISDK behavior changes:
 For each language SDK:
 
 1. endpoint contract fixture tests (`fixtures/contract_endpoints.json`)
-2. path escaping regression tests
-3. verify-link length/base64url tests
-4. config and key resolution precedence tests
-5. bootstrap registration security tests
+2. cross-language wrapper contract tests (`fixtures/cross_lang_test.json`)
+3. MCP tool contract tests (`fixtures/mcp_tool_contract.json`) where applicable
+4. path escaping regression tests
+5. verify-link length/base64url tests
+6. config and key resolution precedence tests
+7. bootstrap registration security tests
 
 ## Open Integration Items
 

@@ -1409,11 +1409,12 @@ mod tests {
             .and_then(|value: &Value| value.get("verify_url"))
             .and_then(Value::as_str)
             .expect("verify_url");
+        let expected_text = format!("verify_url={url}");
 
         assert!(url.starts_with("https://example.com/jacs/verify?s="));
         assert_eq!(
             result["content"][0]["text"].as_str(),
-            Some(&format!("verify_url={url}"))
+            Some(expected_text.as_str())
         );
     }
 

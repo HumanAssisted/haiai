@@ -4,7 +4,7 @@ Cross-language test fixtures used by Python, Node, and Go test suites.
 
 ## Files
 
-- `cross_lang_test.json` - Cross-language verification fixture for JACS signing compatibility
+- `cross_lang_test.json` - Cross-language HAISDK wrapper contract for auth-header shaping and canonical JSON selection
 - `contract_endpoints.json` - Shared HAI endpoint contract used for parity tests
 - `email_conformance.json` - Cross-SDK email conformance tests for EmailVerificationResultV2, content hash golden values, API contracts, FieldStatus enum, and error type mapping
 - `a2a/` - Shared A2A card/artifact/trust fixtures for cross-language parity
@@ -14,3 +14,6 @@ Cross-language test fixtures used by Python, Node, and Go test suites.
 
 Tests in each language directory reference these fixtures via relative paths
 (e.g., `../fixtures/cross_lang_test.json`).
+
+`cross_lang_test.json` is intentionally scoped to HAISDK-owned behavior.
+Key material and raw signature vectors belong in JACS fixtures, not here.

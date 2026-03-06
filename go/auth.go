@@ -10,6 +10,14 @@ import (
 	"time"
 )
 
+func authHeaderMessage(jacsID, timestamp string) string {
+	return fmt.Sprintf("%s:%s", jacsID, timestamp)
+}
+
+func authHeaderValue(jacsID, timestamp, signatureB64 string) string {
+	return fmt.Sprintf("JACS %s:%s:%s", jacsID, timestamp, signatureB64)
+}
+
 // BuildAuthHeader constructs the JACS authentication header value.
 //
 // Format: "JACS {jacsId}:{timestamp}:{signature_base64}"
@@ -21,11 +29,11 @@ import (
 // Deprecated: Use Client.buildAuthHeader instead, which delegates to the CryptoBackend.
 func BuildAuthHeader(jacsID string, key ed25519.PrivateKey) string {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	message := fmt.Sprintf("%s:%s", jacsID, timestamp)
+	message := authHeaderMessage(jacsID, timestamp)
 	sig := ed25519.Sign(key, []byte(message))
 	sigB64 := base64.StdEncoding.EncodeToString(sig)
 
-	return fmt.Sprintf("JACS %s:%s:%s", jacsID, timestamp, sigB64)
+	return authHeaderValue(jacsID, timestamp, sigB64)
 }
 
 // Build4PartAuthHeader constructs a 4-part JACS authentication header value.
@@ -64,12 +72,12 @@ func SetAuthHeaders(req *http.Request, jacsID string, key ed25519.PrivateKey) {
 // sign (e.g., standalone fallback without a loaded key).
 func (c *Client) buildAuthHeader() string {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	message := fmt.Sprintf("%s:%s", c.jacsID, timestamp)
+	message := authHeaderMessage(c.jacsID, timestamp)
 
 	if c.crypto != nil {
 		sigB64, err := c.crypto.SignString(message)
 		if err == nil {
-			return fmt.Sprintf("JACS %s:%s:%s", c.jacsID, timestamp, sigB64)
+			return authHeaderValue(c.jacsID, timestamp, sigB64)
 		}
 		log.Printf("WARNING: CryptoBackend.SignString failed, falling back to direct Ed25519: %v", err)
 	}
