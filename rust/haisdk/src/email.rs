@@ -5,65 +5,34 @@
 //! verification, and identity binding -- without duplicating any MIME parsing
 //! or cryptography (those live in JACS).
 
-// This module requires the jacs-local feature (path dependency to the JACS
-// repo) because the email module is not yet available in the published jacs
-// crate version this SDK consumes.
-// Once a new jacs version is published with the email module, this can be
-// relaxed to also support the jacs-crate feature.
 use jacs_local_path as jacs;
 
 use base64::Engine;
 use sha2::{Digest, Sha256};
 
 use crate::error::{HaiError, Result};
+use crate::types::{ChainEntry, EmailVerificationResultV2, FieldResult, FieldStatus};
 use crate::types::KeyRegistryResponse;
 
 use jacs::simple::{CreateAgentParams, SimpleAgent};
 
 // Re-export JACS email types for consumer convenience.
 pub use jacs::email::{
-    sign_email, AttachmentEntry, BodyPartEntry, ChainEntry, ContentVerificationResult,
-    EmailSignatureHeaders, EmailSignaturePayload, FieldResult, FieldStatus,
-    JacsEmailMetadata, JacsEmailSignature, JacsEmailSignatureDocument,
+    sign_email, AttachmentEntry, BodyPartEntry, ContentVerificationResult, EmailSignatureHeaders,
+    EmailSignaturePayload, JacsEmailMetadata, JacsEmailSignature, JacsEmailSignatureDocument,
     ParsedAttachment, ParsedBodyPart, ParsedEmailParts, SignedHeaderEntry,
 };
 
 use jacs::email::{get_jacs_attachment, verify_email_content, verify_email_document};
 
-/// HAI-layer verification result wrapping JACS content verification with
-/// registry metadata (reputation tier, DNS status, forwarding chain).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct EmailVerificationResultV2 {
-    pub valid: bool,
-    #[serde(default)]
-    pub jacs_id: String,
-    #[serde(default)]
-    pub algorithm: String,
-    #[serde(default)]
-    pub reputation_tier: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dns_verified: Option<bool>,
-    #[serde(default)]
-    pub field_results: Vec<FieldResult>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub chain: Vec<ChainEntry>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+fn convert_field_result(value: jacs::email::FieldResult) -> FieldResult {
+    let json = serde_json::to_value(value).expect("FieldResult should serialize");
+    serde_json::from_value(json).expect("FieldResult should match SDK schema")
 }
 
-impl EmailVerificationResultV2 {
-    pub fn err(jacs_id: &str, reputation_tier: &str, error: &str) -> Self {
-        Self {
-            valid: false,
-            jacs_id: jacs_id.to_string(),
-            algorithm: String::new(),
-            reputation_tier: reputation_tier.to_string(),
-            dns_verified: None,
-            field_results: Vec::new(),
-            chain: Vec::new(),
-            error: Some(error.to_string()),
-        }
-    }
+fn convert_chain_entry(value: jacs::email::ChainEntry) -> ChainEntry {
+    let json = serde_json::to_value(value).expect("ChainEntry should serialize");
+    serde_json::from_value(json).expect("ChainEntry should match SDK schema")
 }
 
 /// Verify a raw RFC 5322 email with JACS attachment signature.
@@ -261,16 +230,25 @@ pub async fn verify_email(
 
     // Step 8: Content hash comparison
     let content_result = verify_email_content(&trusted_doc, &parts);
+    let field_results = content_result
+        .field_results
+        .into_iter()
+        .map(convert_field_result)
+        .collect::<Vec<_>>();
 
     // Step 9: Verify parent chain entries cryptographically.
     // JACS returns parent chain entries with valid=false because it lacks
     // the parent signers' public keys. We upgrade them here by looking up
     // each parent signer from the registry and verifying their signature.
-    let mut chain = content_result.chain;
+    let mut chain = content_result
+        .chain
+        .into_iter()
+        .map(convert_chain_entry)
+        .collect::<Vec<_>>();
     verify_parent_chain_entries(&mut chain, &parts, hai_url, &agent).await;
 
     // Recompute overall validity: fields must pass AND all chain entries valid
-    let fields_valid = !content_result.field_results.iter().any(|r| {
+    let fields_valid = !field_results.iter().any(|r| {
         r.status == FieldStatus::Fail
     });
     let chain_valid = chain.iter().all(|entry| entry.valid);
@@ -282,7 +260,7 @@ pub async fn verify_email(
         algorithm: sig_algorithm,
         reputation_tier: reputation_tier.clone(),
         dns_verified,
-        field_results: content_result.field_results,
+        field_results,
         chain,
         error: None,
     }

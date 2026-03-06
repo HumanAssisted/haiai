@@ -23,6 +23,8 @@ node_modules/
 dist/
 *.tsbuildinfo
 .vitest/
+node/jacs.config.json
+node/jacs_data/
 
 # Go
 *.exe

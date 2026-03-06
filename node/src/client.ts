@@ -471,13 +471,16 @@ export class HaiClient {
   async rotateKeys(options?: RotateKeysOptions): Promise<RotationResult> {
     const {
       copyFile,
+      mkdtemp,
       readFile: readF,
       rename,
+      rm,
       stat: fsStat,
       writeFile,
     } = await import('node:fs/promises');
     const { randomUUID } = await import('node:crypto');
     const { join, resolve } = await import('node:path');
+    const { tmpdir } = await import('node:os');
 
     const registerWithHai = options?.registerWithHai ?? true;
     const haiUrl = options?.haiUrl ?? this.baseUrl;
@@ -542,6 +545,7 @@ export class HaiClient {
       ?? process.env.JACS_PRIVATE_KEY_PASSWORD
       ?? '';
     const newVersion = randomUUID();
+    const generatedKeyDir = await mkdtemp(join(tmpdir(), 'haisdk-rotate-'));
     let newPublicKeyPem: string;
     try {
       const resultJson = createAgentSync(
@@ -549,7 +553,7 @@ export class HaiClient {
         passphrase,
         'pq2025',
         null, // data dir
-        keyDir,
+        generatedKeyDir,
         null, // config path (don't overwrite main config)
         null, // agent type
         (this.config as unknown as Record<string, unknown>).description as string
@@ -578,6 +582,8 @@ export class HaiClient {
       await rename(archivePriv, privKeyPath).catch(() => {});
       try { await rename(archivePub, pubKeyPath); } catch { /* noop */ }
       throw new AuthenticationError(`Key generation failed: ${err}`);
+    } finally {
+      await rm(generatedKeyDir, { recursive: true, force: true }).catch(() => {});
     }
 
     // 3. Build new agent document
@@ -1234,7 +1240,8 @@ export class HaiClient {
     try {
       await tempAgent.load(resolve(tempConfigPath));
     } catch {
-      signingAgent = this.agent;
+      tempAgent.ephemeralSync('pq2025');
+      signingAgent = tempAgent;
     }
 
     // Build minimal JACS agent document

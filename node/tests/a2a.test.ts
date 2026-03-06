@@ -7,16 +7,14 @@ describe('a2a facade wrappers', () => {
     vi.unmock('@hai.ai/jacs/a2a');
   });
 
-  it('returns a clear error when optional A2A module is missing', async () => {
-    vi.doMock('@hai.ai/jacs/a2a', () => {
-      const error = new Error("Cannot find package '@hai.ai/jacs/a2a'");
-      (error as Error & { code?: string }).code = 'ERR_MODULE_NOT_FOUND';
-      throw error;
-    });
+  it('returns a clear error when optional A2A exports are unavailable', async () => {
+    vi.doMock('@hai.ai/jacs/a2a', () => ({
+      JACSA2AIntegration: undefined,
+    }));
     const mod = await import('../src/a2a.js');
 
     await expect(mod.getA2AIntegration({})).rejects.toThrow(
-      "Optional dependency '@hai.ai/jacs/a2a' is required",
+      "Module '@hai.ai/jacs/a2a' does not export class 'JACSA2AIntegration'",
     );
   });
 

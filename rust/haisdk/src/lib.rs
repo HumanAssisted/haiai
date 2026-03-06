@@ -41,11 +41,10 @@ pub use client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
 pub use config::{load_config, resolve_private_key_candidates, AgentConfig};
 #[cfg(feature = "jacs-local")]
 pub use email::{
-    verify_email, EmailVerificationResultV2,
+    verify_email,
     // JACS email types re-exported for consumer convenience
-    sign_email, AttachmentEntry, BodyPartEntry, ChainEntry, ContentVerificationResult,
-    EmailSignatureHeaders, EmailSignaturePayload, FieldResult,
-    FieldStatus, JacsEmailMetadata, JacsEmailSignature, JacsEmailSignatureDocument,
+    sign_email, AttachmentEntry, BodyPartEntry, ContentVerificationResult, EmailSignatureHeaders,
+    EmailSignaturePayload, JacsEmailMetadata, JacsEmailSignature, JacsEmailSignatureDocument,
     ParsedAttachment, ParsedBodyPart, ParsedEmailParts, SignedHeaderEntry,
 };
 pub use error::{HaiError, Result};

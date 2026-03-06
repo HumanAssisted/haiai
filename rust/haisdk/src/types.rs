@@ -201,6 +201,76 @@ pub struct DeleteUsernameResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldStatus {
+    Pass,
+    Modified,
+    Fail,
+    Unverifiable,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FieldResult {
+    #[serde(default)]
+    pub field: String,
+    pub status: FieldStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_value: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChainEntry {
+    #[serde(default)]
+    pub signer: String,
+    #[serde(default)]
+    pub jacs_id: String,
+    #[serde(default)]
+    pub valid: bool,
+    #[serde(default)]
+    pub forwarded: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailVerificationResultV2 {
+    pub valid: bool,
+    #[serde(default)]
+    pub jacs_id: String,
+    #[serde(default)]
+    pub algorithm: String,
+    #[serde(default)]
+    pub reputation_tier: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dns_verified: Option<bool>,
+    #[serde(default)]
+    pub field_results: Vec<FieldResult>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chain: Vec<ChainEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl EmailVerificationResultV2 {
+    pub fn err(jacs_id: &str, reputation_tier: &str, error: &str) -> Self {
+        Self {
+            valid: false,
+            jacs_id: jacs_id.to_string(),
+            algorithm: String::new(),
+            reputation_tier: reputation_tier.to_string(),
+            dns_verified: None,
+            field_results: Vec::new(),
+            chain: Vec::new(),
+            error: Some(error.to_string()),
+        }
+    }
+}
+
 /// An email attachment with raw data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmailAttachment {
