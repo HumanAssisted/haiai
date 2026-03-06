@@ -14,9 +14,10 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import { fileURLToPath } from 'node:url';
 import { HaiClient } from './client.js';
 
-async function getClient(args: Record<string, unknown>): Promise<HaiClient> {
+export async function getClient(args: Record<string, unknown>): Promise<HaiClient> {
   const options: Record<string, unknown> = {};
   if (typeof args.hai_url === 'string' && args.hai_url) {
     options.url = args.hai_url;
@@ -31,7 +32,7 @@ function toJSON(obj: unknown): string {
   return JSON.stringify(obj);
 }
 
-const TOOLS = [
+export const TOOLS = [
   // ----- Identity tools -----
   {
     name: 'hai_hello',
@@ -255,7 +256,7 @@ function errorResult(message: string) {
   return { content: [{ type: 'text' as const, text: message }], isError: true as const };
 }
 
-async function handleToolCall(
+export async function handleToolCall(
   name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: { type: 'text'; text: string }[]; isError?: true }> {
@@ -361,7 +362,7 @@ async function handleToolCall(
   }
 }
 
-async function main() {
+export async function main() {
   const server = new Server(
     { name: 'hai-sdk', version: '0.1.0' },
     { capabilities: { tools: {} } },
@@ -380,7 +381,12 @@ async function main() {
   await server.connect(transport);
 }
 
-main().catch((err) => {
-  process.stderr.write(`server error: ${err}\n`);
-  process.exit(1);
-});
+const currentFile = fileURLToPath(import.meta.url);
+const invokedFile = process.argv[1];
+
+if (invokedFile && currentFile === invokedFile) {
+  main().catch((err) => {
+    process.stderr.write(`server error: ${err}\n`);
+    process.exit(1);
+  });
+}

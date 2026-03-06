@@ -6,21 +6,13 @@ duplicate framework-specific logic in this repository.
 
 from __future__ import annotations
 
-import importlib
 import inspect
 from functools import wraps
 from typing import Any, Callable, TypeVar
 
+from haisdk._optional import load_optional_module, require_attr
+
 TCallable = TypeVar("TCallable", bound=Callable[..., Any])
-
-
-def _load_optional(module_name: str, *, feature: str, install_hint: str) -> Any:
-    try:
-        return importlib.import_module(module_name)
-    except ImportError as exc:
-        raise ImportError(
-            f"{feature} requires optional dependency '{module_name}'. {install_hint}"
-        ) from exc
 
 
 def _resolve_base_adapter(
@@ -28,17 +20,17 @@ def _resolve_base_adapter(
     config_path: str | None = None,
     strict: bool = False,
 ) -> Any:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.adapters.base",
         feature="Agent SDK signing wrapper",
         install_hint='Install with: pip install "haisdk[agentsdk]"',
     )
-    adapter_cls = getattr(module, "BaseJacsAdapter", None)
-    if adapter_cls is None:
-        raise ImportError(
-            "jacs.adapters.base is available but missing BaseJacsAdapter. "
-            "Install/upgrade JACS: pip install -U jacs"
-        )
+    adapter_cls = require_attr(
+        module,
+        "BaseJacsAdapter",
+        owner_name="jacs.adapters.base",
+        upgrade_hint="Install/upgrade JACS: pip install -U jacs",
+    )
     return adapter_cls(client=client, config_path=config_path, strict=strict)
 
 
@@ -52,7 +44,7 @@ def langchain_signing_middleware(
     config_path: str | None = None,
     strict: bool = False,
 ) -> Any:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.adapters.langchain",
         feature="LangChain/LangGraph integration",
         install_hint='Install with: pip install "haisdk[langchain,langgraph]"',
@@ -69,7 +61,7 @@ def langgraph_wrap_tool_call(
     config_path: str | None = None,
     strict: bool = False,
 ) -> Callable[..., Any]:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.adapters.langchain",
         feature="LangGraph wrap_tool_call integration",
         install_hint='Install with: pip install "haisdk[langgraph]"',
@@ -86,7 +78,7 @@ def langgraph_awrap_tool_call(
     config_path: str | None = None,
     strict: bool = False,
 ) -> Callable[..., Any]:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.adapters.langchain",
         feature="LangGraph async wrap_tool_call integration",
         install_hint='Install with: pip install "haisdk[langgraph]"',
@@ -108,7 +100,7 @@ def crewai_guardrail(
     config_path: str | None = None,
     strict: bool = False,
 ) -> Callable[..., Any]:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.adapters.crewai",
         feature="CrewAI integration",
         install_hint='Install with: pip install "haisdk[crewai]"',
@@ -126,7 +118,7 @@ def crewai_signed_task(
     strict: bool = False,
     **task_kwargs: Any,
 ) -> Callable[..., Any]:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.adapters.crewai",
         feature="CrewAI signed task integration",
         install_hint='Install with: pip install "haisdk[crewai]"',
@@ -145,12 +137,17 @@ def crewai_signed_tool(
     config_path: str | None = None,
     strict: bool = False,
 ) -> Any:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.adapters.crewai",
         feature="CrewAI signed tool integration",
         install_hint='Install with: pip install "haisdk[crewai]"',
     )
-    cls = getattr(module, "JacsSignedTool")
+    cls = require_attr(
+        module,
+        "JacsSignedTool",
+        owner_name="jacs.adapters.crewai",
+        upgrade_hint='Install/upgrade JACS with CrewAI support: pip install -U "jacs[crewai]"',
+    )
     return cls(
         inner_tool,
         client=client,
@@ -165,12 +162,17 @@ def crewai_verified_input(
     config_path: str | None = None,
     strict: bool = False,
 ) -> Any:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.adapters.crewai",
         feature="CrewAI verified input integration",
         install_hint='Install with: pip install "haisdk[crewai]"',
     )
-    cls = getattr(module, "JacsVerifiedInput")
+    cls = require_attr(
+        module,
+        "JacsVerifiedInput",
+        owner_name="jacs.adapters.crewai",
+        upgrade_hint='Install/upgrade JACS with CrewAI support: pip install -U "jacs[crewai]"',
+    )
     return cls(
         inner_tool,
         client=client,
@@ -185,7 +187,7 @@ def crewai_verified_input(
 
 
 def create_mcp_server(name: str, config_path: str | None = None) -> Any:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.mcp",
         feature="MCP server integration",
         install_hint='Install with: pip install "haisdk[mcp]"',
@@ -194,7 +196,7 @@ def create_mcp_server(name: str, config_path: str | None = None) -> Any:
 
 
 def mcp_tool(func: Callable[..., Any]) -> Callable[..., Any]:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.mcp",
         feature="MCP tool decorator",
         install_hint='Install with: pip install "haisdk[mcp]"',
@@ -203,7 +205,7 @@ def mcp_tool(func: Callable[..., Any]) -> Callable[..., Any]:
 
 
 def sign_mcp_message(message: dict[str, Any]) -> str:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.mcp",
         feature="MCP message signing",
         install_hint='Install with: pip install "haisdk[mcp]"',
@@ -212,7 +214,7 @@ def sign_mcp_message(message: dict[str, Any]) -> str:
 
 
 def verify_mcp_message(signed_json: str) -> dict[str, Any]:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.mcp",
         feature="MCP message verification",
         install_hint='Install with: pip install "haisdk[mcp]"',
@@ -228,7 +230,7 @@ def register_jacs_tools(
     *,
     tools: list[str] | None = None,
 ) -> Any:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.adapters.mcp",
         feature="MCP JACS tool registration",
         install_hint='Install with: pip install "haisdk[mcp]"',
@@ -248,7 +250,7 @@ def register_a2a_tools(
     config_path: str | None = None,
     strict: bool = False,
 ) -> Any:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.adapters.mcp",
         feature="MCP A2A tool registration",
         install_hint='Install with: pip install "haisdk[mcp,a2a]"',
@@ -267,7 +269,7 @@ def register_trust_tools(
     config_path: str | None = None,
     strict: bool = False,
 ) -> Any:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.adapters.mcp",
         feature="MCP trust tool registration",
         install_hint='Install with: pip install "haisdk[mcp]"',

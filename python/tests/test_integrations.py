@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from haisdk import integrations as integrations_module
+from haisdk import _optional as optional_module
 from haisdk.integrations import (
     agentsdk_tool_wrapper,
     agentsdk_verify_payload,
@@ -324,7 +324,7 @@ def test_missing_dependency_error_includes_install_hint(monkeypatch: pytest.Monk
             raise ImportError("No module named 'jacs.adapters.langchain'")
         return real_import_module(module_name, package)
 
-    monkeypatch.setattr(integrations_module.importlib, "import_module", fake_import_module)
+    monkeypatch.setattr(optional_module.importlib, "import_module", fake_import_module)
 
     with pytest.raises(ImportError, match=r"haisdk\[langgraph\]"):
         langgraph_wrap_tool_call()

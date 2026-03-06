@@ -4,10 +4,12 @@ import { generateTestKeypair as generateKeypair } from './setup.js';
 
 async function makeClient(): Promise<HaiClient> {
   const kp = generateKeypair();
-  return HaiClient.fromCredentials('security-agent', kp.privateKeyPem, {
+  const client = await HaiClient.fromCredentials('security-agent', kp.privateKeyPem, {
     url: 'https://hai.example',
     privateKeyPassphrase: 'keygen-password',
   });
+  (client as any)._publicKeyPem = kp.publicKeyPem;
+  return client;
 }
 
 describe('security behaviors (node)', () => {

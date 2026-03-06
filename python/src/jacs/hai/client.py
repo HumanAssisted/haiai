@@ -75,6 +75,27 @@ MAX_VERIFY_URL_LEN = 2048
 MAX_VERIFY_DOCUMENT_BYTES = 1515
 
 
+def _armor_key_bytes(raw: bytes, block_type: str) -> str:
+    encoded = base64.b64encode(raw).decode("ascii")
+    lines = [encoded[i:i + 64] for i in range(0, len(encoded), 64)]
+    return (
+        f"-----BEGIN {block_type}-----\n"
+        + "\n".join(lines)
+        + f"\n-----END {block_type}-----\n"
+    )
+
+
+def _normalize_public_key_pem(raw: bytes) -> str:
+    try:
+        text = raw.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        text = ""
+
+    if "BEGIN PUBLIC KEY" in text:
+        return text if text.endswith("\n") else text + "\n"
+    return _armor_key_bytes(raw, "PUBLIC KEY")
+
+
 def _read_public_key_pem(cfg: "AgentConfig") -> str:
     """Read the agent's public key PEM from the key directory."""
     key_dir = Path(cfg.key_dir)
@@ -82,10 +103,11 @@ def _read_public_key_pem(cfg: "AgentConfig") -> str:
         key_dir / "agent_public_key.pem",
         key_dir / f"{cfg.name}.public.pem",
         key_dir / "public_key.pem",
+        key_dir / "jacs.public.pem",
     ]
     for p in candidates:
         if p.is_file():
-            return p.read_text(encoding="utf-8")
+            return _normalize_public_key_pem(p.read_bytes())
     raise FileNotFoundError(
         f"Public key not found. Searched: {', '.join(str(p) for p in candidates)}"
     )
@@ -781,7 +803,7 @@ class HaiClient:
         if pub_path.is_file():
             pub_key_raw = pub_path.read_bytes()
             new_public_key_hash = hashlib.sha256(pub_key_raw).hexdigest()
-            pub_pem_str = pub_key_raw.decode("utf-8", errors="replace")
+            pub_pem_str = _normalize_public_key_pem(pub_key_raw)
         else:
             new_public_key_hash = ""
 
@@ -793,10 +815,9 @@ class HaiClient:
         # 8. Optionally re-register with HAI using the pre-signed OLD auth header
         registered = False
         if register_with_hai:
-            if hai_url is None or old_auth_header is None:
+            if hai_url is None:
                 logger.warning(
-                    "register_with_hai=True but no hai_url or old auth header; "
-                    "skipping registration"
+                    "register_with_hai=True but no hai_url; skipping registration"
                 )
             else:
                 try:
@@ -808,10 +829,14 @@ class HaiClient:
                         payload["public_key"] = base64.b64encode(
                             pub_pem_str.encode("utf-8")
                         ).decode("utf-8")
-                    headers = {
-                        "Authorization": old_auth_header,
-                        "Content-Type": "application/json",
-                    }
+                    headers = {"Content-Type": "application/json"}
+                    if old_auth_header is not None:
+                        headers["Authorization"] = old_auth_header
+                    else:
+                        logger.warning(
+                            "Proceeding with rotation registration without old-key "
+                            "Authorization header because pre-signing was unavailable"
+                        )
                     resp = httpx.post(
                         url, json=payload, headers=headers, timeout=self._timeout,
                     )
@@ -3747,26 +3772,15 @@ def register_new_agent(
     except OSError:
         pass
 
-    # Get public key PEM from the agent
-    # JACS may store keys as raw byte files, so get_public_key_pem()
-    # may fail. Fall back to reading the raw key and constructing PEM manually.
+    # Get public key PEM from the agent. JACS may store keys as raw bytes, so
+    # fall back to PEM armoring the on-disk key material when needed.
     public_pem = ""
     try:
         public_pem = _new_agent.get_public_key_pem()
     except Exception:
         pub_src = Path(new_info.get("public_key_path", ""))
         if pub_src.is_file():
-            raw_key = pub_src.read_bytes()
-            if len(raw_key) == 32:
-                # Wrap raw key in ASN.1 SubjectPublicKeyInfo (Ed25519 format)
-                # Prefix: 30 2a 30 05 06 03 2b 65 70 03 21 00
-                asn1_prefix = bytes([
-                    0x30, 0x2a, 0x30, 0x05, 0x06, 0x03,
-                    0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
-                ])
-                der = asn1_prefix + raw_key
-                b64 = base64.b64encode(der).decode("ascii")
-                public_pem = f"-----BEGIN PUBLIC KEY-----\n{b64}\n-----END PUBLIC KEY-----\n"
+            public_pem = _normalize_public_key_pem(pub_src.read_bytes())
 
     # Also write the public key in PEM format at the expected path
     pub_key_path = kd / "agent_public_key.pem"
@@ -3816,6 +3830,8 @@ def register_new_agent(
     }
     if domain:
         payload["domain"] = domain
+    if description:
+        payload["description"] = description
 
     resp = httpx.post(
         url, json=payload, headers={"Content-Type": "application/json"}, timeout=30.0,

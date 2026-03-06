@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createAgentSdkToolWrapper,
@@ -11,7 +11,18 @@ import {
 } from '../src/integrations.js';
 
 describe('integration wrappers', () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.unmock('@hai.ai/jacs/langchain');
+    vi.unmock('@hai.ai/jacs/mcp');
+  });
+
   it('returns a clear error when optional langchain integration is missing', async () => {
+    vi.doMock('@hai.ai/jacs/langchain', () => {
+      const error = new Error("Cannot find package '@hai.ai/jacs/langchain'");
+      (error as Error & { code?: string }).code = 'ERR_MODULE_NOT_FOUND';
+      throw error;
+    });
     await expect(langchainSignedTool({}, { client: {} })).rejects.toThrow(
       "Optional dependency '@hai.ai/jacs/langchain' is required",
     );

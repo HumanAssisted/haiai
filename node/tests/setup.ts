@@ -1,7 +1,5 @@
-import { JacsAgent, createAgentSync } from '@hai.ai/jacs';
-import { mkdtempSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { generateKeyPairSync } from 'node:crypto';
+import { JacsAgent } from '@hai.ai/jacs';
 
 /** Strong test password that meets JACS security requirements. */
 export const TEST_PASSWORD = 'Xk9#mP2vL7qR4!nB8wZ';
@@ -14,65 +12,25 @@ export const TEST_AGENT = new JacsAgent();
 const _ephResult = JSON.parse(TEST_AGENT.ephemeralSync('ring-Ed25519'));
 
 /**
- * A PEM-encoded public key from a generated keypair (NOT matching TEST_AGENT).
- * Used only for contract/deserialization tests that need a PEM string.
- * For sign/verify tests, use TEST_AGENT directly.
+ * A PEM-encoded public key from a generated Ed25519 keypair.
+ * Used for tests that need deterministic PEM-shaped key material without
+ * depending on JACS on-disk agent layout.
  */
 export const TEST_PUBLIC_KEY_PEM = (() => {
-  const tempDir = mkdtempSync(join(tmpdir(), 'haisdk-test-pubkey-'));
-  const kd = join(tempDir, 'keys');
-  const dd = join(tempDir, 'data');
-  const cp = join(tempDir, 'jacs.config.json');
-  const prevPw = process.env.JACS_PRIVATE_KEY_PASSWORD;
-  process.env.JACS_PRIVATE_KEY_PASSWORD = TEST_PASSWORD;
-  createAgentSync(
-    'pubkey-helper',
-    TEST_PASSWORD,
-    'ring-Ed25519',
-    dd, kd, cp,
-    null, null, null, null,
-  );
-  const pem = readFileSync(join(kd, 'jacs.public.pem'), 'utf-8').trim();
-  if (prevPw !== undefined) {
-    process.env.JACS_PRIVATE_KEY_PASSWORD = prevPw;
-  } else {
-    delete process.env.JACS_PRIVATE_KEY_PASSWORD;
-  }
-  return pem;
+  const { publicKey } = generateKeyPairSync('ed25519');
+  return publicKey.export({ format: 'pem', type: 'spki' }).toString().trim();
 })();
 
 /**
- * Generate a keypair using JACS core (replaces local generateKeypair).
- * Creates a temporary JACS agent and extracts the key material from disk.
- * Note: the returned keys are from a different agent than TEST_AGENT.
+ * Generate an Ed25519 keypair as plaintext PEM for tests that only need
+ * stable key fixtures or a public/private pair written to disk.
  */
 export function generateTestKeypair(): { publicKeyPem: string; privateKeyPem: string } {
-  const tempDir = mkdtempSync(join(tmpdir(), 'haisdk-keygen-'));
-  const kd = join(tempDir, 'keys');
-  const dd = join(tempDir, 'data');
-  const cp = join(tempDir, 'jacs.config.json');
-
-  const prevPw = process.env.JACS_PRIVATE_KEY_PASSWORD;
-  process.env.JACS_PRIVATE_KEY_PASSWORD = TEST_PASSWORD;
-
-  createAgentSync(
-    `test-${Date.now()}`,
-    TEST_PASSWORD,
-    'ring-Ed25519',
-    dd, kd, cp,
-    null, null, null, null,
-  );
-
-  if (prevPw !== undefined) {
-    process.env.JACS_PRIVATE_KEY_PASSWORD = prevPw;
-  } else {
-    delete process.env.JACS_PRIVATE_KEY_PASSWORD;
-  }
-
-  const publicKeyPem = readFileSync(join(kd, 'jacs.public.pem'), 'utf-8').trim();
-  const privateKeyPem = readFileSync(join(kd, 'jacs.private.pem.enc'), 'utf-8').trim();
-
-  return { publicKeyPem, privateKeyPem };
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  return {
+    publicKeyPem: publicKey.export({ format: 'pem', type: 'spki' }).toString().trim(),
+    privateKeyPem: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString().trim(),
+  };
 }
 
 /**

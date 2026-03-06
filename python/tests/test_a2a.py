@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from haisdk import a2a as a2a_module
+from haisdk import _optional as optional_module
 
 
 def _install_module(monkeypatch: pytest.MonkeyPatch, module_name: str, **attrs: Any) -> types.ModuleType:
@@ -38,7 +39,7 @@ def test_missing_dependency_error_has_install_hint(monkeypatch: pytest.MonkeyPat
             raise ImportError("No module named 'jacs.a2a'")
         return real_import_module(module_name, package)
 
-    monkeypatch.setattr(a2a_module.importlib, "import_module", fake_import_module)
+    monkeypatch.setattr(optional_module.importlib, "import_module", fake_import_module)
 
     with pytest.raises(ImportError, match=r"haisdk\[a2a\]"):
         a2a_module.get_a2a_integration(client=object())

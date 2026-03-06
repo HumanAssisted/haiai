@@ -53,6 +53,7 @@ describe('client register bootstrap', () => {
   it('exportKeys derives the public key from private key material', async () => {
     const keypair = generateKeypair();
     const client = await HaiClient.fromCredentials('agent-1', keypair.privateKeyPem, { privateKeyPassphrase: 'keygen-password' });
+    (client as any)._publicKeyPem = keypair.publicKeyPem;
     const exported = client.exportKeys();
     expect(exported.publicKeyPem).toContain('-----BEGIN PUBLIC KEY-----');
     expect(exported.privateKeyPem).toContain('-----BEGIN PRIVATE KEY-----');

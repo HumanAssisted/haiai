@@ -6,33 +6,24 @@ keeping implementation ownership in `jacs`.
 
 from __future__ import annotations
 
-import importlib
 import json
 from typing import Any
 
-
-def _load_optional(module_name: str, *, feature: str, install_hint: str) -> Any:
-    try:
-        return importlib.import_module(module_name)
-    except ImportError as exc:
-        raise ImportError(
-            f"{feature} requires optional dependency '{module_name}'. {install_hint}"
-        ) from exc
+from haisdk._optional import load_optional_module, require_attr
 
 
 def _get_integration_class() -> type:
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.a2a",
         feature="A2A integration",
         install_hint='Install with: pip install "haisdk[a2a]"',
     )
-    cls = getattr(module, "JACSA2AIntegration", None)
-    if cls is None:
-        raise ImportError(
-            "jacs.a2a is available but missing JACSA2AIntegration. "
-            "Install/upgrade JACS with A2A support: pip install -U 'jacs[a2a]'"
-        )
-    return cls
+    return require_attr(
+        module,
+        "JACSA2AIntegration",
+        owner_name="jacs.a2a",
+        upgrade_hint="Install/upgrade JACS with A2A support: pip install -U 'jacs[a2a]'",
+    )
 
 
 def get_a2a_integration(client: Any, trust_policy: str = "verified") -> Any:
@@ -51,7 +42,12 @@ def quickstart_a2a(
 ) -> Any:
     """Delegate to ``JACSA2AIntegration.quickstart(...)``."""
     cls = _get_integration_class()
-    quickstart = getattr(cls, "quickstart", None)
+    quickstart = require_attr(
+        cls,
+        "quickstart",
+        owner_name="jacs.a2a.JACSA2AIntegration",
+        upgrade_hint="Install/upgrade JACS with A2A support: pip install -U 'jacs[a2a]'",
+    )
     if not callable(quickstart):
         raise ImportError(
             "jacs.a2a.JACSA2AIntegration.quickstart is missing. "
@@ -379,7 +375,7 @@ def on_mediated_benchmark_job(
 
 def __getattr__(name: str) -> Any:
     """Lazy passthrough so stable `jacs.a2a` symbols are reachable via `haisdk.a2a`."""
-    module = _load_optional(
+    module = load_optional_module(
         "jacs.a2a",
         feature="A2A integration",
         install_hint='Install with: pip install "haisdk[a2a]"',

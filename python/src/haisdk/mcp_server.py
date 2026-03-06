@@ -24,6 +24,13 @@ def _url(hai_url: str | None) -> str:
     return hai_url or _DEFAULT_URL
 
 
+def _maybe_load_config(config_path: str | None) -> None:
+    if config_path:
+        from jacs.hai.config import load
+
+        load(config_path)
+
+
 def _to_json(obj: object) -> str:
     if hasattr(obj, "__dataclass_fields__"):
         return json.dumps(asdict(obj), default=str)  # type: ignore[arg-type]
@@ -45,6 +52,7 @@ async def hai_hello(
     """Run authenticated hello handshake with HAI."""
     from jacs.hai.client import hello_world
 
+    _maybe_load_config(config_path)
     result = hello_world(_url(hai_url))
     return _to_json(result)
 
@@ -58,6 +66,7 @@ async def hai_register_agent(
     """Register the local JACS agent with HAI."""
     from jacs.hai.client import register
 
+    _maybe_load_config(config_path)
     result = register(_url(hai_url), owner_email=owner_email)
     return _to_json(result)
 
@@ -70,6 +79,7 @@ async def hai_agent_status(
     """Get the current agent's verification status."""
     from jacs.hai.client import status
 
+    _maybe_load_config(config_path)
     result = status(_url(hai_url))
     return _to_json(result)
 
@@ -96,6 +106,7 @@ async def hai_claim_username(
     """Claim a hai.ai username for an agent."""
     from jacs.hai.client import claim_username
 
+    _maybe_load_config(config_path)
     result = claim_username(_url(hai_url), agent_id, username)
     return _to_json(result)
 
@@ -142,6 +153,7 @@ async def hai_send_email(
     """Send an email from the agent's @hai.ai address."""
     from jacs.hai.client import send_email
 
+    _maybe_load_config(config_path)
     result = send_email(_url(hai_url), to=to, subject=subject, body=body, in_reply_to=in_reply_to)
     return _to_json(result)
 
@@ -157,6 +169,7 @@ async def hai_list_messages(
     """List email messages in the agent's inbox/outbox."""
     from jacs.hai.client import list_messages
 
+    _maybe_load_config(config_path)
     result = list_messages(_url(hai_url), limit=limit, offset=offset, direction=direction)
     return _to_json(result)
 
@@ -170,6 +183,7 @@ async def hai_get_message(
     """Get a single email message by ID."""
     from jacs.hai.client import get_message
 
+    _maybe_load_config(config_path)
     result = get_message(_url(hai_url), message_id)
     return _to_json(result)
 
@@ -183,6 +197,7 @@ async def hai_delete_message(
     """Delete an email message."""
     from jacs.hai.client import delete_message
 
+    _maybe_load_config(config_path)
     delete_message(_url(hai_url), message_id)
     return json.dumps({"deleted": True, "message_id": message_id})
 
@@ -196,6 +211,7 @@ async def hai_mark_read(
     """Mark an email message as read."""
     from jacs.hai.client import mark_read
 
+    _maybe_load_config(config_path)
     mark_read(_url(hai_url), message_id)
     return json.dumps({"message_id": message_id, "is_read": True})
 
@@ -209,6 +225,7 @@ async def hai_mark_unread(
     """Mark an email message as unread."""
     from jacs.hai.client import mark_unread
 
+    _maybe_load_config(config_path)
     mark_unread(_url(hai_url), message_id)
     return json.dumps({"message_id": message_id, "is_read": False})
 
@@ -229,6 +246,7 @@ async def hai_search_messages(
     """Search email messages by query, sender, recipient, or date range."""
     from jacs.hai.client import search_messages
 
+    _maybe_load_config(config_path)
     result = search_messages(
         _url(hai_url),
         q=q,
@@ -251,6 +269,7 @@ async def hai_get_unread_count(
     """Get the count of unread email messages."""
     from jacs.hai.client import get_unread_count
 
+    _maybe_load_config(config_path)
     count = get_unread_count(_url(hai_url))
     return json.dumps({"count": count})
 
@@ -263,6 +282,7 @@ async def hai_get_email_status(
     """Get email account status including usage limits and daily stats."""
     from jacs.hai.client import get_email_status
 
+    _maybe_load_config(config_path)
     result = get_email_status(_url(hai_url))
     return _to_json(result)
 
@@ -278,6 +298,7 @@ async def hai_reply_email(
     """Reply to an email message (fetches original, sends reply with threading)."""
     from jacs.hai.client import reply
 
+    _maybe_load_config(config_path)
     result = reply(_url(hai_url), message_id, body, subject=subject_override)
     return _to_json(result)
 

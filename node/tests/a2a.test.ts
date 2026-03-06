@@ -8,6 +8,11 @@ describe('a2a facade wrappers', () => {
   });
 
   it('returns a clear error when optional A2A module is missing', async () => {
+    vi.doMock('@hai.ai/jacs/a2a', () => {
+      const error = new Error("Cannot find package '@hai.ai/jacs/a2a'");
+      (error as Error & { code?: string }).code = 'ERR_MODULE_NOT_FOUND';
+      throw error;
+    });
     const mod = await import('../src/a2a.js');
 
     await expect(mod.getA2AIntegration({})).rejects.toThrow(
