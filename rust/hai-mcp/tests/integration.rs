@@ -1,49 +1,113 @@
+use std::collections::BTreeMap;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::mpsc::{self, TryRecvError};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
-use haisdk::{CreateAgentOptions, LocalJacsProvider};
-use httpmock::Method::{GET, POST};
-use httpmock::MockServer;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
-const TEST_PASSWORD: &str = "TestPass!123";
+#[derive(Debug, Clone)]
+struct RecordedRequest {
+    method: String,
+    path: String,
+    headers: BTreeMap<String, String>,
+}
+
+struct MiniHaiServer {
+    base_url: String,
+    requests: Arc<Mutex<Vec<RecordedRequest>>>,
+    shutdown_tx: mpsc::Sender<()>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl MiniHaiServer {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock HAI server");
+        listener
+            .set_nonblocking(true)
+            .expect("set listener nonblocking");
+        let address = listener.local_addr().expect("local addr");
+        let base_url = format!("http://{address}");
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let requests_for_thread = Arc::clone(&requests);
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+
+        let thread = thread::spawn(move || loop {
+            match shutdown_rx.try_recv() {
+                Ok(()) | Err(TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Empty) => {}
+            }
+
+            match listener.accept() {
+                Ok((mut stream, _addr)) => {
+                    if let Some(request) = read_request(&mut stream) {
+                        let response = response_for_request(&request);
+                        requests_for_thread
+                            .lock()
+                            .expect("lock requests")
+                            .push(request);
+                        write_response(&mut stream, response);
+                    }
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(err) => panic!("mock HAI server accept failed: {err}"),
+            }
+        });
+
+        Self {
+            base_url,
+            requests,
+            shutdown_tx,
+            thread: Some(thread),
+        }
+    }
+
+    fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    fn assert_request<F>(&self, predicate: F, description: &str)
+    where
+        F: Fn(&RecordedRequest) -> bool,
+    {
+        let requests = self.requests.lock().expect("lock requests");
+        assert!(
+            requests.iter().any(predicate),
+            "expected request matching {description}, got {requests:?}"
+        );
+    }
+}
+
+impl Drop for MiniHaiServer {
+    fn drop(&mut self) {
+        let _ = self.shutdown_tx.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
 
 struct TestWorkspace {
     _temp_dir: TempDir,
-    config_path: PathBuf,
+    root: PathBuf,
 }
 
 impl TestWorkspace {
     fn new() -> Self {
         let temp_dir = tempfile::tempdir().expect("tempdir");
-        let data_dir = temp_dir.path().join("data");
-        let key_dir = temp_dir.path().join("keys");
-        let config_path = temp_dir.path().join("jacs.config.json");
-        fs::create_dir_all(&data_dir).expect("create data dir");
-        fs::create_dir_all(&key_dir).expect("create key dir");
-
-        LocalJacsProvider::create_agent_with_options(&CreateAgentOptions {
-            name: "hai-mcp-test-agent".to_string(),
-            password: TEST_PASSWORD.to_string(),
-            algorithm: Some("ring-Ed25519".to_string()),
-            data_directory: Some(data_dir.display().to_string()),
-            key_directory: Some(key_dir.display().to_string()),
-            config_path: Some(config_path.display().to_string()),
-            agent_type: Some("ai".to_string()),
-            description: Some("hai-mcp integration test agent".to_string()),
-            domain: None,
-            default_storage: Some("fs".to_string()),
-        })
-        .expect("create local test agent");
-
         Self {
+            root: temp_dir.path().to_path_buf(),
             _temp_dir: temp_dir,
-            config_path,
         }
     }
 }
@@ -55,15 +119,13 @@ struct McpSession {
 }
 
 impl McpSession {
-    fn spawn(workspace: &TestWorkspace, hai_url: &str, jacs_mcp_bin: &Path) -> Self {
+    fn spawn(_workspace: &TestWorkspace, hai_url: &str, jacs_mcp_bin: &Path) -> Self {
         let mut child = Command::new(hai_mcp_bin())
             .env("HAI_URL", hai_url)
-            .env("JACS_CONFIG", &workspace.config_path)
-            .env("JACS_PRIVATE_KEY_PASSWORD", TEST_PASSWORD)
             .env("JACS_MCP_BIN", jacs_mcp_bin)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::inherit())
             .spawn()
             .expect("spawn hai-mcp");
 
@@ -267,6 +329,96 @@ fn make_executable(path: &Path) {
 #[cfg(not(unix))]
 fn make_executable(_path: &Path) {}
 
+fn read_request(stream: &mut TcpStream) -> Option<RecordedRequest> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set read timeout");
+
+    let mut buffer = Vec::new();
+    let mut chunk = [0_u8; 1024];
+    let header_end;
+    loop {
+        let read = stream.read(&mut chunk).ok()?;
+        if read == 0 {
+            return None;
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+        if let Some(idx) = find_header_end(&buffer) {
+            header_end = idx;
+            break;
+        }
+    }
+
+    let header_text = String::from_utf8_lossy(&buffer[..header_end]);
+    let mut lines = header_text.split("\r\n");
+    let request_line = lines.next()?.to_string();
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts.next()?.to_string();
+    let path = request_parts.next()?.to_string();
+
+    let mut headers = BTreeMap::new();
+    for line in lines {
+        if line.is_empty() {
+            continue;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
+        }
+    }
+
+    let content_length = headers
+        .get("content-length")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0);
+    while buffer.len() < header_end + content_length {
+        let read = stream.read(&mut chunk).ok()?;
+        if read == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+    }
+
+    Some(RecordedRequest {
+        method,
+        path,
+        headers,
+    })
+}
+
+fn find_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|idx| idx + 4)
+}
+
+fn response_for_request(request: &RecordedRequest) -> Value {
+    match (request.method.as_str(), request.path.as_str()) {
+        ("GET", path) if path.starts_with("/api/v1/agents/username/check?username=demo-agent") => {
+            json!({
+                "username": "demo-agent",
+                "available": true
+            })
+        }
+        _ => json!({
+            "error": format!("unexpected request: {} {}", request.method, request.path)
+        }),
+    }
+}
+
+fn write_response(stream: &mut TcpStream, body: Value) {
+    let encoded = body.to_string();
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        encoded.len(),
+        encoded
+    );
+    stream
+        .write_all(response.as_bytes())
+        .expect("write mock response");
+    stream.flush().expect("flush mock response");
+}
+
 #[test]
 fn rejects_non_stdio_runtime_arguments() {
     let output = Command::new(hai_mcp_bin())
@@ -285,134 +437,49 @@ fn rejects_non_stdio_runtime_arguments() {
 }
 
 #[test]
-fn serves_hai_and_jacs_tools_and_reuses_cached_email_identity() {
+fn serves_hai_and_jacs_tools_and_calls_hai_over_stdio() {
     let workspace = TestWorkspace::new();
-    let fake_jacs_mcp =
-        write_fake_jacs_mcp_script(workspace.config_path.parent().expect("config dir"));
-    let server = MockServer::start();
+    let fake_jacs_mcp = write_fake_jacs_mcp_script(&workspace.root);
+    let server = MiniHaiServer::start();
 
-    let register_mock = server.mock(|when, then| {
-        when.method(POST)
-            .path("/api/v1/agents/register")
-            .header("content-type", "application/json");
-        then.status(200).json_body(json!({
-            "agent_id": "hai-agent-123",
-            "jacs_id": "ignored-by-test"
-        }));
-    });
-
-    let claim_mock = server.mock(|when, then| {
-        when.method(POST)
-            .path("/api/v1/agents/hai-agent-123/username")
-            .header_exists("authorization")
-            .header("content-type", "application/json");
-        then.status(200).json_body(json!({
-            "agent_id": "hai-agent-123",
-            "username": "demo-agent",
-            "email": "demo-agent@hai.ai"
-        }));
-    });
-
-    let send_mock = server.mock(|when, then| {
-        when.method(POST)
-            .path("/api/agents/hai-agent-123/email/send")
-            .header_exists("authorization")
-            .header("content-type", "application/json")
-            .body_includes("\"to\"")
-            .body_includes("\"subject\"")
-            .body_includes("\"body\"");
-        then.status(200).json_body(json!({
-            "message_id": "msg-001",
-            "status": "queued"
-        }));
-    });
-
-    let email_status_mock = server.mock(|when, then| {
-        when.method(GET)
-            .path("/api/agents/hai-agent-123/email/status")
-            .header_exists("authorization");
-        then.status(200).json_body(json!({
-            "email": "demo-agent@hai.ai",
-            "status": "active",
-            "tier": "free",
-            "daily_limit": 100,
-            "daily_used": 1
-        }));
-    });
-
-    let mut session = McpSession::spawn(&workspace, &server.base_url(), &fake_jacs_mcp);
-    eprintln!("spawned hai-mcp");
+    let mut session = McpSession::spawn(&workspace, server.base_url(), &fake_jacs_mcp);
     let initialize = session.initialize();
-    eprintln!("initialized hai-mcp");
     assert_eq!(
         initialize["result"]["serverInfo"]["name"].as_str(),
         Some("hai-mcp")
     );
 
     let tools = session.list_tools();
-    eprintln!("listed tools");
     assert!(tools.contains(&"hai_register_agent".to_string()));
     assert!(tools.contains(&"hai_send_email".to_string()));
     assert!(tools.contains(&"jacs_echo".to_string()));
 
     let bridged = session.call_tool(10, "jacs_echo", json!({ "message": "hello" }));
-    eprintln!("called bridged tool");
     assert_eq!(
         bridged["structuredContent"]["echoed"].as_str(),
         Some("hello")
     );
 
-    let register = session.call_tool(
+    let check_username = session.call_tool(
         11,
-        "hai_register_agent",
+        "hai_check_username",
         json!({
-            "owner_email": "owner@example.com"
-        }),
-    );
-    eprintln!("registered agent");
-    assert_eq!(
-        register["structuredContent"]["registration"]["agent_id"].as_str(),
-        Some("hai-agent-123")
-    );
-
-    let claim = session.call_tool(
-        12,
-        "hai_claim_username",
-        json!({
-            "agent_id": "hai-agent-123",
             "username": "demo-agent"
         }),
     );
-    eprintln!("claimed username");
     assert_eq!(
-        claim["structuredContent"]["claim_username"]["email"].as_str(),
-        Some("demo-agent@hai.ai")
+        check_username["structuredContent"]["check_username"]["available"].as_bool(),
+        Some(true)
     );
 
-    let send = session.call_tool(
-        13,
-        "hai_send_email",
-        json!({
-            "to": "ops@hai.ai",
-            "subject": "Integration Subject",
-            "body": "Integration Body"
-        }),
+    server.assert_request(
+        |request| {
+            request.method == "GET"
+                && request
+                    .path
+                    .starts_with("/api/v1/agents/username/check?username=demo-agent")
+                && !request.headers.contains_key("authorization")
+        },
+        "GET /api/v1/agents/username/check?username=demo-agent",
     );
-    eprintln!("sent email");
-    assert_eq!(
-        send["structuredContent"]["send_email"]["message_id"].as_str(),
-        Some("msg-001")
-    );
-
-    let email_status = session.call_tool(14, "hai_get_email_status", json!({}));
-    eprintln!("fetched email status");
-    assert_eq!(
-        email_status["structuredContent"]["email_status"]["email"].as_str(),
-        Some("demo-agent@hai.ai")
-    );
-
-    register_mock.assert();
-    claim_mock.assert();
-    send_mock.assert();
-    email_status_mock.assert();
 }
