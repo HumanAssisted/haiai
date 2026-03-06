@@ -15,9 +15,9 @@ use uuid::Uuid;
 
 use crate::error::{HaiError, Result};
 use crate::jacs::{canonicalize_json_rfc8785, JacsProvider};
-use crate::types::{CreateAgentOptions, CreateAgentResult, SignedPayload};
 #[cfg(feature = "jacs-local")]
 use crate::types::RotationResult;
+use crate::types::{CreateAgentOptions, CreateAgentResult, SignedPayload};
 
 /// Local JACS-backed provider using the canonical Rust `jacs` crate.
 ///
@@ -50,13 +50,13 @@ impl LocalJacsProvider {
         // Resolve algorithm from the loaded agent (PRD lines 86-98).
         // Fail fast if the algorithm cannot be determined — a silent default
         // would cause algorithm mismatches during verification (Issue 039).
-        let algorithm = agent
-            .get_key_algorithm()
-            .cloned()
-            .ok_or_else(|| HaiError::Provider(
+        let algorithm = agent.get_key_algorithm().cloned().ok_or_else(|| {
+            HaiError::Provider(
                 "Cannot resolve signing algorithm from JACS agent. \
-                 Ensure the agent was created with a valid key algorithm.".to_string()
-            ))?;
+                 Ensure the agent was created with a valid key algorithm."
+                    .to_string(),
+            )
+        })?;
 
         Ok(Self {
             agent: Mutex::new(agent),
@@ -187,9 +187,9 @@ impl JacsProvider for LocalJacsProvider {
             use base64::Engine;
             // Encode data as base64 string, sign it, then decode the signature
             let encoded = base64::engine::general_purpose::STANDARD.encode(data);
-            let sig_b64 = agent
-                .sign_string(&encoded)
-                .map_err(|e| HaiError::Provider(format!("JACS sign_bytes (via sign_string) failed: {e}")))?;
+            let sig_b64 = agent.sign_string(&encoded).map_err(|e| {
+                HaiError::Provider(format!("JACS sign_bytes (via sign_string) failed: {e}"))
+            })?;
             base64::engine::general_purpose::STANDARD
                 .decode(&sig_b64)
                 .map_err(|e| HaiError::Provider(format!("JACS sign_bytes decode failed: {e}")))
@@ -225,8 +225,9 @@ impl JacsProvider for LocalJacsProvider {
                 HaiError::Provider(format!("JACS A2A artifact verification failed: {e}"))
             })?;
 
-        serde_json::to_string(&result)
-            .map_err(|e| HaiError::Provider(format!("failed to serialize verification result: {e}")))
+        serde_json::to_string(&result).map_err(|e| {
+            HaiError::Provider(format!("failed to serialize verification result: {e}"))
+        })
     }
 
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
@@ -271,9 +272,9 @@ impl JacsProvider for LocalJacsProvider {
     #[cfg(feature = "jacs-local")]
     fn rotate(&self) -> Result<RotationResult> {
         let simple = self.load_simple_agent()?;
-        let jacs_result = simple.rotate().map_err(|e| {
-            HaiError::Provider(format!("JACS key rotation failed: {e}"))
-        })?;
+        let jacs_result = simple
+            .rotate()
+            .map_err(|e| HaiError::Provider(format!("JACS key rotation failed: {e}")))?;
 
         // Reload the agent so in-memory state reflects the rotated keys
         let mut agent = self
@@ -284,9 +285,7 @@ impl JacsProvider for LocalJacsProvider {
         new_agent
             .load_by_config(self.config_path.display().to_string())
             .map_err(|e| {
-                HaiError::Provider(format!(
-                    "failed to reload JACS agent after rotation: {e}"
-                ))
+                HaiError::Provider(format!("failed to reload JACS agent after rotation: {e}"))
             })?;
         *agent = new_agent;
 

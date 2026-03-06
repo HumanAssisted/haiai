@@ -943,8 +943,10 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "haisdk",
+ "httpmock",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

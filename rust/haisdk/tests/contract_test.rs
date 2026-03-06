@@ -21,18 +21,30 @@ struct ListMessagesResponse {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const EMAIL_MESSAGE_JSON: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/email_message.json"));
-const LIST_MESSAGES_JSON: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/list_messages_response.json"));
-const EMAIL_STATUS_JSON: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/email_status_response.json"));
-const CONTENT_HASH_JSON: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/content_hash_example.json"));
-const KEY_REGISTRY_JSON: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/key_registry_response.json"));
-const KEY_LOOKUP_VERSIONED_JSON: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../contract/key_lookup_versioned_response.json"));
+const EMAIL_MESSAGE_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../contract/email_message.json"
+));
+const LIST_MESSAGES_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../contract/list_messages_response.json"
+));
+const EMAIL_STATUS_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../contract/email_status_response.json"
+));
+const CONTENT_HASH_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../contract/content_hash_example.json"
+));
+const KEY_REGISTRY_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../contract/key_registry_response.json"
+));
+const KEY_LOOKUP_VERSIONED_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../contract/key_lookup_versioned_response.json"
+));
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -60,8 +72,8 @@ fn contract_deserialize_email_message() {
 
 #[test]
 fn contract_deserialize_list_messages_response() {
-    let resp: ListMessagesResponse =
-        serde_json::from_str(LIST_MESSAGES_JSON).expect("ListMessagesResponse deserialization failed");
+    let resp: ListMessagesResponse = serde_json::from_str(LIST_MESSAGES_JSON)
+        .expect("ListMessagesResponse deserialization failed");
 
     assert_eq!(resp.messages.len(), 1);
     assert_eq!(resp.total, 1);
@@ -95,12 +107,15 @@ fn contract_deserialize_email_status() {
 
 #[test]
 fn contract_deserialize_key_registry_response() {
-    let resp: KeyRegistryResponse =
-        serde_json::from_str(KEY_REGISTRY_JSON).expect("KeyRegistryResponse deserialization failed");
+    let resp: KeyRegistryResponse = serde_json::from_str(KEY_REGISTRY_JSON)
+        .expect("KeyRegistryResponse deserialization failed");
 
     assert_eq!(resp.email, "testbot@hai.ai");
     assert_eq!(resp.jacs_id, "test-agent-jacs-id");
-    assert_eq!(resp.public_key, "MCowBQYDK2VwAyEAExampleBase64PublicKeyData1234567890ABCDEF");
+    assert_eq!(
+        resp.public_key,
+        "MCowBQYDK2VwAyEAExampleBase64PublicKeyData1234567890ABCDEF"
+    );
     assert_eq!(resp.algorithm, "ed25519");
     assert_eq!(resp.reputation_tier, "new");
     assert_eq!(resp.registered_at, "2026-01-15T00:00:00Z");
@@ -137,7 +152,9 @@ fn contract_sign_input_format() {
     let expected_hash = fixture["expected_hash"].as_str().expect("expected_hash");
     let from_email = fixture["from_email"].as_str().expect("from_email");
     let timestamp = fixture["timestamp"].as_i64().expect("timestamp");
-    let expected_sign_input = fixture["sign_input_example"].as_str().expect("sign_input_example");
+    let expected_sign_input = fixture["sign_input_example"]
+        .as_str()
+        .expect("sign_input_example");
 
     let sign_input = format!("{expected_hash}:{from_email}:{timestamp}");
 

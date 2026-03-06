@@ -436,7 +436,6 @@ pub struct KeyRegistryResponse {
     pub registered_at: String,
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicKeyInfo {
     #[serde(default)]

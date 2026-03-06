@@ -22,10 +22,10 @@ compile_error!(
 pub mod a2a;
 pub mod client;
 pub mod config;
-pub mod error;
-pub mod jacs;
 #[cfg(feature = "jacs-local")]
 pub mod email;
+pub mod error;
+pub mod jacs;
 #[cfg(any(feature = "jacs-crate", feature = "jacs-local"))]
 pub mod jacs_local;
 pub mod types;
@@ -41,11 +41,21 @@ pub use client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
 pub use config::{load_config, resolve_private_key_candidates, AgentConfig};
 #[cfg(feature = "jacs-local")]
 pub use email::{
-    verify_email,
     // JACS email types re-exported for consumer convenience
-    sign_email, AttachmentEntry, BodyPartEntry, ContentVerificationResult, EmailSignatureHeaders,
-    EmailSignaturePayload, JacsEmailMetadata, JacsEmailSignature, JacsEmailSignatureDocument,
-    ParsedAttachment, ParsedBodyPart, ParsedEmailParts, SignedHeaderEntry,
+    sign_email,
+    verify_email,
+    AttachmentEntry,
+    BodyPartEntry,
+    ContentVerificationResult,
+    EmailSignatureHeaders,
+    EmailSignaturePayload,
+    JacsEmailMetadata,
+    JacsEmailSignature,
+    JacsEmailSignatureDocument,
+    ParsedAttachment,
+    ParsedBodyPart,
+    ParsedEmailParts,
+    SignedHeaderEntry,
 };
 pub use error::{HaiError, Result};
 pub use jacs::{JacsProvider, NoopJacsProvider, StaticJacsProvider};
@@ -53,6 +63,6 @@ pub use jacs::{JacsProvider, NoopJacsProvider, StaticJacsProvider};
 pub use jacs_local::LocalJacsProvider;
 pub use types::*;
 pub use verify::{
-    generate_verify_link, generate_verify_link_hosted,
-    MAX_VERIFY_DOCUMENT_BYTES, MAX_VERIFY_URL_LEN,
+    generate_verify_link, generate_verify_link_hosted, MAX_VERIFY_DOCUMENT_BYTES,
+    MAX_VERIFY_URL_LEN,
 };

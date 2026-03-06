@@ -17,3 +17,7 @@ async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+httpmock = "0.8"
+tempfile = "3"

@@ -83,11 +83,15 @@ fn conformance_field_status_values() {
     // Verify all expected values can be deserialized into FieldStatus
     for val in &expected_values {
         let json = format!("\"{}\"", val);
-        let status: FieldStatus =
-            serde_json::from_str(&json).unwrap_or_else(|_| panic!("FieldStatus {:?} not valid", val));
+        let status: FieldStatus = serde_json::from_str(&json)
+            .unwrap_or_else(|_| panic!("FieldStatus {:?} not valid", val));
         // Verify round-trip
         let serialized = serde_json::to_string(&status).unwrap();
-        assert_eq!(serialized, json, "FieldStatus round-trip failed for {}", val);
+        assert_eq!(
+            serialized, json,
+            "FieldStatus round-trip failed for {}",
+            val
+        );
     }
 
     // Verify count matches: pass, modified, fail, unverifiable = 4

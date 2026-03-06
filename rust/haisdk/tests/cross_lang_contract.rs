@@ -35,7 +35,8 @@ struct CanonicalJsonCase {
 }
 
 fn load_fixture() -> CrossLangFixture {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/cross_lang_test.json");
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/cross_lang_test.json");
     let raw = fs::read_to_string(path).expect("read cross_lang_test fixture");
     serde_json::from_str(&raw).expect("decode cross_lang_test fixture")
 }
@@ -65,16 +66,20 @@ fn auth_header_matches_shared_shape() {
     .expect("client");
 
     let header = client.build_auth_header().expect("auth header");
-    let token = header
-        .strip_prefix("JACS ")
-        .expect("auth header prefix");
+    let token = header.strip_prefix("JACS ").expect("auth header prefix");
     let parts: Vec<&str> = token.splitn(3, ':').collect();
 
     assert_eq!(fixture.auth_header.scheme, "JACS");
-    assert_eq!(fixture.auth_header.parts, vec!["jacs_id", "timestamp", "signature_base64"]);
+    assert_eq!(
+        fixture.auth_header.parts,
+        vec!["jacs_id", "timestamp", "signature_base64"]
+    );
     assert_eq!(parts.len(), 3);
     assert_eq!(parts[0], fixture.auth_header.example.jacs_id);
-    assert_eq!(fixture.auth_header.signed_message_template, "{jacs_id}:{timestamp}");
+    assert_eq!(
+        fixture.auth_header.signed_message_template,
+        "{jacs_id}:{timestamp}"
+    );
 
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(parts[2])

@@ -54,9 +54,7 @@ async fn reply_uses_message_id_for_threading_when_present() {
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/api/agents/test-agent-001/email/send")
-                .json_body_includes(
-                    r#"{"in_reply_to": "<db-uuid-123.bot@hai.ai>"}"#,
-                );
+                .json_body_includes(r#"{"in_reply_to": "<db-uuid-123.bot@hai.ai>"}"#);
             then.status(200).json_body(json!({
                 "message_id": "reply-msg-001",
                 "status": "queued"

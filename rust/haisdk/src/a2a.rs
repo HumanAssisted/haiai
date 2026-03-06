@@ -311,7 +311,10 @@ impl<'a, P: JacsProvider> A2AIntegration<'a, P> {
             Ok(result_json) => {
                 let jacs_result: Value = serde_json::from_str(&result_json)?;
                 Ok(A2AArtifactVerificationResult {
-                    valid: jacs_result.get("valid").and_then(Value::as_bool).unwrap_or(false),
+                    valid: jacs_result
+                        .get("valid")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
                     signer_id: jacs_result
                         .get("signerId")
                         .and_then(Value::as_str)

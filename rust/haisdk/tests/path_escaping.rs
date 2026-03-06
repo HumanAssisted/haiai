@@ -166,8 +166,7 @@ async fn fetch_key_by_hash_calls_correct_endpoint() {
     // The SDK correctly percent-encodes the colon: sha256:abc -> sha256%3Aabc
     let mock = server
         .mock_async(|when, then| {
-            when.method(GET)
-                .path("/jacs/v1/keys/by-hash/sha256:abc123");
+            when.method(GET).path("/jacs/v1/keys/by-hash/sha256:abc123");
             then.status(200).json_body(json!({
                 "jacs_id": "agent-1",
                 "version": "v1",
@@ -200,8 +199,7 @@ async fn fetch_key_by_email_calls_correct_endpoint() {
     // The SDK percent-encodes the @: bot@hai.ai -> bot%40hai.ai
     let mock = server
         .mock_async(|when, then| {
-            when.method(GET)
-                .path("/api/agents/keys/bot@hai.ai");
+            when.method(GET).path("/api/agents/keys/bot@hai.ai");
             then.status(200).json_body(json!({
                 "jacs_id": "agent-2",
                 "version": "v1",
@@ -263,8 +261,7 @@ async fn fetch_all_keys_calls_correct_endpoint() {
 
     let mock = server
         .mock_async(|when, then| {
-            when.method(GET)
-                .path("/jacs/v1/agents/agent-4/keys");
+            when.method(GET).path("/jacs/v1/agents/agent-4/keys");
             then.status(200).json_body(json!({
                 "jacs_id": "agent-4",
                 "keys": [

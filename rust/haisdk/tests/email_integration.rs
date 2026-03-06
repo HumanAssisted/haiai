@@ -82,15 +82,23 @@ async fn email_integration_lifecycle() {
         .register(&RegisterAgentOptions {
             agent_json,
             public_key_pem: Some(public_key_pem),
-            owner_email: Some(env::var("HAI_OWNER_EMAIL").unwrap_or_else(|_| "jonathan@hai.io".to_string())),
+            owner_email: Some(
+                env::var("HAI_OWNER_EMAIL").unwrap_or_else(|_| "jonathan@hai.io".to_string()),
+            ),
             domain: None,
             description: Some("Rust integration test agent".to_string()),
         })
         .await
         .expect("register agent");
 
-    eprintln!("Registered agent: jacs_id={}, agent_id={}", reg.jacs_id, reg.agent_id);
-    assert!(reg.success || !reg.jacs_id.is_empty(), "registration should succeed");
+    eprintln!(
+        "Registered agent: jacs_id={}, agent_id={}",
+        reg.jacs_id, reg.agent_id
+    );
+    assert!(
+        reg.success || !reg.jacs_id.is_empty(),
+        "registration should succeed"
+    );
 
     // Store the HAI-assigned agent UUID for email URL paths.
     if !reg.agent_id.is_empty() {
@@ -102,7 +110,10 @@ async fn email_integration_lifecycle() {
         .claim_username(&reg.agent_id, &agent_name)
         .await
         .expect("claim_username");
-    eprintln!("Claimed username: {}, email={}", claim.username, claim.email);
+    eprintln!(
+        "Claimed username: {}, email={}",
+        claim.username, claim.email
+    );
     assert!(!claim.email.is_empty(), "claim should return email");
 
     // ── 1. Send email ────────────────────────────────────────────────────
@@ -141,16 +152,10 @@ async fn email_integration_lifecycle() {
     assert!(!messages.is_empty(), "should have at least one message");
 
     // ── 3. Get message ───────────────────────────────────────────────────
-    let msg = client
-        .get_message(message_id)
-        .await
-        .expect("get_message");
+    let msg = client.get_message(message_id).await.expect("get_message");
 
     assert_eq!(msg.subject, subject);
-    assert!(
-        msg.body_text.contains(body),
-        "body should contain our text"
-    );
+    assert!(msg.body_text.contains(body), "body should contain our text");
     eprintln!("Got message: subject={}", msg.subject);
 
     // ── 4. Mark read ─────────────────────────────────────────────────────

@@ -8,14 +8,11 @@
 use std::fs;
 use std::path::PathBuf;
 
-use haisdk::{
-    A2AAgentCard, A2AArtifactVerificationResult, A2ATrustAssessment, A2AWrappedArtifact,
-};
+use haisdk::{A2AAgentCard, A2AArtifactVerificationResult, A2ATrustAssessment, A2AWrappedArtifact};
 use serde_json::Value;
 
 fn contract_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/a2a_verification_contract.json")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/a2a_verification_contract.json")
 }
 
 fn a2a_fixture_path(name: &str) -> PathBuf {
@@ -127,7 +124,10 @@ fn contract_wrapped_artifact_roundtrip_fields() {
     );
 
     // Verify roundtrip values.
-    assert_eq!(wrapped.jacs_id, "contract-00000000-0000-4000-8000-000000000001");
+    assert_eq!(
+        wrapped.jacs_id,
+        "contract-00000000-0000-4000-8000-000000000001"
+    );
     assert_eq!(wrapped.jacs_type, "a2a-task");
     assert_eq!(wrapped.jacs_level, "artifact");
     assert_eq!(wrapped.jacs_version, "1.0.0");
@@ -149,8 +149,7 @@ fn contract_verification_result_roundtrip_fields() {
     let result: A2AArtifactVerificationResult =
         serde_json::from_value(example.clone()).expect("deserialize verification result");
 
-    let reserialized =
-        serde_json::to_value(&result).expect("re-serialize verification result");
+    let reserialized = serde_json::to_value(&result).expect("re-serialize verification result");
 
     assert_fields_present("A2AArtifactVerificationResult", &reserialized, required);
 
@@ -168,11 +167,20 @@ fn contract_verification_result_roundtrip_fields() {
 
     // Verify camelCase field names (not snake_case).
     let obj = reserialized.as_object().unwrap();
-    assert!(obj.contains_key("signerId"), "must use 'signerId' not 'signer_id'");
+    assert!(
+        obj.contains_key("signerId"),
+        "must use 'signerId' not 'signer_id'"
+    );
     assert!(!obj.contains_key("signer_id"));
-    assert!(obj.contains_key("artifactType"), "must use 'artifactType' not 'artifact_type'");
+    assert!(
+        obj.contains_key("artifactType"),
+        "must use 'artifactType' not 'artifact_type'"
+    );
     assert!(!obj.contains_key("artifact_type"));
-    assert!(obj.contains_key("originalArtifact"), "must use 'originalArtifact' not 'original_artifact'");
+    assert!(
+        obj.contains_key("originalArtifact"),
+        "must use 'originalArtifact' not 'original_artifact'"
+    );
     assert!(!obj.contains_key("original_artifact"));
 
     // Check specific values.
@@ -180,7 +188,10 @@ fn contract_verification_result_roundtrip_fields() {
     assert_eq!(result.signer_id, "contract-agent");
     assert_eq!(result.artifact_type, "a2a-task");
     assert_eq!(result.timestamp, "2026-03-01T00:00:00Z");
-    assert_eq!(result.error.as_deref(), Some("signature verification failed"));
+    assert_eq!(
+        result.error.as_deref(),
+        Some("signature verification failed")
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -197,8 +208,7 @@ fn contract_trust_assessment_roundtrip_fields() {
     let assessment: A2ATrustAssessment =
         serde_json::from_value(example.clone()).expect("deserialize trust assessment");
 
-    let reserialized =
-        serde_json::to_value(&assessment).expect("re-serialize trust assessment");
+    let reserialized = serde_json::to_value(&assessment).expect("re-serialize trust assessment");
 
     assert_fields_present("A2ATrustAssessment", &reserialized, required);
 
@@ -216,11 +226,20 @@ fn contract_trust_assessment_roundtrip_fields() {
 
     // Verify camelCase field names.
     let obj = reserialized.as_object().unwrap();
-    assert!(obj.contains_key("trustLevel"), "must use 'trustLevel' not 'trust_level'");
+    assert!(
+        obj.contains_key("trustLevel"),
+        "must use 'trustLevel' not 'trust_level'"
+    );
     assert!(!obj.contains_key("trust_level"));
-    assert!(obj.contains_key("jacsRegistered"), "must use 'jacsRegistered' not 'jacs_registered'");
+    assert!(
+        obj.contains_key("jacsRegistered"),
+        "must use 'jacsRegistered' not 'jacs_registered'"
+    );
     assert!(!obj.contains_key("jacs_registered"));
-    assert!(obj.contains_key("inTrustStore"), "must use 'inTrustStore' not 'in_trust_store'");
+    assert!(
+        obj.contains_key("inTrustStore"),
+        "must use 'inTrustStore' not 'in_trust_store'"
+    );
     assert!(!obj.contains_key("in_trust_store"));
 
     // Check specific values.
@@ -282,7 +301,10 @@ fn contract_agent_card_roundtrip_fields() {
         .as_array()
         .expect("extensions array");
     assert!(!extensions.is_empty());
-    assert!(extensions[0].get("uri").is_some(), "extension must have 'uri'");
+    assert!(
+        extensions[0].get("uri").is_some(),
+        "extension must have 'uri'"
+    );
 }
 
 // ---------------------------------------------------------------------------

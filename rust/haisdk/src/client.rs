@@ -18,10 +18,10 @@ use crate::types::{
     AgentKeyHistory, AgentVerificationResult, CheckUsernameResult, ClaimUsernameResult,
     DeleteUsernameResult, DnsCertifiedResult, DnsCertifiedRunOptions, DocumentVerificationResult,
     EmailMessage, EmailStatus, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult,
-    ListMessagesOptions, PublicKeyInfo, RegisterAgentOptions, RegistrationResult, RotateKeysOptions,
-    RotationResult, SearchOptions,
-    SendEmailOptions, SendEmailResult, TranscriptMessage, TransportType, UpdateUsernameResult,
-    VerifyAgentDocumentRequest, VerifyAgentResult,
+    ListMessagesOptions, PublicKeyInfo, RegisterAgentOptions, RegistrationResult,
+    RotateKeysOptions, RotationResult, SearchOptions, SendEmailOptions, SendEmailResult,
+    TranscriptMessage, TransportType, UpdateUsernameResult, VerifyAgentDocumentRequest,
+    VerifyAgentResult,
 };
 
 const DEFAULT_BASE_URL: &str = "https://hai.ai";
@@ -127,7 +127,9 @@ impl<P: JacsProvider> HaiClient<P> {
     /// Returns the HAI-assigned agent UUID for email URL paths.
     /// Falls back to jacs_id if not set.
     pub fn hai_agent_id(&self) -> &str {
-        self.hai_agent_id.as_deref().unwrap_or_else(|| self.jacs.jacs_id())
+        self.hai_agent_id
+            .as_deref()
+            .unwrap_or_else(|| self.jacs.jacs_id())
     }
 
     /// Set the HAI-assigned agent UUID (from registration response).
@@ -285,9 +287,7 @@ impl<P: JacsProvider> HaiClient<P> {
     /// key with HAI. HAI registration failure is non-fatal -- local rotation
     /// is preserved.
     pub async fn rotate_keys(&self, options: Option<&RotateKeysOptions>) -> Result<RotationResult> {
-        let register_with_hai = options
-            .and_then(|o| o.register_with_hai)
-            .unwrap_or(true);
+        let register_with_hai = options.and_then(|o| o.register_with_hai).unwrap_or(true);
 
         // Build 4-part auth header with the OLD key BEFORE rotation
         // (chain of trust: old key vouches for new key)
@@ -476,15 +476,19 @@ impl<P: JacsProvider> HaiClient<P> {
         }
         if !options.attachments.is_empty() {
             use base64::Engine;
-            let att_json: Vec<Value> = options.attachments.iter().map(|att| {
-                json!({
-                    "filename": att.filename,
-                    "content_type": att.content_type,
-                    "data_base64": att.data_base64.clone().unwrap_or_else(|| {
-                        base64::engine::general_purpose::STANDARD.encode(&att.data)
-                    }),
+            let att_json: Vec<Value> = options
+                .attachments
+                .iter()
+                .map(|att| {
+                    json!({
+                        "filename": att.filename,
+                        "content_type": att.content_type,
+                        "data_base64": att.data_base64.clone().unwrap_or_else(|| {
+                            base64::engine::general_purpose::STANDARD.encode(&att.data)
+                        }),
+                    })
                 })
-            }).collect();
+                .collect();
             payload["attachments"] = Value::Array(att_json);
         }
 
@@ -1383,15 +1387,17 @@ mod tests {
         let server = httpmock::MockServer::start_async().await;
 
         // Mock the claim_username endpoint
-        server.mock_async(|when, then| {
-            when.method(httpmock::Method::POST)
-                .path("/api/v1/agents/test-agent-001/username");
-            then.status(200).json_body(serde_json::json!({
-                "username": "myagent",
-                "email": "myagent@hai.ai",
-                "agent_id": "test-agent-001"
-            }));
-        }).await;
+        server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path("/api/v1/agents/test-agent-001/username");
+                then.status(200).json_body(serde_json::json!({
+                    "username": "myagent",
+                    "email": "myagent@hai.ai",
+                    "agent_id": "test-agent-001"
+                }));
+            })
+            .await;
 
         let provider = StaticJacsProvider::new("test-agent-001");
         let mut client = HaiClient::new(
@@ -1400,12 +1406,16 @@ mod tests {
                 base_url: server.base_url(),
                 ..HaiClientOptions::default()
             },
-        ).expect("client");
+        )
+        .expect("client");
 
         // Before claim_username, agent_email should be None
         assert!(client.agent_email().is_none());
 
-        let result = client.claim_username("test-agent-001", "myagent").await.expect("claim");
+        let result = client
+            .claim_username("test-agent-001", "myagent")
+            .await
+            .expect("claim");
         assert_eq!(result.email, "myagent@hai.ai");
 
         // After claim_username, agent_email should be auto-stored
@@ -1416,15 +1426,17 @@ mod tests {
     async fn test_claim_username_does_not_store_empty_email() {
         let server = httpmock::MockServer::start_async().await;
 
-        server.mock_async(|when, then| {
-            when.method(httpmock::Method::POST)
-                .path("/api/v1/agents/test-agent-001/username");
-            then.status(200).json_body(serde_json::json!({
-                "username": "myagent",
-                "email": "",
-                "agent_id": "test-agent-001"
-            }));
-        }).await;
+        server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path("/api/v1/agents/test-agent-001/username");
+                then.status(200).json_body(serde_json::json!({
+                    "username": "myagent",
+                    "email": "",
+                    "agent_id": "test-agent-001"
+                }));
+            })
+            .await;
 
         let provider = StaticJacsProvider::new("test-agent-001");
         let mut client = HaiClient::new(
@@ -1433,10 +1445,17 @@ mod tests {
                 base_url: server.base_url(),
                 ..HaiClientOptions::default()
             },
-        ).expect("client");
+        )
+        .expect("client");
 
-        let _result = client.claim_username("test-agent-001", "myagent").await.expect("claim");
-        assert!(client.agent_email().is_none(), "empty email should not be stored");
+        let _result = client
+            .claim_username("test-agent-001", "myagent")
+            .await
+            .expect("claim");
+        assert!(
+            client.agent_email().is_none(),
+            "empty email should not be stored"
+        );
     }
 
     // ── Key rotation tests ──────────────────────────────────────────────
@@ -1454,7 +1473,10 @@ mod tests {
         .expect("client");
 
         let result = client.rotate_keys(None).await;
-        assert!(result.is_err(), "rotation with StaticJacsProvider should fail");
+        assert!(
+            result.is_err(),
+            "rotation with StaticJacsProvider should fail"
+        );
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
             err_msg.contains("not supported") || err_msg.contains("provider"),
@@ -1466,11 +1488,7 @@ mod tests {
     async fn test_rotate_keys_with_hai_registration_on_error() {
         // When provider rotate() fails, rotate_keys() should propagate the error
         let provider = StaticJacsProvider::new("test-agent-001");
-        let client = HaiClient::new(
-            provider,
-            HaiClientOptions::default(),
-        )
-        .expect("client");
+        let client = HaiClient::new(provider, HaiClientOptions::default()).expect("client");
 
         let opts = RotateKeysOptions {
             register_with_hai: Some(true),
@@ -1506,10 +1524,7 @@ mod tests {
         ];
 
         for field in &expected_fields {
-            assert!(
-                obj.contains_key(*field),
-                "fixture missing field: {field}",
-            );
+            assert!(obj.contains_key(*field), "fixture missing field: {field}",);
         }
         assert_eq!(
             obj.len(),
@@ -1517,5 +1532,4 @@ mod tests {
             "fixture field count mismatch",
         );
     }
-
 }

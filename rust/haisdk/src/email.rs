@@ -11,8 +11,8 @@ use base64::Engine;
 use sha2::{Digest, Sha256};
 
 use crate::error::{HaiError, Result};
-use crate::types::{ChainEntry, EmailVerificationResultV2, FieldResult, FieldStatus};
 use crate::types::KeyRegistryResponse;
+use crate::types::{ChainEntry, EmailVerificationResultV2, FieldResult, FieldStatus};
 
 use jacs::simple::{CreateAgentParams, SimpleAgent};
 
@@ -49,17 +49,18 @@ fn convert_chain_entry(value: jacs::email::ChainEntry) -> ChainEntry {
 /// # Arguments
 /// * `raw_email` - Raw RFC 5322 email bytes (with JACS attachment)
 /// * `hai_url` - HAI server URL for registry lookup (e.g., "https://hai.ai")
-pub async fn verify_email(
-    raw_email: &[u8],
-    hai_url: &str,
-) -> EmailVerificationResultV2 {
+pub async fn verify_email(raw_email: &[u8], hai_url: &str) -> EmailVerificationResultV2 {
     let hai_url = hai_url.trim_end_matches('/');
 
     // Step 1: Extract the JACS signature attachment to get metadata
     let jacs_bytes = match get_jacs_attachment(raw_email) {
         Ok(b) => b,
         Err(e) => {
-            return EmailVerificationResultV2::err("", "", &format!("No JACS signature found: {e}"));
+            return EmailVerificationResultV2::err(
+                "",
+                "",
+                &format!("No JACS signature found: {e}"),
+            );
         }
     };
 
@@ -189,17 +190,16 @@ pub async fn verify_email(
             );
         }
     };
-    let (trusted_doc, parts) =
-        match verify_email_document(raw_email, &agent, &raw_pub_key) {
-            Ok(result) => result,
-            Err(e) => {
-                return EmailVerificationResultV2::err(
-                    &jacs_id,
-                    reputation_tier,
-                    &format!("JACS signature verification failed: {e}"),
-                );
-            }
-        };
+    let (trusted_doc, parts) = match verify_email_document(raw_email, &agent, &raw_pub_key) {
+        Ok(result) => result,
+        Err(e) => {
+            return EmailVerificationResultV2::err(
+                &jacs_id,
+                reputation_tier,
+                &format!("JACS signature verification failed: {e}"),
+            );
+        }
+    };
 
     // Step 7: DNS verification (for dns_certified and fully_certified tiers)
     let dns_verified = if reputation_tier == "dns_certified" || reputation_tier == "fully_certified"
@@ -248,9 +248,7 @@ pub async fn verify_email(
     verify_parent_chain_entries(&mut chain, &parts, hai_url, &agent).await;
 
     // Recompute overall validity: fields must pass AND all chain entries valid
-    let fields_valid = !field_results.iter().any(|r| {
-        r.status == FieldStatus::Fail
-    });
+    let fields_valid = !field_results.iter().any(|r| r.status == FieldStatus::Fail);
     let chain_valid = chain.iter().all(|entry| entry.valid);
     let valid = fields_valid && chain_valid;
 
@@ -299,11 +297,10 @@ async fn verify_parent_chain_entries(
         };
 
         // Parse the parent JACS envelope for identity/algorithm checks
-        let parent_value: serde_json::Value =
-            match serde_json::from_slice(&parent_att.content) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
+        let parent_value: serde_json::Value = match serde_json::from_slice(&parent_att.content) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
 
         let parent_issuer = parent_value
             .get("jacsSignature")
@@ -374,7 +371,9 @@ async fn verify_parent_chain_entries(
 /// the JACS infrastructure requirements (schema loading, document parsing).
 fn create_verification_agent() -> Result<SimpleAgent> {
     let tmp = tempfile::tempdir().map_err(|e| {
-        HaiError::Provider(format!("Failed to create temp directory for verification agent: {e}"))
+        HaiError::Provider(format!(
+            "Failed to create temp directory for verification agent: {e}"
+        ))
     })?;
     let tmp_path = tmp.path().to_string_lossy().to_string();
 
@@ -387,9 +386,8 @@ fn create_verification_agent() -> Result<SimpleAgent> {
         .config_path(&format!("{}/jacs.config.json", tmp_path))
         .build();
 
-    let (agent, _info) = SimpleAgent::create_with_params(params).map_err(|e| {
-        HaiError::Provider(format!("Failed to create verification agent: {e}"))
-    })?;
+    let (agent, _info) = SimpleAgent::create_with_params(params)
+        .map_err(|e| HaiError::Provider(format!("Failed to create verification agent: {e}")))?;
 
     // Keep the temp directory alive for the agent's lifetime by leaking it.
     // The OS will reclaim it when the process exits. This avoids the temp dir
@@ -406,10 +404,8 @@ pub async fn fetch_public_key_from_registry(
     hai_url: &str,
     email: &str,
 ) -> Result<KeyRegistryResponse> {
-    let encoded_email = percent_encoding::utf8_percent_encode(
-        email,
-        percent_encoding::NON_ALPHANUMERIC,
-    );
+    let encoded_email =
+        percent_encoding::utf8_percent_encode(email, percent_encoding::NON_ALPHANUMERIC);
     let url = format!("{}/api/agents/keys/{}", hai_url, encoded_email);
     let client = reqwest::Client::new();
     let resp = client
@@ -480,10 +476,7 @@ pub async fn verify_dns_public_key(domain: &str, public_key_pem: &str) -> Result
 async fn fetch_dns_txt_records(name: &str) -> Result<Vec<String>> {
     let url = format!(
         "https://dns.google/resolve?name={}&type=TXT",
-        percent_encoding::utf8_percent_encode(
-            name,
-            percent_encoding::NON_ALPHANUMERIC
-        )
+        percent_encoding::utf8_percent_encode(name, percent_encoding::NON_ALPHANUMERIC)
     );
 
     let client = reqwest::Client::new();
@@ -548,16 +541,10 @@ fn extract_domain(email: &str) -> String {
 /// The JACS `SimpleAgent::verify_with_key()` handles per-algorithm format
 /// conversion internally, so callers can pass these bytes directly.
 fn extract_public_key_bytes(pem: &str) -> Result<Vec<u8>> {
-    let pem_lines: Vec<&str> = pem
-        .lines()
-        .filter(|l| !l.starts_with("-----"))
-        .collect();
-    let der_bytes =
-        base64::engine::general_purpose::STANDARD
-            .decode(pem_lines.join(""))
-            .map_err(|e| {
-                HaiError::Provider(format!("Invalid PEM encoding: {e}"))
-            })?;
+    let pem_lines: Vec<&str> = pem.lines().filter(|l| !l.starts_with("-----")).collect();
+    let der_bytes = base64::engine::general_purpose::STANDARD
+        .decode(pem_lines.join(""))
+        .map_err(|e| HaiError::Provider(format!("Invalid PEM encoding: {e}")))?;
 
     if der_bytes.len() < 12 {
         return Err(HaiError::Provider("Public key DER too short".into()));
@@ -573,7 +560,9 @@ fn extract_public_key_bytes(pem: &str) -> Result<Vec<u8>> {
     if is_ed25519 {
         // Ed25519 SPKI: the last 32 bytes are the raw public key
         if der_bytes.len() < 32 {
-            return Err(HaiError::Provider("Ed25519 DER too short for 32-byte key".into()));
+            return Err(HaiError::Provider(
+                "Ed25519 DER too short for 32-byte key".into(),
+            ));
         }
         Ok(der_bytes[der_bytes.len() - 32..].to_vec())
     } else {
@@ -600,10 +589,7 @@ mod tests {
 
     #[test]
     fn extract_domain_with_angle_brackets() {
-        assert_eq!(
-            extract_domain("Agent <agent@example.com>"),
-            "example.com"
-        );
+        assert_eq!(extract_domain("Agent <agent@example.com>"), "example.com");
     }
 
     #[test]
@@ -643,7 +629,7 @@ mod tests {
 
     // -- Tests that use JACS email functions with SimpleAgent --
 
-    use super::{SimpleAgent, CreateAgentParams};
+    use super::{CreateAgentParams, SimpleAgent};
 
     /// Create a test SimpleAgent for email signing/verification tests.
     ///
@@ -662,8 +648,7 @@ mod tests {
             .config_path(&format!("{}/jacs.config.json", tmp_path))
             .build();
 
-        let (agent, _info) = SimpleAgent::create_with_params(params)
-            .expect("create test agent");
+        let (agent, _info) = SimpleAgent::create_with_params(params).expect("create test agent");
 
         // Set env vars needed by the keystore at signing time.
         // SAFETY: tests that sign emails must not run in parallel
@@ -690,8 +675,14 @@ mod tests {
         // Verify JACS envelope structure
         assert_eq!(jacs_doc["jacsType"].as_str(), Some("message"));
         assert!(jacs_doc.get("jacsId").is_some(), "should have jacsId");
-        assert!(jacs_doc.get("jacsSignature").is_some(), "should have jacsSignature");
-        assert!(jacs_doc.get("content").is_some(), "should have content field");
+        assert!(
+            jacs_doc.get("jacsSignature").is_some(),
+            "should have jacsSignature"
+        );
+        assert!(
+            jacs_doc.get("content").is_some(),
+            "should have content field"
+        );
 
         // Verify the email payload is in the content field
         let payload: EmailSignaturePayload =
@@ -709,7 +700,11 @@ mod tests {
 
         let result = verify_email(email, "http://127.0.0.1:1").await;
         assert!(!result.valid);
-        assert!(result.error.as_deref().unwrap().contains("No JACS signature found"));
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("No JACS signature found"));
     }
 
     #[tokio::test]
@@ -720,7 +715,11 @@ mod tests {
 
         let result = verify_email(&signed, "http://127.0.0.1:1").await;
         assert!(!result.valid);
-        assert!(result.error.as_deref().unwrap().contains("Registry lookup failed"));
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("Registry lookup failed"));
     }
 
     #[tokio::test]
@@ -749,7 +748,11 @@ mod tests {
 
         let result = verify_email(&signed, &server.base_url()).await;
         assert!(!result.valid);
-        assert!(result.error.as_deref().unwrap().contains("Identity mismatch"));
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("Identity mismatch"));
         assert!(result.error.as_deref().unwrap().contains("issuer"));
     }
 
@@ -786,7 +789,11 @@ mod tests {
 
         let result = verify_email(&signed, &server.base_url()).await;
         assert!(!result.valid);
-        assert!(result.error.as_deref().unwrap().contains("Identity mismatch"));
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("Identity mismatch"));
         assert!(result.error.as_deref().unwrap().contains("From"));
     }
 
