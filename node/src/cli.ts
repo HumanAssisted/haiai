@@ -90,7 +90,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       return result.status ?? 1;
     }
 
-    if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
+    if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
       process.stdout.write(USAGE);
       return 0;
     }

@@ -1373,4 +1373,81 @@ mod tests {
         set_env_var("JACS_MCP_ARGS", old_args.as_deref());
         set_env_var("JACS_MCP_CWD", old_cwd.as_deref());
     }
+
+    #[test]
+    fn hai_tool_definitions_include_core_identity_and_email_tools() {
+        let definitions = hai_tool_definitions();
+        let names: Vec<&str> = definitions
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect();
+
+        assert!(names.contains(&"hai_hello"));
+        assert!(names.contains(&"hai_register_agent"));
+        assert!(names.contains(&"hai_send_email"));
+        assert!(names.contains(&"hai_reply_email"));
+    }
+
+    #[test]
+    fn required_string_reports_missing_fields() {
+        let args = json!({});
+        let err = required_string(&args, "message_id").expect_err("missing field");
+        assert_eq!(err, "message_id is required");
+    }
+
+    #[tokio::test]
+    async fn call_generate_verify_link_returns_text_and_structured_content() {
+        let result = call_generate_verify_link(&json!({
+            "document": r#"{"signed":true}"#,
+            "base_url": "https://example.com"
+        }))
+        .await
+        .expect("verify link result");
+
+        let url = result
+            .get("structuredContent")
+            .and_then(|value: &Value| value.get("verify_url"))
+            .and_then(Value::as_str)
+            .expect("verify_url");
+
+        assert!(url.starts_with("https://example.com/jacs/verify?s="));
+        assert_eq!(
+            result["content"][0]["text"].as_str(),
+            Some(&format!("verify_url={url}"))
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_request_lists_hai_tools_without_bridge_tools() {
+        let request = RpcRequest {
+            jsonrpc: Some("2.0".to_string()),
+            id: Some(json!(1)),
+            method: "tools/list".to_string(),
+            params: Some(json!({})),
+        };
+        let context = HaiServerContext {
+            base_url: "https://hai.example".to_string(),
+            fallback_jacs_id: "anonymous-agent".to_string(),
+        };
+
+        let response = handle_request(&context, &NoopJacsmcpBridge, request)
+            .await
+            .expect("tools/list response");
+
+        let result = response
+            .result
+            .expect("tools/list result");
+        let tools = result
+            .get("tools")
+            .and_then(Value::as_array)
+            .expect("tools array");
+        let names: Vec<&str> = tools
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect();
+
+        assert!(names.contains(&"hai_hello"));
+        assert!(names.contains(&"hai_check_username"));
+        assert!(names.contains(&"hai_get_email_status"));
+    }
 }
