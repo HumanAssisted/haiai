@@ -481,6 +481,7 @@ async fn handle_request(
             let result = match name {
                 "hai_check_username" => call_check_username(context, &args).await,
                 "hai_hello" => call_hello(context, &args).await,
+                "hai_agent_status" => call_verify_status(context, &args).await,
                 "hai_verify_status" => call_verify_status(context, &args).await,
                 "hai_claim_username" => call_claim_username(context, &args).await,
                 "hai_create_agent" => call_create_agent(context, &args).await,
@@ -553,6 +554,17 @@ fn hai_tool_definitions() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "include_test": { "type": "boolean" },
+                    "config_path": { "type": "string" },
+                    "hai_url": { "type": "string" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_agent_status",
+            "description": "Get the current agent's verification status",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
                     "config_path": { "type": "string" },
                     "hai_url": { "type": "string" }
                 }
@@ -1310,6 +1322,9 @@ fn bridge_candidates() -> Vec<BridgeCandidate> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
+    use std::fs;
+    use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
 
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -1386,6 +1401,75 @@ mod tests {
         assert!(names.contains(&"hai_register_agent"));
         assert!(names.contains(&"hai_send_email"));
         assert!(names.contains(&"hai_reply_email"));
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct MCPToolContractFixture {
+        required_tools: Vec<RequiredTool>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct RequiredTool {
+        name: String,
+        properties: std::collections::BTreeMap<String, String>,
+        required: Vec<String>,
+    }
+
+    fn load_mcp_tool_contract_fixture() -> MCPToolContractFixture {
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/mcp_tool_contract.json");
+        let raw = fs::read_to_string(path).expect("read mcp tool contract fixture");
+        serde_json::from_str(&raw).expect("decode mcp tool contract fixture")
+    }
+
+    #[test]
+    fn hai_tool_definitions_match_shared_mcp_contract() {
+        let fixture = load_mcp_tool_contract_fixture();
+        let actual: std::collections::BTreeMap<String, (std::collections::BTreeMap<String, String>, Vec<String>)> =
+            hai_tool_definitions()
+                .into_iter()
+                .filter_map(|tool| {
+                    let name = tool.get("name")?.as_str()?.to_string();
+                    let properties = tool
+                        .get("inputSchema")?
+                        .get("properties")?
+                        .as_object()?
+                        .iter()
+                        .map(|(key, value)| {
+                            let type_name = value
+                                .get("type")
+                                .and_then(Value::as_str)
+                                .unwrap_or("string")
+                                .to_string();
+                            (key.clone(), if type_name == "integer" { "number".to_string() } else { type_name })
+                        })
+                        .collect();
+                    let mut required = tool
+                        .get("inputSchema")?
+                        .get("required")
+                        .and_then(Value::as_array)
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(Value::as_str)
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    required.sort();
+                    Some((name, (properties, required)))
+                })
+                .collect();
+
+        for expected in fixture.required_tools {
+            let (properties, required) = actual
+                .get(&expected.name)
+                .unwrap_or_else(|| panic!("missing tool {}", expected.name));
+            let mut expected_required = expected.required.clone();
+            expected_required.sort();
+            assert_eq!(properties, &expected.properties, "tool {}", expected.name);
+            assert_eq!(required, &expected_required, "tool {}", expected.name);
+        }
     }
 
     #[test]

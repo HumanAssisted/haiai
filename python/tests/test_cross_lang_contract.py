@@ -17,7 +17,6 @@ def _load_fixture() -> dict[str, object]:
 def test_cross_lang_canonical_json_cases() -> None:
     fixture = _load_fixture()
     for case in fixture["canonical_json_cases"]:
-        case = case
         assert canonicalize_json(case["input"]) == case["expected"]
 
 
@@ -35,9 +34,9 @@ def test_cross_lang_auth_header_contract(monkeypatch: pytest.MonkeyPatch) -> Non
             seen["message"] = message
             return example["stub_signature_base64"]
 
-    monkeypatch.setattr("jacs.hai.client.get_config", lambda: _Config())
-    monkeypatch.setattr("jacs.hai.client.get_agent", lambda: _Agent())
-    monkeypatch.setattr("time.time", lambda: example["timestamp"])
+    monkeypatch.setattr("jacs.hai.config.get_config", lambda: _Config())
+    monkeypatch.setattr("jacs.hai.config.get_agent", lambda: _Agent())
+    monkeypatch.setattr("jacs.hai.client.time.time", lambda: example["timestamp"])
 
     header = HaiClient()._build_jacs_auth_header()
 

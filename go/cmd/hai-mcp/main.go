@@ -27,34 +27,9 @@ func main() {
 		server.WithToolCapabilities(false),
 	)
 
-	// ----- Identity tools -----
-	s.AddTool(mcp.NewTool("hai_hello",
-		mcp.WithDescription("Run authenticated hello handshake with HAI"),
-		mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
-		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
-	), handleHello)
+	s.AddTools(requiredToolDefinitions()...)
 
-	s.AddTool(mcp.NewTool("hai_check_username",
-		mcp.WithDescription("Check if a hai.ai username is available"),
-		mcp.WithString("username", mcp.Required(), mcp.Description("Username to check")),
-		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
-	), handleCheckUsername)
-
-	s.AddTool(mcp.NewTool("hai_claim_username",
-		mcp.WithDescription("Claim a hai.ai username for an agent"),
-		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent UUID")),
-		mcp.WithString("username", mcp.Required(), mcp.Description("Username to claim")),
-		mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
-		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
-	), handleClaimUsername)
-
-	s.AddTool(mcp.NewTool("hai_register_agent",
-		mcp.WithDescription("Register the local JACS agent with HAI"),
-		mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
-		mcp.WithString("owner_email", mcp.Description("Owner email address")),
-		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
-	), handleRegisterAgent)
-
+	// Backward-compatible extra tool not included in the shared minimum contract.
 	s.AddTool(mcp.NewTool("hai_verify_agent",
 		mcp.WithDescription("Verify another agent's identity"),
 		mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID to verify")),
@@ -62,98 +37,168 @@ func main() {
 		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
 	), handleVerifyAgent)
 
-	s.AddTool(mcp.NewTool("hai_agent_status",
-		mcp.WithDescription("Get the current agent's verification status"),
-		mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
-		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
-	), handleAgentStatus)
-
-	// ----- Email tools -----
-	s.AddTool(mcp.NewTool("hai_send_email",
-		mcp.WithDescription("Send an email from the agent's @hai.ai address"),
-		mcp.WithString("to", mcp.Required(), mcp.Description("Recipient email address")),
-		mcp.WithString("subject", mcp.Required(), mcp.Description("Email subject line")),
-		mcp.WithString("body", mcp.Required(), mcp.Description("Plain text email body")),
-		mcp.WithString("in_reply_to", mcp.Description("Message-ID to reply to (for threading)")),
-		mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
-		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
-	), handleSendEmail)
-
-	s.AddTool(mcp.NewTool("hai_list_messages",
-		mcp.WithDescription("List email messages in the agent's inbox/outbox"),
-		mcp.WithNumber("limit", mcp.Description("Max messages to return (default 20)")),
-		mcp.WithNumber("offset", mcp.Description("Pagination offset")),
-		mcp.WithString("direction", mcp.Description("Filter: 'inbound' or 'outbound'")),
-		mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
-		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
-	), handleListMessages)
-
-	s.AddTool(mcp.NewTool("hai_get_message",
-		mcp.WithDescription("Get a single email message by ID"),
-		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message UUID")),
-		mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
-		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
-	), handleGetMessage)
-
-	s.AddTool(mcp.NewTool("hai_delete_message",
-		mcp.WithDescription("Delete an email message"),
-		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message UUID")),
-		mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
-		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
-	), handleDeleteMessage)
-
-	s.AddTool(mcp.NewTool("hai_mark_read",
-		mcp.WithDescription("Mark an email message as read"),
-		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message UUID")),
-		mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
-		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
-	), handleMarkRead)
-
-	s.AddTool(mcp.NewTool("hai_mark_unread",
-		mcp.WithDescription("Mark an email message as unread"),
-		mcp.WithString("message_id", mcp.Required(), mcp.Description("Message UUID")),
-		mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
-		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
-	), handleMarkUnread)
-
-	s.AddTool(mcp.NewTool("hai_search_messages",
-		mcp.WithDescription("Search email messages by query, sender, recipient, or date range"),
-		mcp.WithString("q", mcp.Description("Search query text")),
-		mcp.WithString("direction", mcp.Description("Filter: 'inbound' or 'outbound'")),
-		mcp.WithString("from_address", mcp.Description("Filter by sender address")),
-		mcp.WithString("to_address", mcp.Description("Filter by recipient address")),
-		mcp.WithString("since", mcp.Description("Filter: messages after this ISO date")),
-		mcp.WithString("until", mcp.Description("Filter: messages before this ISO date")),
-		mcp.WithNumber("limit", mcp.Description("Max results (default 20)")),
-		mcp.WithNumber("offset", mcp.Description("Pagination offset")),
-		mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
-		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
-	), handleSearchMessages)
-
-	s.AddTool(mcp.NewTool("hai_get_unread_count",
-		mcp.WithDescription("Get the count of unread email messages"),
-		mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
-		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
-	), handleGetUnreadCount)
-
-	s.AddTool(mcp.NewTool("hai_get_email_status",
-		mcp.WithDescription("Get email account status including usage limits and daily stats"),
-		mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
-		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
-	), handleGetEmailStatus)
-
-	s.AddTool(mcp.NewTool("hai_reply_email",
-		mcp.WithDescription("Reply to an email message (fetches original, sends reply with threading)"),
-		mcp.WithString("message_id", mcp.Required(), mcp.Description("ID of the message to reply to")),
-		mcp.WithString("body", mcp.Required(), mcp.Description("Reply body text")),
-		mcp.WithString("subject_override", mcp.Description("Override the Re: subject line")),
-		mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
-		mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
-	), handleReplyEmail)
-
 	if err := server.ServeStdio(s); err != nil {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+func requiredToolDefinitions() []server.ServerTool {
+	return []server.ServerTool{
+		{
+			Tool: mcp.NewTool("hai_hello",
+				mcp.WithDescription("Run authenticated hello handshake with HAI"),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleHello,
+		},
+		{
+			Tool: mcp.NewTool("hai_check_username",
+				mcp.WithDescription("Check if a hai.ai username is available"),
+				mcp.WithString("username", mcp.Required(), mcp.Description("Username to check")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleCheckUsername,
+		},
+		{
+			Tool: mcp.NewTool("hai_claim_username",
+				mcp.WithDescription("Claim a hai.ai username for an agent"),
+				mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent UUID")),
+				mcp.WithString("username", mcp.Required(), mcp.Description("Username to claim")),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleClaimUsername,
+		},
+		{
+			Tool: mcp.NewTool("hai_register_agent",
+				mcp.WithDescription("Register the local JACS agent with HAI"),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("owner_email", mcp.Description("Owner email address")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleRegisterAgent,
+		},
+		{
+			Tool: mcp.NewTool("hai_agent_status",
+				mcp.WithDescription("Get the current agent's verification status"),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleAgentStatus,
+		},
+		{
+			Tool: mcp.NewTool("hai_generate_verify_link",
+				mcp.WithDescription("Generate a HAI verify link from a signed JACS document"),
+				mcp.WithString("document", mcp.Required(), mcp.Description("Signed JACS document JSON string")),
+				mcp.WithString("base_url", mcp.Description("Verifier base URL override")),
+				mcp.WithBoolean("hosted", mcp.Description("Use hosted verify URL mode")),
+			),
+			Handler: handleGenerateVerifyLink,
+		},
+		{
+			Tool: mcp.NewTool("hai_send_email",
+				mcp.WithDescription("Send an email from the agent's @hai.ai address"),
+				mcp.WithString("to", mcp.Required(), mcp.Description("Recipient email address")),
+				mcp.WithString("subject", mcp.Required(), mcp.Description("Email subject line")),
+				mcp.WithString("body", mcp.Required(), mcp.Description("Plain text email body")),
+				mcp.WithString("in_reply_to", mcp.Description("Message-ID to reply to (for threading)")),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleSendEmail,
+		},
+		{
+			Tool: mcp.NewTool("hai_list_messages",
+				mcp.WithDescription("List email messages in the agent's inbox/outbox"),
+				mcp.WithNumber("limit", mcp.Description("Max messages to return (default 20)")),
+				mcp.WithNumber("offset", mcp.Description("Pagination offset")),
+				mcp.WithString("direction", mcp.Description("Filter: 'inbound' or 'outbound'")),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleListMessages,
+		},
+		{
+			Tool: mcp.NewTool("hai_get_message",
+				mcp.WithDescription("Get a single email message by ID"),
+				mcp.WithString("message_id", mcp.Required(), mcp.Description("Message UUID")),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleGetMessage,
+		},
+		{
+			Tool: mcp.NewTool("hai_delete_message",
+				mcp.WithDescription("Delete an email message"),
+				mcp.WithString("message_id", mcp.Required(), mcp.Description("Message UUID")),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleDeleteMessage,
+		},
+		{
+			Tool: mcp.NewTool("hai_mark_read",
+				mcp.WithDescription("Mark an email message as read"),
+				mcp.WithString("message_id", mcp.Required(), mcp.Description("Message UUID")),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleMarkRead,
+		},
+		{
+			Tool: mcp.NewTool("hai_mark_unread",
+				mcp.WithDescription("Mark an email message as unread"),
+				mcp.WithString("message_id", mcp.Required(), mcp.Description("Message UUID")),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleMarkUnread,
+		},
+		{
+			Tool: mcp.NewTool("hai_search_messages",
+				mcp.WithDescription("Search email messages by query, sender, recipient, or date range"),
+				mcp.WithString("q", mcp.Description("Search query text")),
+				mcp.WithString("direction", mcp.Description("Filter: 'inbound' or 'outbound'")),
+				mcp.WithString("from_address", mcp.Description("Filter by sender address")),
+				mcp.WithString("to_address", mcp.Description("Filter by recipient address")),
+				mcp.WithString("since", mcp.Description("Filter: messages after this ISO date")),
+				mcp.WithString("until", mcp.Description("Filter: messages before this ISO date")),
+				mcp.WithNumber("limit", mcp.Description("Max results (default 20)")),
+				mcp.WithNumber("offset", mcp.Description("Pagination offset")),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleSearchMessages,
+		},
+		{
+			Tool: mcp.NewTool("hai_get_unread_count",
+				mcp.WithDescription("Get the count of unread email messages"),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleGetUnreadCount,
+		},
+		{
+			Tool: mcp.NewTool("hai_get_email_status",
+				mcp.WithDescription("Get email account status including usage limits and daily stats"),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleGetEmailStatus,
+		},
+		{
+			Tool: mcp.NewTool("hai_reply_email",
+				mcp.WithDescription("Reply to an email message (fetches original, sends reply with threading)"),
+				mcp.WithString("message_id", mcp.Required(), mcp.Description("ID of the message to reply to")),
+				mcp.WithString("body", mcp.Required(), mcp.Description("Reply body text")),
+				mcp.WithString("subject_override", mcp.Description("Override the Re: subject line")),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleReplyEmail,
+		},
 	}
 }
 
@@ -276,6 +321,30 @@ func handleAgentStatus(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallT
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	return mcp.NewToolResultText(toJSON(result)), nil
+}
+
+func handleGenerateVerifyLink(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	document, err := req.RequireString("document")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	baseURL := req.GetString("base_url", "")
+	hosted := req.GetBool("hosted", false)
+
+	var link string
+	if hosted {
+		link, err = haisdk.GenerateVerifyLinkHosted(document, baseURL)
+	} else {
+		link, err = haisdk.GenerateVerifyLink(document, baseURL)
+	}
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	return mcp.NewToolResultText(toJSON(map[string]string{
+		"verify_url": link,
+	})), nil
 }
 
 // ---------------------------------------------------------------------------

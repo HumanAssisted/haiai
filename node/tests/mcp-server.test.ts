@@ -20,6 +20,7 @@ describe('mcp server tool dispatch', () => {
   it('publishes core HAI tools', () => {
     const toolNames = TOOLS.map((tool) => tool.name);
     expect(toolNames).toContain('hai_hello');
+    expect(toolNames).toContain('hai_generate_verify_link');
     expect(toolNames).toContain('hai_send_email');
     expect(toolNames).toContain('hai_reply_email');
   });
@@ -121,6 +122,19 @@ describe('mcp server tool dispatch', () => {
 
     expect(reply).toHaveBeenCalledWith('msg-4', 'Reply body', 'Custom subject');
     expect(JSON.parse(result.content[0].text)).toEqual({ message_id: 'reply-1' });
+  });
+
+  it('wraps verify-link generation results', async () => {
+    createMock.mockResolvedValue({});
+
+    const result = await handleToolCall('hai_generate_verify_link', {
+      document: '{"signed":true}',
+      base_url: 'https://hai.example',
+    });
+
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      verify_url: 'https://hai.example/jacs/verify?s=eyJzaWduZWQiOnRydWV9',
+    });
   });
 
   it('returns an MCP error payload for unknown tools', async () => {

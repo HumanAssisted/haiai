@@ -16,6 +16,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { fileURLToPath } from 'node:url';
 import { HaiClient } from './client.js';
+import { generateVerifyLink } from './verify.js';
 
 export async function getClient(args: Record<string, unknown>): Promise<HaiClient> {
   const options: Record<string, unknown> = {};
@@ -105,6 +106,19 @@ export const TOOLS = [
         hai_url: { type: 'string', description: 'HAI API URL override' },
       },
       required: ['agent_document'],
+    },
+  },
+  {
+    name: 'hai_generate_verify_link',
+    description: 'Generate a HAI verify link from a signed JACS document',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        document: { type: 'string', description: 'Signed JACS document JSON string' },
+        base_url: { type: 'string', description: 'Verifier base URL override' },
+        hosted: { type: 'boolean', description: 'Use hosted verify URL mode' },
+      },
+      required: ['document'],
     },
   },
   // ----- Email tools -----
@@ -290,6 +304,14 @@ export async function handleToolCall(
       case 'hai_verify_agent': {
         const result = await client.verifyAgent(args.agent_document as string);
         return textResult(toJSON(result));
+      }
+      case 'hai_generate_verify_link': {
+        const result = generateVerifyLink(
+          args.document as string,
+          typeof args.base_url === 'string' ? args.base_url : undefined,
+          Boolean(args.hosted),
+        );
+        return textResult(toJSON({ verify_url: result }));
       }
 
       // Email
