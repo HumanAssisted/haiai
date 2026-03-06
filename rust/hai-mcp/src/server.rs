@@ -1,7 +1,7 @@
 use jacs_mcp::JacsMcpServer;
 use rmcp::model::{
-    CallToolRequestParam, Implementation, ListToolsResult, PaginatedRequestParam, ServerCapabilities,
-    ServerInfo, Tool, ToolsCapability,
+    CallToolRequestParam, Implementation, ListToolsResult, PaginatedRequestParam,
+    ServerCapabilities, ServerInfo, Tool, ToolsCapability,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler};

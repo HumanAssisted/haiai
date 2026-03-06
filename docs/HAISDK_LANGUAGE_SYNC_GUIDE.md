@@ -145,7 +145,7 @@ The Rust workspace lives under `rust/`:
 Rust-specific boundary points:
 
 1. `rust/haisdk/src/jacs.rs`: `JacsProvider` trait (integration seam to JACS)
-2. `rust/hai-mcp/src/main.rs`: `JacsmcpBridge` trait (integration seam to `jacs-mcp`)
+2. `rust/hai-mcp/src/server.rs`: `HaiMcpServer` composition layer embedding `jacs-mcp`
 
 Do not add runtime primitive crypto logic to `rust/haisdk`; implement JACS-backed providers instead.
 
@@ -174,5 +174,5 @@ For each language SDK:
 ## Open Integration Items
 
 1. Keep `rust/haisdk/src/jacs_local.rs` aligned with canonical `jacs` updates.
-2. Keep `rust/hai-mcp` `jacs_*` proxy behavior aligned with canonical `jacs-mcp` tool changes.
+2. Keep `rust/hai-mcp` embedded `jacs_*` behavior aligned with canonical `jacs-mcp` tool changes.
 3. Expand shared fixtures for additional HAI endpoints as contracts stabilize.

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tempfile::TempDir;
 
 #[derive(Debug, Clone)]
@@ -37,29 +37,27 @@ impl MiniHaiServer {
         let requests_for_thread = Arc::clone(&requests);
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
 
-        let thread = thread::spawn(move || {
-            loop {
-                match shutdown_rx.try_recv() {
-                    Ok(()) | Err(TryRecvError::Disconnected) => break,
-                    Err(TryRecvError::Empty) => {}
-                }
+        let thread = thread::spawn(move || loop {
+            match shutdown_rx.try_recv() {
+                Ok(()) | Err(TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Empty) => {}
+            }
 
-                match listener.accept() {
-                    Ok((mut stream, _addr)) => {
-                        if let Some(request) = read_request(&mut stream) {
-                            let response = response_for_request(&request);
-                            requests_for_thread
-                                .lock()
-                                .expect("lock requests")
-                                .push(request);
-                            write_response(&mut stream, response);
-                        }
+            match listener.accept() {
+                Ok((mut stream, _addr)) => {
+                    if let Some(request) = read_request(&mut stream) {
+                        let response = response_for_request(&request);
+                        requests_for_thread
+                            .lock()
+                            .expect("lock requests")
+                            .push(request);
+                        write_response(&mut stream, response);
                     }
-                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(10));
-                    }
-                    Err(err) => panic!("mock HAI server accept failed: {err}"),
                 }
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(err) => panic!("mock HAI server accept failed: {err}"),
             }
         });
 
@@ -97,15 +95,45 @@ impl Drop for MiniHaiServer {
 }
 
 struct TestWorkspace {
-    _temp_dir: TempDir,
+    temp_dir: TempDir,
 }
 
 impl TestWorkspace {
     fn new() -> Self {
         let temp_dir = tempfile::tempdir().expect("tempdir");
-        Self {
-            _temp_dir: temp_dir,
+        Self { temp_dir }
+    }
+
+    fn path(&self) -> &Path {
+        self.temp_dir.path()
+    }
+
+    fn write_embedded_jacs_config(&self) -> PathBuf {
+        let source = jacs_fixture_config();
+        let source_dir = source.parent().expect("fixture config dir");
+        let mut value: Value =
+            serde_json::from_str(&std::fs::read_to_string(&source).expect("read fixture config"))
+                .expect("parse fixture config");
+
+        for field in ["jacs_data_directory", "jacs_key_directory"] {
+            let path = value.get(field).and_then(Value::as_str).map(PathBuf::from);
+            if let Some(path) = path {
+                let resolved = if path.is_absolute() {
+                    path
+                } else {
+                    source_dir.join(path)
+                };
+                value[field] = Value::String(resolved.to_string_lossy().into_owned());
+            }
         }
+
+        let config_path = self.path().join("embedded-jacs.config.json");
+        std::fs::write(
+            &config_path,
+            serde_json::to_vec_pretty(&value).expect("encode temp config"),
+        )
+        .expect("write temp config");
+        config_path
     }
 }
 
@@ -120,7 +148,9 @@ impl McpSession {
         let mut child = Command::new(hai_mcp_bin())
             .env("HAI_URL", hai_url)
             .env("JACS_CONFIG", jacs_config)
-            .env("JACS_PRIVATE_KEY_PASSWORD", "testpassword")
+            .env("JACS_PRIVATE_KEY_PASSWORD", "secretpassord")
+            .env("JACS_MCP_BIN", "/definitely-unused/jacs-mcp")
+            .env("JACS_MCP_ARGS", "--transport http")
             .env("RUST_LOG", "warn")
             .current_dir(jacs_config.parent().expect("JACS config dir"))
             .stdin(Stdio::piped())
@@ -331,6 +361,32 @@ fn response_for_request(request: &RecordedRequest) -> Value {
                 "available": true
             })
         }
+        ("POST", "/api/v1/agents/register") => {
+            json!({
+                "success": true,
+                "agent_id": "hai-agent-registered",
+                "jacs_id": "ddf35096-d212-4ca9-a299-feda597d5525",
+                "dns_verified": false,
+                "registrations": [],
+                "registered_at": "2026-03-06T00:00:00Z",
+                "message": "registered"
+            })
+        }
+        ("GET", "/api/agents/hai-agent-123/email/status") => {
+            json!({
+                "email": "demo-agent@hai.ai",
+                "status": "active",
+                "tier": "verified",
+                "billing_tier": "free",
+                "messages_sent_24h": 2,
+                "daily_limit": 100,
+                "daily_used": 2,
+                "resets_at": "2026-03-07T00:00:00Z",
+                "messages_sent_total": 12,
+                "external_enabled": true,
+                "external_sends_today": 1
+            })
+        }
         _ => json!({
             "error": format!("unexpected request: {} {}", request.method, request.path)
         }),
@@ -370,7 +426,7 @@ fn rejects_non_stdio_runtime_arguments() {
 #[test]
 fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     let workspace = TestWorkspace::new();
-    let jacs_config = jacs_fixture_config();
+    let jacs_config = workspace.write_embedded_jacs_config();
     let server = MiniHaiServer::start();
 
     let mut session = McpSession::spawn(&workspace, server.base_url(), &jacs_config);
@@ -405,6 +461,22 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
         Some(true)
     );
 
+    let email_status = session.call_tool(
+        12,
+        "hai_get_email_status",
+        json!({
+            "agent_id": "hai-agent-123"
+        }),
+    );
+    assert_eq!(
+        email_status["structuredContent"]["email_status"]["email"].as_str(),
+        Some("demo-agent@hai.ai")
+    );
+    assert_eq!(
+        email_status["structuredContent"]["email_status"]["status"].as_str(),
+        Some("active")
+    );
+
     server.assert_request(
         |request| {
             request.method == "GET"
@@ -414,5 +486,82 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
                 && !request.headers.contains_key("authorization")
         },
         "GET /api/v1/agents/username/check?username=demo-agent",
+    );
+    server.assert_request(
+        |request| {
+            request.method == "GET"
+                && request.path == "/api/agents/hai-agent-123/email/status"
+                && request
+                    .headers
+                    .get("authorization")
+                    .map(|value| value.starts_with("JACS "))
+                    .unwrap_or(false)
+        },
+        "GET /api/agents/hai-agent-123/email/status with JACS auth",
+    );
+}
+
+#[test]
+fn authenticated_hai_tools_keep_working_after_startup_config_is_removed() {
+    let workspace = TestWorkspace::new();
+    let jacs_config = workspace.write_embedded_jacs_config();
+    let server = MiniHaiServer::start();
+
+    let mut session = McpSession::spawn(&workspace, server.base_url(), &jacs_config);
+    let initialize = session.initialize();
+    assert_eq!(
+        initialize["result"]["serverInfo"]["name"].as_str(),
+        Some("hai-mcp")
+    );
+
+    std::fs::remove_file(&jacs_config).expect("remove startup config after initialization");
+
+    let email_status = session.call_tool(
+        20,
+        "hai_get_email_status",
+        json!({
+            "agent_id": "hai-agent-123"
+        }),
+    );
+    assert_eq!(
+        email_status["structuredContent"]["email_status"]["email"].as_str(),
+        Some("demo-agent@hai.ai")
+    );
+
+    let registration = session.call_tool(
+        21,
+        "hai_register_agent",
+        json!({
+            "owner_email": "owner@example.com"
+        }),
+    );
+    assert_eq!(
+        registration["structuredContent"]["registration"]["success"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        registration["structuredContent"]["registration"]["agent_id"].as_str(),
+        Some("hai-agent-registered")
+    );
+
+    server.assert_request(
+        |request| {
+            request.method == "GET"
+                && request.path == "/api/agents/hai-agent-123/email/status"
+                && request
+                    .headers
+                    .get("authorization")
+                    .map(|value| value.starts_with("JACS "))
+                    .unwrap_or(false)
+        },
+        "GET /api/agents/hai-agent-123/email/status after config removal",
+    );
+    server.assert_request(
+        |request| {
+            request.method == "POST"
+                && request.path == "/api/v1/agents/register"
+                && !request.headers.contains_key("authorization")
+        },
+        "POST /api/v1/agents/register after config removal",
     );
 }

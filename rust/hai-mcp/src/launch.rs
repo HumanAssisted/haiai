@@ -56,7 +56,7 @@ mod tests {
     }
 
     #[test]
-    fn help_text_does_not_reference_bridge_env_vars() {
+    fn help_text_does_not_reference_removed_subprocess_env_vars() {
         let text = help_text();
         assert!(text.contains("JACS_CONFIG"));
         assert!(!text.contains("JACS_MCP_BIN"));

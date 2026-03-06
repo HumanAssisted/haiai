@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex as StdMutex;
 
-use haisdk::{
-    HaiClient, HaiClientOptions, JacsProvider, LocalJacsProvider, NoopJacsProvider,
-};
+use haisdk::{HaiClient, HaiClientOptions, JacsProvider, LocalJacsProvider, NoopJacsProvider};
+
+use crate::embedded_provider::EmbeddedJacsProvider;
 
 #[derive(Debug, Clone, Default)]
 struct CachedAgentState {
@@ -12,21 +12,27 @@ struct CachedAgentState {
     agent_email: Option<String>,
 }
 
-#[derive(Debug)]
 pub struct HaiServerContext {
     base_url: String,
     fallback_jacs_id: String,
-    default_config_path: Option<String>,
+    default_config_path: Option<PathBuf>,
+    embedded_provider: EmbeddedJacsProvider,
     cached_agent_state: StdMutex<BTreeMap<String, CachedAgentState>>,
 }
 
 impl HaiServerContext {
-    pub fn from_process_env(fallback_jacs_id: String, default_config_path: Option<String>) -> Self {
+    pub fn from_process_env(
+        fallback_jacs_id: String,
+        default_config_path: Option<String>,
+        embedded_provider: EmbeddedJacsProvider,
+    ) -> Self {
         let base_url = std::env::var("HAI_URL").unwrap_or_else(|_| "https://hai.ai".to_string());
+        let default_config_path = default_config_path.map(PathBuf::from);
         Self {
             base_url,
             fallback_jacs_id,
             default_config_path,
+            embedded_provider,
             cached_agent_state: StdMutex::new(BTreeMap::new()),
         }
     }
@@ -34,7 +40,29 @@ impl HaiServerContext {
     fn effective_config_path<'a>(&'a self, override_path: Option<&'a str>) -> Option<&'a Path> {
         override_path
             .map(Path::new)
-            .or_else(|| self.default_config_path.as_deref().map(Path::new))
+            .or(self.default_config_path.as_deref())
+    }
+
+    fn validate_embedded_config_path(&self, override_path: Option<&str>) -> Result<(), String> {
+        let Some(override_path) = override_path else {
+            return Ok(());
+        };
+        let Some(default_config_path) = self.default_config_path.as_ref() else {
+            return Err(
+                "hai-mcp does not have a startup JACS config path; alternate config_path values are not supported."
+                    .to_string(),
+            );
+        };
+
+        let requested = absolutize_path(Path::new(override_path))?;
+        if requested == *default_config_path {
+            return Ok(());
+        }
+
+        Err(format!(
+            "hai-mcp uses the embedded JACS identity loaded from {}. Alternate config_path values are not supported for this tool.",
+            default_config_path.display()
+        ))
     }
 
     pub fn noop_client_with_url(
@@ -45,22 +73,30 @@ impl HaiServerContext {
         self.client_with_provider(provider, base_url_override)
     }
 
-    pub fn local_provider(&self, config_path: Option<&str>) -> Result<LocalJacsProvider, String> {
-        LocalJacsProvider::from_config_path(self.effective_config_path(config_path)).map_err(|e| {
-            format!("failed to load local JACS agent; set JACS_CONFIG or pass config_path: {e}")
-        })
+    pub fn embedded_provider(
+        &self,
+        config_path: Option<&str>,
+    ) -> Result<EmbeddedJacsProvider, String> {
+        self.validate_embedded_config_path(config_path)?;
+        Ok(self.embedded_provider.clone())
     }
 
-    pub fn local_client_with_url(
+    pub fn embedded_client_with_url(
         &self,
         config_path: Option<&str>,
         base_url_override: Option<&str>,
-    ) -> Result<HaiClient<LocalJacsProvider>, String> {
-        let provider = self.local_provider(config_path)?;
+    ) -> Result<HaiClient<EmbeddedJacsProvider>, String> {
+        let provider = self.embedded_provider(config_path)?;
         let jacs_id = provider.jacs_id().to_string();
         let mut client = self.client_with_provider(provider, base_url_override)?;
         self.apply_cached_agent_state(&jacs_id, &mut client);
         Ok(client)
+    }
+
+    pub fn local_provider(&self, config_path: Option<&str>) -> Result<LocalJacsProvider, String> {
+        LocalJacsProvider::from_config_path(self.effective_config_path(config_path)).map_err(|e| {
+            format!("failed to load local JACS agent; set JACS_CONFIG or pass config_path: {e}")
+        })
     }
 
     pub fn client_with_provider<P: JacsProvider>(
@@ -110,10 +146,7 @@ impl HaiServerContext {
             .cached_agent_state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        cached
-            .entry(jacs_id.to_string())
-            .or_default()
-            .hai_agent_id = Some(agent_id.to_string());
+        cached.entry(jacs_id.to_string()).or_default().hai_agent_id = Some(agent_id.to_string());
     }
 
     pub fn remember_agent_email(&self, jacs_id: &str, email: &str) {
@@ -125,17 +158,32 @@ impl HaiServerContext {
             .cached_agent_state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        cached
-            .entry(jacs_id.to_string())
-            .or_default()
-            .agent_email = Some(email.to_string());
+        cached.entry(jacs_id.to_string()).or_default().agent_email = Some(email.to_string());
+    }
+}
+
+fn absolutize_path(path: &Path) -> Result<PathBuf, String> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .map_err(|error| format!("failed to resolve current working directory: {error}"))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use haisdk::{HaiClient, NoopJacsProvider};
+    use haisdk::HaiClient;
+
+    fn build_context(default_config_path: Option<&str>) -> HaiServerContext {
+        HaiServerContext::from_process_env(
+            "anonymous-agent".to_string(),
+            default_config_path.map(ToString::to_string),
+            EmbeddedJacsProvider::testing("agent-123"),
+        )
+    }
 
     fn apply_identity_overrides(
         context: &HaiServerContext,
@@ -149,7 +197,7 @@ mod tests {
 
     #[test]
     fn cached_identity_is_restored_per_jacs_id() {
-        let context = HaiServerContext::from_process_env("anonymous-agent".to_string(), None);
+        let context = build_context(None);
 
         let mut seeded = context
             .client_with_provider(NoopJacsProvider::new("agent-123"), None)
@@ -166,11 +214,8 @@ mod tests {
     }
 
     #[test]
-    fn explicit_config_path_overrides_default() {
-        let context = HaiServerContext::from_process_env(
-            "anonymous-agent".to_string(),
-            Some("/tmp/default-jacs.config.json".to_string()),
-        );
+    fn explicit_config_path_overrides_default_for_local_provider_loading() {
+        let context = build_context(Some("/tmp/default-jacs.config.json"));
 
         assert_eq!(
             context.effective_config_path(Some("/tmp/override.json")),
@@ -180,5 +225,21 @@ mod tests {
             context.effective_config_path(None),
             Some(Path::new("/tmp/default-jacs.config.json"))
         );
+    }
+
+    #[test]
+    fn embedded_provider_rejects_drifted_config_paths() {
+        let context = build_context(Some("/tmp/default-jacs.config.json"));
+
+        let error = match context.embedded_provider(Some("/tmp/other-jacs.config.json")) {
+            Ok(_) => panic!("drifted config path must be rejected"),
+            Err(error) => error,
+        };
+        assert!(error.contains("embedded JACS identity"));
+
+        assert!(context.embedded_provider(None).is_ok());
+        assert!(context
+            .embedded_provider(Some("/tmp/default-jacs.config.json"))
+            .is_ok());
     }
 }

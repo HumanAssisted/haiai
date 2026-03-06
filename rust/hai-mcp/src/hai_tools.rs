@@ -1,7 +1,6 @@
 use haisdk::{
-    generate_verify_link, generate_verify_link_hosted, CreateAgentOptions, HaiClient,
-    JacsProvider, ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions, SearchOptions,
-    SendEmailOptions,
+    generate_verify_link, generate_verify_link_hosted, CreateAgentOptions, HaiClient, JacsProvider,
+    ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions, SearchOptions, SendEmailOptions,
 };
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 use rmcp::ErrorData as McpError;
@@ -78,7 +77,9 @@ pub async fn dispatch(
         "hai_get_unread_count" => call_get_unread_count(context, &args).await,
         "hai_get_email_status" => call_get_email_status(context, &args).await,
         "hai_reply_email" => call_reply_email(context, &args).await,
-        _ => Err(ToolError::InvalidParams(format!("unknown HAI tool: {name}"))),
+        _ => Err(ToolError::InvalidParams(format!(
+            "unknown HAI tool: {name}"
+        ))),
     };
 
     match result {
@@ -358,7 +359,9 @@ async fn call_check_username(context: &HaiServerContext, args: &Value) -> ToolRe
     let username = required_string(args, "username")?;
     let hai_url = optional_string(args, "hai_url");
 
-    let client = context.noop_client_with_url(hai_url).map_err(tool_message)?;
+    let client = context
+        .noop_client_with_url(hai_url)
+        .map_err(tool_message)?;
     let result = client
         .check_username(username)
         .await
@@ -384,7 +387,7 @@ async fn call_hello(context: &HaiServerContext, args: &Value) -> ToolResult {
     let hai_url = optional_string(args, "hai_url");
 
     let client = context
-        .local_client_with_url(config_path, hai_url)
+        .embedded_client_with_url(config_path, hai_url)
         .map_err(tool_message)?;
     let result = client.hello(include_test).await.map_err(tool_message)?;
 
@@ -400,12 +403,9 @@ async fn call_verify_status(context: &HaiServerContext, args: &Value) -> ToolRes
     let hai_url = optional_string(args, "hai_url");
 
     let client = context
-        .local_client_with_url(config_path, hai_url)
+        .embedded_client_with_url(config_path, hai_url)
         .map_err(tool_message)?;
-    let result = client
-        .verify_status(agent_id)
-        .await
-        .map_err(tool_message)?;
+    let result = client.verify_status(agent_id).await.map_err(tool_message)?;
 
     Ok(success_tool_result(
         format!(
@@ -423,7 +423,7 @@ async fn call_claim_username(context: &HaiServerContext, args: &Value) -> ToolRe
     let hai_url = optional_string(args, "hai_url");
 
     let mut client = context
-        .local_client_with_url(config_path, hai_url)
+        .embedded_client_with_url(config_path, hai_url)
         .map_err(tool_message)?;
     let result = client
         .claim_username(agent_id, username)
@@ -508,7 +508,9 @@ async fn call_create_agent(context: &HaiServerContext, args: &Value) -> ToolResu
 
 async fn call_register_agent(context: &HaiServerContext, args: &Value) -> ToolResult {
     let config_path = optional_string(args, "config_path");
-    let provider = context.local_provider(config_path).map_err(tool_message)?;
+    let provider = context
+        .embedded_provider(config_path)
+        .map_err(tool_message)?;
     let jacs_id = provider.jacs_id().to_string();
 
     let agent_json = provider.export_agent_json().map_err(tool_message)?;
@@ -577,9 +579,9 @@ fn apply_email_identity_overrides(
 async fn prepare_email_client(
     context: &HaiServerContext,
     args: &Value,
-) -> Result<HaiClient<LocalJacsProvider>, ToolError> {
+) -> Result<HaiClient<impl JacsProvider>, ToolError> {
     let mut client = context
-        .local_client_with_url(
+        .embedded_client_with_url(
             optional_string(args, "config_path"),
             optional_string(args, "hai_url"),
         )
@@ -655,7 +657,10 @@ async fn call_get_message(context: &HaiServerContext, args: &Value) -> ToolResul
 async fn call_delete_message(context: &HaiServerContext, args: &Value) -> ToolResult {
     let message_id = required_string(args, "message_id")?;
     let client = prepare_email_client(context, args).await?;
-    client.delete_message(message_id).await.map_err(tool_message)?;
+    client
+        .delete_message(message_id)
+        .await
+        .map_err(tool_message)?;
 
     Ok(success_tool_result(
         format!("deleted message_id={message_id}"),
@@ -780,7 +785,9 @@ fn optional_string<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 fn optional_u32(args: &Value, key: &str) -> Option<u32> {
-    args.get(key).and_then(Value::as_u64).map(|value| value as u32)
+    args.get(key)
+        .and_then(Value::as_u64)
+        .map(|value| value as u32)
 }
 
 #[cfg(test)]
@@ -879,7 +886,9 @@ mod tests {
     fn required_string_reports_missing_fields() {
         let args = json!({});
         let err = required_string(&args, "message_id").expect_err("missing field");
-        assert!(matches!(err, ToolError::InvalidParams(message) if message == "message_id is required"));
+        assert!(
+            matches!(err, ToolError::InvalidParams(message) if message == "message_id is required")
+        );
     }
 
     #[tokio::test]
@@ -900,6 +909,9 @@ mod tests {
             .to_string();
 
         assert!(url.starts_with("https://example.com/jacs/verify?s="));
-        assert_eq!(result.content[0].as_text().map(|text| text.text.as_str()), Some(format!("verify_url={url}").as_str()));
+        assert_eq!(
+            result.content[0].as_text().map(|text| text.text.as_str()),
+            Some(format!("verify_url={url}").as_str())
+        );
     }
 }
