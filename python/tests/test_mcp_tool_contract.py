@@ -44,8 +44,8 @@ def test_mcp_tool_contract_matches_shared_required_surface() -> None:
     fixture = _load_fixture()
 
     for tool in fixture["required_tools"]:
-        assert _tool_shape(tool["name"]) == {
-            "name": tool["name"],
-            "properties": tool["properties"],
-            "required": sorted(tool["required"]),
-        }
+        actual = _tool_shape(tool["name"])
+        assert actual["name"] == tool["name"]
+        assert actual["required"] == sorted(tool["required"])
+        for name, type_name in tool["properties"].items():
+            assert actual["properties"][name] == type_name

@@ -27,6 +27,7 @@ node/jacs.config.json
 node/jacs_data/
 
 # Go
+go/haisdk
 *.exe
 *.exe~
 *.dll

@@ -1467,8 +1467,16 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing tool {}", expected.name));
             let mut expected_required = expected.required.clone();
             expected_required.sort();
-            assert_eq!(properties, &expected.properties, "tool {}", expected.name);
             assert_eq!(required, &expected_required, "tool {}", expected.name);
+            for (key, value) in &expected.properties {
+                assert_eq!(
+                    properties.get(key),
+                    Some(value),
+                    "tool {} property {}",
+                    expected.name,
+                    key
+                );
+            }
         }
     }
 

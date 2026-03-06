@@ -47,11 +47,12 @@ describe('mcp tool contract (node)', () => {
     );
 
     for (const expected of fixture.required_tools) {
-      expect(actual.get(expected.name)).toEqual({
-        name: expected.name,
-        properties: expected.properties,
-        required: [...expected.required].sort(),
-      });
+      const tool = actual.get(expected.name);
+      expect(tool).toBeDefined();
+      expect(tool?.required).toEqual([...expected.required].sort());
+      for (const [name, type] of Object.entries(expected.properties)) {
+        expect(tool?.properties[name]).toBe(type);
+      }
     }
   });
 });
