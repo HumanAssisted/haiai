@@ -671,7 +671,20 @@ class HaiClient:
 
         archive_pub = pub_path.with_suffix(f".{old_version}.pem") if pub_path.is_file() else None
 
-        # 2. Archive old keys
+        # 2. Pre-sign auth header with old agent BEFORE archiving keys
+        #    (chain of trust: old key vouches for new key during re-registration)
+        old_auth_header = None
+        if register_with_hai and hai_url is not None:
+            try:
+                old_auth_header = self._build_jacs_auth_header_with_key(
+                    jacs_id, old_version, old_agent,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to pre-sign rotation auth header: %s", exc
+                )
+
+        # 3. Archive old keys (after pre-signing)
         logger.info("Archiving old private key: %s -> %s", priv_path, archive_priv)
         shutil.move(str(priv_path), str(archive_priv))
 
@@ -679,7 +692,7 @@ class HaiClient:
             logger.info("Archiving old public key: %s -> %s", pub_path, archive_pub)
             shutil.move(str(pub_path), str(archive_pub))
 
-        # 3. Generate new keypair via JACS SimpleAgent.create_agent()
+        # 4. Generate new keypair via JACS SimpleAgent.create_agent()
         try:
             from jacs import SimpleAgent as _SimpleAgent
         except ImportError:
@@ -729,7 +742,7 @@ class HaiClient:
                 shutil.move(str(archive_pub), str(pub_path))
             raise HaiAuthError(f"Key generation failed: {exc}") from exc
 
-        # 4. Use the newly-created agent directly for signing
+        # 5. Use the newly-created agent directly for signing
         new_version = str(uuid.uuid4())
 
         cfg_path = config_path or os.environ.get(
@@ -753,7 +766,7 @@ class HaiClient:
         config_mod._agent = new_agent
         config_mod.save(cfg_path)
 
-        # 5. Build new agent document signed by the new agent
+        # 6. Build new agent document signed by the new agent
         agent_doc = create_agent_document(
             agent=new_agent,
             name=cfg.name,
@@ -763,11 +776,12 @@ class HaiClient:
         )
         signed_agent_json = json.dumps(agent_doc, indent=2)
 
-        # 6. Compute new public key hash
-        # Read raw bytes from the JACS key file for public key hash
+        # 7. Compute new public key hash and read PEM for re-registration
+        pub_pem_str = ""
         if pub_path.is_file():
             pub_key_raw = pub_path.read_bytes()
             new_public_key_hash = hashlib.sha256(pub_key_raw).hexdigest()
+            pub_pem_str = pub_key_raw.decode("utf-8", errors="replace")
         else:
             new_public_key_hash = ""
 
@@ -776,21 +790,16 @@ class HaiClient:
             old_version, new_version, jacs_id,
         )
 
-        # 7. Optionally re-register with HAI using the OLD agent for auth
-        # (chain of trust: old agent vouches for new key)
+        # 8. Optionally re-register with HAI using the pre-signed OLD auth header
         registered = False
         if register_with_hai:
-            if hai_url is None:
+            if hai_url is None or old_auth_header is None:
                 logger.warning(
-                    "register_with_hai=True but no hai_url provided; "
+                    "register_with_hai=True but no hai_url or old auth header; "
                     "skipping registration"
                 )
             else:
                 try:
-                    # Build 4-part auth header signed by the OLD agent
-                    old_auth = self._build_jacs_auth_header_with_key(
-                        jacs_id, old_version, old_agent,
-                    )
                     url = self._make_url(hai_url, "/api/v1/agents/register")
                     payload: dict[str, Any] = {
                         "agent_json": signed_agent_json,
@@ -800,7 +809,7 @@ class HaiClient:
                             pub_pem_str.encode("utf-8")
                         ).decode("utf-8")
                     headers = {
-                        "Authorization": old_auth,
+                        "Authorization": old_auth_header,
                         "Content-Type": "application/json",
                     }
                     resp = httpx.post(

@@ -17,7 +17,8 @@ import (
 // The message signed is "{jacsId}:{timestamp}" where timestamp is Unix seconds.
 //
 // This function accepts an ed25519.PrivateKey for backward compatibility.
-// Prefer Client.buildAuthHeader which delegates to the CryptoBackend.
+//
+// Deprecated: Use Client.buildAuthHeader instead, which delegates to the CryptoBackend.
 func BuildAuthHeader(jacsID string, key ed25519.PrivateKey) string {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	message := fmt.Sprintf("%s:%s", jacsID, timestamp)
@@ -36,7 +37,9 @@ func BuildAuthHeader(jacsID string, key ed25519.PrivateKey) string {
 // (chain of trust: old key vouches for new key).
 //
 // This function accepts an ed25519.PrivateKey for backward compatibility.
-// Prefer Client.build4PartAuthHeader which delegates to the CryptoBackend.
+//
+// Deprecated: Use Client.build4PartAuthHeader (via build4PartAuthHeaderWithBackend) instead,
+// which delegates to the CryptoBackend.
 func Build4PartAuthHeader(jacsID, version string, key ed25519.PrivateKey) string {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 	message := fmt.Sprintf("%s:%s:%s", jacsID, version, timestamp)
@@ -49,7 +52,8 @@ func Build4PartAuthHeader(jacsID, version string, key ed25519.PrivateKey) string
 // SetAuthHeaders sets the JACS Authorization and Content-Type headers on an HTTP request.
 //
 // This function accepts an ed25519.PrivateKey for backward compatibility.
-// Prefer Client.setAuthHeaders which delegates to the CryptoBackend.
+//
+// Deprecated: Use Client.setAuthHeaders instead, which delegates to the CryptoBackend.
 func SetAuthHeaders(req *http.Request, jacsID string, key ed25519.PrivateKey) {
 	req.Header.Set("Authorization", BuildAuthHeader(jacsID, key))
 	req.Header.Set("Content-Type", "application/json")

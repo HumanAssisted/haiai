@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"log"
 	"os"
+	"sync"
 
 	jacs "github.com/HumanAssisted/jacsgo"
 )
@@ -52,11 +54,21 @@ func (b *jacsBackend) VerifyResponse(documentJSON string) (string, error) {
 	return string(encoded), nil
 }
 
+// jacsKeygenWarningOnce guards the one-time deprecation notice for Ed25519 keygen
+// in JACS builds.
+var jacsKeygenWarningOnce sync.Once
+
 func (b *jacsBackend) GenerateKeyPair() ([]byte, []byte, error) {
-	// Generate an Ed25519 keypair and return PEM-encoded bytes.
-	// The JACS Go binding's Create API does not expose the private key path,
-	// so we generate raw keys here. The actual signing with these keys still
-	// goes through the CryptoBackend (JACS agent or Ed25519 fallback).
+	// KNOWN LIMITATION: Generates Ed25519 keys locally because the JACS Go binding
+	// (jacsgo) does not yet expose pq2025 key generation via FFI. The JACS core
+	// supports pq2025 internally, but that functionality is not available from Go.
+	// The actual signing with these keys still goes through the CryptoBackend
+	// (JACS agent or Ed25519 fallback).
+	//
+	// TODO: Replace with jacs.GenerateKeyPair(algorithm) when jacsgo exposes pq2025 keygen FFI
+	jacsKeygenWarningOnce.Do(func() {
+		log.Println("WARNING: JACS backend GenerateKeyPair uses local Ed25519 — jacsgo does not yet expose pq2025 keygen FFI")
+	})
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("jacs backend: key generation failed: %w", err)
@@ -232,15 +244,27 @@ func newClientCryptoBackend(privateKey ed25519.PrivateKey, jacsID string) Crypto
 
 // clientEd25519FallbackInJacs is used in jacs-tagged builds when the JACS agent
 // cannot be loaded (e.g., test code using WithPrivateKey directly).
+// It signs with local Ed25519 as a last resort and emits a one-time deprecation
+// warning on first use.
 type clientEd25519FallbackInJacs struct {
-	privateKey ed25519.PrivateKey
-	jacsID     string
+	privateKey  ed25519.PrivateKey
+	jacsID      string
+	warnOnce    sync.Once
+}
+
+// logFallbackWarning emits a one-time warning that the JACS agent could not be
+// loaded and signing is falling back to local Ed25519.
+func (b *clientEd25519FallbackInJacs) logFallbackWarning() {
+	b.warnOnce.Do(func() {
+		log.Println("WARNING: Using Ed25519 fallback in JACS build — JACS agent not loaded")
+	})
 }
 
 func (b *clientEd25519FallbackInJacs) SignString(message string) (string, error) {
 	if b.privateKey == nil {
 		return "", fmt.Errorf("jacs fallback: private key not loaded")
 	}
+	b.logFallbackWarning()
 	sig := ed25519.Sign(b.privateKey, []byte(message))
 	return base64.StdEncoding.EncodeToString(sig), nil
 }
@@ -249,10 +273,12 @@ func (b *clientEd25519FallbackInJacs) SignBytes(data []byte) ([]byte, error) {
 	if b.privateKey == nil {
 		return nil, fmt.Errorf("jacs fallback: private key not loaded")
 	}
+	b.logFallbackWarning()
 	return ed25519.Sign(b.privateKey, data), nil
 }
 
 func (b *clientEd25519FallbackInJacs) VerifyBytes(data, signature []byte, publicKeyPEM string) error {
+	b.logFallbackWarning()
 	pubKey, err := ParsePublicKey([]byte(publicKeyPEM))
 	if err != nil {
 		return err
