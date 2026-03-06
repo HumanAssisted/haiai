@@ -1,5 +1,5 @@
 [workspace]
-members = ["haisdk", "hai-mcp"]
+members = ["haisdk", "hai-mcp", "haisdk-cli"]
 resolver = "2"
 
 [workspace.package]

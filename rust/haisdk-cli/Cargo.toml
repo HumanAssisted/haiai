@@ -1,0 +1,24 @@
+[package]
+name = "haisdk-cli"
+version = "0.1.0"
+description = "HAISDK CLI: command-line interface for HAI.AI agent SDK"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "haisdk"
+path = "src/main.rs"
+
+[dependencies]
+hai-mcp = { path = "../hai-mcp" }
+haisdk = { path = "../haisdk", default-features = false, features = ["rustls-tls", "jacs-local"] }
+jacs-mcp = { path = "../../../JACS/jacs-mcp", features = ["mcp"] }
+anyhow = "1"
+rmcp = { version = "0.12", features = ["server", "transport-io", "macros"] }
+clap = { version = "4", features = ["derive"] }
+tokio.workspace = true
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
