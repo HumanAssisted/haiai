@@ -1,9 +1,6 @@
 use std::collections::BTreeMap;
-use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{self, TryRecvError};
@@ -11,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tempfile::TempDir;
 
 #[derive(Debug, Clone)]
@@ -40,27 +37,29 @@ impl MiniHaiServer {
         let requests_for_thread = Arc::clone(&requests);
         let (shutdown_tx, shutdown_rx) = mpsc::channel();
 
-        let thread = thread::spawn(move || loop {
-            match shutdown_rx.try_recv() {
-                Ok(()) | Err(TryRecvError::Disconnected) => break,
-                Err(TryRecvError::Empty) => {}
-            }
+        let thread = thread::spawn(move || {
+            loop {
+                match shutdown_rx.try_recv() {
+                    Ok(()) | Err(TryRecvError::Disconnected) => break,
+                    Err(TryRecvError::Empty) => {}
+                }
 
-            match listener.accept() {
-                Ok((mut stream, _addr)) => {
-                    if let Some(request) = read_request(&mut stream) {
-                        let response = response_for_request(&request);
-                        requests_for_thread
-                            .lock()
-                            .expect("lock requests")
-                            .push(request);
-                        write_response(&mut stream, response);
+                match listener.accept() {
+                    Ok((mut stream, _addr)) => {
+                        if let Some(request) = read_request(&mut stream) {
+                            let response = response_for_request(&request);
+                            requests_for_thread
+                                .lock()
+                                .expect("lock requests")
+                                .push(request);
+                            write_response(&mut stream, response);
+                        }
                     }
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(err) => panic!("mock HAI server accept failed: {err}"),
                 }
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(err) => panic!("mock HAI server accept failed: {err}"),
             }
         });
 
@@ -99,14 +98,12 @@ impl Drop for MiniHaiServer {
 
 struct TestWorkspace {
     _temp_dir: TempDir,
-    root: PathBuf,
 }
 
 impl TestWorkspace {
     fn new() -> Self {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         Self {
-            root: temp_dir.path().to_path_buf(),
             _temp_dir: temp_dir,
         }
     }
@@ -119,10 +116,13 @@ struct McpSession {
 }
 
 impl McpSession {
-    fn spawn(_workspace: &TestWorkspace, hai_url: &str, jacs_mcp_bin: &Path) -> Self {
+    fn spawn(_workspace: &TestWorkspace, hai_url: &str, jacs_config: &Path) -> Self {
         let mut child = Command::new(hai_mcp_bin())
             .env("HAI_URL", hai_url)
-            .env("JACS_MCP_BIN", jacs_mcp_bin)
+            .env("JACS_CONFIG", jacs_config)
+            .env("JACS_PRIVATE_KEY_PASSWORD", "testpassword")
+            .env("RUST_LOG", "warn")
+            .current_dir(jacs_config.parent().expect("JACS config dir"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -248,86 +248,17 @@ fn hai_mcp_bin() -> PathBuf {
     candidate
 }
 
-fn write_fake_jacs_mcp_script(dir: &Path) -> PathBuf {
-    let script_path = dir.join("fake-jacs-mcp.py");
-    let script = r#"#!/usr/bin/env python3
-import json
-import sys
-
-for raw in sys.stdin:
-    line = raw.strip()
-    if not line:
-        continue
-    request = json.loads(line)
-    method = request.get("method")
-
-    if method == "initialize":
-        response = {
-            "jsonrpc": "2.0",
-            "id": request["id"],
-            "result": {
-                "protocolVersion": "2025-06-18",
-                "serverInfo": {"name": "fake-jacs-mcp", "version": "0.1.0"},
-                "capabilities": {"tools": {}}
-            }
-        }
-    elif method == "notifications/initialized":
-        continue
-    elif method == "tools/list":
-        response = {
-            "jsonrpc": "2.0",
-            "id": request["id"],
-            "result": {
-                "tools": [
-                    {
-                        "name": "jacs_echo",
-                        "description": "Echo a message from the fake jacs-mcp bridge",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "message": {"type": "string"}
-                            },
-                            "required": ["message"]
-                        }
-                    }
-                ]
-            }
-        }
-    elif method == "tools/call":
-        params = request.get("params", {})
-        args = params.get("arguments", {})
-        response = {
-            "jsonrpc": "2.0",
-            "id": request["id"],
-            "result": {
-                "content": [{"type": "text", "text": f"jacs_echo {args.get('message', '')}"}],
-                "structuredContent": {"echoed": args.get("message", "")}
-            }
-        }
-    else:
-        response = {
-            "jsonrpc": "2.0",
-            "id": request.get("id"),
-            "error": {"code": -32601, "message": f"method not found: {method}"}
-        }
-
-    print(json.dumps(response), flush=True)
-"#;
-
-    fs::write(&script_path, script).expect("write fake jacs-mcp script");
-    make_executable(&script_path);
-    script_path
+fn jacs_fixture_config() -> PathBuf {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = manifest_dir.join("../../../JACS/jacs/jacs.config.json");
+    let canonical = path.canonicalize().expect("canonical JACS fixture config");
+    assert!(
+        canonical.exists(),
+        "expected JACS fixture config at {}",
+        canonical.display()
+    );
+    canonical
 }
-
-#[cfg(unix)]
-fn make_executable(path: &Path) {
-    let mut permissions = fs::metadata(path).expect("metadata").permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).expect("chmod +x");
-}
-
-#[cfg(not(unix))]
-fn make_executable(_path: &Path) {}
 
 fn read_request(stream: &mut TcpStream) -> Option<RecordedRequest> {
     stream
@@ -437,12 +368,12 @@ fn rejects_non_stdio_runtime_arguments() {
 }
 
 #[test]
-fn serves_hai_and_jacs_tools_and_calls_hai_over_stdio() {
+fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     let workspace = TestWorkspace::new();
-    let fake_jacs_mcp = write_fake_jacs_mcp_script(&workspace.root);
+    let jacs_config = jacs_fixture_config();
     let server = MiniHaiServer::start();
 
-    let mut session = McpSession::spawn(&workspace, server.base_url(), &fake_jacs_mcp);
+    let mut session = McpSession::spawn(&workspace, server.base_url(), &jacs_config);
     let initialize = session.initialize();
     assert_eq!(
         initialize["result"]["serverInfo"]["name"].as_str(),
@@ -452,13 +383,15 @@ fn serves_hai_and_jacs_tools_and_calls_hai_over_stdio() {
     let tools = session.list_tools();
     assert!(tools.contains(&"hai_register_agent".to_string()));
     assert!(tools.contains(&"hai_send_email".to_string()));
-    assert!(tools.contains(&"jacs_echo".to_string()));
+    assert!(tools.contains(&"jacs_export_agent".to_string()));
 
-    let bridged = session.call_tool(10, "jacs_echo", json!({ "message": "hello" }));
-    assert_eq!(
-        bridged["structuredContent"]["echoed"].as_str(),
-        Some("hello")
-    );
+    let exported = session.call_tool(10, "jacs_export_agent", json!({}));
+    let export_text = exported["content"][0]["text"]
+        .as_str()
+        .expect("jacs_export_agent text");
+    let export_json: Value = serde_json::from_str(export_text).expect("decode export result");
+    assert_eq!(export_json["success"].as_bool(), Some(true));
+    assert!(export_json["agent_id"].as_str().is_some());
 
     let check_username = session.call_tool(
         11,
