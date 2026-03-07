@@ -88,6 +88,8 @@ jobs:
       CLI_ASSET_NAME: haiai-cli-${{ needs.verify-version.outputs.version }}-${{ matrix.asset_suffix }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          sparse-checkout: rust
 
       - uses: dtolnay/rust-toolchain@stable
         with:
