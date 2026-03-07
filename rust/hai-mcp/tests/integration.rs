@@ -145,19 +145,18 @@ struct McpSession {
 
 impl McpSession {
     fn spawn(_workspace: &TestWorkspace, hai_url: &str, jacs_config: &Path) -> Self {
-        let mut child = Command::new(hai_mcp_bin())
+        let mut child = Command::new(haisdk_bin())
+            .arg("mcp")
             .env("HAI_URL", hai_url)
             .env("JACS_CONFIG", jacs_config)
             .env("JACS_PRIVATE_KEY_PASSWORD", "secretpassord")
-            .env("JACS_MCP_BIN", "/definitely-unused/jacs-mcp")
-            .env("JACS_MCP_ARGS", "--transport http")
             .env("RUST_LOG", "warn")
             .current_dir(jacs_config.parent().expect("JACS config dir"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .expect("spawn hai-mcp");
+            .expect("spawn haisdk mcp");
 
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = BufReader::new(child.stdout.take().expect("child stdout"));
@@ -263,16 +262,16 @@ impl Drop for McpSession {
     }
 }
 
-fn hai_mcp_bin() -> PathBuf {
+fn haisdk_bin() -> PathBuf {
     let current_exe = std::env::current_exe().expect("current_exe");
     let target_dir = current_exe
         .parent()
         .and_then(Path::parent)
         .expect("target dir for integration test binary");
-    let candidate = target_dir.join(format!("hai-mcp{}", std::env::consts::EXE_SUFFIX));
+    let candidate = target_dir.join(format!("haisdk{}", std::env::consts::EXE_SUFFIX));
     assert!(
         candidate.exists(),
-        "expected hai-mcp binary at {}",
+        "expected haisdk binary at {}. Run `cargo build -p haisdk-cli` first.",
         candidate.display()
     );
     candidate
@@ -406,21 +405,31 @@ fn write_response(stream: &mut TcpStream, body: Value) {
     stream.flush().expect("flush mock response");
 }
 
+/// Verify the deprecated standalone hai-mcp binary prints a deprecation message.
 #[test]
-fn rejects_non_stdio_runtime_arguments() {
-    let output = Command::new(hai_mcp_bin())
-        .arg("--transport")
-        .arg("http")
+fn standalone_binary_prints_deprecation() {
+    let current_exe = std::env::current_exe().expect("current_exe");
+    let target_dir = current_exe
+        .parent()
+        .and_then(Path::parent)
+        .expect("target dir");
+    let hai_mcp_bin = target_dir.join(format!("hai-mcp{}", std::env::consts::EXE_SUFFIX));
+    if !hai_mcp_bin.exists() {
+        // Binary not built, skip
+        return;
+    }
+
+    let output = Command::new(&hai_mcp_bin)
         .output()
         .expect("run hai-mcp");
 
     assert!(
         !output.status.success(),
-        "unexpected success: {:?}",
-        output.status
+        "deprecated binary should exit with failure"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("stdio-only"), "stderr was: {stderr}");
+    assert!(stderr.contains("deprecated"), "stderr was: {stderr}");
+    assert!(stderr.contains("haisdk mcp"), "stderr was: {stderr}");
 }
 
 #[test]
