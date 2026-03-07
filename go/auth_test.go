@@ -125,6 +125,44 @@ func TestAuthHeaderVerifiableByServer(t *testing.T) {
 	}
 }
 
+func TestCryptoBackendBuildAuthHeader(t *testing.T) {
+	_, priv, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
+	}
+
+	backend := &clientEd25519Backend{privateKey: priv, jacsID: "backend-agent"}
+	header, err := backend.BuildAuthHeader()
+	if err != nil {
+		t.Fatalf("BuildAuthHeader: %v", err)
+	}
+
+	if !strings.HasPrefix(header, "JACS backend-agent:") {
+		t.Fatalf("expected 'JACS backend-agent:' prefix, got: %s", header)
+	}
+
+	parts := strings.SplitN(strings.TrimPrefix(header, "JACS "), ":", 3)
+	if len(parts) != 3 {
+		t.Fatalf("expected 3 parts, got %d", len(parts))
+	}
+
+	// Verify signature
+	sig, _ := base64.StdEncoding.DecodeString(parts[2])
+	message := fmt.Sprintf("%s:%s", parts[0], parts[1])
+	pub := priv.Public().(ed25519.PublicKey)
+	if !ed25519.Verify(pub, []byte(message), sig) {
+		t.Error("signature verification failed")
+	}
+}
+
+func TestCryptoBackendBuildAuthHeaderNilKey(t *testing.T) {
+	backend := &clientEd25519Backend{privateKey: nil, jacsID: "no-key"}
+	_, err := backend.BuildAuthHeader()
+	if err == nil {
+		t.Fatal("expected error for nil private key")
+	}
+}
+
 func abs(x int64) int64 {
 	if x < 0 {
 		return -x

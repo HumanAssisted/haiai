@@ -115,6 +115,19 @@ describe('unwrapSignedEvent', () => {
       unwrapSignedEvent(doc, { [TEST_JACS_ID]: TEST_PUBLIC_KEY_PEM }, agent);
     }).toThrow('JACS signature verification failed');
   });
+
+  it('propagates verification errors instead of swallowing them', () => {
+    const payload = { hello: 'world' };
+    const result = signResponse(payload, TEST_AGENT, TEST_JACS_ID);
+    const doc = JSON.parse(result.signed_document);
+    const agent = {
+      verifyStringSync: vi.fn(() => { throw new Error('invalid PEM format'); }),
+    } as unknown as JacsAgent;
+
+    expect(() => {
+      unwrapSignedEvent(doc, { [TEST_JACS_ID]: TEST_PUBLIC_KEY_PEM }, agent);
+    }).toThrow('invalid PEM format');
+  });
 });
 
 describe('clearServerKeysCache', () => {
