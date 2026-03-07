@@ -1,6 +1,6 @@
 [package]
 name = "haiai"
-version = "0.1.1"
+version = "0.1.2"
 description = "Rust SDK for HAI.AI agent benchmarking, designed as a JACS-delegating wrapper"
 readme = "README.md"
 keywords = ["hai", "jacs", "agent", "benchmark", "sdk"]
@@ -24,7 +24,7 @@ percent-encoding.workspace = true
 reqwest = { workspace = true, features = ["stream"] }
 serde.workspace = true
 serde_json.workspace = true
-serde_json_canonicalizer = "0.3"
+serde_json_canonicalizer = { version = "0.3", optional = true }
 sha2.workspace = true
 thiserror.workspace = true
 time.workspace = true

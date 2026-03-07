@@ -238,7 +238,13 @@ pub fn canonicalize_json_rfc8785(value: &Value) -> String {
 /// Canonical JSON per RFC 8785 (JSON Canonicalization Scheme / JCS).
 ///
 /// Local fallback when `jacs-crate` feature is not enabled.
-#[cfg(not(feature = "jacs-crate"))]
+/// Requires the `serde_json_canonicalizer` feature.
+#[cfg(all(not(feature = "jacs-crate"), feature = "serde_json_canonicalizer"))]
 pub fn canonicalize_json_rfc8785(value: &Value) -> String {
     serde_json_canonicalizer::to_string(value).unwrap_or_else(|_| "null".to_string())
 }
+
+#[cfg(all(not(feature = "jacs-crate"), not(feature = "serde_json_canonicalizer")))]
+compile_error!(
+    "Either `jacs-crate` or `serde_json_canonicalizer` feature must be enabled for JSON canonicalization"
+);

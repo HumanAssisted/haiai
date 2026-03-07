@@ -1013,7 +1013,7 @@ dependencies = [
 
 [[package]]
 name = "hai-mcp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "base64",
@@ -1036,7 +1036,7 @@ dependencies = [
 
 [[package]]
 name = "haiai"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "base64",
@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "haiai-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
