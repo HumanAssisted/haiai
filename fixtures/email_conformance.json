@@ -1,0 +1,134 @@
+{
+  "description": "Cross-SDK email conformance test vectors for EmailVerificationResultV2 and email signing API contracts",
+  "version": "1.0",
+
+  "content_hash_golden": {
+    "description": "All SDKs must produce identical content hashes for these inputs",
+    "vectors": [
+      {
+        "name": "simple_no_attachments",
+        "subject": "Cross-SDK Test",
+        "body": "Verify me",
+        "attachments": [
+          {"filename": "doc.pdf", "content_type": "application/pdf", "data_utf8": "pdf-content"},
+          {"filename": "img.png", "content_type": "image/png", "data_utf8": "png-content"}
+        ],
+        "expected_hash": "sha256:a0222afb5f569cb89efd21f2bebdcf84e97c4c98cb31cb5ff54e6e4a2b88c8a1"
+      },
+      {
+        "name": "no_attachments",
+        "subject": "Subject",
+        "body": "Body",
+        "attachments": [],
+        "expected_hash": "sha256:ee0c09adcdb487b1c64d7e63dfeaf7eabc1fe5ffc7f6182b0541061e2610bb25"
+      }
+    ]
+  },
+
+  "verification_result_v2_schema": {
+    "description": "All SDKs must return structurally equivalent EmailVerificationResultV2 with these fields",
+    "required_fields": {
+      "valid": "boolean",
+      "jacs_id": "string",
+      "algorithm": "string",
+      "reputation_tier": "string",
+      "dns_verified": "boolean_or_null",
+      "field_results": "array_of_field_result",
+      "chain": "array_of_chain_entry",
+      "error": "string_or_null"
+    },
+    "field_result_schema": {
+      "required_fields": {
+        "field": "string",
+        "status": "field_status_enum"
+      },
+      "optional_fields": {
+        "original_hash": "string_or_null",
+        "current_hash": "string_or_null",
+        "original_value": "string_or_null",
+        "current_value": "string_or_null"
+      }
+    },
+    "chain_entry_schema": {
+      "required_fields": {
+        "signer": "string",
+        "jacs_id": "string",
+        "valid": "boolean",
+        "forwarded": "boolean"
+      }
+    },
+    "field_status_values": ["pass", "modified", "fail", "unverifiable"]
+  },
+
+  "api_contracts": {
+    "sign_email": {
+      "method": "POST",
+      "path": "/api/v1/email/sign",
+      "request_content_type": "message/rfc822",
+      "request_body": "raw_rfc5322_bytes",
+      "response_content_type": "message/rfc822",
+      "response_body": "signed_rfc5822_bytes"
+    },
+    "verify_email": {
+      "method": "POST",
+      "path": "/api/v1/email/verify",
+      "request_content_type": "message/rfc822",
+      "request_body": "raw_rfc5322_bytes",
+      "response_content_type": "application/json",
+      "response_body": "EmailVerificationResultV2"
+    },
+    "send_email": {
+      "method": "POST",
+      "path_pattern": "/api/agents/{agent_id}/email/send",
+      "request_content_type": "application/json",
+      "excluded_fields": ["jacs_signature", "jacs_timestamp"],
+      "note": "Client must NOT send jacs_signature or jacs_timestamp; server handles signing"
+    }
+  },
+
+  "error_type_mapping": {
+    "description": "SDK error type names mapped to language-idiomatic casing",
+    "email_not_active": {
+      "error_code": "EMAIL_NOT_ACTIVE",
+      "python": "EmailNotActiveError (sentinel via ErrEmailNotActive pattern)",
+      "node": "EmailNotActiveError",
+      "go": "ErrEmailNotActive",
+      "rust": "HaiError::EmailNotActive"
+    },
+    "recipient_not_found": {
+      "error_code": "RECIPIENT_NOT_FOUND",
+      "python": "RecipientNotFoundError (sentinel via ErrRecipientNotFound pattern)",
+      "node": "RecipientNotFoundError",
+      "go": "ErrRecipientNotFound",
+      "rust": "HaiError::RecipientNotFound"
+    },
+    "rate_limited": {
+      "error_code": "RATE_LIMITED",
+      "python": "RateLimitedError (sentinel via ErrEmailRateLimited pattern)",
+      "node": "RateLimitedError",
+      "go": "ErrEmailRateLimited",
+      "rust": "HaiError::RateLimited"
+    }
+  },
+
+  "mock_verify_response": {
+    "description": "A canonical mock response that all SDKs should be able to deserialize into EmailVerificationResultV2",
+    "json": {
+      "valid": true,
+      "jacs_id": "conformance-test-agent-001",
+      "algorithm": "ed25519",
+      "reputation_tier": "established",
+      "dns_verified": true,
+      "field_results": [
+        {"field": "subject", "status": "pass", "original_hash": "sha256:aaa", "current_hash": "sha256:aaa"},
+        {"field": "body", "status": "pass"},
+        {"field": "from", "status": "pass"},
+        {"field": "date", "status": "modified", "original_value": "2026-02-27T12:00:00Z", "current_value": "2026-02-27T12:00:01Z"}
+      ],
+      "chain": [
+        {"signer": "agent@hai.ai", "jacs_id": "conformance-test-agent-001", "valid": true, "forwarded": false}
+      ],
+      "error": null
+    }
+  }
+}

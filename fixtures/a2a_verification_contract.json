@@ -1,0 +1,154 @@
+{
+  "_comment": "Canonical A2A verification contract. All SDKs must produce/consume these exact JSON field names. Tests in each SDK validate struct serialization against this fixture to prevent cross-language drift.",
+
+  "wrappedArtifact": {
+    "_comment": "Sample A2AWrappedArtifact used as input to verify operations.",
+    "jacsId": "contract-00000000-0000-4000-8000-000000000001",
+    "jacsVersion": "1.0.0",
+    "jacsType": "a2a-task",
+    "jacsLevel": "artifact",
+    "jacsVersionDate": "2026-03-01T00:00:00Z",
+    "a2aArtifact": {
+      "taskId": "contract-task-001",
+      "operation": "echo",
+      "input": { "text": "contract test" }
+    },
+    "jacsParentSignatures": [],
+    "jacsSignature": {
+      "agentID": "contract-agent",
+      "date": "2026-03-01T00:00:00Z",
+      "signature": "Q09OVFJBQ1RfU0lHTkFUVVJFX1BMQUNFSE9MREVS"
+    }
+  },
+
+  "wrappedArtifactSchema": {
+    "_comment": "Required fields and types for A2AWrappedArtifact JSON serialization.",
+    "requiredFields": {
+      "jacsId": "string",
+      "jacsVersion": "string",
+      "jacsType": "string",
+      "jacsLevel": "string",
+      "jacsVersionDate": "string",
+      "a2aArtifact": "object"
+    },
+    "optionalFields": {
+      "jacsParentSignatures": "array",
+      "jacsSignature": "object|null"
+    },
+    "signatureFields": {
+      "_comment": "When jacsSignature is present, these fields are required. Note: agentID uses uppercase ID, not agentId.",
+      "agentID": "string",
+      "date": "string",
+      "signature": "string"
+    }
+  },
+
+  "verificationResultSchema": {
+    "_comment": "Required fields and types for A2AArtifactVerificationResult JSON serialization.",
+    "requiredFields": {
+      "valid": "boolean",
+      "signerId": "string",
+      "artifactType": "string",
+      "timestamp": "string",
+      "originalArtifact": "object"
+    },
+    "optionalFields": {
+      "error": "string|null"
+    }
+  },
+
+  "verificationResultExample": {
+    "_comment": "Example verification result for the wrappedArtifact above (signature is a placeholder, so valid=false).",
+    "valid": false,
+    "signerId": "contract-agent",
+    "artifactType": "a2a-task",
+    "timestamp": "2026-03-01T00:00:00Z",
+    "originalArtifact": {
+      "taskId": "contract-task-001",
+      "operation": "echo",
+      "input": { "text": "contract test" }
+    },
+    "error": "signature verification failed"
+  },
+
+  "trustAssessmentSchema": {
+    "_comment": "Required fields and types for A2ATrustAssessment JSON serialization.",
+    "requiredFields": {
+      "allowed": "boolean",
+      "trustLevel": "string",
+      "jacsRegistered": "boolean",
+      "inTrustStore": "boolean",
+      "reason": "string"
+    }
+  },
+
+  "trustAssessmentExample": {
+    "_comment": "Example trust assessment for a card with JACS extension under 'open' policy.",
+    "allowed": true,
+    "trustLevel": "jacs_verified",
+    "jacsRegistered": true,
+    "inTrustStore": false,
+    "reason": "open policy: all agents accepted"
+  },
+
+  "agentCardSchema": {
+    "_comment": "Required fields and types for A2AAgentCard JSON serialization.",
+    "requiredFields": {
+      "name": "string",
+      "description": "string",
+      "version": "string",
+      "supportedInterfaces": "array",
+      "defaultInputModes": "array",
+      "defaultOutputModes": "array",
+      "capabilities": "object",
+      "skills": "array"
+    },
+    "optionalFields": {
+      "protocolVersions": "array",
+      "metadata": "object"
+    },
+    "interfaceFields": {
+      "url": "string",
+      "protocolBinding": "string",
+      "protocolVersion": "string|omitted",
+      "tenant": "string|omitted"
+    },
+    "skillFields": {
+      "id": "string",
+      "name": "string",
+      "description": "string",
+      "tags": "array"
+    },
+    "extensionFields": {
+      "uri": "string",
+      "description": "string|omitted",
+      "required": "boolean"
+    }
+  },
+
+  "chainOfCustodySchema": {
+    "_comment": "Required fields and types for A2AChainOfCustody JSON serialization.",
+    "requiredFields": {
+      "chainOfCustody": "array",
+      "created": "string",
+      "totalArtifacts": "number"
+    },
+    "entryFields": {
+      "artifactId": "string",
+      "artifactType": "string",
+      "timestamp": "string",
+      "agentId": "string",
+      "signaturePresent": "boolean"
+    }
+  },
+
+  "casingNotes": {
+    "_comment": "All SDKs serialize to camelCase JSON. The one exception is the signature field 'agentID' which uses uppercase ID across all SDKs (Go json tag, Rust serde rename, etc). Python and Node use the same camelCase keys via their A2A integration modules.",
+    "wrappedArtifact": "camelCase",
+    "verificationResult": "camelCase",
+    "trustAssessment": "camelCase",
+    "agentCard": "camelCase",
+    "chainOfCustody": "camelCase",
+    "signatureAgentField": "agentID (uppercase ID)"
+  }
+}

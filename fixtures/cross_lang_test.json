@@ -1,0 +1,61 @@
+{
+  "description": "Cross-language HAISDK wrapper contract for JACS auth-header shaping and canonical JSON selection.",
+  "ownership_note": "This fixture intentionally covers only HAISDK-owned behavior. Raw cryptographic signing, verification, and key handling remain owned by JACS.",
+  "auth_header": {
+    "scheme": "JACS",
+    "parts": [
+      "jacs_id",
+      "timestamp",
+      "signature_base64"
+    ],
+    "signed_message_template": "{jacs_id}:{timestamp}",
+    "example": {
+      "jacs_id": "test-agent-001",
+      "timestamp": 1700000000,
+      "stub_signature_base64": "fixture-signature-base64",
+      "expected_header": "JACS test-agent-001:1700000000:fixture-signature-base64"
+    }
+  },
+  "canonical_json_cases": [
+    {
+      "name": "flat_object",
+      "input": {
+        "z": 1,
+        "a": 2,
+        "m": 3
+      },
+      "expected": "{\"a\":2,\"m\":3,\"z\":1}"
+    },
+    {
+      "name": "nested_object",
+      "input": {
+        "b": {
+          "z": 1,
+          "a": 2
+        },
+        "a": 1
+      },
+      "expected": "{\"a\":1,\"b\":{\"a\":2,\"z\":1}}"
+    },
+    {
+      "name": "array_preserves_order",
+      "input": {
+        "arr": [
+          3,
+          1,
+          2
+        ]
+      },
+      "expected": "{\"arr\":[3,1,2]}"
+    },
+    {
+      "name": "null_and_primitives",
+      "input": {
+        "value": null,
+        "message": "hello",
+        "count": 42
+      },
+      "expected": "{\"count\":42,\"message\":\"hello\",\"value\":null}"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+name: Publish Python Package
+
+on:
+  push:
+    tags:
+      - "python/v*"
+
+permissions:
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tools
+        run: pip install build
+      - name: Build package
+        run: |
+          cd python
+          python -m build
+      - name: Smoke install wheel + CLI
+        run: |
+          cd python
+          pip install --force-reinstall dist/*.whl
+          python -c "import haisdk; import haisdk.integrations as i; assert hasattr(haisdk, 'HaiClient'); assert callable(i.langgraph_wrap_tool_call)"
+          haisdk --help > /dev/null
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python/dist/

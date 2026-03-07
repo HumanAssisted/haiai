@@ -1,0 +1,33 @@
+[package]
+name = "hai-mcp"
+version = "0.1.0"
+description = "HAISDK MCP server extending jacs-mcp in-process"
+readme = "README.md"
+keywords = ["hai", "mcp", "agent", "sdk"]
+categories = ["command-line-utilities", "network-programming"]
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+haisdk = { path = "../haisdk", default-features = false, features = ["rustls-tls", "jacs-local"] }
+jacs = { path = "../../../JACS/jacs" }
+jacs-binding-core = { path = "../../../JACS/binding-core" }
+jacs-mcp = { path = "../../../JACS/jacs-mcp", features = ["mcp"] }
+anyhow = "1"
+base64.workspace = true
+rmcp = { version = "0.12", features = ["server", "transport-io", "macros"] }
+schemars = "1.0"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

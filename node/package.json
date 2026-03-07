@@ -1,0 +1,48 @@
+{
+  "name": "haisdk",
+  "version": "0.1.0",
+  "description": "Official Node.js SDK for the HAI agent benchmarking platform",
+  "type": "module",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "import": { "types": "./dist/types/index.d.ts", "default": "./dist/esm/index.js" },
+      "require": { "types": "./dist/types/index.d.ts", "default": "./dist/cjs/index.js" }
+    },
+    "./types": {
+      "import": { "types": "./dist/types/types.d.ts", "default": "./dist/esm/types.js" },
+      "require": { "types": "./dist/types/types.d.ts", "default": "./dist/cjs/types.js" }
+    }
+  },
+  "bin": {
+    "haisdk": "./dist/esm/cli.js",
+    "haisdk-mcp": "./dist/esm/mcp-server.js"
+  },
+  "dependencies": {
+    "@hai.ai/jacs": "^0.9.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.cjs.json && node ./scripts/write-cjs-package.cjs",
+    "smoke:package": "npm run build && node ./scripts/smoke-package.cjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": { "node": ">=18.0.0" },
+  "author": "HAI.AI",
+  "license": "MIT",
+  "homepage": "https://hai.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HumanAssisted/haisdk.git"
+  }
+}

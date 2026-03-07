@@ -1,0 +1,36 @@
+{
+  "name": "HAISDK Demo Agent",
+  "description": "JACS-backed A2A demo agent",
+  "version": "1.0.0",
+  "supportedInterfaces": [
+    {
+      "url": "https://agent.example.com/agent/demo-agent",
+      "protocolBinding": "jsonrpc",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "defaultInputModes": ["text/plain", "application/json"],
+  "defaultOutputModes": ["text/plain", "application/json"],
+  "capabilities": {
+    "extensions": [
+      {
+        "uri": "urn:jacs:provenance-v1",
+        "description": "JACS signing and verification",
+        "required": false
+      }
+    ]
+  },
+  "skills": [
+    {
+      "id": "classify",
+      "name": "classify_text",
+      "description": "Classify text content",
+      "tags": ["jacs", "classification"]
+    }
+  ],
+  "metadata": {
+    "jacsId": "demo-agent",
+    "jacsVersion": "1.0.0",
+    "a2aProfile": "1.0"
+  }
+}

@@ -1,0 +1,24 @@
+[workspace]
+members = ["haisdk", "hai-mcp", "haisdk-cli"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+authors = ["HAI.AI <engineering@hai.ai>"]
+repository = "https://github.com/HumanAssisted/haisdk"
+homepage = "https://hai.ai"
+
+[workspace.dependencies]
+async-trait = "0.1"
+base64 = "0.22"
+percent-encoding = "2.3"
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "http2", "query"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "process", "sync"] }
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+sha2 = "0.10"

@@ -1,0 +1,15 @@
+{
+  "_comment": "Test fixture with real Ed25519 keypair. Private key included for test generation only.",
+  "headers": {
+    "X-JACS-Signature": "v=1; a=ed25519; id=test-agent-jacs-id; t=1740393600; s=MTntdbM5444hmwagH4c4St+NdGuPE4I7Tc0XkF7KdcWcqaPx3i51lswbL8+gpPkHDfT37TVb/tnshG3AXTU4Bw==",
+    "X-JACS-Content-Hash": "sha256:281a89eac66f256513e8f5ee12f4a5031f13b6902cc060341a163e2371d732eb",
+    "From": "testbot@hai.ai"
+  },
+  "subject": "Test Subject",
+  "body": "Hello, this is a test email body.",
+  "expected_content_hash": "sha256:281a89eac66f256513e8f5ee12f4a5031f13b6902cc060341a163e2371d732eb",
+  "expected_sign_input": "sha256:281a89eac66f256513e8f5ee12f4a5031f13b6902cc060341a163e2371d732eb:1740393600",
+  "test_public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAPJ34LnkrMFw5B5gjBPngEaougEVE3Hr0s0vbuoUPU0w=\n-----END PUBLIC KEY-----",
+  "test_public_key_b64": "PJ34LnkrMFw5B5gjBPngEaougEVE3Hr0s0vbuoUPU0w=",
+  "test_private_key_pem": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIIQKh3V2QJWZHYIbgyDe+icnyjanJBV+rVmN09z++Uuj\n-----END PRIVATE KEY-----"
+}

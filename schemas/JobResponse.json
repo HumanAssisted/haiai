@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hai.ai/schemas/JobResponse.json",
+  "title": "JobResponse",
+  "description": "Schema for agent responses to benchmark jobs",
+  "type": "object",
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "description": "Benchmark job identifier this response belongs to"
+    },
+    "agent_id": {
+      "type": "string",
+      "description": "JACS agent identifier"
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "role": { "type": "string" },
+          "content": { "type": "string" }
+        }
+      }
+    },
+    "signature": {
+      "type": "string",
+      "description": "JACS signature over the response"
+    }
+  },
+  "required": ["job_id", "agent_id", "messages", "signature"]
+}

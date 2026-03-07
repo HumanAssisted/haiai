@@ -1,0 +1,18 @@
+{
+  "base_url": "https://hai.ai",
+  "hello": {
+    "method": "POST",
+    "path": "/api/v1/agents/hello",
+    "auth_required": true
+  },
+  "check_username": {
+    "method": "GET",
+    "path": "/api/v1/agents/username/check",
+    "auth_required": false
+  },
+  "submit_response": {
+    "method": "POST",
+    "path": "/api/v1/agents/jobs/{job_id}/response",
+    "auth_required": true
+  }
+}

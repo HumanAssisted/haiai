@@ -1,0 +1,135 @@
+{
+  "cases": [
+    {
+      "name": "metadata_profile_preferred",
+      "agentJson": {
+        "jacsId": "demo-agent",
+        "name": "Demo Agent"
+      },
+      "card": {
+        "name": "Demo Agent",
+        "description": "Demo card",
+        "version": "1.0.0",
+        "protocolVersions": [
+          "0.4.0"
+        ],
+        "supportedInterfaces": [
+          {
+            "url": "https://agent.example.com/agent/demo-agent",
+            "protocolBinding": "jsonrpc",
+            "protocolVersion": "0.4.0"
+          }
+        ],
+        "defaultInputModes": [
+          "application/json"
+        ],
+        "defaultOutputModes": [
+          "application/json"
+        ],
+        "capabilities": {},
+        "skills": [],
+        "metadata": {
+          "a2aProfile": "1.0"
+        }
+      },
+      "expected": {
+        "a2aProfile": "1.0"
+      }
+    },
+    {
+      "name": "protocol_versions_fallback",
+      "agentJson": {
+        "jacsId": "demo-agent",
+        "name": "Demo Agent"
+      },
+      "card": {
+        "name": "Demo Agent",
+        "description": "Demo card",
+        "version": "1.0.0",
+        "protocolVersions": [
+          "0.4.0"
+        ],
+        "supportedInterfaces": [
+          {
+            "url": "https://agent.example.com/agent/demo-agent",
+            "protocolBinding": "jsonrpc",
+            "protocolVersion": "1.0"
+          }
+        ],
+        "defaultInputModes": [
+          "application/json"
+        ],
+        "defaultOutputModes": [
+          "application/json"
+        ],
+        "capabilities": {},
+        "skills": [],
+        "metadata": {}
+      },
+      "expected": {
+        "a2aProfile": "0.4.0"
+      }
+    },
+    {
+      "name": "supported_interface_profile_fallback",
+      "agentJson": {
+        "jacsId": "demo-agent",
+        "name": "Demo Agent"
+      },
+      "card": {
+        "name": "Demo Agent",
+        "description": "Demo card",
+        "version": "1.0.0",
+        "supportedInterfaces": [
+          {
+            "url": "https://agent.example.com/agent/demo-agent",
+            "protocolBinding": "jsonrpc",
+            "protocolVersion": "1.0"
+          }
+        ],
+        "defaultInputModes": [
+          "application/json"
+        ],
+        "defaultOutputModes": [
+          "application/json"
+        ],
+        "capabilities": {},
+        "skills": [],
+        "metadata": {}
+      },
+      "expected": {
+        "a2aProfile": "1.0"
+      }
+    },
+    {
+      "name": "default_profile_fallback",
+      "agentJson": {
+        "jacsId": "demo-agent",
+        "name": "Demo Agent"
+      },
+      "card": {
+        "name": "Demo Agent",
+        "description": "Demo card",
+        "version": "1.0.0",
+        "supportedInterfaces": [
+          {
+            "url": "https://agent.example.com/agent/demo-agent",
+            "protocolBinding": "jsonrpc"
+          }
+        ],
+        "defaultInputModes": [
+          "application/json"
+        ],
+        "defaultOutputModes": [
+          "application/json"
+        ],
+        "capabilities": {},
+        "skills": [],
+        "metadata": {}
+      },
+      "expected": {
+        "a2aProfile": "0.4.0"
+      }
+    }
+  ]
+}

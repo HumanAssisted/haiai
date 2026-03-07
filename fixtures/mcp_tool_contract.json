@@ -1,0 +1,181 @@
+{
+  "description": "Required shared HAISDK MCP tool surface. Languages may expose additional tools, but the tools listed here must keep names and input fields aligned.",
+  "required_tools": [
+    {
+      "name": "hai_hello",
+      "properties": {
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": []
+    },
+    {
+      "name": "hai_check_username",
+      "properties": {
+        "username": "string",
+        "hai_url": "string"
+      },
+      "required": [
+        "username"
+      ]
+    },
+    {
+      "name": "hai_claim_username",
+      "properties": {
+        "agent_id": "string",
+        "username": "string",
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": [
+        "agent_id",
+        "username"
+      ]
+    },
+    {
+      "name": "hai_register_agent",
+      "properties": {
+        "owner_email": "string",
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": []
+    },
+    {
+      "name": "hai_agent_status",
+      "properties": {
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": []
+    },
+    {
+      "name": "hai_generate_verify_link",
+      "properties": {
+        "document": "string",
+        "base_url": "string",
+        "hosted": "boolean"
+      },
+      "required": [
+        "document"
+      ]
+    },
+    {
+      "name": "hai_send_email",
+      "properties": {
+        "to": "string",
+        "subject": "string",
+        "body": "string",
+        "in_reply_to": "string",
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": [
+        "to",
+        "subject",
+        "body"
+      ]
+    },
+    {
+      "name": "hai_list_messages",
+      "properties": {
+        "limit": "number",
+        "offset": "number",
+        "direction": "string",
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": []
+    },
+    {
+      "name": "hai_get_message",
+      "properties": {
+        "message_id": "string",
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": [
+        "message_id"
+      ]
+    },
+    {
+      "name": "hai_delete_message",
+      "properties": {
+        "message_id": "string",
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": [
+        "message_id"
+      ]
+    },
+    {
+      "name": "hai_mark_read",
+      "properties": {
+        "message_id": "string",
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": [
+        "message_id"
+      ]
+    },
+    {
+      "name": "hai_mark_unread",
+      "properties": {
+        "message_id": "string",
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": [
+        "message_id"
+      ]
+    },
+    {
+      "name": "hai_search_messages",
+      "properties": {
+        "q": "string",
+        "direction": "string",
+        "from_address": "string",
+        "to_address": "string",
+        "since": "string",
+        "until": "string",
+        "limit": "number",
+        "offset": "number",
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": []
+    },
+    {
+      "name": "hai_get_unread_count",
+      "properties": {
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": []
+    },
+    {
+      "name": "hai_get_email_status",
+      "properties": {
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": []
+    },
+    {
+      "name": "hai_reply_email",
+      "properties": {
+        "message_id": "string",
+        "body": "string",
+        "subject_override": "string",
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": [
+        "message_id",
+        "body"
+      ]
+    }
+  ]
+}

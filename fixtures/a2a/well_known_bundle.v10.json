@@ -1,0 +1,42 @@
+{
+  "/.well-known/agent-card.json": {
+    "name": "HAISDK Demo Agent",
+    "supportedInterfaces": [
+      {
+        "url": "https://agent.example.com/agent/demo-agent",
+        "protocolBinding": "jsonrpc",
+        "protocolVersion": "1.0"
+      }
+    ],
+    "metadata": {
+      "jacsId": "demo-agent",
+      "a2aProfile": "1.0"
+    }
+  },
+  "/.well-known/jwks.json": {
+    "keys": [
+      {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "kid": "demo-agent",
+        "use": "sig",
+        "alg": "EdDSA",
+        "x": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      }
+    ]
+  },
+  "/.well-known/jacs-agent.json": {
+    "jacsVersion": "1.0",
+    "agentId": "demo-agent",
+    "capabilities": {
+      "signing": true,
+      "verification": true,
+      "postQuantum": false
+    }
+  },
+  "/.well-known/jacs-extension.json": {
+    "uri": "urn:jacs:provenance-v1",
+    "version": "1.0",
+    "a2aProtocolVersion": "1.0"
+  }
+}
