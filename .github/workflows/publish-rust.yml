@@ -25,7 +25,7 @@ jobs:
       - name: Check Cargo.toml versions match tag
         run: |
           TAG_VERSION="${{ steps.extract.outputs.version }}"
-          for dir in rust/haisdk rust/hai-mcp rust/haisdk-cli; do
+          for dir in rust/haiai rust/hai-mcp rust/haiai-cli; do
             CARGO_VERSION=$(grep '^version = ' $dir/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
             echo "$dir version: $CARGO_VERSION, tag: $TAG_VERSION"
             if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
@@ -42,8 +42,8 @@ jobs:
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - name: Publish haisdk to crates.io
-        working-directory: rust/haisdk
+      - name: Publish haiai to crates.io
+        working-directory: rust/haiai
         run: cargo publish --no-default-features --features rustls-tls,jacs-crate --token ${{ secrets.CRATES_IO_TOKEN }}
 
       - name: Wait for crates.io index update
@@ -56,8 +56,8 @@ jobs:
       - name: Wait for crates.io index update
         run: sleep 30
 
-      - name: Publish haisdk-cli to crates.io
-        working-directory: rust/haisdk-cli
+      - name: Publish haiai-cli to crates.io
+        working-directory: rust/haiai-cli
         run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}
 
   build:
@@ -85,7 +85,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       VERSION: ${{ needs.verify-version.outputs.version }}
-      CLI_ASSET_NAME: haisdk-cli-${{ needs.verify-version.outputs.version }}-${{ matrix.asset_suffix }}
+      CLI_ASSET_NAME: haiai-cli-${{ needs.verify-version.outputs.version }}-${{ matrix.asset_suffix }}
     steps:
       - uses: actions/checkout@v4
 
@@ -95,30 +95,30 @@ jobs:
 
       - name: Build CLI binary
         working-directory: rust
-        run: cargo build --release -p haisdk-cli --target ${{ matrix.target }}
+        run: cargo build --release -p haiai-cli --target ${{ matrix.target }}
 
       - name: Smoke test (Unix)
         if: runner.os != 'Windows'
-        run: ./rust/target/${{ matrix.target }}/release/haisdk --version
+        run: ./rust/target/${{ matrix.target }}/release/haiai --version
 
       - name: Smoke test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: .\rust\target\${{ matrix.target }}\release\haisdk.exe --version
+        run: .\rust\target\${{ matrix.target }}\release\haiai.exe --version
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
-          cp rust/target/${{ matrix.target }}/release/haisdk haisdk-cli
-          tar czf ${CLI_ASSET_NAME}.tar.gz haisdk-cli
+          cp rust/target/${{ matrix.target }}/release/haiai haiai-cli
+          tar czf ${CLI_ASSET_NAME}.tar.gz haiai-cli
           shasum -a 256 ${CLI_ASSET_NAME}.tar.gz > ${CLI_ASSET_NAME}.tar.gz.sha256
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Copy-Item "rust/target/${{ matrix.target }}/release/haisdk.exe" "haisdk-cli.exe"
-          Compress-Archive -Path "haisdk-cli.exe" -DestinationPath "${env:CLI_ASSET_NAME}.zip"
+          Copy-Item "rust/target/${{ matrix.target }}/release/haiai.exe" "haiai-cli.exe"
+          Compress-Archive -Path "haiai-cli.exe" -DestinationPath "${env:CLI_ASSET_NAME}.zip"
           Get-FileHash "${env:CLI_ASSET_NAME}.zip" -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  ${env:CLI_ASSET_NAME}.zip" } | Out-File "${env:CLI_ASSET_NAME}.zip.sha256" -Encoding ascii
 
       - uses: actions/upload-artifact@v4
@@ -146,35 +146,35 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: rust/v${{ needs.verify-version.outputs.version }}
-          name: HAISDK CLI v${{ needs.verify-version.outputs.version }}
+          name: HAIAI CLI v${{ needs.verify-version.outputs.version }}
           body: |
-            ## HAISDK CLI v${{ needs.verify-version.outputs.version }}
+            ## HAIAI CLI v${{ needs.verify-version.outputs.version }}
 
-            Unified `haisdk` binary with CLI + built-in MCP server.
+            Unified `haiai` binary with CLI + built-in MCP server.
 
             ### Install
 
             **From crates.io:**
             ```bash
-            cargo install haisdk-cli
+            cargo install haiai-cli
             ```
 
             **From prebuilt binary:**
             ```bash
             # macOS (Apple Silicon)
-            curl -LO https://github.com/HumanAssisted/haisdk/releases/download/rust/v${{ needs.verify-version.outputs.version }}/haisdk-cli-${{ needs.verify-version.outputs.version }}-darwin-arm64.tar.gz
-            tar xzf haisdk-cli-*.tar.gz
-            sudo mv haisdk-cli /usr/local/bin/haisdk
+            curl -LO https://github.com/HumanAssisted/haiai/releases/download/rust/v${{ needs.verify-version.outputs.version }}/haiai-cli-${{ needs.verify-version.outputs.version }}-darwin-arm64.tar.gz
+            tar xzf haiai-cli-*.tar.gz
+            sudo mv haiai-cli /usr/local/bin/haiai
 
             # Linux (x86_64)
-            curl -LO https://github.com/HumanAssisted/haisdk/releases/download/rust/v${{ needs.verify-version.outputs.version }}/haisdk-cli-${{ needs.verify-version.outputs.version }}-linux-x64.tar.gz
-            tar xzf haisdk-cli-*.tar.gz
-            sudo mv haisdk-cli /usr/local/bin/haisdk
+            curl -LO https://github.com/HumanAssisted/haiai/releases/download/rust/v${{ needs.verify-version.outputs.version }}/haiai-cli-${{ needs.verify-version.outputs.version }}-linux-x64.tar.gz
+            tar xzf haiai-cli-*.tar.gz
+            sudo mv haiai-cli /usr/local/bin/haiai
             ```
 
             **Start MCP server (stdio):**
             ```bash
-            haisdk mcp
+            haiai mcp
             ```
 
             ### Verify checksums

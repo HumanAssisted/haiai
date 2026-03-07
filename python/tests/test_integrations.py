@@ -1,4 +1,4 @@
-"""Tests for `haisdk.integrations` Step 2 helper wrappers."""
+"""Tests for `haiai.integrations` Step 2 helper wrappers."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from typing import Any
 
 import pytest
 
-from haisdk import _optional as optional_module
-from haisdk.integrations import (
+from haiai import _optional as optional_module
+from haiai.integrations import (
     agentsdk_tool_wrapper,
     agentsdk_verify_payload,
     register_a2a_tools,
@@ -326,5 +326,5 @@ def test_missing_dependency_error_includes_install_hint(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(optional_module.importlib, "import_module", fake_import_module)
 
-    with pytest.raises(ImportError, match=r"haisdk\[langgraph\]"):
+    with pytest.raises(ImportError, match=r"haiai\[langgraph\]"):
         langgraph_wrap_tool_call()

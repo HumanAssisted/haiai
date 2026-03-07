@@ -10,14 +10,14 @@ This plan addresses:
 5. Test/CI gaps that currently allow regressions.
 
 ## Non-Negotiable Policy
-`haisdk` must not implement its own crypto primitives when JACS provides them.
+`haiai` must not implement its own crypto primitives when JACS provides them.
 
 Rules:
 
 1. All signing, verification, key generation, canonicalization, and encryption must delegate to JACS functions.
 2. Any local helper that currently performs cryptographic work must be removed or converted to a thin JACS wrapper.
 3. Agent creation flows should support encrypted private key handling using JACS-provided encryption/key-management functionality.
-4. New crypto code in `haisdk` is disallowed unless explicitly approved and documented as a JACS-gap exception.
+4. New crypto code in `haiai` is disallowed unless explicitly approved and documented as a JACS-gap exception.
 
 ## Policy Enforcement Changes
 
@@ -52,7 +52,7 @@ Acceptance criteria:
   - key generation
   - key encryption/decryption
   - any JACS envelope helpers
-- Produce mapping table: `current_haisdk_function -> jacs_function`.
+- Produce mapping table: `current_haiai_function -> jacs_function`.
 
 Deliverable:
 - `docs/crypto-mapping.md` with exact imports and replacement plan.
@@ -236,7 +236,7 @@ Tests:
 - [x] Add path escaping for user-controlled path segments in Python.
 - [x] Add/expand Node+Python tests for path escaping.
 - [x] Add shared mock contract tests for auth + endpoint shape consistency.
-- [x] Add canonical Python `haisdk` namespace wrappers while preserving `jacs.hai` compatibility.
+- [x] Add canonical Python `haiai` namespace wrappers while preserving `jacs.hai` compatibility.
 
 ### P1 TODOs
 - [ ] Create `docs/crypto-mapping.md` with exact JACS replacements.

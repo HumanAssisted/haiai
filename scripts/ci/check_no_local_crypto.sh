@@ -47,7 +47,7 @@ if [[ "$status" -ne 0 ]]; then
   cat <<'MSG'
 
 Policy violation:
-  haisdk runtime crypto must delegate to JACS functions.
+  haiai runtime crypto must delegate to JACS functions.
   If this is a temporary migration exception, update the ADR and allowlist intentionally.
 MSG
   exit 1

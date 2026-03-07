@@ -38,7 +38,7 @@ impl ServerHandler for HaiMcpServer {
             },
             server_info: Implementation {
                 name: "hai-mcp".to_string(),
-                title: Some("HAISDK MCP Server".to_string()),
+                title: Some("HAIAI MCP Server".to_string()),
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 icons: None,
                 website_url: Some("https://hai.ai".to_string()),

@@ -1,4 +1,4 @@
-"""Tests for `haisdk.a2a` wrapper module."""
+"""Tests for `haiai.a2a` wrapper module."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from typing import Any
 
 import pytest
 
-from haisdk import a2a as a2a_module
-from haisdk import _optional as optional_module
+from haiai import a2a as a2a_module
+from haiai import _optional as optional_module
 
 
 def _install_module(monkeypatch: pytest.MonkeyPatch, module_name: str, **attrs: Any) -> types.ModuleType:
@@ -41,7 +41,7 @@ def test_missing_dependency_error_has_install_hint(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(optional_module.importlib, "import_module", fake_import_module)
 
-    with pytest.raises(ImportError, match=r"haisdk\[a2a\]"):
+    with pytest.raises(ImportError, match=r"haiai\[a2a\]"):
         a2a_module.get_a2a_integration(client=object())
 
 
@@ -150,7 +150,7 @@ def test_get_a2a_integration_and_wrappers_delegate(monkeypatch: pytest.MonkeyPat
         a2a_module.quickstart_a2a(
             name="hai-agent",
             domain="agent.example.com",
-            description="HAISDK agent",
+            description="HAIAI agent",
             algorithm="pq2025",
             config_path="cfg.json",
             url="https://a2a.example",
@@ -160,7 +160,7 @@ def test_get_a2a_integration_and_wrappers_delegate(monkeypatch: pytest.MonkeyPat
     assert calls["quickstart"] == {
         "name": "hai-agent",
         "domain": "agent.example.com",
-        "description": "HAISDK agent",
+        "description": "HAIAI agent",
         "algorithm": "pq2025",
         "config_path": "cfg.json",
         "url": "https://a2a.example",

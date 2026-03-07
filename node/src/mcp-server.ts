@@ -3,9 +3,9 @@
  * Standalone MCP server exposing HAI SDK operations as tools.
  *
  * Usage:
- *   haisdk-mcp                           # stdio transport
+ *   haiai-mcp                           # stdio transport
  *   npx tsx src/mcp-server.ts            # dev mode
- *   HAI_URL=https://hai.ai haisdk-mcp    # override API endpoint
+ *   HAI_URL=https://hai.ai haiai-mcp    # override API endpoint
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -386,7 +386,7 @@ export async function handleToolCall(
 
 export async function main() {
   const server = new Server(
-    { name: 'hai-sdk', version: '0.1.0' },
+    { name: 'haiai', version: '0.1.0' },
     { capabilities: { tools: {} } },
   );
 

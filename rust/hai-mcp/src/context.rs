@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex as StdMutex;
 
-use haisdk::{HaiClient, HaiClientOptions, JacsProvider, LocalJacsProvider, NoopJacsProvider};
+use haiai::{HaiClient, HaiClientOptions, JacsProvider, LocalJacsProvider, NoopJacsProvider};
 
 use crate::embedded_provider::EmbeddedJacsProvider;
 
@@ -175,7 +175,7 @@ fn absolutize_path(path: &Path) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use haisdk::HaiClient;
+    use haiai::HaiClient;
 
     fn build_context(default_config_path: Option<&str>) -> HaiServerContext {
         HaiServerContext::from_process_env(

@@ -145,7 +145,7 @@ struct McpSession {
 
 impl McpSession {
     fn spawn(_workspace: &TestWorkspace, hai_url: &str, jacs_config: &Path) -> Self {
-        let mut child = Command::new(haisdk_bin())
+        let mut child = Command::new(haiai_bin())
             .arg("mcp")
             .env("HAI_URL", hai_url)
             .env("JACS_CONFIG", jacs_config)
@@ -156,7 +156,7 @@ impl McpSession {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .expect("spawn haisdk mcp");
+            .expect("spawn haiai mcp");
 
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = BufReader::new(child.stdout.take().expect("child stdout"));
@@ -262,16 +262,16 @@ impl Drop for McpSession {
     }
 }
 
-fn haisdk_bin() -> PathBuf {
+fn haiai_bin() -> PathBuf {
     let current_exe = std::env::current_exe().expect("current_exe");
     let target_dir = current_exe
         .parent()
         .and_then(Path::parent)
         .expect("target dir for integration test binary");
-    let candidate = target_dir.join(format!("haisdk{}", std::env::consts::EXE_SUFFIX));
+    let candidate = target_dir.join(format!("haiai{}", std::env::consts::EXE_SUFFIX));
     assert!(
         candidate.exists(),
-        "expected haisdk binary at {}. Run `cargo build -p haisdk-cli` first.",
+        "expected haiai binary at {}. Run `cargo build -p haiai-cli` first.",
         candidate.display()
     );
     candidate
@@ -429,7 +429,7 @@ fn standalone_binary_prints_deprecation() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("deprecated"), "stderr was: {stderr}");
-    assert!(stderr.contains("haisdk mcp"), "stderr was: {stderr}");
+    assert!(stderr.contains("haiai mcp"), "stderr was: {stderr}");
 }
 
 #[test]

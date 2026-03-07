@@ -127,7 +127,7 @@ class HaiClient:
 
     Example::
 
-        from haisdk import config, HaiClient
+        from haiai import config, HaiClient
 
         config.load("./jacs.config.json")
         client = HaiClient()

@@ -1,6 +1,6 @@
 {
-  "description": "Cross-language HAISDK wrapper contract for JACS auth-header shaping and canonical JSON selection.",
-  "ownership_note": "This fixture intentionally covers only HAISDK-owned behavior. Raw cryptographic signing, verification, and key handling remain owned by JACS.",
+  "description": "Cross-language HAIAI wrapper contract for JACS auth-header shaping and canonical JSON selection.",
+  "ownership_note": "This fixture intentionally covers only HAIAI-owned behavior. Raw cryptographic signing, verification, and key handling remain owned by JACS.",
   "auth_header": {
     "scheme": "JACS",
     "parts": [

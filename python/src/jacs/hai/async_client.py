@@ -5,8 +5,8 @@ for use in FastAPI, LangChain, CrewAI, AutoGen, and other async frameworks.
 
 Usage::
 
-    from haisdk import config
-    from haisdk.async_client import AsyncHaiClient
+    from haiai import config
+    from haiai.async_client import AsyncHaiClient
 
     config.load("./jacs.config.json")
 

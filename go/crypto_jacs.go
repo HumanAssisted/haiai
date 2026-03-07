@@ -1,6 +1,6 @@
 //go:build cgo && jacs
 
-package haisdk
+package haiai
 
 import (
 	"crypto/ed25519"

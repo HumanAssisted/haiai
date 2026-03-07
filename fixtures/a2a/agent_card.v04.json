@@ -1,5 +1,5 @@
 {
-  "name": "HAISDK Demo Agent",
+  "name": "HAIAI Demo Agent",
   "description": "JACS-backed A2A demo agent",
   "version": "1.0.0",
   "protocolVersions": ["0.4.0"],

@@ -1,4 +1,4 @@
-package haisdk
+package haiai
 
 import (
 	"context"
@@ -78,7 +78,7 @@ type A2AAgentSkill struct {
 	OutputModes []string `json:"outputModes,omitempty"`
 }
 
-// A2AAgentCard is the A2A agent-card payload shape used by HAISDK wrappers.
+// A2AAgentCard is the A2A agent-card payload shape used by HAIAI wrappers.
 type A2AAgentCard struct {
 	Name                string                 `json:"name"`
 	Description         string                 `json:"description"`
@@ -201,7 +201,7 @@ func (a *A2AIntegration) exportAgentCardLocal(agentData map[string]interface{}) 
 	}
 	description := stringValue(agentData["jacsDescription"])
 	if description == "" {
-		description = fmt.Sprintf("HAISDK agent %s", agentName)
+		description = fmt.Sprintf("HAIAI agent %s", agentName)
 	}
 	version := stringValue(agentData["jacsVersion"])
 	if version == "" {

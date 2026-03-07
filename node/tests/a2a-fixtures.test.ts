@@ -13,8 +13,8 @@ describe('a2a fixtures', () => {
     const cardV04 = loadFixture('agent_card.v04.json');
     const cardV10 = loadFixture('agent_card.v10.json');
 
-    expect(cardV04.name).toBe('HAISDK Demo Agent');
-    expect(cardV10.name).toBe('HAISDK Demo Agent');
+    expect(cardV04.name).toBe('HAIAI Demo Agent');
+    expect(cardV10.name).toBe('HAIAI Demo Agent');
     expect(cardV04.protocolVersions).toEqual(['0.4.0']);
 
     const supported = cardV10.supportedInterfaces as Array<Record<string, unknown>>;

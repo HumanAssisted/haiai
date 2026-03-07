@@ -58,7 +58,7 @@ describe('CLI command handling', () => {
     const code = await main([]);
 
     expect(code).toBe(0);
-    expect(joinWrites(stdoutSpy)).toContain('Usage: haisdk <command> [options]');
+    expect(joinWrites(stdoutSpy)).toContain('Usage: haiai <command> [options]');
     expect(createMock).not.toHaveBeenCalled();
   });
 
@@ -68,7 +68,7 @@ describe('CLI command handling', () => {
     const code = await main(['hello', '--help']);
 
     expect(code).toBe(0);
-    expect(joinWrites(stdoutSpy)).toContain('Usage: haisdk hello');
+    expect(joinWrites(stdoutSpy)).toContain('Usage: haiai hello');
     expect(createMock).not.toHaveBeenCalled();
   });
 
@@ -148,7 +148,7 @@ describe('CLI command handling', () => {
   });
 
   it('registers a new agent from generated keys and writes config', async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), 'haisdk-cli-'));
+    const tempDir = await mkdtemp(join(tmpdir(), 'haiai-cli-'));
     const keyDir = join(tempDir, 'keys');
     const configPath = join(tempDir, 'nested', 'jacs.config.json');
     const publicKeyPath = join(keyDir, 'jacs.public.pem');

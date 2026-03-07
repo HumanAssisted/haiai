@@ -7,7 +7,7 @@
 //
 //	HAI_LIVE_TEST=1 HAI_URL=http://localhost:3000 go test -run TestKeyIntegration -v -count=1
 
-package haisdk
+package haiai
 
 import (
 	"context"

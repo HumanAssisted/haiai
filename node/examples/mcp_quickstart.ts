@@ -1,13 +1,13 @@
 /**
- * MCP quickstart using HAISDK integration wrappers.
+ * MCP quickstart using HAIAI integration wrappers.
  *
  * Demonstrates:
  *   1. JACS quickstart with required identity fields
- *   2. MCP tool registration via HAISDK -> JACS adapters
+ *   2. MCP tool registration via HAIAI -> JACS adapters
  *   3. Expanded toolsets (share/trust helpers)
  *
  * Prerequisites:
- *   npm install haisdk @hai.ai/jacs @modelcontextprotocol/sdk
+ *   npm install haiai @hai.ai/jacs @modelcontextprotocol/sdk
  *
  * Usage:
  *   npx tsx examples/mcp_quickstart.ts
@@ -21,12 +21,12 @@ async function main(): Promise<void> {
   const jacs = await JacsClient.quickstart({
     name: 'hai-agent',
     domain: 'agent.example.com',
-    description: 'HAISDK MCP agent',
+    description: 'HAIAI MCP agent',
     algorithm: 'pq2025',
   });
 
   const server = new Server(
-    { name: 'hai-sdk-example-mcp', version: '1.0.0' },
+    { name: 'haiai-example-mcp', version: '1.0.0' },
     { capabilities: { tools: {} } },
   );
 

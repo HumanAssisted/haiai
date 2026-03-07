@@ -1,4 +1,4 @@
-package haisdk
+package haiai
 
 import (
 	"encoding/json"
@@ -44,7 +44,7 @@ func TestA2AFixturesLoad(t *testing.T) {
 	wrapped := loadA2AFixture(t, "wrapped_task.with_parents.json")
 	wellKnown := loadA2AFixture(t, "well_known_bundle.v10.json")
 
-	if got := cardV04["name"]; got != "HAISDK Demo Agent" {
+	if got := cardV04["name"]; got != "HAIAI Demo Agent" {
 		t.Fatalf("card v0.4 name = %v", got)
 	}
 	if got := wrapped["jacsType"]; got != "a2a-task-result" {

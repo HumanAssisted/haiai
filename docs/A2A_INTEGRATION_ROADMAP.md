@@ -1,20 +1,20 @@
-# A2A Integration Roadmap (HAISDK)
+# A2A Integration Roadmap (HAIAI)
 
 ## Scope
 
-This roadmap defines a practical, DRY, TDD-first plan to make A2A a first-class capability in `haisdk` while preserving the architecture boundary:
+This roadmap defines a practical, DRY, TDD-first plan to make A2A a first-class capability in `haiai` while preserving the architecture boundary:
 
 1. `jacs` owns cryptography and provenance primitives.
-2. `haisdk` owns HAI-mediated transport, registration, orchestration, and email workflows.
-3. `haisdk` should expose the full relevant JACS capability set as a unified facade so users can stay at the `haisdk` layer.
+2. `haiai` owns HAI-mediated transport, registration, orchestration, and email workflows.
+3. `haiai` should expose the full relevant JACS capability set as a unified facade so users can stay at the `haiai` layer.
 
 ## Non-Negotiable Layering Principles
 
 1. **JACS implementation parity first**: A2A logic is implemented in `jacs` (or canonical JACS modules) as the source of truth.
-2. **HAISDK facade parity second**: All stable JACS A2A features should be accessible through `haisdk` APIs.
-3. **No duplicated protocol engines in HAISDK**: `haisdk` wraps/delegates JACS A2A logic instead of re-implementing it.
-4. **HAISDK composes with HAI**: `haisdk` adds HAI-specific composition (registration, mediated transport, orchestration, email) on top of JACS primitives.
-5. **Examples use facade APIs**: examples should consume first-class `haisdk` A2A facades, not ad-hoc duplicate structs/logic.
+2. **HAIAI facade parity second**: All stable JACS A2A features should be accessible through `haiai` APIs.
+3. **No duplicated protocol engines in HAIAI**: `haiai` wraps/delegates JACS A2A logic instead of re-implementing it.
+4. **HAIAI composes with HAI**: `haiai` adds HAI-specific composition (registration, mediated transport, orchestration, email) on top of JACS primitives.
+5. **Examples use facade APIs**: examples should consume first-class `haiai` A2A facades, not ad-hoc duplicate structs/logic.
 
 ## What Is Already Implemented In JACS (Baseline Snapshot)
 
@@ -65,15 +65,15 @@ Baseline snapshot date: **February 24, 2026**.
    - `verify_a2a_artifact(...)`
 2. Trust-store support includes A2A card trust path (`trust_a2a_card(...)`) plus standard trust operations.
 
-### Gap Relative To HAISDK Today
+### Gap Relative To HAIAI Today
 
-1. `haisdk` examples demonstrate A2A flows, but first-class unified A2A facades are not yet complete across all SDK languages.
-2. Several example flows in `haisdk` currently duplicate protocol structs/logic that should move behind delegated facade APIs.
+1. `haiai` examples demonstrate A2A flows, but first-class unified A2A facades are not yet complete across all SDK languages.
+2. Several example flows in `haiai` currently duplicate protocol structs/logic that should move behind delegated facade APIs.
 
 ## Current State (Baseline)
 
-1. `haisdk` has A2A quickstart examples in Node/Python/Go.
-2. A2A functionality is mostly example-level in `haisdk` (not unified SDK surface).
+1. `haiai` has A2A quickstart examples in Node/Python/Go.
+2. A2A functionality is mostly example-level in `haiai` (not unified SDK surface).
 3. JACS already has richer A2A support (agent cards, artifact signing/verification, trust policy, discovery server helpers).
 4. HAI registration accepts `agent_json` and extracts A2A-like fields (`skills`, `capabilities`, etc.) but does not yet expose dedicated A2A card endpoints.
 
@@ -85,12 +85,12 @@ Make A2A a practical default for agent-to-agent trust and task/document provenan
 
 1. A2A + JACS signatures are the default for service-to-service trust and provenance.
 2. OAuth/OIDC is still required for delegated user authorization and user-scoped data access.
-3. In `haisdk`, all A2A task/document handoffs should be signable and verifiable using JACS-backed helpers.
+3. In `haiai`, all A2A task/document handoffs should be signable and verifiable using JACS-backed helpers.
 
 ## Design Principles (DRY)
 
-1. No new crypto primitives in `haisdk`.
-2. Reuse JACS A2A implementations where available, and expose them via `haisdk` facades.
+1. No new crypto primitives in `haiai`.
+2. Reuse JACS A2A implementations where available, and expose them via `haiai` facades.
 3. Keep one shared A2A contract fixture set for all SDKs.
 4. Keep one shared API naming model across languages.
 5. Keep quickstarts thin and built on first-class SDK APIs (no duplicated protocol structs in examples).
@@ -122,8 +122,8 @@ Add a first-class `A2A` facade per language with these operations:
 ### Deliverables
 
 1. Node: `node/src/a2a.ts` thin wrappers delegating to `@hai.ai/jacs` A2A modules.
-2. Python: `python/src/haisdk/a2a.py` thin wrappers delegating to `jacs.a2a`.
-3. Public exports from `node/src/index.ts` and `python/src/haisdk/__init__.py`, covering the full stable JACS A2A surface.
+2. Python: `python/src/haiai/a2a.py` thin wrappers delegating to `jacs.a2a`.
+3. Public exports from `node/src/index.ts` and `python/src/haiai/__init__.py`, covering the full stable JACS A2A surface.
 4. Unified registration helper using agent-card metadata embedding.
 
 ### TDD
@@ -176,7 +176,7 @@ Add a first-class `A2A` facade per language with these operations:
    - multi-step chain of custody
    - trust-policy enforcement
    - emailing signed artifact links
-3. Add one architecture doc linking JACS vs HAISDK ownership boundaries.
+3. Add one architecture doc linking JACS vs HAIAI ownership boundaries.
 
 ### TDD
 
@@ -200,7 +200,7 @@ Use these fixtures in all language SDK tests.
 ## Acceptance Criteria
 
 1. All four SDKs expose matching A2A facade operations.
-2. All stable JACS A2A capabilities are reachable from `haisdk` (API map + parity tests).
+2. All stable JACS A2A capabilities are reachable from `haiai` (API map + parity tests).
 3. Node/Python wrappers are thin delegation layers to JACS A2A modules.
 4. Go/Rust provide equivalent behavior and pass shared fixture contracts.
 5. A2A workflows are integrated with HAI transport/orchestration and email APIs.
@@ -218,7 +218,7 @@ Use these fixtures in all language SDK tests.
 ## Production Use Cases
 
 This section defines the highest-frequency real-world A2A scenarios that must be
-explicitly supported by `haisdk` (via JACS-backed facades and HAI composition).
+explicitly supported by `haiai` (via JACS-backed facades and HAI composition).
 
 ### P0: Identity + Discovery
 
@@ -370,8 +370,8 @@ Completed in this pass:
    - added `node/src/a2a.ts` wrappers delegating to `@hai.ai/jacs/a2a`
    - exported A2A facade APIs from `node/src/index.ts`
 2. Phase 1 Python facade scaffolding:
-   - added `python/src/haisdk/a2a.py` wrappers delegating to `jacs.a2a`
-   - exported `haisdk.a2a` in `python/src/haisdk/__init__.py`
+   - added `python/src/haiai/a2a.py` wrappers delegating to `jacs.a2a`
+   - exported `haiai.a2a` in `python/src/haiai/__init__.py`
 3. Shared fixture baseline:
    - added `fixtures/a2a/` fixture set (cards, wrapped artifacts, well-known bundles, trust cases)
 4. TDD coverage added:
@@ -382,21 +382,21 @@ Completed in this pass:
    - added register helper parity: `RegisterOptionsWithAgentCard(...)` + `RegisterWithAgentCard(...)`
    - added mediated/email helpers: `OnMediatedBenchmarkJob(...)` + `SendSignedArtifactEmail(...)`
 6. Phase 2 Rust facade implementation:
-   - added `rust/haisdk/src/a2a.rs` with facade methods and trust-policy handling
-   - exported A2A facade/types from `rust/haisdk/src/lib.rs`
+   - added `rust/haiai/src/a2a.rs` with facade methods and trust-policy handling
+   - exported A2A facade/types from `rust/haiai/src/lib.rs`
    - added `HaiClient::get_a2a(...)` facade constructor
    - added register helper parity: `register_options_with_agent_card(...)` + `register_with_agent_card(...)`
    - added mediated/email helpers: `on_mediated_benchmark_job(...)` + `send_signed_artifact_email(...)`
 7. Phase 2 TDD coverage added:
    - Go: `go/a2a_test.go` (roundtrip signing/verification, fixture contracts, trust-policy cases, register-helper merge behavior)
-   - Rust: `rust/haisdk/tests/a2a_facade.rs` (shared fixture contracts + facade behavior parity)
+   - Rust: `rust/haiai/tests/a2a_facade.rs` (shared fixture contracts + facade behavior parity)
 8. Phase 4 example migration started:
    - replaced `go/examples/a2a/main.go` duplicated protocol logic with facade-first usage (`GetA2A`, `SignArtifact`, `VerifyArtifact`, `CreateChainOfCustody`, `GenerateWellKnownDocuments`, register-option merge)
 9. Phase 4 Node/Python quickstart migration:
    - replaced `node/examples/a2a_quickstart.ts` duplicated protocol structs/helpers with facade-first usage (`exportAgentCard`, `signArtifact`, `verifyArtifact`, `createChainOfCustody`, `generateWellKnownDocuments`)
    - replaced `python/examples/a2a_quickstart.py` duplicated protocol structs/helpers with facade-first usage (`export_agent_card`, `sign_artifact`, `verify_artifact`, `create_chain_of_custody`, `generate_well_known_documents`)
 10. Phase 3 mediated workflow coverage:
-   - added `rust/haisdk/tests/a2a_mediated_flow.rs` for mediated SSE/WS flow coverage, including trust-policy rejection, invalid inbound signature rejection, and reconnect behavior
+   - added `rust/haiai/tests/a2a_mediated_flow.rs` for mediated SSE/WS flow coverage, including trust-policy rejection, invalid inbound signature rejection, and reconnect behavior
    - added runtime options for mediated flow hardening in `A2AMediatedJobOptions`:
      - `verify_inbound_artifact`
      - `enforce_trust_policy`
@@ -418,7 +418,7 @@ Completed in this pass:
      - `fixtures/a2a/golden_profile_normalization.json`
      - `fixtures/a2a/golden_chain_of_custody.json`
    - added Go golden tests in `go/a2a_test.go`
-   - added Rust golden tests in `rust/haisdk/tests/a2a_facade.rs`
+   - added Rust golden tests in `rust/haiai/tests/a2a_facade.rs`
    - added fixture-availability checks in Node/Python fixture tests
 
 Remaining roadmap work:

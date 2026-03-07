@@ -1,6 +1,6 @@
 //go:build !cgo || !jacs
 
-package haisdk
+package haiai
 
 import (
 	"crypto/ed25519"
@@ -22,9 +22,9 @@ var fallbackWarningOnce sync.Once
 func printFallbackWarning() {
 	fallbackWarningOnce.Do(func() {
 		// Only print if not in test mode
-		if os.Getenv("HAISDK_QUIET_FALLBACK") == "" {
+		if os.Getenv("HAIAI_QUIET_FALLBACK") == "" {
 			fmt.Fprintln(os.Stderr,
-				"WARNING: haisdk using local Ed25519 fallback crypto. "+
+				"WARNING: haiai using local Ed25519 fallback crypto. "+
 					"Build with '-tags jacs' and install JACS for full algorithm support (Ed25519, RSA-PSS, PQ2025).")
 		}
 	})

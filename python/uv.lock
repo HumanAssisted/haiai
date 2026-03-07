@@ -1159,7 +1159,7 @@ wheels = [
 ]
 
 [[package]]
-name = "haisdk"
+name = "haiai"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -1218,7 +1218,7 @@ ws = [
 [package.metadata]
 requires-dist = [
     { name = "dnspython", marker = "extra == 'dns'", specifier = ">=2.4" },
-    { name = "haisdk", extras = ["ws", "sse", "dns", "langchain", "langgraph", "crewai", "anthropic", "fastapi", "mcp", "agentsdk", "a2a"], marker = "extra == 'all'" },
+    { name = "haiai", extras = ["ws", "sse", "dns", "langchain", "langgraph", "crewai", "anthropic", "fastapi", "mcp", "agentsdk", "a2a"], marker = "extra == 'all'" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx-sse", marker = "extra == 'sse'", specifier = ">=0.4.0" },
     { name = "jacs", specifier = ">=0.8.0" },

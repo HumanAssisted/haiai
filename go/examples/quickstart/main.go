@@ -2,7 +2,7 @@
 //
 // Prerequisites:
 //
-//	go get github.com/HumanAssisted/haisdk-go
+//	go get github.com/HumanAssisted/haiai-go
 //
 // Recommended usage (JACS-managed identity):
 //
@@ -37,10 +37,10 @@ import (
 	"os"
 	"time"
 
-	haisdk "github.com/HumanAssisted/haisdk-go"
+	haiai "github.com/HumanAssisted/haiai-go"
 )
 
-const HAIURL = haisdk.DefaultEndpoint
+const HAIURL = haiai.DefaultEndpoint
 
 func main() {
 	existing := flag.Bool("existing", true, "Use existing jacs.config.json/JACS_CONFIG_PATH (recommended)")
@@ -64,11 +64,11 @@ func quickstartNew() {
 
 	// 1. Register a new agent without requiring a pre-existing local config.
 	fmt.Println("=== Step 1: Register a new JACS agent with HAI ===")
-	reg, err := haisdk.RegisterNewAgentWithEndpoint(
+	reg, err := haiai.RegisterNewAgentWithEndpoint(
 		ctx,
 		HAIURL,
 		"my-quickstart-agent",
-		&haisdk.RegisterNewAgentOptions{
+		&haiai.RegisterNewAgentOptions{
 			OwnerEmail: "you@example.com",
 		},
 	)
@@ -80,7 +80,7 @@ func quickstartNew() {
 	}
 	fmt.Printf("Agent ID: %s\n", reg.Registration.AgentID)
 
-	privateKey, err := haisdk.ParsePrivateKey(reg.PrivateKey)
+	privateKey, err := haiai.ParsePrivateKey(reg.PrivateKey)
 	if err != nil {
 		log.Fatalf("Failed to parse generated private key: %v", err)
 	}
@@ -90,10 +90,10 @@ func quickstartNew() {
 	}
 
 	// 2. Create an authenticated client from the in-memory bootstrap credentials.
-	client, err := haisdk.NewClient(
-		haisdk.WithEndpoint(HAIURL),
-		haisdk.WithJACSID(jacsID),
-		haisdk.WithPrivateKey(privateKey),
+	client, err := haiai.NewClient(
+		haiai.WithEndpoint(HAIURL),
+		haiai.WithJACSID(jacsID),
+		haiai.WithPrivateKey(privateKey),
 	)
 	if err != nil {
 		log.Fatalf("Failed to create client from bootstrap credentials: %v", err)
@@ -136,7 +136,7 @@ func quickstartExisting() {
 
 	// 1. Load existing JACS-managed config
 	fmt.Println("=== Loading existing config (configure exactly one password source) ===")
-	client, err := haisdk.NewClient(haisdk.WithEndpoint(HAIURL))
+	client, err := haiai.NewClient(haiai.WithEndpoint(HAIURL))
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}

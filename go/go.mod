@@ -1,4 +1,4 @@
-module github.com/HumanAssisted/haisdk-go
+module github.com/HumanAssisted/haiai-go
 
 go 1.23.0
 

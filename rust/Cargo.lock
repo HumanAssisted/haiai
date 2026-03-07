@@ -1017,7 +1017,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64",
- "haisdk",
+ "haiai",
  "jacs 0.9.1",
  "jacs-binding-core",
  "jacs-mcp",
@@ -1035,7 +1035,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "haisdk"
+name = "haiai"
 version = "0.1.1"
 dependencies = [
  "async-trait",
@@ -1060,13 +1060,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "haisdk-cli"
+name = "haiai-cli"
 version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
  "hai-mcp",
- "haisdk",
+ "haiai",
  "jacs-mcp",
  "rmcp",
  "serde_json",

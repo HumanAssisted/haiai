@@ -2,7 +2,7 @@
  * HAI SDK Quickstart (TypeScript) -- register an agent, say hello, run a benchmark.
  *
  * Prerequisites:
- *     npm install haisdk @hai.ai/jacs
+ *     npm install haiai @hai.ai/jacs
  *
  * Usage (new agent):
  *     export JACS_PRIVATE_KEY_PASSWORD=dev-password
@@ -32,7 +32,7 @@ async function quickstartNewAgent(): Promise<void> {
   await JacsClient.quickstart({
     name: 'my-quickstart-agent',
     domain: 'agent.example.com',
-    description: 'HAISDK quickstart agent',
+    description: 'HAIAI quickstart agent',
     algorithm: 'pq2025',
     configPath: CONFIG_PATH,
   });
@@ -43,7 +43,7 @@ async function quickstartNewAgent(): Promise<void> {
   const reg = await client.register({
     ownerEmail: 'you@example.com',
     domain: 'agent.example.com',
-    description: 'HAISDK quickstart agent',
+    description: 'HAIAI quickstart agent',
   });
   console.log(`Agent ID: ${reg.agentId}`);
   console.log(`Registered at: ${reg.registeredAt}`);

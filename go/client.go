@@ -1,17 +1,17 @@
-// Package haisdk provides the Go SDK for the HAI.AI agent benchmarking platform.
+// Package haiai provides the Go SDK for the HAI.AI agent benchmarking platform.
 //
 // All authentication uses JACS agent identity (Ed25519 signatures).
 // There is no API key authentication path.
 //
 // Quick start:
 //
-//	client, err := haisdk.NewClient()
+//	client, err := haiai.NewClient()
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
 //
 //	result, err := client.Hello(ctx)
-package haisdk
+package haiai
 
 import (
 	"bytes"

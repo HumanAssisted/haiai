@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from haisdk import a2a as a2a_module
+from haiai import a2a as a2a_module
 
 FIXTURES_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "a2a"
 
@@ -18,9 +18,9 @@ def test_agent_card_fixtures_load() -> None:
     card_v04 = _load("agent_card.v04.json")
     card_v10 = _load("agent_card.v10.json")
 
-    assert card_v04["name"] == "HAISDK Demo Agent"
+    assert card_v04["name"] == "HAIAI Demo Agent"
     assert card_v04["protocolVersions"] == ["0.4.0"]
-    assert card_v10["name"] == "HAISDK Demo Agent"
+    assert card_v10["name"] == "HAIAI Demo Agent"
     assert card_v10["supportedInterfaces"][0]["protocolVersion"] == "1.0"
 
 

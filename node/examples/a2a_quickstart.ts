@@ -1,15 +1,15 @@
 /**
- * A2A (Agent-to-Agent) quickstart using HAISDK facade APIs.
+ * A2A (Agent-to-Agent) quickstart using HAIAI facade APIs.
  *
  * Demonstrates:
  *   1. Initialize a JACS client + HAI client
- *   2. Export an A2A agent card via haisdk facade
+ *   2. Export an A2A agent card via haiai facade
  *   3. Sign and verify A2A task artifacts
  *   4. Build chain-of-custody output
  *   5. Generate .well-known discovery documents
  *
  * Prerequisites:
- *   npm install haisdk @hai.ai/jacs
+ *   npm install haiai @hai.ai/jacs
  *
  * Usage:
  *   npx tsx examples/a2a_quickstart.ts
@@ -33,7 +33,7 @@ async function main(): Promise<void> {
   const jacs = await JacsClient.quickstart({
     name: 'hai-agent',
     domain: 'agent.example.com',
-    description: 'HAISDK agent',
+    description: 'HAIAI agent',
     algorithm: 'pq2025',
   });
   const hai = await HaiClient.create({ url: HAI_URL });

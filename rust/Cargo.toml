@@ -1,12 +1,12 @@
 [workspace]
-members = ["haisdk", "hai-mcp", "haisdk-cli"]
+members = ["haiai", "hai-mcp", "haiai-cli"]
 resolver = "2"
 
 [workspace.package]
 edition = "2021"
 license = "MIT"
 authors = ["HAI.AI <engineering@hai.ai>"]
-repository = "https://github.com/HumanAssisted/haisdk"
+repository = "https://github.com/HumanAssisted/haiai"
 homepage = "https://hai.ai"
 
 [workspace.dependencies]

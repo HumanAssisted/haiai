@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from haisdk import mcp_server
+from haiai import mcp_server
 
 
 def _load_fixture() -> dict[str, Any]:

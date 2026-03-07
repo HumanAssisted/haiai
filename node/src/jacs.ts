@@ -47,7 +47,7 @@ export function enforceMcpRunStdioArgs(args: string[]): string[] {
     }
 
     throw new Error(
-      '`jacs mcp run` is stdio-only in haisdk. ' +
+      '`jacs mcp run` is stdio-only in haiai. ' +
       'Only optional `--bin <path>` is allowed; transport/runtime overrides are blocked.',
     );
   }

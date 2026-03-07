@@ -1,4 +1,4 @@
-"""Tests for haisdk CLI passthrough to the JACS CLI."""
+"""Tests for haiai CLI passthrough to the JACS CLI."""
 
 from __future__ import annotations
 
@@ -111,7 +111,7 @@ def test_mcp_run_passthrough_rejects_runtime_args(
 
     err = capsys.readouterr().err
     assert exit_info.value.code == 2
-    assert "stdio-only in haisdk" in err
+    assert "stdio-only in haiai" in err
     assert called["run"] is False
 
 

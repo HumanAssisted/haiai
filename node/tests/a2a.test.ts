@@ -105,14 +105,14 @@ describe('a2a facade wrappers', () => {
     await expect(mod.quickstartA2A({
       name: 'hai-agent',
       domain: 'agent.example.com',
-      description: 'HAISDK agent',
+      description: 'HAIAI agent',
       algorithm: 'pq2025',
     })).resolves.toEqual({
       quickstart: true,
       options: {
         name: 'hai-agent',
         domain: 'agent.example.com',
-        description: 'HAISDK agent',
+        description: 'HAIAI agent',
         algorithm: 'pq2025',
       },
     });

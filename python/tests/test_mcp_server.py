@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from haisdk import mcp_server
+from haiai import mcp_server
 
 
 @pytest.mark.asyncio

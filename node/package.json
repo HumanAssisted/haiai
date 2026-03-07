@@ -1,5 +1,5 @@
 {
-  "name": "haisdk",
+  "name": "haiai",
   "version": "0.1.1",
   "description": "Official Node.js SDK for the HAI agent benchmarking platform",
   "type": "module",
@@ -17,11 +17,11 @@
     }
   },
   "bin": {
-    "haisdk": "./dist/esm/cli.js",
-    "haisdk-mcp": "./dist/esm/mcp-server.js"
+    "haiai": "./dist/esm/cli.js",
+    "haiai-mcp": "./dist/esm/mcp-server.js"
   },
   "dependencies": {
-    "@hai.ai/jacs": "0.9.1",
+    "@hai.ai/jacs": "0.9.2",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "ws": "^8.16.0"
   },
@@ -43,6 +43,6 @@
   "homepage": "https://hai.ai",
   "repository": {
     "type": "git",
-    "url": "https://github.com/HumanAssisted/haisdk.git"
+    "url": "https://github.com/HumanAssisted/haiai.git"
   }
 }

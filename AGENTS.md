@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`haisdk` is the HAI platform integration layer around `jacs`.
+The HAIAI SDK is the HAI platform integration layer around `jacs`.
 
 It exists to help agents use JACS identity/provenance on HAI APIs to:
 
@@ -20,7 +20,7 @@ It exists to help agents use JACS identity/provenance on HAI APIs to:
 3. document signing and signature verification
 4. low-level cryptographic primitives and trust-store mechanics
 
-### `haisdk` owns
+### `haiai` owns
 
 1. HAI endpoint contracts and request/response shaping
 2. JACS-authenticated HAI API calls (`Authorization: JACS ...`)
@@ -31,8 +31,8 @@ It exists to help agents use JACS identity/provenance on HAI APIs to:
 
 ## Design Rules
 
-1. Keep `haisdk` as a thin wrapper around `jacs` for crypto and provenance logic.
-2. Do not duplicate or expand local crypto implementations in `haisdk`.
+1. Keep `haiai` as a thin wrapper around `jacs` for crypto and provenance logic.
+2. Do not duplicate or expand local crypto implementations in `haiai`.
 3. Prefer DRY delegation to `jacs` modules for framework integrations.
 4. Keep behavior aligned across Node/Python/Go/Rust SDKs.
 5. Treat HAI API behavior as the contract surface; add parity tests for all languages.
@@ -40,14 +40,14 @@ It exists to help agents use JACS identity/provenance on HAI APIs to:
 ## Practical Mental Model
 
 1. Build/load agent identity with `jacs`.
-2. Use `haisdk` to register that identity with HAI.
-3. Use `haisdk` transport (`sse`/`ws`) to receive mediated work from HAI.
+2. Use `haiai` to register that identity with HAI.
+3. Use `haiai` transport (`sse`/`ws`) to receive mediated work from HAI.
 4. Sign/verify payloads with JACS-backed helpers.
-5. Use `haisdk` email and agent APIs for operational interaction on HAI.
+5. Use `haiai` email and agent APIs for operational interaction on HAI.
 
 ## Reference Docs
 
 1. `README.md`
-2. `docs/HAISDK_LANGUAGE_SYNC_GUIDE.md`
+2. `docs/HAIAI_LANGUAGE_SYNC_GUIDE.md`
 3. `docs/adr/0001-crypto-delegation-to-jacs.md`
 4. `docs/A2A_INTEGRATION_ROADMAP.md`

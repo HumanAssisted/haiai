@@ -1,4 +1,4 @@
-package haisdk
+package haiai
 
 import (
 	"context"

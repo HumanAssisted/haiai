@@ -1,9 +1,9 @@
 fn main() {
     eprintln!("WARNING: The standalone `hai-mcp` binary is deprecated.");
-    eprintln!("Use `haisdk mcp` instead.");
+    eprintln!("Use `haiai mcp` instead.");
     eprintln!();
-    eprintln!("  haisdk mcp    # start MCP server (stdio transport)");
+    eprintln!("  haiai mcp    # start MCP server (stdio transport)");
     eprintln!();
-    eprintln!("Install: cargo install haisdk-cli");
+    eprintln!("Install: cargo install haiai-cli");
     std::process::exit(1);
 }

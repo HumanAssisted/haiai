@@ -366,7 +366,7 @@ export class HaiClient {
    * Generates a JACS agent document with the agent's public key and
    * POSTs to the registration endpoint.
    *
-   * This is the haisdk equivalent of JACS's `registerWithHai()`. Unlike
+   * This is the haiai equivalent of JACS's `registerWithHai()`. Unlike
    * the JACS version (which uses API-key Bearer auth), this method uses
    * the self-signed agent document as authentication. See also {@link registerNewAgent}
    * for a full generate-and-register workflow.
@@ -545,7 +545,7 @@ export class HaiClient {
       ?? process.env.JACS_PRIVATE_KEY_PASSWORD
       ?? '';
     const newVersion = randomUUID();
-    const generatedKeyDir = await mkdtemp(join(tmpdir(), 'haisdk-rotate-'));
+    const generatedKeyDir = await mkdtemp(join(tmpdir(), 'haiai-rotate-'));
     let newPublicKeyPem: string;
     try {
       const resultJson = createAgentSync(
@@ -1210,7 +1210,7 @@ export class HaiClient {
     const { tmpdir } = await import('node:os');
 
     // Generate a new JACS agent with keys via JACS core
-    const tempDir = await mkdtemp(join(tmpdir(), 'haisdk-register-'));
+    const tempDir = await mkdtemp(join(tmpdir(), 'haiai-register-'));
     const keyDir = join(tempDir, 'keys');
     const dataDir = join(tempDir, 'data');
     const passphrase = process.env.JACS_PRIVATE_KEY_PASSWORD ?? 'register-temp';

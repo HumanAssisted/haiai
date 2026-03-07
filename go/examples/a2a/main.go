@@ -1,4 +1,4 @@
-// A2A (Agent-to-Agent) quickstart using HAISDK Go facade APIs.
+// A2A (Agent-to-Agent) quickstart using HAIAI Go facade APIs.
 //
 // Demonstrates:
 //  1. Register a new JACS agent with HAI
@@ -17,17 +17,17 @@ import (
 	"log"
 	"time"
 
-	haisdk "github.com/HumanAssisted/haisdk-go"
+	haiai "github.com/HumanAssisted/haiai-go"
 )
 
-const HAIURL = haisdk.DefaultEndpoint
+const HAIURL = haiai.DefaultEndpoint
 
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	fmt.Println("=== Step 1: Register a new JACS agent with HAI ===")
-	reg, err := haisdk.RegisterNewAgentWithEndpoint(ctx, HAIURL, "a2a-demo-agent", &haisdk.RegisterNewAgentOptions{
+	reg, err := haiai.RegisterNewAgentWithEndpoint(ctx, HAIURL, "a2a-demo-agent", &haiai.RegisterNewAgentOptions{
 		OwnerEmail: "you@example.com",
 	})
 	if err != nil {
@@ -43,24 +43,24 @@ func main() {
 	}
 	fmt.Printf("Agent registered: %s\n", jacsID)
 
-	privateKey, err := haisdk.ParsePrivateKey(reg.PrivateKey)
+	privateKey, err := haiai.ParsePrivateKey(reg.PrivateKey)
 	if err != nil {
 		log.Fatalf("parse generated private key: %v", err)
 	}
-	publicKey, err := haisdk.ParsePublicKey(reg.PublicKey)
+	publicKey, err := haiai.ParsePublicKey(reg.PublicKey)
 	if err != nil {
 		log.Fatalf("parse generated public key: %v", err)
 	}
 
-	client, err := haisdk.NewClient(
-		haisdk.WithEndpoint(HAIURL),
-		haisdk.WithJACSID(jacsID),
-		haisdk.WithPrivateKey(privateKey),
+	client, err := haiai.NewClient(
+		haiai.WithEndpoint(HAIURL),
+		haiai.WithJACSID(jacsID),
+		haiai.WithPrivateKey(privateKey),
 	)
 	if err != nil {
 		log.Fatalf("build client from generated credentials: %v", err)
 	}
-	a2a := client.GetA2A(haisdk.A2ATrustPolicyVerified)
+	a2a := client.GetA2A(haiai.A2ATrustPolicyVerified)
 
 	fmt.Println("\n=== Step 2: Export A2A agent card with facade ===")
 	agentData := map[string]interface{}{
@@ -68,7 +68,7 @@ func main() {
 		"jacsName":        "a2a-demo-agent",
 		"jacsVersion":     "1.0.0",
 		"jacsAgentDomain": "demo.example.com",
-		"a2aProfile":      haisdk.A2AProtocolVersion10,
+		"a2aProfile":      haiai.A2AProtocolVersion10,
 		"jacsServices": []interface{}{
 			map[string]interface{}{
 				"name":               "conflict_mediation",
@@ -81,7 +81,7 @@ func main() {
 	fmt.Println(string(cardJSON))
 
 	fmt.Println("\n=== Step 3: Prepare register options with embedded card metadata ===")
-	merged, err := a2a.RegisterOptionsWithAgentCard(haisdk.RegisterOptions{
+	merged, err := a2a.RegisterOptionsWithAgentCard(haiai.RegisterOptions{
 		AgentJSON:  reg.AgentJSON,
 		PublicKey:  string(reg.PublicKey),
 		OwnerEmail: "you@example.com",
@@ -128,7 +128,7 @@ func main() {
 		log.Fatalf("sign result artifact: %v", err)
 	}
 
-	chain := a2a.CreateChainOfCustody([]*haisdk.A2AWrappedArtifact{wrappedTask, wrappedResult})
+	chain := a2a.CreateChainOfCustody([]*haiai.A2AWrappedArtifact{wrappedTask, wrappedResult})
 	fmt.Printf("Chain length: %d\n", chain.TotalArtifacts)
 	for _, entry := range chain.Chain {
 		fmt.Printf("  [%s] by %s at %s\n", entry.ArtifactType, entry.AgentID, entry.Timestamp)

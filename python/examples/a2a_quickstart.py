@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""A2A quickstart using HAISDK facade APIs.
+"""A2A quickstart using HAIAI facade APIs.
 
 Demonstrates:
 1. Initialize JACS + HAI clients
-2. Export an A2A agent card via `haisdk.a2a`
+2. Export an A2A agent card via `haiai.a2a`
 3. Sign and verify task artifacts
 4. Build chain-of-custody output
 5. Generate .well-known discovery documents
 
 Prerequisites:
-    pip install haisdk jacs
+    pip install haiai jacs
 
 Usage:
     python python/examples/a2a_quickstart.py
@@ -22,8 +22,8 @@ import json
 
 from jacs.client import JacsClient
 
-from haisdk import HaiClient
-from haisdk.a2a import (
+from haiai import HaiClient
+from haiai.a2a import (
     create_chain_of_custody,
     generate_well_known_documents,
     register_with_agent_card,
@@ -46,7 +46,7 @@ def main() -> None:
     jacs = JacsClient.quickstart(
         name="hai-agent",
         domain="agent.example.com",
-        description="HAISDK agent",
+        description="HAIAI agent",
         algorithm="pq2025",
     )
     hai = HaiClient()

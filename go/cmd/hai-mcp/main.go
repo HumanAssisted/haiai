@@ -15,14 +15,14 @@ import (
 	"fmt"
 	"os"
 
-	haisdk "github.com/HumanAssisted/haisdk-go"
+	haiai "github.com/HumanAssisted/haiai-go"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
 func main() {
 	s := server.NewMCPServer(
-		"hai-sdk",
+		"haiai",
 		"0.1.0",
 		server.WithToolCapabilities(false),
 	)
@@ -206,11 +206,11 @@ func requiredToolDefinitions() []server.ServerTool {
 // Client helpers
 // ---------------------------------------------------------------------------
 
-func getClient(req mcp.CallToolRequest) (*haisdk.Client, error) {
-	var opts []haisdk.Option
+func getClient(req mcp.CallToolRequest) (*haiai.Client, error) {
+	var opts []haiai.Option
 
 	if url := req.GetString("hai_url", ""); url != "" {
-		opts = append(opts, haisdk.WithEndpoint(url))
+		opts = append(opts, haiai.WithEndpoint(url))
 	}
 
 	// config_path is set via env var since Go SDK uses JACS_CONFIG_PATH
@@ -219,7 +219,7 @@ func getClient(req mcp.CallToolRequest) (*haisdk.Client, error) {
 		defer os.Unsetenv("JACS_CONFIG_PATH")
 	}
 
-	return haisdk.NewClient(opts...)
+	return haiai.NewClient(opts...)
 }
 
 func toJSON(v interface{}) string {
@@ -284,7 +284,7 @@ func handleRegisterAgent(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	opts := haisdk.RegisterOptions{}
+	opts := haiai.RegisterOptions{}
 	if email := req.GetString("owner_email", ""); email != "" {
 		opts.OwnerEmail = email
 	}
@@ -334,9 +334,9 @@ func handleGenerateVerifyLink(ctx context.Context, req mcp.CallToolRequest) (*mc
 
 	var link string
 	if hosted {
-		link, err = haisdk.GenerateVerifyLinkHosted(document, baseURL)
+		link, err = haiai.GenerateVerifyLinkHosted(document, baseURL)
 	} else {
-		link, err = haisdk.GenerateVerifyLink(document, baseURL)
+		link, err = haiai.GenerateVerifyLink(document, baseURL)
 	}
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -368,7 +368,7 @@ func handleSendEmail(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	opts := haisdk.SendEmailOptions{
+	opts := haiai.SendEmailOptions{
 		To:      to,
 		Subject: subject,
 		Body:    body,
@@ -388,7 +388,7 @@ func handleListMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.Call
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	opts := haisdk.ListMessagesOptions{
+	opts := haiai.ListMessagesOptions{
 		Limit:     int(req.GetFloat("limit", 0)),
 		Offset:    int(req.GetFloat("offset", 0)),
 		Direction: req.GetString("direction", ""),
@@ -466,7 +466,7 @@ func handleSearchMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	opts := haisdk.SearchOptions{
+	opts := haiai.SearchOptions{
 		Q:           req.GetString("q", ""),
 		Direction:   req.GetString("direction", ""),
 		FromAddress: req.GetString("from_address", ""),

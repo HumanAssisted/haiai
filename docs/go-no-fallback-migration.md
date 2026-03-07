@@ -2,10 +2,10 @@
 
 ## Goal
 
-Remove Go runtime fallback crypto from `haisdk` while preserving HAI contract
+Remove Go runtime fallback crypto from `haiai` while preserving HAI contract
 behavior and A2A parity.
 
-`haisdk` should keep owning:
+`haiai` should keep owning:
 
 1. HAI request/response shaping
 2. auth-header assembly and transport behavior
@@ -69,7 +69,7 @@ fallback removal, bootstrap needs a JACS-backed path instead:
 2. Write/import those credentials into a JACS-owned agent/config layout.
 3. Re-open the client through the JACS-backed backend.
 
-That keeps `haisdk` thin while still supporting register/create flows.
+That keeps `haiai` thin while still supporting register/create flows.
 
 ### Stage 3: Remove fallback from auth and response signing
 

@@ -1,6 +1,6 @@
 # hai-mcp
 
-MCP server crate for HAISDK.
+MCP server crate for HAIAI.
 
 This crate exposes HAI platform operations as `hai_*` MCP tools and embeds the
 full canonical `jacs_*` tool surface from `jacs-mcp` in-process.

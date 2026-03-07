@@ -1,4 +1,4 @@
-package haisdk
+package haiai
 
 import (
 	"bufio"
@@ -103,7 +103,7 @@ func (s *SSEConnection) readLoop(resp *http.Response) {
 					select {
 					case s.events <- *event:
 					default:
-						log.Printf("[haisdk] WARNING: SSE event dropped (channel full, buffer=%d): type=%s", cap(s.events), event.Type)
+						log.Printf("[haiai] WARNING: SSE event dropped (channel full, buffer=%d): type=%s", cap(s.events), event.Type)
 					}
 				}
 			}

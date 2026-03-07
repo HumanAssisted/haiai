@@ -1,6 +1,6 @@
 """Contract tests -- validate SDK deserialization against shared JSON fixtures.
 
-Each fixture in ``haisdk/contract/`` is the single source of truth shared
+Each fixture in ``haiai/contract/`` is the single source of truth shared
 across all language SDKs (Python, Node, Go, Rust).  These tests ensure
 the Python SDK can round-trip every fixture into its domain model with
 the correct field values, and that content-hash / sign-input computations

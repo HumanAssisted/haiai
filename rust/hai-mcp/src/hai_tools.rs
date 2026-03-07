@@ -1,4 +1,4 @@
-use haisdk::{
+use haiai::{
     generate_verify_link, generate_verify_link_hosted, CreateAgentOptions, HaiClient, JacsProvider,
     ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions, SearchOptions, SendEmailOptions,
 };

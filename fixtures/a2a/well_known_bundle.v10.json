@@ -1,6 +1,6 @@
 {
   "/.well-known/agent-card.json": {
-    "name": "HAISDK Demo Agent",
+    "name": "HAIAI Demo Agent",
     "supportedInterfaces": [
       {
         "url": "https://agent.example.com/agent/demo-agent",

@@ -9,7 +9,7 @@ describe('config', () => {
   let tmpDir: string;
 
   beforeEach(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'haisdk-test-'));
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'haiai-test-'));
   });
 
   afterEach(async () => {

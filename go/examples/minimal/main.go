@@ -21,11 +21,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	haisdk "github.com/HumanAssisted/haisdk-go"
+	haiai "github.com/HumanAssisted/haiai-go"
 )
 
 func main() {
-	client, err := haisdk.NewClient()
+	client, err := haiai.NewClient()
 	if err != nil {
 		log.Fatalf("Failed to create HAI client: %v", err)
 	}
@@ -35,12 +35,12 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	err = client.OnBenchmarkJob(ctx, func(ctx context.Context, event haisdk.AgentEvent) error {
+	err = client.OnBenchmarkJob(ctx, func(ctx context.Context, event haiai.AgentEvent) error {
 		conversation := event.Config.Conversation
 
 		if len(conversation) < 2 {
 			// Let the conversation start naturally
-			_, err := client.SubmitResponse(ctx, event.JobID, haisdk.ModerationResponse{
+			_, err := client.SubmitResponse(ctx, event.JobID, haiai.ModerationResponse{
 				Message: "",
 			})
 			return err
@@ -53,7 +53,7 @@ func main() {
 			last.Speaker,
 		)
 
-		_, err := client.SubmitResponse(ctx, event.JobID, haisdk.ModerationResponse{
+		_, err := client.SubmitResponse(ctx, event.JobID, haiai.ModerationResponse{
 			Message: response,
 		})
 

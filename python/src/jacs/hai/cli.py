@@ -2,10 +2,10 @@
 
 Usage::
 
-    python -m haisdk register --name "My Agent" --owner-email "user@example.com"
-    python -m haisdk hello --api-url https://hai.ai
-    python -m haisdk benchmark --tier free
-    haisdk --help
+    python -m haiai register --name "My Agent" --owner-email "user@example.com"
+    python -m haiai hello --api-url https://hai.ai
+    python -m haiai benchmark --tier free
+    haiai --help
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _require_config() -> None:
 
     if not is_loaded():
         print(
-            "Error: No JACS config found. Run 'haisdk register' first or "
+            "Error: No JACS config found. Run 'haiai register' first or "
             "set JACS_CONFIG_PATH.",
             file=sys.stderr,
         )
@@ -65,8 +65,8 @@ def cmd_register(args: argparse.Namespace) -> None:
     print(f"  Agent ID: {result.agent_id}")
     print(f"\nNext steps:")
     print(f"  1. Check {args.owner_email} for a verification email")
-    print(f"  2. Run: haisdk hello")
-    print(f"  3. Run: haisdk benchmark --tier free")
+    print(f"  2. Run: haiai hello")
+    print(f"  3. Run: haiai benchmark --tier free")
 
 
 def cmd_hello(args: argparse.Namespace) -> None:
@@ -185,7 +185,7 @@ def cmd_fetch_key(args: argparse.Namespace) -> None:
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser."""
     parser = argparse.ArgumentParser(
-        prog="haisdk",
+        prog="haiai",
         description="HAI SDK CLI -- register, test, and manage AI agents",
     )
     parser.add_argument(
@@ -310,7 +310,7 @@ def _normalize_jacs_passthrough_args(argv: Sequence[str]) -> list[str]:
             i += 1
             continue
         raise ValueError(
-            "`jacs mcp run` is stdio-only in haisdk. "
+            "`jacs mcp run` is stdio-only in haiai. "
             "Only optional `--bin <path>` is allowed; transport/runtime overrides are blocked."
         )
 
@@ -345,7 +345,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     """CLI entry point."""
     argv_list = list(argv) if argv is not None else sys.argv[1:]
 
-    # `haisdk jacs ...` => explicit passthrough to JACS CLI
+    # `haiai jacs ...` => explicit passthrough to JACS CLI
     if argv_list and argv_list[0] == "jacs":
         _forward_to_jacs_cli(argv_list[1:])
 

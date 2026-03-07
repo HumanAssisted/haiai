@@ -16,7 +16,7 @@ describe('CLI passthrough', () => {
   });
 
   describe('resolveJacsPassthroughArgs', () => {
-    it('returns null for known haisdk command', () => {
+    it('returns null for known haiai command', () => {
       expect(resolveJacsPassthroughArgs(['status'])).toBeNull();
     });
 
@@ -34,7 +34,7 @@ describe('CLI passthrough', () => {
   });
 
   describe('main', () => {
-    it('forwards explicit `haisdk jacs ...` to JACS CLI', async () => {
+    it('forwards explicit `haiai jacs ...` to JACS CLI', async () => {
       runJacsCliMock.mockReturnValue({ status: 0 } as never);
 
       const code = await main(['jacs', 'agent', 'lookup', 'example.com']);

@@ -2,7 +2,7 @@
 /**
  * HAI SDK CLI - Register, test, and manage AI agents.
  *
- * Usage: npx haisdk <command> [options]
+ * Usage: npx haiai <command> [options]
  */
 import { HaiClient } from './client.js';
 import { createAgentSync } from '@hai.ai/jacs';
@@ -12,7 +12,7 @@ import { chmod, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
-const USAGE = `Usage: haisdk <command> [options]
+const USAGE = `Usage: haiai <command> [options]
 
 Commands:
   register         Register a new agent with HAI
@@ -62,7 +62,7 @@ const HAI_COMMANDS = new Set([
 
 /**
  * Determine whether CLI args should be forwarded to `jacs`.
- * - `haisdk jacs ...` forwards explicitly.
+ * - `haiai jacs ...` forwards explicitly.
  * - unknown top-level commands forward transparently.
  */
 export function resolveJacsPassthroughArgs(args: string[]): string[] | null {
@@ -96,7 +96,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     }
 
     if (args.includes('--version') || args.includes('-v')) {
-      process.stdout.write('haisdk 0.1.0\n');
+      process.stdout.write('haiai 0.1.0\n');
       return 0;
     }
 
@@ -150,16 +150,16 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
 function showCommandHelp(command: string) {
   const help: Record<string, string> = {
-    register: 'Usage: haisdk register --name <name> --description <text> --dns <domain> --owner-email <email> [--key-dir <path>] [--config-path <path>] [--url <api-url>]',
-    hello: 'Usage: haisdk hello [--include-test] [--url <api-url>]',
-    benchmark: 'Usage: haisdk benchmark [--tier free|dns_certified|fully_certified] [--url <api-url>]',
-    status: 'Usage: haisdk status [--jacs-id <id>] [--url <api-url>]',
-    'check-username': 'Usage: haisdk check-username --username <name> [--url <api-url>]',
-    'claim-username': 'Usage: haisdk claim-username --username <name> --agent-id <id> [--url <api-url>]',
-    'send-email': 'Usage: haisdk send-email --to <addr> --subject <subj> --body <body> [--url <api-url>]',
-    'list-messages': 'Usage: haisdk list-messages [--limit <n>] [--direction inbound|outbound] [--url <api-url>]',
-    'email-status': 'Usage: haisdk email-status [--url <api-url>]',
-    'fetch-key': 'Usage: haisdk fetch-key --jacs-id <id> [--version <ver>] [--url <api-url>]',
+    register: 'Usage: haiai register --name <name> --description <text> --dns <domain> --owner-email <email> [--key-dir <path>] [--config-path <path>] [--url <api-url>]',
+    hello: 'Usage: haiai hello [--include-test] [--url <api-url>]',
+    benchmark: 'Usage: haiai benchmark [--tier free|dns_certified|fully_certified] [--url <api-url>]',
+    status: 'Usage: haiai status [--jacs-id <id>] [--url <api-url>]',
+    'check-username': 'Usage: haiai check-username --username <name> [--url <api-url>]',
+    'claim-username': 'Usage: haiai claim-username --username <name> --agent-id <id> [--url <api-url>]',
+    'send-email': 'Usage: haiai send-email --to <addr> --subject <subj> --body <body> [--url <api-url>]',
+    'list-messages': 'Usage: haiai list-messages [--limit <n>] [--direction inbound|outbound] [--url <api-url>]',
+    'email-status': 'Usage: haiai email-status [--url <api-url>]',
+    'fetch-key': 'Usage: haiai fetch-key --jacs-id <id> [--version <ver>] [--url <api-url>]',
   };
   process.stdout.write((help[command] || `Unknown command: ${command}`) + '\n');
 }
@@ -228,7 +228,7 @@ async function cmdRegister(args: string[]) {
     // Best effort on non-POSIX filesystems.
   }
 
-  // Update config for haisdk format
+  // Update config for haiai format
   const configData = {
     jacsAgentName: name,
     jacsAgentVersion: '1.0.0',

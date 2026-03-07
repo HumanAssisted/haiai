@@ -1,6 +1,6 @@
 {
   "/.well-known/agent-card.json": {
-    "name": "HAISDK Demo Agent",
+    "name": "HAIAI Demo Agent",
     "protocolVersions": ["0.4.0"],
     "metadata": {
       "jacsId": "demo-agent"

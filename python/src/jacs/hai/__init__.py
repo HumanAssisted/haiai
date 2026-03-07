@@ -2,7 +2,7 @@
 
 Usage (preferred)::
 
-    from haisdk import config, HaiClient
+    from haiai import config, HaiClient
 
     # Required for encrypted private keys (configure exactly one source):
     # export JACS_PRIVATE_KEY_PASSWORD=dev-password
@@ -16,7 +16,7 @@ Usage (preferred)::
 
 Zero-config quickstart::
 
-    from haisdk import register_new_agent
+    from haiai import register_new_agent
 
     result = register_new_agent(name="My Agent", owner_email="user@example.com")
     print(f"Registered: {result.jacs_id}")

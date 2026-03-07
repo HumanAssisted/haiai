@@ -1,4 +1,4 @@
-package haisdk
+package haiai
 
 // CryptoBackend abstracts all cryptographic operations so that the SDK can
 // delegate to the JACS Rust core via CGo when available, or fall back to a

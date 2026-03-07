@@ -1,4 +1,4 @@
-# haisdk
+# HAIAI SDK
 
 Official SDKs for the [HAI.AI](https://hai.ai) agent benchmarking platform.
 
@@ -7,67 +7,67 @@ Official SDKs for the [HAI.AI](https://hai.ai) agent benchmarking platform.
 | Need | Package |
 |------|---------|
 | Just JACS signing/verification | [`jacs`](https://github.com/HumanAssisted/jacs) |
-| Integrating with HAI.AI (benchmarks, leaderboard, agent identity) | **haisdk** (this repo) |
+| Integrating with HAI.AI (benchmarks, leaderboard, agent identity) | **HAIAI SDK** (this repo) |
 
-`haisdk` builds on top of `jacs` -- it uses JACS for signing and adds HAI platform features: benchmark orchestration, SSE/WebSocket transport, agent registration, and leaderboard queries.
+The HAIAI SDK builds on top of `jacs` -- it uses JACS for signing and adds HAI platform features: benchmark orchestration, SSE/WebSocket transport, agent registration, and leaderboard queries.
 
 ## Crypto Policy
 
-`haisdk` is a wrapper around JACS for HAI integrations.
+The HAIAI SDK is a wrapper around JACS for HAI integrations.
 
 Cryptographic operations (signing, verification, key generation, key encryption/decryption, and canonicalization for signatures) must delegate to JACS functions. Local crypto code is transitional and should not be expanded.
 
 See architecture decision record: `docs/adr/0001-crypto-delegation-to-jacs.md`.
 
-Cross-language maintenance guide: `docs/HAISDK_LANGUAGE_SYNC_GUIDE.md`.
+Cross-language maintenance guide: `docs/HAIAI_LANGUAGE_SYNC_GUIDE.md`.
 
 ## Install
 
 ### Homebrew (macOS)
 
-Install `jacs` and `haisdk` separately from the tap:
+Install `jacs` and `haiai` separately from the tap:
 
 ```bash
 brew tap HumanAssisted/homebrew-jacs
 brew install jacs
-brew install haisdk
+brew install haiai
 ```
 
 ### Python
 
 ```bash
-pip install haisdk
+pip install haiai
 # Quickstart examples also import JacsClient:
 pip install jacs
 
 # With optional extras:
-pip install "haisdk[ws]"       # WebSocket support
-pip install "haisdk[sse]"      # SSE support
-pip install "haisdk[langchain]"  # LangChain adapter helpers
-pip install "haisdk[langgraph]"  # LangGraph adapter helpers
-pip install "haisdk[crewai]"   # CrewAI adapter helpers
-pip install "haisdk[mcp]"      # MCP helper wrappers
-pip install "haisdk[agentsdk]" # Agent SDK tool wrappers
-pip install "haisdk[all]"      # Everything
+pip install "haiai[ws]"       # WebSocket support
+pip install "haiai[sse]"      # SSE support
+pip install "haiai[langchain]"  # LangChain adapter helpers
+pip install "haiai[langgraph]"  # LangGraph adapter helpers
+pip install "haiai[crewai]"   # CrewAI adapter helpers
+pip install "haiai[mcp]"      # MCP helper wrappers
+pip install "haiai[agentsdk]" # Agent SDK tool wrappers
+pip install "haiai[all]"      # Everything
 ```
 
 ### Node.js
 
 ```bash
-npm install haisdk @hai.ai/jacs
+npm install haiai @hai.ai/jacs
 ```
 
 ### Go
 
 ```bash
-go get github.com/HumanAssisted/haisdk-go
+go get github.com/HumanAssisted/haiai-go
 ```
 
 ### Rust
 
 ```bash
 # Workspace crates:
-# - rust/haisdk      (library crate)
+# - rust/haiai      (library crate)
 # - rust/hai-mcp     (MCP server binary)
 cd rust
 cargo test
@@ -75,34 +75,34 @@ cargo test
 
 ## CLI Usage
 
-The `haisdk` CLI exposes HAI operations and wraps the full `jacs` CLI.
+The HAIAI SDK CLI exposes HAI operations and wraps the full `jacs` CLI.
 
 ### HAI commands
 
 ```bash
 # Register with HAI
-haisdk register --name "My Agent" --description "..." --dns example.com --owner-email you@example.com
+haiai register --name "My Agent" --description "..." --dns example.com --owner-email you@example.com
 
 # Check registration status
-haisdk status
+haiai status
 ```
 
 ### JACS passthrough (including MCP)
 
 ```bash
 # Explicit passthrough form
-haisdk jacs --help
-haisdk jacs verify ./signed.json
-haisdk jacs mcp install
-haisdk jacs mcp run
+haiai jacs --help
+haiai jacs verify ./signed.json
+haiai jacs mcp install
+haiai jacs mcp run
 
 # Shorthand passthrough also works
-haisdk verify ./signed.json
-haisdk mcp install
-haisdk mcp run
+haiai verify ./signed.json
+haiai mcp install
+haiai mcp run
 ```
 
-`haisdk` enforces local MCP execution for `mcp run` (stdio transport only).  
+The HAIAI SDK enforces local MCP execution for `mcp run` (stdio transport only).  
 Only optional `--bin <path>` is allowed; transport/runtime override args are blocked.
 
 ## Quickstart
@@ -111,13 +111,13 @@ Only optional `--bin <path>` is allowed; transport/runtime override args are blo
 
 ```python
 from jacs.client import JacsClient
-from haisdk import HaiClient
+from haiai import HaiClient
 
 # Direct quickstart now requires identity fields.
 jacs = JacsClient.quickstart(
     name="hai-agent",
     domain="agent.example.com",
-    description="HAISDK quickstart agent",
+    description="HAIAI quickstart agent",
     algorithm="pq2025",
 )
 
@@ -143,13 +143,13 @@ for event in client.connect("https://hai.ai", transport="ws"):
 
 ```typescript
 import { JacsClient } from "@hai.ai/jacs/client";
-import { HaiClient } from "haisdk";
+import { HaiClient } from "haiai";
 
 // Direct quickstart now requires identity fields.
 await JacsClient.quickstart({
   name: "hai-agent",
   domain: "agent.example.com",
-  description: "HAISDK quickstart agent",
+  description: "HAIAI quickstart agent",
   algorithm: "pq2025",
 });
 
@@ -173,7 +173,7 @@ for await (const event of client.connect({ transport: "ws" })) {
 
 ## Step 2: Framework Integration
 
-`haisdk` now exposes thin integration wrappers so you can wire framework tools
+The HAIAI SDK exposes thin integration wrappers so you can wire framework tools
 without copying adapter code.
 
 ### Python: LangGraph / CrewAI / Agent SDK / MCP
@@ -182,16 +182,16 @@ without copying adapter code.
 from jacs.client import JacsClient
 
 # LangGraph/LangChain middleware wrappers
-from haisdk.langgraph import langchain_signing_middleware, langgraph_wrap_tool_call
+from haiai.langgraph import langchain_signing_middleware, langgraph_wrap_tool_call
 
 # CrewAI wrappers
-from haisdk.crewai import crewai_guardrail, crewai_signed_tool
+from haiai.crewai import crewai_guardrail, crewai_signed_tool
 
 # Generic Agent SDK wrapper (sync or async tool functions)
-from haisdk.agentsdk import agentsdk_tool_wrapper
+from haiai.agentsdk import agentsdk_tool_wrapper
 
 # MCP server bootstrap wrapper
-from haisdk.mcp import (
+from haiai.mcp import (
     create_mcp_server,
     register_a2a_tools,
     register_jacs_tools,
@@ -201,12 +201,12 @@ from haisdk.mcp import (
 jacs = JacsClient.quickstart(
     name="hai-agent",
     domain="agent.example.com",
-    description="HAISDK framework agent",
+    description="HAIAI framework agent",
     algorithm="pq2025",
 )
 
 middleware = langchain_signing_middleware(client=jacs)
-mcp = create_mcp_server("hai-sdk")
+mcp = create_mcp_server("haiai")
 
 # Includes jacs_share_public_key and jacs_share_agent
 register_jacs_tools(mcp, client=jacs)
@@ -232,12 +232,12 @@ import {
   createJacsMcpTransportProxy,
   registerJacsMcpTools,
   createAgentSdkToolWrapper,
-} from "haisdk";
+} from "haiai";
 
 const jacs = await JacsClient.quickstart({
   name: "hai-agent",
   domain: "agent.example.com",
-  description: "HAISDK framework agent",
+  description: "HAIAI framework agent",
   algorithm: "pq2025",
 });
 
@@ -265,7 +265,7 @@ import (
 	"fmt"
 	"log"
 
-	hai "github.com/HumanAssisted/haisdk-go"
+	hai "github.com/HumanAssisted/haiai-go"
 )
 
 func main() {
@@ -291,8 +291,8 @@ When using `JACS_PASSWORD_FILE`, configure exactly one source and keep file perm
 
 ## Step 3: A2A Integration
 
-`haisdk` exposes A2A wrappers that delegate to canonical JACS A2A modules.
-This keeps A2A implementation in JACS while giving a single `haisdk` API layer.
+The HAIAI SDK exposes A2A wrappers that delegate to canonical JACS A2A modules.
+This keeps A2A implementation in JACS while giving a single `haiai` API layer.
 
 ### Node
 
@@ -303,13 +303,13 @@ import {
   verifyArtifact,
   registerWithAgentCard,
   onMediatedBenchmarkJob,
-} from "haisdk";
+} from "haiai";
 import { JacsClient } from "@hai.ai/jacs/client";
 
 const jacs = await JacsClient.quickstart({
   name: "hai-agent",
   domain: "agent.example.com",
-  description: "HAISDK agent",
+  description: "HAIAI agent",
   algorithm: "pq2025",
 });
 const a2a = await getA2AIntegration(jacs, { trustPolicy: "verified" });
@@ -326,7 +326,7 @@ console.log(verified);
 ### Python
 
 ```python
-from haisdk.a2a import (
+from haiai.a2a import (
     get_a2a_integration,
     sign_artifact,
     verify_artifact,
@@ -338,7 +338,7 @@ from jacs.client import JacsClient
 jacs = JacsClient.quickstart(
     name="hai-agent",
     domain="agent.example.com",
-    description="HAISDK agent",
+    description="HAIAI agent",
     algorithm="pq2025",
 )
 a2a = get_a2a_integration(jacs, trust_policy="verified")
@@ -378,7 +378,7 @@ _ = ctx // used if calling RegisterWithAgentCard / OnMediatedBenchmarkJob
 ### Rust
 
 ```rust
-use haisdk::{
+use haiai::{
     A2ATrustPolicy, HaiClient, HaiClientOptions, RegisterAgentOptions, StaticJacsProvider,
 };
 use serde_json::json;
@@ -411,11 +411,11 @@ let _merged = a2a.register_options_with_agent_card(
 ## Repository Structure
 
 ```
-haisdk/
-├── python/      # Python SDK (PyPI: haisdk)
-├── node/        # Node.js SDK (npm: haisdk)
-├── go/          # Go SDK (github.com/HumanAssisted/haisdk-go)
-├── rust/        # Rust workspace (haisdk + hai-mcp)
+haiai/
+├── python/      # Python SDK (PyPI: haiai)
+├── node/        # Node.js SDK (npm: haiai)
+├── go/          # Go SDK (github.com/HumanAssisted/haiai-go)
+├── rust/        # Rust workspace (haiai + hai-mcp)
 ├── fixtures/    # Shared cross-language test fixtures
 ├── schemas/     # JSON Schema for HAI events
 └── .github/     # CI/CD workflows

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::{anyhow, Context as _};
-use haisdk::{HaiError, JacsProvider, Result as HaiResult, SignedPayload};
+use haiai::{HaiError, JacsProvider, Result as HaiResult, SignedPayload};
 use jacs::agent::boilerplate::BoilerPlate;
 use jacs::agent::Agent;
 use jacs::crypt::KeyManager;
@@ -180,7 +180,7 @@ impl JacsProvider for EmbeddedJacsProvider {
     }
 
     fn canonical_json(&self, value: &Value) -> HaiResult<String> {
-        Ok(haisdk::jacs::canonicalize_json_rfc8785(value))
+        Ok(haiai::jacs::canonicalize_json_rfc8785(value))
     }
 
     fn verify_a2a_artifact(&self, wrapped_json: &str) -> HaiResult<String> {
@@ -332,7 +332,7 @@ impl<T> Pipe for T {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use haisdk::LocalJacsProvider;
+    use haiai::LocalJacsProvider;
     use tempfile::TempDir;
 
     fn write_temp_fixture_config() -> (TempDir, PathBuf) {

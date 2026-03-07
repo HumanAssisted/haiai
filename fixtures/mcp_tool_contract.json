@@ -1,5 +1,5 @@
 {
-  "description": "Required shared HAISDK MCP tool surface. Languages may expose additional tools, but the tools listed here must keep names and input fields aligned.",
+  "description": "Required shared HAIAI MCP tool surface. Languages may expose additional tools, but the tools listed here must keep names and input fields aligned.",
   "required_tools": [
     {
       "name": "hai_hello",

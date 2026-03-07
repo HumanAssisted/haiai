@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const npmCacheDir = path.join(os.tmpdir(), 'haisdk-npm-cache');
+const npmCacheDir = path.join(os.tmpdir(), 'haiai-npm-cache');
 
 try {
   fs.mkdirSync(npmCacheDir, { recursive: true });
@@ -43,7 +43,7 @@ async function main() {
   }
 
   const cliHelp = run('node', [path.join(root, 'dist', 'esm', 'cli.js'), '--help'], root);
-  if (!(`${cliHelp.stdout}${cliHelp.stderr}`).includes('Usage: haisdk')) {
+  if (!(`${cliHelp.stdout}${cliHelp.stderr}`).includes('Usage: haiai')) {
     throw new Error('CLI help output did not include expected usage text');
   }
 
@@ -55,7 +55,7 @@ async function main() {
   }
 
   const tarballPath = path.join(root, tarballName);
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'haisdk-node-pack-'));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'haiai-node-pack-'));
   const packageDir = path.join(tempDir, 'package');
 
   try {
@@ -77,7 +77,7 @@ async function main() {
       [path.join(packageDir, 'dist', 'esm', 'cli.js'), '--help'],
       root,
     );
-    if (!(`${installedCliHelp.stdout}${installedCliHelp.stderr}`).includes('Usage: haisdk')) {
+    if (!(`${installedCliHelp.stdout}${installedCliHelp.stderr}`).includes('Usage: haiai')) {
       throw new Error('Packaged CLI help output did not include expected usage text');
     }
   } finally {

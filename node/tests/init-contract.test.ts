@@ -48,7 +48,7 @@ describe('shared init contract (node)', () => {
     ]);
     expect(fixture.private_key_password_strategy).toBe('single_source_required');
 
-    const tmp = await mkdtemp(join(tmpdir(), 'haisdk-node-init-contract-'));
+    const tmp = await mkdtemp(join(tmpdir(), 'haiai-node-init-contract-'));
     try {
       const keyDir = join(tmp, 'keys');
       const configPath = join(tmp, 'jacs.config.json');

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""MCP quickstart using HAISDK integration wrappers.
+"""MCP quickstart using HAIAI integration wrappers.
 
 Demonstrates:
 1. JACS quickstart with required identity fields
-2. MCP server bootstrap via HAISDK wrapper
+2. MCP server bootstrap via HAIAI wrapper
 3. Expanded JACS/A2A/trust MCP toolsets
 
 Prerequisites:
-    pip install "haisdk[mcp,a2a]" jacs
+    pip install "haiai[mcp,a2a]" jacs
 
 Usage:
     python python/examples/mcp_quickstart.py
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from jacs.client import JacsClient
 
-from haisdk.mcp import (
+from haiai.mcp import (
     create_mcp_server,
     register_a2a_tools,
     register_jacs_tools,
@@ -29,11 +29,11 @@ def main() -> None:
     jacs = JacsClient.quickstart(
         name="hai-agent",
         domain="agent.example.com",
-        description="HAISDK MCP agent",
+        description="HAIAI MCP agent",
         algorithm="pq2025",
     )
 
-    mcp = create_mcp_server("hai-sdk-example-mcp")
+    mcp = create_mcp_server("haiai-example-mcp")
     register_jacs_tools(mcp, client=jacs)
     register_a2a_tools(mcp, client=jacs)
     register_trust_tools(mcp, client=jacs)

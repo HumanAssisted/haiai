@@ -100,7 +100,7 @@ describe('jacs passthrough library helpers', () => {
 
     it('rejects runtime argument passthrough for `mcp run`', () => {
       expect(() => runJacsCli(['mcp', 'run', '--transport', 'http'])).toThrow(
-        '`jacs mcp run` is stdio-only in haisdk.',
+        '`jacs mcp run` is stdio-only in haiai.',
       );
     });
   });
