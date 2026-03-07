@@ -1,6 +1,6 @@
 [package]
 name = "haisdk"
-version = "0.1.0"
+version = "0.1.1"
 description = "Rust SDK for HAI.AI agent benchmarking, designed as a JACS-delegating wrapper"
 readme = "README.md"
 keywords = ["hai", "jacs", "agent", "benchmark", "sdk"]
@@ -35,8 +35,8 @@ tokio-tungstenite = "0.28"
 url.workspace = true
 uuid.workspace = true
 tempfile = "3"
-jacs = { version = "=0.9.0", optional = true }
-jacs_local_path = { package = "jacs", path = "../../../JACS/jacs", optional = true }
+jacs = { version = "=0.9.1", optional = true }
+jacs_local_path = { package = "jacs", version = "=0.9.1", path = "../../../JACS/jacs", optional = true }
 
 [dev-dependencies]
 httpmock = "0.8"

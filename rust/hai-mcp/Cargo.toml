@@ -1,6 +1,6 @@
 [package]
 name = "hai-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "HAISDK MCP server extending jacs-mcp in-process"
 readme = "README.md"
 keywords = ["hai", "mcp", "agent", "sdk"]
@@ -12,10 +12,10 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-haisdk = { path = "../haisdk", default-features = false, features = ["rustls-tls", "jacs-local"] }
-jacs = { path = "../../../JACS/jacs" }
-jacs-binding-core = { path = "../../../JACS/binding-core" }
-jacs-mcp = { path = "../../../JACS/jacs-mcp", features = ["mcp"] }
+haisdk = { version = "=0.1.1", path = "../haisdk", default-features = false, features = ["rustls-tls", "jacs-local"] }
+jacs = { version = "=0.9.1", path = "../../../JACS/jacs" }
+jacs-binding-core = { version = "=0.9.1", path = "../../../JACS/binding-core" }
+jacs-mcp = { version = "=0.9.1", path = "../../../JACS/jacs-mcp", features = ["mcp"] }
 anyhow = "1"
 base64.workspace = true
 rmcp = { version = "0.12", features = ["server", "transport-io", "macros"] }
