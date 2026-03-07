@@ -283,12 +283,12 @@ struct McpSession {
 }
 
 impl McpSession {
-    fn spawn(hai_url: &str, jacs_config: &Path) -> Self {
+    fn spawn(hai_url: &str, jacs_config: &Path, password: &str) -> Self {
         let mut child = Command::new(haisdk_bin())
             .arg("mcp")
             .env("HAI_URL", hai_url)
             .env("JACS_CONFIG", jacs_config)
-            .env("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123")
+            .env("JACS_PRIVATE_KEY_PASSWORD", password)
             .env("RUST_LOG", "warn")
             .current_dir(jacs_config.parent().expect("config dir"))
             .stdin(Stdio::piped())
@@ -381,7 +381,7 @@ impl Drop for McpSession {
 fn mcp_serves_hai_and_jacs_tools() {
     let jacs_config = jacs_fixture_config();
     let server = MiniHaiServer::start();
-    let mut session = McpSession::spawn(&server.base_url, &jacs_config);
+    let mut session = McpSession::spawn(&server.base_url, &jacs_config, "secretpassord");
     let init_resp = session.initialize();
     assert_eq!(
         init_resp["result"]["serverInfo"]["name"].as_str(),
