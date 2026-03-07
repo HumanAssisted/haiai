@@ -68,21 +68,26 @@ func SetAuthHeaders(req *http.Request, jacsID string, key ed25519.PrivateKey) {
 }
 
 // buildAuthHeader constructs the JACS authentication header using the Client's
-// CryptoBackend. Falls back to direct ed25519 signing if the backend cannot
-// sign (e.g., standalone fallback without a loaded key).
+// CryptoBackend. Prefers full JACS delegation via BuildAuthHeader(), falls back
+// to local construction with SignString(), then to direct Ed25519 signing.
 func (c *Client) buildAuthHeader() string {
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	message := authHeaderMessage(c.jacsID, timestamp)
-
 	if c.crypto != nil {
-		sigB64, err := c.crypto.SignString(message)
-		if err == nil {
+		// Prefer full JACS delegation (JACS handles ID, timestamp, signing atomically)
+		if header, err := c.crypto.BuildAuthHeader(); err == nil {
+			return header
+		}
+
+		// Fallback: local header construction with JACS signing
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+		message := authHeaderMessage(c.jacsID, timestamp)
+		if sigB64, err := c.crypto.SignString(message); err == nil {
 			return authHeaderValue(c.jacsID, timestamp, sigB64)
 		}
-		log.Printf("WARNING: CryptoBackend.SignString failed, falling back to direct Ed25519: %v", err)
+
+		log.Printf("WARNING: CryptoBackend auth header failed, falling back to direct Ed25519")
 	}
 
-	// Fallback to direct signing
+	// Last resort: direct Ed25519 signing
 	return BuildAuthHeader(c.jacsID, c.privateKey)
 }
 

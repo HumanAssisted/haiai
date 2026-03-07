@@ -236,11 +236,8 @@ export class HaiClient {
    * Format: `JACS {jacsId}:{timestamp}:{signature_base64}`
    */
   private buildAuthHeaders(): Record<string, string> {
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const message = `${this.jacsId}:${timestamp}`;
-    const signature = this.agent.signStringSync(message);
     return {
-      'Authorization': `JACS ${this.jacsId}:${timestamp}:${signature}`,
+      'Authorization': this.buildAuthHeader(),
       'Content-Type': 'application/json',
     };
   }
@@ -252,6 +249,11 @@ export class HaiClient {
 
   /** Build the JACS Authorization header value string. */
   buildAuthHeader(): string {
+    // Prefer JACS binding delegation
+    if ('buildAuthHeaderSync' in this.agent && typeof (this.agent as Record<string, unknown>).buildAuthHeaderSync === 'function') {
+      return (this.agent as Record<string, unknown> & { buildAuthHeaderSync: () => string }).buildAuthHeaderSync();
+    }
+    // Fallback: local construction
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const message = `${this.jacsId}:${timestamp}`;
     const signature = this.agent.signStringSync(message);

@@ -131,24 +131,15 @@ export function unwrapSignedEvent(
       const signedContent = canonicalJson(doc.data, agent);
       let valid = false;
       if (agent) {
-        try {
-          valid = agent.verifyStringSync(
-            signedContent,
-            doc.jacsSignature.signature,
-            Buffer.from(publicKeyPem, 'utf-8'),
-            'pem',
-          );
-        } catch {
-          valid = false;
-        }
+        valid = agent.verifyStringSync(
+          signedContent,
+          doc.jacsSignature.signature,
+          Buffer.from(publicKeyPem, 'utf-8'),
+          'pem',
+        );
       } else {
-        // Attempt standalone verification via JACS
-        try {
-          const standaloneResult = verifyDocumentStandalone(JSON.stringify(eventData));
-          valid = standaloneResult.valid;
-        } catch {
-          valid = false;
-        }
+        const standaloneResult = verifyDocumentStandalone(JSON.stringify(eventData));
+        valid = standaloneResult.valid;
       }
       if (!valid) {
         throw new Error(`JACS signature verification failed for agentID="${agentID}"`);
@@ -172,16 +163,12 @@ export function unwrapSignedEvent(
       }, agent);
       let valid = false;
       if (agent) {
-        try {
-          valid = agent.verifyStringSync(
-            signedContent,
-            (sig.signature as string) || '',
-            Buffer.from(publicKeyPem, 'utf-8'),
-            'pem',
-          );
-        } catch {
-          valid = false;
-        }
+        valid = agent.verifyStringSync(
+          signedContent,
+          (sig.signature as string) || '',
+          Buffer.from(publicKeyPem, 'utf-8'),
+          'pem',
+        );
       }
       if (!valid) {
         throw new Error(`JACS signature verification failed for key_id="${keyId}"`);
@@ -207,15 +194,15 @@ export function signResponse(
   agent: JacsAgent,
   jacsId: string,
 ): { signed_document: string; agent_jacs_id: string } {
-  const canonicalPayload = canonicalJson(jobResponse, agent);
-
-  // Prefer JACS binding delegation (centralizes envelope format in jacs::protocol)
+  // Prefer JACS binding delegation (JACS canonicalizes internally via RFC 8785)
   if ('signResponseSync' in agent && typeof (agent as Record<string, unknown>).signResponseSync === 'function') {
-    const resultJson = (agent as Record<string, unknown> & { signResponseSync: (p: string) => string }).signResponseSync(canonicalPayload);
+    const rawJson = JSON.stringify(jobResponse);
+    const resultJson = (agent as Record<string, unknown> & { signResponseSync: (p: string) => string }).signResponseSync(rawJson);
     return { signed_document: resultJson, agent_jacs_id: jacsId };
   }
 
   // Fallback for agents without signResponseSync
+  const canonicalPayload = canonicalJson(jobResponse, agent);
   const now = new Date().toISOString();
   const documentId = randomUUID();
   const hash = hashString(canonicalPayload);

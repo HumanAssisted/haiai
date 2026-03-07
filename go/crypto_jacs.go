@@ -109,6 +109,10 @@ func (b *jacsBackend) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (strin
 	return "", fmt.Errorf("jacs backend: UnwrapSignedEvent requires a loaded agent; use Client.crypto instead")
 }
 
+func (b *jacsBackend) BuildAuthHeader() (string, error) {
+	return "", fmt.Errorf("jacs backend: BuildAuthHeader requires a loaded agent; use Client.crypto instead")
+}
+
 func (b *jacsBackend) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
 	return "", fmt.Errorf("jacs backend: SignA2AArtifact requires a loaded agent; use Client.crypto instead")
 }
@@ -218,6 +222,13 @@ func (b *clientJacsBackend) UnwrapSignedEvent(eventJSON, serverKeysJSON string) 
 		return "", fmt.Errorf("jacs backend: agent not loaded")
 	}
 	return b.agent.UnwrapSignedEvent(eventJSON, serverKeysJSON)
+}
+
+func (b *clientJacsBackend) BuildAuthHeader() (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.BuildAuthHeader()
 }
 
 func (b *clientJacsBackend) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
@@ -363,6 +374,14 @@ func (b *clientEd25519FallbackInJacs) EncodeVerifyPayload(document string) (stri
 
 func (b *clientEd25519FallbackInJacs) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
 	return "", fmt.Errorf("jacs fallback: UnwrapSignedEvent requires loaded JACS agent")
+}
+
+func (b *clientEd25519FallbackInJacs) BuildAuthHeader() (string, error) {
+	if b.privateKey == nil {
+		return "", fmt.Errorf("jacs fallback: private key not loaded")
+	}
+	b.logFallbackWarning()
+	return BuildAuthHeader(b.jacsID, b.privateKey), nil
 }
 
 func (b *clientEd25519FallbackInJacs) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {

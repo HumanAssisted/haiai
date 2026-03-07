@@ -411,14 +411,14 @@ def sign_response(
     Returns:
         Dict with ``signed_document`` (JSON string) and ``agent_jacs_id``.
     """
-    canonical_payload = canonicalize_json(job_response_payload)
-
-    # Prefer JACS binding delegation (centralizes envelope format in jacs::protocol)
+    # Prefer JACS binding delegation (JACS canonicalizes internally via RFC 8785)
     if hasattr(agent, "sign_response"):
-        result_json = agent.sign_response(canonical_payload)
+        raw_json = json.dumps(job_response_payload, separators=(",", ":"))
+        result_json = agent.sign_response(raw_json)
         return {"signed_document": result_json, "agent_jacs_id": jacs_id}
 
     # Fallback for agents without sign_response (test mocks)
+    canonical_payload = canonicalize_json(job_response_payload)
     doc_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     payload_hash = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()

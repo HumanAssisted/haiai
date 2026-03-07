@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { mergeAgentJsonWithAgentCard } from '../src/a2a.js';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
 function loadFixture(name: string): Record<string, unknown> {
-  const file = join(process.cwd(), '..', 'fixtures', 'a2a', name);
+  const file = join(__dirname, '..', '..', 'fixtures', 'a2a', name);
   return JSON.parse(readFileSync(file, 'utf-8')) as Record<string, unknown>;
 }
 

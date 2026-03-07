@@ -60,6 +60,11 @@ type CryptoBackend interface {
 	// Fallback backends return an error.
 	UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error)
 
+	// BuildAuthHeader constructs the full JACS Authorization header value.
+	// Format: "JACS {jacsId}:{timestamp}:{signature_base64}"
+	// Delegates to JACS core when available. Fallback backends return an error.
+	BuildAuthHeader() (string, error)
+
 	// --- A2A Protocol Methods ---
 	// These methods delegate to the JACS Rust core for A2A operations.
 	// Fallback backends return descriptive errors since A2A requires JACS core.

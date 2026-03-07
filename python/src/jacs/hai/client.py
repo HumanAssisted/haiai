@@ -221,9 +221,9 @@ class HaiClient:
     def _build_jacs_auth_header(self) -> str:
         """Build ``Authorization: JACS {jacsId}:{timestamp}:{signature}``.
 
-        The signed message is ``"{jacsId}:{timestamp}"`` matching the Rust
-        ``extract_jacs_credentials`` parser.
-        Signing delegates to JACS binding-core via the loaded JacsAgent.
+        Delegates to JACS binding-core ``build_auth_header`` when available,
+        falling back to local construction for agents that only provide
+        ``sign_string`` (e.g. test mocks).
         """
         from jacs.hai.config import get_config, get_agent
 
@@ -233,6 +233,11 @@ class HaiClient:
         if cfg.jacs_id is None:
             raise HaiAuthError("jacsId is required for JACS authentication")
 
+        # Prefer JACS binding delegation
+        if hasattr(agent, "build_auth_header"):
+            return agent.build_auth_header()
+
+        # Fallback: local construction (test mocks without build_auth_header)
         timestamp = int(time.time())
         message = f"{cfg.jacs_id}:{timestamp}"
         signature = agent.sign_string(message)

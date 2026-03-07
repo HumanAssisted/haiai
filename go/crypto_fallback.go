@@ -103,6 +103,10 @@ func (f *ed25519Fallback) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (s
 	return "", fmt.Errorf("ed25519 fallback: UnwrapSignedEvent requires JACS backend; build with '-tags jacs'")
 }
 
+func (f *ed25519Fallback) BuildAuthHeader() (string, error) {
+	return "", fmt.Errorf("ed25519 fallback: BuildAuthHeader requires a loaded private key; use Client.buildAuthHeader instead")
+}
+
 func (f *ed25519Fallback) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
 	return "", fmt.Errorf("ed25519 fallback: SignA2AArtifact requires JACS backend; build with '-tags jacs'")
 }
@@ -186,6 +190,13 @@ func (b *clientEd25519Backend) EncodeVerifyPayload(document string) (string, err
 
 func (b *clientEd25519Backend) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
 	return "", fmt.Errorf("ed25519 fallback: UnwrapSignedEvent requires JACS backend; build with '-tags jacs'")
+}
+
+func (b *clientEd25519Backend) BuildAuthHeader() (string, error) {
+	if b.privateKey == nil {
+		return "", fmt.Errorf("ed25519 fallback: private key not loaded")
+	}
+	return BuildAuthHeader(b.jacsID, b.privateKey), nil
 }
 
 func (b *clientEd25519Backend) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
