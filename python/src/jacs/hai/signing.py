@@ -347,6 +347,10 @@ def sign_response(
 
         {"signed_document": "<json string>", "agent_jacs_id": "..."}
 
+    Delegates envelope construction to JACS binding-core when the agent
+    exposes ``sign_response``. Falls back to local construction for agents
+    that only provide ``sign_string`` (e.g. test mocks).
+
     Args:
         job_response_payload: The ``JobResponseRequest`` dict.
         agent: A loaded JacsAgent instance (from JACS binding-core).
@@ -355,13 +359,17 @@ def sign_response(
     Returns:
         Dict with ``signed_document`` (JSON string) and ``agent_jacs_id``.
     """
+    canonical_payload = canonicalize_json(job_response_payload)
+
+    # Prefer JACS binding delegation (centralizes envelope format in jacs::protocol)
+    if hasattr(agent, "sign_response"):
+        result_json = agent.sign_response(canonical_payload)
+        return {"signed_document": result_json, "agent_jacs_id": jacs_id}
+
+    # Fallback for agents without sign_response (test mocks)
     doc_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
-
-    canonical_payload = canonicalize_json(job_response_payload)
     payload_hash = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
-
-    # Store data in canonical (sorted-key) form for cross-language compat
     sorted_data: dict[str, Any] = json.loads(canonical_payload)
 
     jacs_doc: dict[str, Any] = {

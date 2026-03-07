@@ -159,28 +159,28 @@ export function unwrapSignedEvent(
 /**
  * Sign a job response as a JACS document via JACS core.
  *
- * Creates a JacsDocument matching the Python SDK format:
- *   {version, document_type, data, metadata, jacsSignature}
- *
- * The signature is computed over the canonical JSON of the job response
- * payload (matching Python which signs `canonicalize_json(job_response_payload)`).
+ * Delegates envelope construction to JACS binding-core when the agent
+ * exposes `signResponseSync`. Falls back to local construction for agents
+ * that only provide `signStringSync` (e.g. test mocks).
  */
 export function signResponse(
   jobResponse: unknown,
   agent: JacsAgent,
   jacsId: string,
 ): { signed_document: string; agent_jacs_id: string } {
+  const canonicalPayload = canonicalJson(jobResponse);
+
+  // Prefer JACS binding delegation (centralizes envelope format in jacs::protocol)
+  if ('signResponseSync' in agent && typeof (agent as Record<string, unknown>).signResponseSync === 'function') {
+    const resultJson = (agent as Record<string, unknown> & { signResponseSync: (p: string) => string }).signResponseSync(canonicalPayload);
+    return { signed_document: resultJson, agent_jacs_id: jacsId };
+  }
+
+  // Fallback for agents without signResponseSync
   const now = new Date().toISOString();
   const documentId = randomUUID();
-
-  // Canonical JSON of the payload for signing and hashing
-  const canonicalPayload = canonicalJson(jobResponse);
   const hash = hashString(canonicalPayload);
-
-  // Store data in canonical (sorted-key) form for cross-language compat
   const sortedData: unknown = JSON.parse(canonicalPayload);
-
-  // Sign the canonical payload data via JACS
   const signature = agent.signStringSync(canonicalPayload);
 
   const jacsDoc: JacsDocument = {

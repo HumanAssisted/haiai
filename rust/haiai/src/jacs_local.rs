@@ -7,12 +7,9 @@ use jacs::agent::boilerplate::BoilerPlate;
 use jacs::crypt::KeyManager;
 use jacs::simple::{self, CreateAgentParams, SimpleAgent};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
-use time::OffsetDateTime;
-use uuid::Uuid;
 
 use crate::error::{HaiError, Result};
-use crate::jacs::{canonicalize_json_rfc8785, JacsProvider};
+use crate::jacs::JacsProvider;
 #[cfg(feature = "jacs-crate")]
 use crate::types::RotationResult;
 use crate::types::{CreateAgentOptions, CreateAgentResult, SignedPayload};
@@ -203,9 +200,7 @@ impl JacsProvider for LocalJacsProvider {
     }
 
     fn canonical_json(&self, value: &Value) -> Result<String> {
-        // Canonical JSON for HAIAI contract parity (sorted keys, compact JSON).
-        // Signing itself remains delegated to JACS.
-        Ok(canonicalize_json_rfc8785(value))
+        Ok(jacs::protocol::canonicalize_json(value))
     }
 
     fn verify_a2a_artifact(&self, wrapped_json: &str) -> Result<String> {
@@ -229,40 +224,16 @@ impl JacsProvider for LocalJacsProvider {
     }
 
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
-        let canonical_payload = self.canonical_json(payload)?;
-        let sorted_data: Value = serde_json::from_str(&canonical_payload)?;
+        let mut agent = self
+            .agent
+            .lock()
+            .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
 
-        let hash = {
-            let mut hasher = Sha256::new();
-            hasher.update(canonical_payload.as_bytes());
-            format!("{:x}", hasher.finalize())
-        };
-
-        let now = OffsetDateTime::now_utc()
-            .format(&time::format_description::well_known::Rfc3339)
-            .map_err(|e| HaiError::Provider(format!("failed to format timestamp: {e}")))?;
-
-        let signature = self.sign_string(&canonical_payload)?;
-
-        let doc = serde_json::json!({
-            "version": "1.0.0",
-            "document_type": "job_response",
-            "data": sorted_data,
-            "metadata": {
-                "issuer": self.jacs_id,
-                "document_id": Uuid::new_v4().to_string(),
-                "created_at": now,
-                "hash": hash,
-            },
-            "jacsSignature": {
-                "agentID": self.jacs_id,
-                "date": now,
-                "signature": signature,
-            },
-        });
+        let envelope = jacs::protocol::sign_response(&mut agent, payload)
+            .map_err(|e| HaiError::Provider(format!("JACS sign_response failed: {e}")))?;
 
         Ok(SignedPayload {
-            signed_document: serde_json::to_string(&doc)?,
+            signed_document: serde_json::to_string(&envelope)?,
             agent_jacs_id: self.jacs_id.clone(),
         })
     }

@@ -22,3 +22,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 sha2 = "0.10"
+
+# Use local JACS crate until protocol module is published
+[patch.crates-io]
+jacs = { path = "../../JACS/jacs" }

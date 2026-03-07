@@ -1018,7 +1018,7 @@ dependencies = [
  "anyhow",
  "base64",
  "haiai",
- "jacs 0.9.1",
+ "jacs",
  "jacs-binding-core",
  "jacs-mcp",
  "rmcp",
@@ -1042,8 +1042,7 @@ dependencies = [
  "base64",
  "futures-util",
  "httpmock",
- "jacs 0.9.1",
- "jacs 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "jacs",
  "percent-encoding",
  "reqwest 0.13.2",
  "serde",
@@ -1576,68 +1575,7 @@ checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
 
 [[package]]
 name = "jacs"
-version = "0.9.1"
-dependencies = [
- "aes-gcm",
- "base64",
- "chrono",
- "difference",
- "dirs",
- "encoding_rs",
- "env_logger",
- "fips203",
- "fips204",
- "flate2",
- "futures-executor",
- "futures-util",
- "getset",
- "hex",
- "hickory-resolver",
- "hkdf",
- "jsonschema",
- "lazy_static",
- "log",
- "mail-parser",
- "mime_guess",
- "moka",
- "object_store",
- "pbkdf2",
- "pem",
- "phf",
- "rand 0.9.2",
- "referencing 0.33.0",
- "regex",
- "reqwest 0.13.2",
- "ring",
- "rpassword",
- "rsa",
- "secrecy",
- "serde",
- "serde_json",
- "serde_json_canonicalizer",
- "sha2",
- "signature",
- "strum",
- "strum_macros",
- "thiserror 2.0.18",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "unicode-normalization",
- "url",
- "uuid",
- "validator",
- "walkdir",
- "wasm-bindgen",
- "web-sys",
- "zeroize",
-]
-
-[[package]]
-name = "jacs"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b7725173b63c9c2ea44a2d0fd5be4fede290b49cb65dd23c554386f9131bd14"
+version = "0.9.2"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1696,10 +1634,12 @@ dependencies = [
 
 [[package]]
 name = "jacs-binding-core"
-version = "0.9.1"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1d9bdaee3ece1855025e34c8a39da3341f77c3907db27937acf30924ba3fdbb"
 dependencies = [
  "base64",
- "jacs 0.9.1",
+ "jacs",
  "serde",
  "serde_json",
  "tracing",
@@ -1707,11 +1647,13 @@ dependencies = [
 
 [[package]]
 name = "jacs-mcp"
-version = "0.9.1"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a983d99da9494413d137f5a7a34340a8237baf3a50ada5d2fd9b3865d3251ab"
 dependencies = [
  "anyhow",
  "chrono",
- "jacs 0.9.1",
+ "jacs",
  "jacs-binding-core",
  "rmcp",
  "schemars",

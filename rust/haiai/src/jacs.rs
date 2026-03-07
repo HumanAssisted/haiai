@@ -229,11 +229,16 @@ impl JacsProvider for StaticJacsProvider {
 
 /// Canonical JSON per RFC 8785 (JSON Canonicalization Scheme / JCS).
 ///
-/// Uses the `serde_json_canonicalizer` crate for full compliance including:
-/// - Sorted keys
-/// - IEEE 754 number serialization
-/// - Minimal Unicode escape handling
-/// - No unnecessary whitespace
+/// When the `jacs-crate` feature is enabled, delegates to `jacs::protocol::canonicalize_json`.
+#[cfg(feature = "jacs-crate")]
+pub fn canonicalize_json_rfc8785(value: &Value) -> String {
+    jacs::protocol::canonicalize_json(value)
+}
+
+/// Canonical JSON per RFC 8785 (JSON Canonicalization Scheme / JCS).
+///
+/// Local fallback when `jacs-crate` feature is not enabled.
+#[cfg(not(feature = "jacs-crate"))]
 pub fn canonicalize_json_rfc8785(value: &Value) -> String {
     serde_json_canonicalizer::to_string(value).unwrap_or_else(|_| "null".to_string())
 }
