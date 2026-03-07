@@ -1,0 +1,187 @@
+name: Publish Rust Crates
+
+on:
+  push:
+    tags:
+      - "rust/v*"
+
+permissions:
+  contents: write
+
+jobs:
+  verify-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: extract
+        run: |
+          TAG="${GITHUB_REF#refs/tags/rust/v}"
+          echo "version=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Check Cargo.toml versions match tag
+        run: |
+          TAG_VERSION="${{ steps.extract.outputs.version }}"
+          for dir in rust/haisdk rust/hai-mcp rust/haisdk-cli; do
+            CARGO_VERSION=$(grep '^version = ' $dir/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+            echo "$dir version: $CARGO_VERSION, tag: $TAG_VERSION"
+            if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+              echo "::error::Version mismatch! $dir/Cargo.toml has $CARGO_VERSION but tag is $TAG_VERSION"
+              exit 1
+            fi
+          done
+
+  publish:
+    needs: verify-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Publish haisdk to crates.io
+        working-directory: rust/haisdk
+        run: cargo publish --no-default-features --features rustls-tls,jacs-crate --token ${{ secrets.CRATES_IO_TOKEN }}
+
+      - name: Wait for crates.io index update
+        run: sleep 30
+
+      - name: Publish hai-mcp to crates.io
+        working-directory: rust/hai-mcp
+        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}
+
+      - name: Wait for crates.io index update
+        run: sleep 30
+
+      - name: Publish haisdk-cli to crates.io
+        working-directory: rust/haisdk-cli
+        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}
+
+  build:
+    needs: verify-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset_suffix: darwin-arm64
+          - os: macos-14
+            target: x86_64-apple-darwin
+            asset_suffix: darwin-x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset_suffix: linux-x64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset_suffix: linux-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset_suffix: windows-x64
+
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.verify-version.outputs.version }}
+      CLI_ASSET_NAME: haisdk-cli-${{ needs.verify-version.outputs.version }}-${{ matrix.asset_suffix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build CLI binary
+        working-directory: rust
+        run: cargo build --release -p haisdk-cli --target ${{ matrix.target }}
+
+      - name: Smoke test (Unix)
+        if: runner.os != 'Windows'
+        run: ./rust/target/${{ matrix.target }}/release/haisdk --version
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\rust\target\${{ matrix.target }}\release\haisdk.exe --version
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cp rust/target/${{ matrix.target }}/release/haisdk haisdk-cli
+          tar czf ${CLI_ASSET_NAME}.tar.gz haisdk-cli
+          shasum -a 256 ${CLI_ASSET_NAME}.tar.gz > ${CLI_ASSET_NAME}.tar.gz.sha256
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item "rust/target/${{ matrix.target }}/release/haisdk.exe" "haisdk-cli.exe"
+          Compress-Archive -Path "haisdk-cli.exe" -DestinationPath "${env:CLI_ASSET_NAME}.zip"
+          Get-FileHash "${env:CLI_ASSET_NAME}.zip" -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  ${env:CLI_ASSET_NAME}.zip" } | Out-File "${env:CLI_ASSET_NAME}.zip.sha256" -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.asset_suffix }}
+          path: |
+            ${{ env.CLI_ASSET_NAME }}.*
+
+  release:
+    needs: [verify-version, build, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect checksums
+        run: |
+          cd artifacts
+          find . -name "*.sha256" -exec cat {} \; > ../sha256sums.txt
+          cd ..
+          cat sha256sums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: rust/v${{ needs.verify-version.outputs.version }}
+          name: HAISDK CLI v${{ needs.verify-version.outputs.version }}
+          body: |
+            ## HAISDK CLI v${{ needs.verify-version.outputs.version }}
+
+            Unified `haisdk` binary with CLI + built-in MCP server.
+
+            ### Install
+
+            **From crates.io:**
+            ```bash
+            cargo install haisdk-cli
+            ```
+
+            **From prebuilt binary:**
+            ```bash
+            # macOS (Apple Silicon)
+            curl -LO https://github.com/HumanAssisted/haisdk/releases/download/rust/v${{ needs.verify-version.outputs.version }}/haisdk-cli-${{ needs.verify-version.outputs.version }}-darwin-arm64.tar.gz
+            tar xzf haisdk-cli-*.tar.gz
+            sudo mv haisdk-cli /usr/local/bin/haisdk
+
+            # Linux (x86_64)
+            curl -LO https://github.com/HumanAssisted/haisdk/releases/download/rust/v${{ needs.verify-version.outputs.version }}/haisdk-cli-${{ needs.verify-version.outputs.version }}-linux-x64.tar.gz
+            tar xzf haisdk-cli-*.tar.gz
+            sudo mv haisdk-cli /usr/local/bin/haisdk
+            ```
+
+            **Start MCP server (stdio):**
+            ```bash
+            haisdk mcp
+            ```
+
+            ### Verify checksums
+            ```bash
+            shasum -a 256 -c sha256sums.txt
+            ```
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
+            sha256sums.txt
