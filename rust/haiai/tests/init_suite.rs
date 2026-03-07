@@ -1,4 +1,4 @@
-#![cfg(any(feature = "jacs-crate", feature = "jacs-local"))]
+#![cfg(feature = "jacs-crate")]
 
 use std::fs;
 use std::path::PathBuf;

@@ -8,7 +8,7 @@
 //! HAI_LIVE_TEST=1 cargo test -p haiai email_integration -- --nocapture
 //! ```
 
-#![cfg(any(feature = "jacs-crate", feature = "jacs-local"))]
+#![cfg(feature = "jacs-crate")]
 
 use haiai::{
     CreateAgentOptions, HaiClient, HaiClientOptions, ListMessagesOptions, LocalJacsProvider,

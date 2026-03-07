@@ -14,8 +14,8 @@ path = "src/main.rs"
 
 [dependencies]
 hai-mcp = { version = "=0.1.1", path = "../hai-mcp" }
-haiai = { version = "=0.1.1", path = "../haiai", default-features = false, features = ["rustls-tls", "jacs-local"] }
-jacs-mcp = { version = "=0.9.2", path = "../../../JACS/jacs-mcp", features = ["mcp"] }
+haiai = { version = "=0.1.1", path = "../haiai" }
+jacs-mcp = { version = "=0.9.2", features = ["mcp"] }
 anyhow = "1"
 rmcp = { version = "0.12", features = ["server", "transport-io", "macros"] }
 clap = { version = "4", features = ["derive"] }

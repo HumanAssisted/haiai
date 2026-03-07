@@ -2,8 +2,6 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-#[cfg(all(feature = "jacs-local", not(feature = "jacs-crate")))]
-use jacs_local_path as jacs;
 
 use jacs::agent::boilerplate::BoilerPlate;
 use jacs::crypt::KeyManager;
@@ -15,7 +13,7 @@ use uuid::Uuid;
 
 use crate::error::{HaiError, Result};
 use crate::jacs::{canonicalize_json_rfc8785, JacsProvider};
-#[cfg(feature = "jacs-local")]
+#[cfg(feature = "jacs-crate")]
 use crate::types::RotationResult;
 use crate::types::{CreateAgentOptions, CreateAgentResult, SignedPayload};
 
@@ -177,12 +175,12 @@ impl JacsProvider for LocalJacsProvider {
         // Use Agent::sign_bytes when available (jacs-local path with our changes).
         // For the crates.io jacs-crate path, fall back to sign_string
         // with base64 encoding as a bridge.
-        #[cfg(feature = "jacs-local")]
+        #[cfg(feature = "jacs-crate")]
         {
             jacs::agent::Agent::sign_bytes(&mut *agent, data)
                 .map_err(|e| HaiError::Provider(format!("JACS sign_bytes failed: {e}")))
         }
-        #[cfg(not(feature = "jacs-local"))]
+        #[cfg(not(feature = "jacs-crate"))]
         {
             use base64::Engine;
             // Encode data as base64 string, sign it, then decode the signature
@@ -269,7 +267,7 @@ impl JacsProvider for LocalJacsProvider {
         })
     }
 
-    #[cfg(feature = "jacs-local")]
+    #[cfg(feature = "jacs-crate")]
     fn rotate(&self) -> Result<RotationResult> {
         let simple = self.load_simple_agent()?;
         let jacs_result = simple

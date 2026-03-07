@@ -3,7 +3,7 @@
 //! Validates the Rust SDK against the shared `fixtures/email_conformance.json`
 //! fixture to ensure structural equivalence with Go, Node, and Python SDKs.
 
-#![cfg(any(feature = "jacs-crate", feature = "jacs-local"))]
+#![cfg(feature = "jacs-crate")]
 
 use haiai::{EmailVerificationResultV2, FieldStatus};
 use serde_json::Value;

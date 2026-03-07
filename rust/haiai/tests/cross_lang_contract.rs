@@ -1,4 +1,4 @@
-#![cfg(any(feature = "jacs-crate", feature = "jacs-local"))]
+#![cfg(feature = "jacs-crate")]
 
 use base64::Engine;
 use haiai::{HaiClient, HaiClientOptions, StaticJacsProvider};
