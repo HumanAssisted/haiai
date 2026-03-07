@@ -1013,7 +1013,7 @@ dependencies = [
 
 [[package]]
 name = "hai-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -1036,14 +1036,14 @@ dependencies = [
 
 [[package]]
 name = "haisdk"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "base64",
  "futures-util",
  "httpmock",
- "jacs 0.9.0",
  "jacs 0.9.1",
+ "jacs 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "percent-encoding",
  "reqwest 0.13.2",
  "serde",
@@ -1061,7 +1061,7 @@ dependencies = [
 
 [[package]]
 name = "haisdk-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1069,6 +1069,8 @@ dependencies = [
  "haisdk",
  "jacs-mcp",
  "rmcp",
+ "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1574,9 +1576,7 @@ checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
 
 [[package]]
 name = "jacs"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2dc121f33ebc95762b8f3f66cc396e78a9ced08aaf3f5d660f5cabc7d40cba6"
+version = "0.9.1"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1636,6 +1636,8 @@ dependencies = [
 [[package]]
 name = "jacs"
 version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b7725173b63c9c2ea44a2d0fd5be4fede290b49cb65dd23c554386f9131bd14"
 dependencies = [
  "aes-gcm",
  "base64",
