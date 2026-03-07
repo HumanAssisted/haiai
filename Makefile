@@ -1,9 +1,7 @@
 .PHONY: test test-python test-node test-go test-rust \
         versions check-versions \
         release-node release-python release-rust release-all \
-        release-delete-tags retry-node retry-python retry-rust \
-        check-version-node check-version-python check-version-rust \
-        help
+        release-delete-tags help
 
 # ============================================================================
 # VERSION DETECTION
@@ -72,6 +70,7 @@ check-versions:
 # ============================================================================
 # Create git tags that trigger GitHub Actions release workflows.
 # Versions are auto-detected from source files.
+# Safe to re-run — existing tags are deleted and recreated.
 #
 # Required GitHub Secrets:
 #   - CRATES_IO_TOKEN  (for rust/v* tags)
@@ -79,67 +78,32 @@ check-versions:
 #   - NPM_TOKEN        (for node/v* tags)
 # ============================================================================
 
-check-version-rust:
-	@echo "rust version: $(RUST_VERSION)"
-	@if git tag -l | grep -q "^rust/v$(RUST_VERSION)$$"; then \
-		echo "ERROR: Tag rust/v$(RUST_VERSION) already exists"; exit 1; fi
-	@echo "Tag rust/v$(RUST_VERSION) is available"
-
-check-version-python:
-	@echo "python version: $(PYTHON_VERSION)"
-	@if git tag -l | grep -q "^python/v$(PYTHON_VERSION)$$"; then \
-		echo "ERROR: Tag python/v$(PYTHON_VERSION) already exists"; exit 1; fi
-	@echo "Tag python/v$(PYTHON_VERSION) is available"
-
-check-version-node:
-	@echo "node version: $(NODE_VERSION)"
-	@if git tag -l | grep -q "^node/v$(NODE_VERSION)$$"; then \
-		echo "ERROR: Tag node/v$(NODE_VERSION) already exists"; exit 1; fi
-	@echo "Tag node/v$(NODE_VERSION) is available"
-
-release-rust: check-version-rust
+release-rust:
+	@echo "Releasing Rust v$(RUST_VERSION)..."
+	-git tag -d rust/v$(RUST_VERSION) 2>/dev/null
+	-git push origin --delete rust/v$(RUST_VERSION) 2>/dev/null
 	git tag rust/v$(RUST_VERSION)
 	git push origin rust/v$(RUST_VERSION)
 	@echo "Tagged rust/v$(RUST_VERSION) - CI will publish to crates.io + build CLI binaries"
 
-release-python: check-version-python
+release-python:
+	@echo "Releasing Python v$(PYTHON_VERSION)..."
+	-git tag -d python/v$(PYTHON_VERSION) 2>/dev/null
+	-git push origin --delete python/v$(PYTHON_VERSION) 2>/dev/null
 	git tag python/v$(PYTHON_VERSION)
 	git push origin python/v$(PYTHON_VERSION)
 	@echo "Tagged python/v$(PYTHON_VERSION) - CI will publish to PyPI"
 
-release-node: check-version-node
+release-node:
+	@echo "Releasing Node v$(NODE_VERSION)..."
+	-git tag -d node/v$(NODE_VERSION) 2>/dev/null
+	-git push origin --delete node/v$(NODE_VERSION) 2>/dev/null
 	git tag node/v$(NODE_VERSION)
 	git push origin node/v$(NODE_VERSION)
 	@echo "Tagged node/v$(NODE_VERSION) - CI will publish to npm"
 
 release-all: check-versions release-rust release-python release-node
 	@echo "All release tags pushed for v$(RUST_VERSION). CI will handle publishing."
-
-# --- Retry targets (delete old tag, retag, push) ---
-
-retry-rust:
-	@echo "Retrying Rust release for v$(RUST_VERSION)..."
-	-git tag -d rust/v$(RUST_VERSION)
-	-git push origin --delete rust/v$(RUST_VERSION)
-	git tag rust/v$(RUST_VERSION)
-	git push origin rust/v$(RUST_VERSION)
-	@echo "Re-tagged rust/v$(RUST_VERSION)"
-
-retry-python:
-	@echo "Retrying Python release for v$(PYTHON_VERSION)..."
-	-git tag -d python/v$(PYTHON_VERSION)
-	-git push origin --delete python/v$(PYTHON_VERSION)
-	git tag python/v$(PYTHON_VERSION)
-	git push origin python/v$(PYTHON_VERSION)
-	@echo "Re-tagged python/v$(PYTHON_VERSION)"
-
-retry-node:
-	@echo "Retrying Node release for v$(NODE_VERSION)..."
-	-git tag -d node/v$(NODE_VERSION)
-	-git push origin --delete node/v$(NODE_VERSION)
-	git tag node/v$(NODE_VERSION)
-	git push origin node/v$(NODE_VERSION)
-	@echo "Re-tagged node/v$(NODE_VERSION)"
 
 release-delete-tags:
 	@echo "Deleting tags for version $(RUST_VERSION)..."
@@ -165,15 +129,12 @@ help:
 	@echo "  make test-go         Run Go tests"
 	@echo "  make test-rust       Run Rust tests"
 	@echo ""
-	@echo "RELEASE (via git tags, versions auto-detected):"
+	@echo "RELEASE (via git tags, versions auto-detected, safe to re-run):"
 	@echo "  make release-rust    Tag rust/v<ver>   -> crates.io + CLI binaries"
 	@echo "  make release-python  Tag python/v<ver> -> PyPI"
 	@echo "  make release-node    Tag node/v<ver>   -> npm"
 	@echo "  make release-all     Verify versions, then release all"
-	@echo "  make release-delete-tags  Delete tags (fix failed releases)"
-	@echo "  make retry-rust      Retry failed Rust release"
-	@echo "  make retry-python    Retry failed Python release"
-	@echo "  make retry-node      Retry failed Node release"
+	@echo "  make release-delete-tags  Delete all tags for current version"
 	@echo ""
 	@echo "Required GitHub Secrets:"
 	@echo "  CRATES_IO_TOKEN  - for rust/v* tags"
