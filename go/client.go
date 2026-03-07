@@ -811,7 +811,28 @@ func (c *Client) SubmitResponse(ctx context.Context, jobID string, response Mode
 }
 
 // signResponse wraps a response payload in a JACS document envelope and signs it.
+//
+// Delegates to CryptoBackend.SignResponse (JACS core) when available. Falls back
+// to local envelope construction + SignBytes for backends that don't support it.
 func (c *Client) signResponse(response interface{}) (map[string]interface{}, error) {
+	// Try JACS delegation first
+	if c.crypto != nil {
+		payloadBytes, err := json.Marshal(response)
+		if err != nil {
+			return nil, wrapError(ErrSigningFailed, err, "failed to marshal response for signing")
+		}
+		signedJSON, signErr := c.crypto.SignResponse(string(payloadBytes))
+		if signErr == nil {
+			var result map[string]interface{}
+			if parseErr := json.Unmarshal([]byte(signedJSON), &result); parseErr != nil {
+				return nil, wrapError(ErrSigningFailed, parseErr, "failed to parse signed response")
+			}
+			return result, nil
+		}
+		// Fall through to local construction if SignResponse not supported
+	}
+
+	// Fallback: local envelope construction
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	doc := map[string]interface{}{

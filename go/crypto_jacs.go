@@ -93,6 +93,22 @@ func (b *jacsBackend) Algorithm() string {
 	return "JACS"
 }
 
+func (b *jacsBackend) CanonicalizeJSON(jsonStr string) (string, error) {
+	return "", fmt.Errorf("jacs backend: CanonicalizeJSON requires a loaded agent; use Client.crypto instead")
+}
+
+func (b *jacsBackend) SignResponse(payloadJSON string) (string, error) {
+	return "", fmt.Errorf("jacs backend: SignResponse requires a loaded agent; use Client.crypto instead")
+}
+
+func (b *jacsBackend) EncodeVerifyPayload(document string) (string, error) {
+	return "", fmt.Errorf("jacs backend: EncodeVerifyPayload requires a loaded agent; use Client.crypto instead")
+}
+
+func (b *jacsBackend) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
+	return "", fmt.Errorf("jacs backend: UnwrapSignedEvent requires a loaded agent; use Client.crypto instead")
+}
+
 func (b *jacsBackend) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
 	return "", fmt.Errorf("jacs backend: SignA2AArtifact requires a loaded agent; use Client.crypto instead")
 }
@@ -174,6 +190,34 @@ func (b *clientJacsBackend) GenerateKeyPair() ([]byte, []byte, error) {
 
 func (b *clientJacsBackend) Algorithm() string {
 	return "JACS"
+}
+
+func (b *clientJacsBackend) CanonicalizeJSON(jsonStr string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.CanonicalizeJson(jsonStr)
+}
+
+func (b *clientJacsBackend) SignResponse(payloadJSON string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.SignResponse(payloadJSON)
+}
+
+func (b *clientJacsBackend) EncodeVerifyPayload(document string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.EncodeVerifyPayload(document)
+}
+
+func (b *clientJacsBackend) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.UnwrapSignedEvent(eventJSON, serverKeysJSON)
 }
 
 func (b *clientJacsBackend) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
@@ -303,6 +347,22 @@ func (b *clientEd25519FallbackInJacs) GenerateKeyPair() ([]byte, []byte, error) 
 
 func (b *clientEd25519FallbackInJacs) Algorithm() string {
 	return "Ed25519"
+}
+
+func (b *clientEd25519FallbackInJacs) CanonicalizeJSON(jsonStr string) (string, error) {
+	return canonicalizeJSONLocal(jsonStr)
+}
+
+func (b *clientEd25519FallbackInJacs) SignResponse(payloadJSON string) (string, error) {
+	return "", fmt.Errorf("jacs fallback: SignResponse requires loaded JACS agent")
+}
+
+func (b *clientEd25519FallbackInJacs) EncodeVerifyPayload(document string) (string, error) {
+	return base64.RawURLEncoding.EncodeToString([]byte(document)), nil
+}
+
+func (b *clientEd25519FallbackInJacs) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
+	return "", fmt.Errorf("jacs fallback: UnwrapSignedEvent requires loaded JACS agent")
 }
 
 func (b *clientEd25519FallbackInJacs) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {

@@ -36,6 +36,30 @@ type CryptoBackend interface {
 	// Algorithm returns the signing algorithm name (e.g., "Ed25519", "pq2025").
 	Algorithm() string
 
+	// CanonicalizeJSON produces canonical JSON per RFC 8785 (JCS).
+	// jsonStr is any valid JSON string.
+	// Returns the canonicalized JSON string.
+	// Fallback backends use Go's json.Marshal (sorted keys).
+	CanonicalizeJSON(jsonStr string) (string, error)
+
+	// SignResponse wraps a response payload in a signed JACS document envelope.
+	// payloadJSON is the JSON string of the payload to sign.
+	// Returns the signed document JSON string.
+	// Fallback backends return an error.
+	SignResponse(payloadJSON string) (string, error)
+
+	// EncodeVerifyPayload encodes a document as URL-safe base64 (no padding)
+	// for verification links.
+	// Fallback backends use Go's base64.RawURLEncoding.
+	EncodeVerifyPayload(document string) (string, error)
+
+	// UnwrapSignedEvent unwraps and verifies a signed event using server keys.
+	// eventJSON is the signed event JSON string.
+	// serverKeysJSON is the server public keys JSON string.
+	// Returns the unwrapped event payload as a JSON string.
+	// Fallback backends return an error.
+	UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error)
+
 	// --- A2A Protocol Methods ---
 	// These methods delegate to the JACS Rust core for A2A operations.
 	// Fallback backends return descriptive errors since A2A requires JACS core.

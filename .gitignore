@@ -38,6 +38,7 @@ go/haiai
 vendor/
 
 # Rust
+rust/.cargo/
 rust/target/
 rust/haiai/target/
 rust/haiai/data/

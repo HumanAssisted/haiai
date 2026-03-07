@@ -35,10 +35,25 @@ logger = logging.getLogger("jacs.hai.signing")
 
 
 def canonicalize_json(obj: dict) -> str:
-    """Produce canonical JSON matching Rust serde_json::to_string() with BTreeMap.
+    """Produce canonical JSON per RFC 8785 (JCS).
 
-    Sorted keys, compact separators, no trailing newline.
+    Delegates to JACS binding-core when available, falling back to
+    Python's ``json.dumps`` with sorted keys for environments where
+    the JACS native module is not installed.
     """
+    try:
+        from jacs.hai.config import is_loaded, get_agent
+
+        if is_loaded():
+            agent = get_agent()
+            if hasattr(agent, "canonicalize_json"):
+                # JACS expects a JSON string, not a dict
+                json_str = json.dumps(obj, sort_keys=True, separators=(",", ":"))
+                return agent.canonicalize_json(json_str)
+    except Exception:
+        pass
+
+    # Fallback: local sorted-key JSON (matches for simple cases)
     return json.dumps(obj, sort_keys=True, separators=(",", ":"))
 
 
@@ -275,7 +290,9 @@ def unwrap_signed_event(
 ) -> tuple[dict[str, Any], bool]:
     """Unwrap a JACS-signed event, optionally verifying the server signature.
 
-    Verification delegates to JACS binding-core via verify_string.
+    Delegates to JACS binding-core ``unwrap_signed_event`` when the agent
+    is loaded and supports it.  Falls back to local unwrap + verify_string
+    for environments without the native JACS module.
 
     Args:
         data: The parsed JSON from SSE/WS.
@@ -286,6 +303,41 @@ def unwrap_signed_event(
         ``(payload, verified)`` -- the inner event payload and whether
         the signature was cryptographically verified.
     """
+    # Try JACS binding-core delegation first
+    if verify and hai_url:
+        try:
+            from jacs.hai.config import is_loaded, get_agent
+
+            if is_loaded():
+                agent = get_agent()
+                if hasattr(agent, "unwrap_signed_event"):
+                    keys = fetch_server_keys(hai_url)
+                    server_keys_dict: dict[str, Any] = {
+                        "keys": [
+                            {
+                                "key_id": k.key_id,
+                                "algorithm": k.algorithm,
+                                "public_key": k.public_key_pem,
+                            }
+                            for k in keys
+                        ]
+                    }
+                    event_json = json.dumps(data)
+                    server_keys_json = json.dumps(server_keys_dict)
+                    result_json = agent.unwrap_signed_event(
+                        event_json, server_keys_json
+                    )
+                    result = json.loads(result_json)
+                    payload = result.get("data", data)
+                    verified = result.get("verified", False)
+                    if isinstance(payload, dict):
+                        return payload, verified
+                    return data, False
+        except Exception:
+            # Fall through to local implementation
+            pass
+
+    # Fallback: local unwrap with JACS verify_string for signature checks
     # JacsDocument format
     if "payload" in data and "signature" in data:
         payload = data["payload"]

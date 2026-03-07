@@ -6,9 +6,11 @@ import (
 	"crypto/ed25519"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 )
 
@@ -85,6 +87,22 @@ func (f *ed25519Fallback) Algorithm() string {
 	return "Ed25519"
 }
 
+func (f *ed25519Fallback) CanonicalizeJSON(jsonStr string) (string, error) {
+	return canonicalizeJSONLocal(jsonStr)
+}
+
+func (f *ed25519Fallback) SignResponse(payloadJSON string) (string, error) {
+	return "", fmt.Errorf("ed25519 fallback: SignResponse requires JACS backend; build with '-tags jacs'")
+}
+
+func (f *ed25519Fallback) EncodeVerifyPayload(document string) (string, error) {
+	return base64.RawURLEncoding.EncodeToString([]byte(document)), nil
+}
+
+func (f *ed25519Fallback) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
+	return "", fmt.Errorf("ed25519 fallback: UnwrapSignedEvent requires JACS backend; build with '-tags jacs'")
+}
+
 func (f *ed25519Fallback) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
 	return "", fmt.Errorf("ed25519 fallback: SignA2AArtifact requires JACS backend; build with '-tags jacs'")
 }
@@ -154,6 +172,22 @@ func (b *clientEd25519Backend) Algorithm() string {
 	return "Ed25519"
 }
 
+func (b *clientEd25519Backend) CanonicalizeJSON(jsonStr string) (string, error) {
+	return canonicalizeJSONLocal(jsonStr)
+}
+
+func (b *clientEd25519Backend) SignResponse(payloadJSON string) (string, error) {
+	return "", fmt.Errorf("ed25519 fallback: SignResponse requires JACS backend; build with '-tags jacs'")
+}
+
+func (b *clientEd25519Backend) EncodeVerifyPayload(document string) (string, error) {
+	return base64.RawURLEncoding.EncodeToString([]byte(document)), nil
+}
+
+func (b *clientEd25519Backend) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
+	return "", fmt.Errorf("ed25519 fallback: UnwrapSignedEvent requires JACS backend; build with '-tags jacs'")
+}
+
 func (b *clientEd25519Backend) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
 	return "", fmt.Errorf("ed25519 fallback: SignA2AArtifact requires JACS backend; build with '-tags jacs'")
 }
@@ -180,4 +214,76 @@ func newClientCryptoBackend(privateKey ed25519.PrivateKey, jacsID string) Crypto
 		privateKey: privateKey,
 		jacsID:     jacsID,
 	}
+}
+
+// canonicalizeJSONLocal produces canonical JSON with sorted keys (local fallback).
+// This is the Go equivalent of RFC 8785 for simple cases: parse, sort keys
+// recursively, re-serialize with compact separators.
+func canonicalizeJSONLocal(jsonStr string) (string, error) {
+	var raw interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
+		return "", fmt.Errorf("canonicalize: invalid JSON: %w", err)
+	}
+	sorted := sortKeys(raw)
+	result, err := json.Marshal(sorted)
+	if err != nil {
+		return "", fmt.Errorf("canonicalize: marshal failed: %w", err)
+	}
+	return string(result), nil
+}
+
+// sortKeys recursively sorts map keys for canonical JSON output.
+func sortKeys(v interface{}) interface{} {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		sorted := make(orderedMap, 0, len(val))
+		for _, k := range keys {
+			sorted = append(sorted, orderedEntry{k, sortKeys(val[k])})
+		}
+		return sorted
+	case []interface{}:
+		result := make([]interface{}, len(val))
+		for i, item := range val {
+			result[i] = sortKeys(item)
+		}
+		return result
+	default:
+		return v
+	}
+}
+
+// orderedEntry holds a key-value pair for ordered JSON serialization.
+type orderedEntry struct {
+	Key   string
+	Value interface{}
+}
+
+// orderedMap is a slice of entries that serializes with insertion order preserved.
+type orderedMap []orderedEntry
+
+func (om orderedMap) MarshalJSON() ([]byte, error) {
+	buf := []byte{'{'}
+	for i, entry := range om {
+		if i > 0 {
+			buf = append(buf, ',')
+		}
+		key, err := json.Marshal(entry.Key)
+		if err != nil {
+			return nil, err
+		}
+		val, err := json.Marshal(entry.Value)
+		if err != nil {
+			return nil, err
+		}
+		buf = append(buf, key...)
+		buf = append(buf, ':')
+		buf = append(buf, val...)
+	}
+	buf = append(buf, '}')
+	return buf, nil
 }

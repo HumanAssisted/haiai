@@ -3610,6 +3610,29 @@ def verify_agent_document(
 # ---------------------------------------------------------------------------
 
 
+def _encode_verify_payload(document: str) -> str:
+    """URL-safe base64 encoding for verification payloads.
+
+    Delegates to JACS binding-core when available so the encoding is
+    identical to the Rust implementation.  Falls back to Python's
+    ``base64.urlsafe_b64encode`` when JACS is not loaded.
+    """
+    try:
+        from jacs.hai.config import is_loaded, get_agent
+
+        if is_loaded():
+            agent = get_agent()
+            if hasattr(agent, "encode_verify_payload"):
+                return agent.encode_verify_payload(document)
+    except Exception:
+        pass
+
+    # Fallback: local base64url encoding (no padding)
+    return base64.urlsafe_b64encode(
+        document.encode("utf-8")
+    ).rstrip(b"=").decode("ascii")
+
+
 def generate_verify_link(
     document: str,
     base_url: str = "https://hai.ai",
@@ -3644,9 +3667,7 @@ def generate_verify_link(
         hosted = False
 
     if not hosted:
-        encoded = base64.urlsafe_b64encode(
-            document.encode("utf-8")
-        ).rstrip(b"=").decode("ascii")
+        encoded = _encode_verify_payload(document)
         path_and_query = f"/jacs/verify?s={encoded}"
         full_url = f"{base}{path_and_query}"
         if len(full_url) > MAX_VERIFY_URL_LEN:

@@ -20,6 +20,11 @@ from typing import Optional, Sequence
 DEFAULT_API_URL = "https://hai.ai"
 
 
+def _default_api_url() -> str:
+    """API URL: HAI_API_URL env (for local testing) else https://hai.ai."""
+    return os.getenv("HAI_API_URL", DEFAULT_API_URL)
+
+
 def _load_config_if_exists() -> None:
     """Attempt to load jacs.config.json from the default location."""
     from jacs.hai.config import is_loaded, load
@@ -190,8 +195,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--api-url",
-        default=DEFAULT_API_URL,
-        help=f"HAI API URL (default: {DEFAULT_API_URL})",
+        default=None,
+        help=f"HAI API URL (default: HAI_API_URL env or {DEFAULT_API_URL})",
     )
 
     sub = parser.add_subparsers(dest="command", help="Available commands")
@@ -359,6 +364,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         raise SystemExit(0)
 
     args = parser.parse_args(argv_list)
+    if getattr(args, "api_url", None) is None:
+        args.api_url = _default_api_url()
 
     if not args.command:
         parser.print_help()
