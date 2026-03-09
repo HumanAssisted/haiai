@@ -64,7 +64,7 @@ When updating Rust integrations, use these canonical upstream repos as reference
 1. `~/personal/JACS/jacs`
 2. `~/personal/JACS/jacs-mcp`
 
-Target canonical version pin for both integrations: `0.9.2`.
+Target canonical version pin for both integrations: `0.9.3`.
 
 ### Authentication header format
 
@@ -160,7 +160,8 @@ Private-key candidate order:
 The Rust workspace lives under `rust/`:
 
 1. `rust/haiai`: publishable library crate
-2. `rust/hai-mcp`: MCP server binary crate
+2. `rust/haiai-cli`: CLI binary crate (`haiai` binary with built-in MCP server)
+3. `rust/hai-mcp`: MCP server library crate
 
 Rust-specific boundary points:
 
