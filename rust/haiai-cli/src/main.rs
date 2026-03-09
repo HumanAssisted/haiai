@@ -1,9 +1,13 @@
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use hai_mcp::{HaiMcpServer, HaiServerContext, LoadedSharedAgent};
-use haiai::{CreateAgentOptions, JacsProvider, LocalJacsProvider};
+use haiai::{
+    CreateAgentOptions, HaiClient, HaiClientOptions, JacsProvider, ListMessagesOptions,
+    LocalJacsProvider, RegisterAgentOptions, SearchOptions, SendEmailOptions,
+};
 use jacs_mcp::JacsMcpServer;
 use rmcp::{transport::stdio, ServiceExt};
+use serde_json::Value;
 
 #[derive(Parser)]
 #[command(name = "haiai", version, about = "HAIAI CLI")]
@@ -43,6 +47,141 @@ enum Commands {
 
     /// Start the built-in HAIAI MCP server (stdio transport)
     Mcp,
+
+    /// Ping the HAI API and verify connectivity
+    Hello,
+
+    /// Register this agent with the HAI platform
+    Register {
+        /// Owner email for registration notifications
+        #[arg(long)]
+        owner_email: String,
+
+        /// Optional description of this agent
+        #[arg(long)]
+        description: Option<String>,
+    },
+
+    /// Check registration and verification status
+    Status,
+
+    /// Check if a username is available
+    CheckUsername {
+        /// Username to check
+        username: String,
+    },
+
+    /// Claim a @hai.ai username for this agent
+    ClaimUsername {
+        /// Username to claim
+        username: String,
+    },
+
+    /// Send a signed email from this agent
+    SendEmail {
+        /// Recipient email address
+        #[arg(long)]
+        to: String,
+
+        /// Email subject line
+        #[arg(long)]
+        subject: String,
+
+        /// Email body text
+        #[arg(long)]
+        body: String,
+    },
+
+    /// List email messages
+    ListMessages {
+        /// Maximum number of messages to return
+        #[arg(long, default_value = "20")]
+        limit: u32,
+
+        /// Offset for pagination
+        #[arg(long, default_value = "0")]
+        offset: u32,
+
+        /// Filter by direction: inbound or outbound
+        #[arg(long)]
+        direction: Option<String>,
+    },
+
+    /// Search email messages
+    SearchMessages {
+        /// Search query string
+        #[arg(long)]
+        q: Option<String>,
+
+        /// Filter by sender address
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Filter by recipient address
+        #[arg(long)]
+        to: Option<String>,
+
+        /// Maximum number of results
+        #[arg(long, default_value = "20")]
+        limit: u32,
+    },
+
+    /// Run a benchmark against the HAI platform
+    Benchmark {
+        /// Benchmark name
+        #[arg(long, default_value = "cli-benchmark")]
+        name: String,
+
+        /// Benchmark tier: free, pro, or enterprise
+        #[arg(long, default_value = "free")]
+        tier: String,
+    },
+}
+
+fn hai_url() -> String {
+    std::env::var("HAI_URL").unwrap_or_else(|_| "https://hai.ai".to_string())
+}
+
+/// Load the local JACS provider and build a HaiClient.
+///
+/// The provider is loaded from `JACS_CONFIG` / `JACS_CONFIG_PATH` env vars
+/// or `./jacs.config.json`. The base URL comes from `HAI_URL` env var
+/// or defaults to `https://hai.ai`.
+fn load_client() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
+    let provider = LocalJacsProvider::from_config_path(None)
+        .context("failed to load JACS agent from config")?;
+    let options = HaiClientOptions {
+        base_url: hai_url(),
+        ..Default::default()
+    };
+    let client =
+        HaiClient::new(provider, options).context("failed to construct HaiClient")?;
+    Ok(client)
+}
+
+/// Print a table of email messages in a consistent format.
+fn print_message_table(messages: &[haiai::EmailMessage]) {
+    if messages.is_empty() {
+        println!("No messages.");
+        return;
+    }
+    println!(
+        "{:<9} {:<28} {:<28} {:<40} {:<20} {:<5}",
+        "DIRECTION", "FROM", "TO", "SUBJECT", "DATE", "READ"
+    );
+    println!("{}", "-".repeat(130));
+    for msg in messages {
+        let subject = if msg.subject.len() > 38 {
+            format!("{}...", &msg.subject[..35])
+        } else {
+            msg.subject.clone()
+        };
+        let read = if msg.is_read { "yes" } else { "no" };
+        println!(
+            "{:<9} {:<28} {:<28} {:<40} {:<20} {:<5}",
+            msg.direction, msg.from_address, msg.to_address, subject, msg.created_at, read,
+        );
+    }
 }
 
 #[tokio::main]
@@ -119,7 +258,462 @@ async fn main() -> anyhow::Result<()> {
             let running = server.serve((stdin, stdout)).await?;
             running.waiting().await?;
         }
+
+        Commands::Hello => {
+            let client = load_client()?;
+            let result = client.hello(false).await.context("hello failed")?;
+            println!("  Timestamp: {}", result.timestamp);
+            println!("  Message:   {}", result.message);
+            println!("  Hello ID:  {}", result.hello_id);
+        }
+
+        Commands::Register {
+            owner_email,
+            description,
+        } => {
+            let provider = LocalJacsProvider::from_config_path(None)
+                .context("failed to load JACS agent from config")?;
+            let agent_json = provider
+                .export_agent_json()
+                .context("failed to export agent JSON")?;
+            let public_key = provider
+                .public_key_pem()
+                .context("failed to read public key PEM")?;
+
+            let options = HaiClientOptions {
+                base_url: hai_url(),
+                ..Default::default()
+            };
+            let client = HaiClient::new(provider, options)
+                .context("failed to construct HaiClient")?;
+
+            let reg_options = RegisterAgentOptions {
+                agent_json,
+                public_key_pem: Some(public_key),
+                owner_email: Some(owner_email.clone()),
+                description,
+                ..Default::default()
+            };
+            let result = client
+                .register(&reg_options)
+                .await
+                .context("registration failed")?;
+
+            println!("  Agent ID:            {}", result.agent_id);
+            println!("  JACS ID:             {}", result.jacs_id);
+            println!(
+                "  Registration Status: {}",
+                if result.success {
+                    "registered"
+                } else {
+                    "failed"
+                }
+            );
+            println!("  Email:               {}", owner_email);
+        }
+
+        Commands::Status => {
+            let client = load_client()?;
+            let jacs_id = client.jacs_id().to_string();
+            let result = client
+                .verify_status(Some(&jacs_id))
+                .await
+                .context("status check failed")?;
+            println!("  JACS ID:       {}", result.jacs_id);
+            println!("  Registered:    {}", result.registered);
+            println!("  DNS Verified:  {}", result.dns_verified);
+            println!("  Registered At: {}", result.registered_at);
+        }
+
+        Commands::CheckUsername { username } => {
+            let client = load_client()?;
+            let result = client
+                .check_username(&username)
+                .await
+                .context("username check failed")?;
+            println!("  Available: {}", result.available);
+            println!("  Username:  {}", result.username);
+            if let Some(reason) = &result.reason {
+                println!("  Reason:    {}", reason);
+            }
+        }
+
+        Commands::ClaimUsername { username } => {
+            let mut client = load_client()?;
+            let agent_id = client.jacs_id().to_string();
+            let result = client
+                .claim_username(&agent_id, &username)
+                .await
+                .context("username claim failed")?;
+            println!("  Username: {}", result.username);
+            println!("  Email:    {}", result.email);
+            println!("  Agent ID: {}", result.agent_id);
+        }
+
+        Commands::SendEmail { to, subject, body } => {
+            let client = load_client()?;
+            let options = SendEmailOptions {
+                to,
+                subject,
+                body,
+                in_reply_to: None,
+                attachments: vec![],
+            };
+            let result = client
+                .send_signed_email(&options)
+                .await
+                .context("send email failed")?;
+            println!("  Message ID: {}", result.message_id);
+            println!("  Status:     {}", result.status);
+        }
+
+        Commands::ListMessages {
+            limit,
+            offset,
+            direction,
+        } => {
+            let client = load_client()?;
+            let options = ListMessagesOptions {
+                limit: Some(limit),
+                offset: Some(offset),
+                direction,
+            };
+            let messages = client
+                .list_messages(&options)
+                .await
+                .context("list messages failed")?;
+            print_message_table(&messages);
+        }
+
+        Commands::SearchMessages {
+            q,
+            from,
+            to,
+            limit,
+        } => {
+            let client = load_client()?;
+            let options = SearchOptions {
+                q,
+                from_address: from,
+                to_address: to,
+                limit: Some(limit),
+                ..Default::default()
+            };
+            let messages = client
+                .search_messages(&options)
+                .await
+                .context("search messages failed")?;
+            print_message_table(&messages);
+        }
+
+        Commands::Benchmark { name, tier } => {
+            let client = load_client()?;
+            let result = client
+                .benchmark(Some(&name), Some(&tier))
+                .await
+                .context("benchmark failed")?;
+
+            let run_id = result
+                .get("run_id")
+                .or_else(|| result.get("runId"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let status = result
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let tier_val = result
+                .get("tier")
+                .and_then(Value::as_str)
+                .unwrap_or(&tier);
+
+            println!("  Run ID: {}", run_id);
+            println!("  Status: {}", status);
+            println!("  Tier:   {}", tier_val);
+        }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_help_does_not_panic() {
+        // Verify the CLI definition is well-formed and --help can render.
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn parse_init() {
+        let cli = Cli::parse_from([
+            "haiai", "init", "--name", "myagent", "--domain", "example.com",
+        ]);
+        match cli.command {
+            Commands::Init {
+                name,
+                domain,
+                algorithm,
+                data_dir,
+                key_dir,
+                config_path,
+            } => {
+                assert_eq!(name, "myagent");
+                assert_eq!(domain, "example.com");
+                assert_eq!(algorithm, "pq2025");
+                assert_eq!(data_dir, "./jacs");
+                assert_eq!(key_dir, "./jacs_keys");
+                assert_eq!(config_path, "./jacs.config.json");
+            }
+            _ => panic!("expected Init command"),
+        }
+    }
+
+    #[test]
+    fn parse_mcp() {
+        let cli = Cli::parse_from(["haiai", "mcp"]);
+        assert!(matches!(cli.command, Commands::Mcp));
+    }
+
+    #[test]
+    fn parse_hello() {
+        let cli = Cli::parse_from(["haiai", "hello"]);
+        assert!(matches!(cli.command, Commands::Hello));
+    }
+
+    #[test]
+    fn parse_register_required_args() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "register",
+            "--owner-email",
+            "agent@example.com",
+        ]);
+        match cli.command {
+            Commands::Register {
+                owner_email,
+                description,
+            } => {
+                assert_eq!(owner_email, "agent@example.com");
+                assert!(description.is_none());
+            }
+            _ => panic!("expected Register command"),
+        }
+    }
+
+    #[test]
+    fn parse_register_with_description() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "register",
+            "--owner-email",
+            "agent@example.com",
+            "--description",
+            "My test agent",
+        ]);
+        match cli.command {
+            Commands::Register {
+                owner_email,
+                description,
+            } => {
+                assert_eq!(owner_email, "agent@example.com");
+                assert_eq!(description.as_deref(), Some("My test agent"));
+            }
+            _ => panic!("expected Register command"),
+        }
+    }
+
+    #[test]
+    fn parse_register_missing_email_fails() {
+        let result = Cli::try_parse_from(["haiai", "register"]);
+        assert!(result.is_err(), "register without --owner-email should fail");
+    }
+
+    #[test]
+    fn parse_status() {
+        let cli = Cli::parse_from(["haiai", "status"]);
+        assert!(matches!(cli.command, Commands::Status));
+    }
+
+    #[test]
+    fn parse_check_username() {
+        let cli = Cli::parse_from(["haiai", "check-username", "alice"]);
+        match cli.command {
+            Commands::CheckUsername { username } => {
+                assert_eq!(username, "alice");
+            }
+            _ => panic!("expected CheckUsername command"),
+        }
+    }
+
+    #[test]
+    fn parse_check_username_missing_arg_fails() {
+        let result = Cli::try_parse_from(["haiai", "check-username"]);
+        assert!(result.is_err(), "check-username without positional arg should fail");
+    }
+
+    #[test]
+    fn parse_claim_username() {
+        let cli = Cli::parse_from(["haiai", "claim-username", "bob"]);
+        match cli.command {
+            Commands::ClaimUsername { username } => {
+                assert_eq!(username, "bob");
+            }
+            _ => panic!("expected ClaimUsername command"),
+        }
+    }
+
+    #[test]
+    fn parse_send_email() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "send-email",
+            "--to",
+            "friend@hai.ai",
+            "--subject",
+            "Hello",
+            "--body",
+            "Hi there!",
+        ]);
+        match cli.command {
+            Commands::SendEmail { to, subject, body } => {
+                assert_eq!(to, "friend@hai.ai");
+                assert_eq!(subject, "Hello");
+                assert_eq!(body, "Hi there!");
+            }
+            _ => panic!("expected SendEmail command"),
+        }
+    }
+
+    #[test]
+    fn parse_send_email_missing_args_fails() {
+        let result = Cli::try_parse_from(["haiai", "send-email", "--to", "x@hai.ai"]);
+        assert!(result.is_err(), "send-email without --subject and --body should fail");
+    }
+
+    #[test]
+    fn parse_list_messages_defaults() {
+        let cli = Cli::parse_from(["haiai", "list-messages"]);
+        match cli.command {
+            Commands::ListMessages {
+                limit,
+                offset,
+                direction,
+            } => {
+                assert_eq!(limit, 20);
+                assert_eq!(offset, 0);
+                assert!(direction.is_none());
+            }
+            _ => panic!("expected ListMessages command"),
+        }
+    }
+
+    #[test]
+    fn parse_list_messages_with_args() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "list-messages",
+            "--limit",
+            "50",
+            "--offset",
+            "10",
+            "--direction",
+            "inbound",
+        ]);
+        match cli.command {
+            Commands::ListMessages {
+                limit,
+                offset,
+                direction,
+            } => {
+                assert_eq!(limit, 50);
+                assert_eq!(offset, 10);
+                assert_eq!(direction.as_deref(), Some("inbound"));
+            }
+            _ => panic!("expected ListMessages command"),
+        }
+    }
+
+    #[test]
+    fn parse_search_messages_defaults() {
+        let cli = Cli::parse_from(["haiai", "search-messages"]);
+        match cli.command {
+            Commands::SearchMessages {
+                q,
+                from,
+                to,
+                limit,
+            } => {
+                assert!(q.is_none());
+                assert!(from.is_none());
+                assert!(to.is_none());
+                assert_eq!(limit, 20);
+            }
+            _ => panic!("expected SearchMessages command"),
+        }
+    }
+
+    #[test]
+    fn parse_search_messages_with_args() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "search-messages",
+            "--q",
+            "invoice",
+            "--from",
+            "sender@hai.ai",
+            "--to",
+            "me@hai.ai",
+            "--limit",
+            "5",
+        ]);
+        match cli.command {
+            Commands::SearchMessages {
+                q,
+                from,
+                to,
+                limit,
+            } => {
+                assert_eq!(q.as_deref(), Some("invoice"));
+                assert_eq!(from.as_deref(), Some("sender@hai.ai"));
+                assert_eq!(to.as_deref(), Some("me@hai.ai"));
+                assert_eq!(limit, 5);
+            }
+            _ => panic!("expected SearchMessages command"),
+        }
+    }
+
+    #[test]
+    fn parse_benchmark_defaults() {
+        let cli = Cli::parse_from(["haiai", "benchmark"]);
+        match cli.command {
+            Commands::Benchmark { name, tier } => {
+                assert_eq!(name, "cli-benchmark");
+                assert_eq!(tier, "free");
+            }
+            _ => panic!("expected Benchmark command"),
+        }
+    }
+
+    #[test]
+    fn parse_benchmark_with_args() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "benchmark",
+            "--name",
+            "stress-test",
+            "--tier",
+            "pro",
+        ]);
+        match cli.command {
+            Commands::Benchmark { name, tier } => {
+                assert_eq!(name, "stress-test");
+                assert_eq!(tier, "pro");
+            }
+            _ => panic!("expected Benchmark command"),
+        }
+    }
 }

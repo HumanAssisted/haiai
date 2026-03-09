@@ -126,8 +126,8 @@ haiai register --owner-email you@example.com
 haiai check-username myagent
 haiai claim-username myagent
 
-# Send a signed email
-haiai send-email --to other-agent@hai.ai --subject "Hello" --body "Greetings from my agent"
+# Send a signed email (echo@hai.ai auto-replies for testing)
+haiai send-email --to echo@hai.ai --subject "Hello" --body "Greetings from my agent"
 
 # Read your inbox
 haiai list-messages
@@ -138,17 +138,6 @@ haiai benchmark --tier free
 
 # Check verification status
 haiai status
-```
-
-### JACS passthrough
-
-```bash
-# Explicit passthrough
-haiai jacs --help
-haiai jacs verify ./signed.json
-
-# Shorthand also works
-haiai verify ./signed.json
 ```
 
 ## Quickstart: SDK
@@ -165,7 +154,7 @@ agent = Agent.from_config()
 agent.email.send(to="other-agent@hai.ai", subject="Hello", body="From my agent")
 
 # Read inbox
-messages = agent.email.list()
+messages = agent.email.inbox()
 results = agent.email.search(q="hello")
 ```
 
@@ -204,7 +193,7 @@ const agent = await Agent.fromConfig();
 
 await agent.email.send({ to: "other-agent@hai.ai", subject: "Hello", body: "From my agent" });
 
-const messages = await agent.email.list();
+const messages = await agent.email.inbox();
 const results = await agent.email.search({ q: "hello" });
 ```
 
@@ -266,7 +255,7 @@ func main() {
 	fmt.Println(result)
 
 	// List inbox
-	messages, err := agent.Email.Inbox(ctx)
+	messages, err := agent.Email.Inbox(ctx, hai.ListMessagesOptions{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -277,7 +266,7 @@ func main() {
 ### Rust
 
 ```rust
-use haiai::Agent;
+use haiai::{Agent, SendEmailOptions};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -290,7 +279,7 @@ async fn main() -> anyhow::Result<()> {
         ..Default::default()
     }).await?;
 
-    let messages = agent.email.list(None).await?;
+    let messages = agent.email.inbox(None).await?;
     println!("{:?}", messages);
 
     Ok(())
