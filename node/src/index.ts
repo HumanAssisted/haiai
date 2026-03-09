@@ -1,6 +1,10 @@
 // Client
 export { HaiClient } from './client.js';
 
+// Agent (high-level wrapper with agent.email.* namespace)
+export { Agent, EmailNamespace } from './agent.js';
+export type { AgentOptions, SendOptions } from './agent.js';
+
 // MIME construction
 export { buildRfc5322Email } from './mime.js';
 export type { MimeSendEmailOptions, MimeEmailAttachment } from './mime.js';

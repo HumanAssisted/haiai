@@ -1,0 +1,246 @@
+/**
+ * High-level Agent API for HAI email operations.
+ *
+ * Provides an `Agent` class with an `agent.email` namespace that wraps
+ * the existing {@link HaiClient} for email operations. All emails are
+ * sent signed with the agent's JACS key. There is no unsigned send path.
+ *
+ * @example
+ * ```typescript
+ * import { Agent } from 'haiai';
+ *
+ * const agent = await Agent.fromConfig('./jacs.config.json');
+ * await agent.email.send({ to: 'other@hai.ai', subject: 'Hello', body: 'World' });
+ * ```
+ */
+
+import { HaiClient } from './client.js';
+import type {
+  EmailMessage,
+  EmailStatus,
+  ListMessagesOptions,
+  SearchOptions,
+  SendEmailOptions,
+  SendEmailResult,
+} from './types.js';
+
+/** Options for creating an Agent. */
+export interface AgentOptions {
+  /** HAI API base URL (default: https://hai.ai). */
+  baseUrl?: string;
+  /** Request timeout in ms (default: 30000). */
+  timeout?: number;
+}
+
+/**
+ * High-level agent wrapper providing `agent.email.*` namespace.
+ *
+ * Created via {@link Agent.fromConfig} which loads the JACS config and
+ * initializes the underlying {@link HaiClient}. All email operations
+ * go through the agent's JACS key -- there is no unsigned path.
+ */
+export class Agent {
+  /** Email operations namespace. */
+  readonly email: EmailNamespace;
+
+  private readonly _client: HaiClient;
+
+  constructor(client: HaiClient) {
+    this._client = client;
+    this.email = new EmailNamespace(client);
+  }
+
+  /**
+   * Create an Agent from a `jacs.config.json` file.
+   *
+   * Loads the JACS agent configuration and initializes the client.
+   *
+   * @param configPath - Path to jacs.config.json.
+   * @param options - Optional client options (base URL, timeout).
+   * @returns A configured Agent instance.
+   */
+  static async fromConfig(
+    configPath: string = './jacs.config.json',
+    options?: AgentOptions,
+  ): Promise<Agent> {
+    const client = new HaiClient({
+      configPath,
+      baseUrl: options?.baseUrl,
+      timeout: options?.timeout,
+    });
+    return new Agent(client);
+  }
+
+  /** Access the underlying {@link HaiClient} for advanced operations. */
+  get client(): HaiClient {
+    return this._client;
+  }
+}
+
+/** Options for the send method. */
+export interface SendOptions {
+  /** Recipient email address. */
+  to: string;
+  /** Email subject line. */
+  subject: string;
+  /** Plain text email body. */
+  body: string;
+  /** Optional Message-ID for threading. */
+  inReplyTo?: string;
+  /** Optional file attachments. */
+  attachments?: Array<{
+    filename: string;
+    contentType: string;
+    data: Buffer;
+  }>;
+}
+
+/**
+ * Email operations namespace.
+ *
+ * All methods delegate to {@link HaiClient} email methods. The
+ * {@link EmailNamespace.send} method always signs with the agent's
+ * JACS key via `sendSignedEmail`. There is no unsigned send path.
+ */
+export class EmailNamespace {
+  private readonly _client: HaiClient;
+
+  constructor(client: HaiClient) {
+    this._client = client;
+  }
+
+  /**
+   * Send an email, always signed with the agent's JACS key.
+   *
+   * Builds RFC 5322 MIME, signs with the agent's Ed25519 key via JACS,
+   * and submits to the HAI API. There is no unsigned send path.
+   *
+   * @param options - Email options (to, subject, body, attachments).
+   * @returns SendEmailResult with messageId and status.
+   */
+  async send(options: SendOptions): Promise<SendEmailResult> {
+    return this._client.sendSignedEmail({
+      to: options.to,
+      subject: options.subject,
+      body: options.body,
+      inReplyTo: options.inReplyTo,
+      attachments: options.attachments?.map(a => ({
+        filename: a.filename,
+        contentType: a.contentType,
+        data: a.data,
+      })),
+    });
+  }
+
+  /**
+   * List inbox messages (direction=inbound).
+   *
+   * @param options - Optional list options (limit, offset).
+   * @returns Array of EmailMessage objects.
+   */
+  async inbox(options?: { limit?: number; offset?: number }): Promise<EmailMessage[]> {
+    return this._client.listMessages({
+      limit: options?.limit,
+      offset: options?.offset,
+      direction: 'inbound',
+    });
+  }
+
+  /**
+   * List outbox messages (direction=outbound).
+   *
+   * @param options - Optional list options (limit, offset).
+   * @returns Array of EmailMessage objects.
+   */
+  async outbox(options?: { limit?: number; offset?: number }): Promise<EmailMessage[]> {
+    return this._client.listMessages({
+      limit: options?.limit,
+      offset: options?.offset,
+      direction: 'outbound',
+    });
+  }
+
+  /**
+   * Get a specific message by ID.
+   *
+   * @param messageId - The message ID to retrieve.
+   * @returns EmailMessage.
+   */
+  async get(messageId: string): Promise<EmailMessage> {
+    return this._client.getMessage(messageId);
+  }
+
+  /**
+   * Search email messages.
+   *
+   * @param options - Search options (query, direction, date range, etc.).
+   * @returns Array of EmailMessage matching the search criteria.
+   */
+  async search(options: SearchOptions): Promise<EmailMessage[]> {
+    return this._client.searchMessages(options);
+  }
+
+  /**
+   * Get email status including capacity and tier information.
+   *
+   * @returns EmailStatus with daily limits, usage, and tier info.
+   */
+  async status(): Promise<EmailStatus> {
+    return this._client.getEmailStatus();
+  }
+
+  /**
+   * Get the count of unread messages.
+   *
+   * @returns Number of unread inbound messages.
+   */
+  async unreadCount(): Promise<number> {
+    return this._client.getUnreadCount();
+  }
+
+  /**
+   * Delete a message by ID.
+   *
+   * @param messageId - The message ID to delete.
+   */
+  async delete(messageId: string): Promise<void> {
+    return this._client.deleteMessage(messageId);
+  }
+
+  /**
+   * Mark a message as read.
+   *
+   * @param messageId - The message ID to mark as read.
+   */
+  async markRead(messageId: string): Promise<void> {
+    return this._client.markRead(messageId);
+  }
+
+  /**
+   * Mark a message as unread.
+   *
+   * @param messageId - The message ID to mark as unread.
+   */
+  async markUnread(messageId: string): Promise<void> {
+    return this._client.markUnread(messageId);
+  }
+
+  /**
+   * Reply to a message, always signed with the agent's JACS key.
+   *
+   * Fetches the original message, constructs a reply with proper
+   * threading headers, and sends it signed.
+   *
+   * @param messageId - The message ID to reply to.
+   * @param body - Reply body text.
+   * @param subjectOverride - Optional subject override.
+   * @returns SendEmailResult with messageId and status.
+   */
+  async reply(
+    messageId: string,
+    body: string,
+    subjectOverride?: string,
+  ): Promise<SendEmailResult> {
+    return this._client.reply(messageId, body, subjectOverride);
+  }
+}

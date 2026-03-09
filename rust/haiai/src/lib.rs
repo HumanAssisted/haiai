@@ -6,8 +6,32 @@
 //! # Feature flags
 //!
 //! * `jacs-crate` (default) -- Use the published jacs crate from crates.io.
+//!
+//! # Agent API
+//!
+//! The recommended entry point is [`agent::Agent`], which provides an
+//! ergonomic `agent.email.*` namespace. All email operations sign with
+//! the agent's JACS key -- there is no unsigned send path.
+//!
+//! ```rust,no_run
+//! use haiai::agent::Agent;
+//! use haiai::types::SendEmailOptions;
+//!
+//! # async fn example() -> haiai::Result<()> {
+//! let agent = Agent::from_config(None).await?;
+//! agent.email.send(SendEmailOptions {
+//!     to: "other@hai.ai".into(),
+//!     subject: "Hello".into(),
+//!     body: "World".into(),
+//!     in_reply_to: None,
+//!     attachments: vec![],
+//! }).await?;
+//! # Ok(())
+//! # }
+//! ```
 
 pub mod a2a;
+pub mod agent;
 pub mod client;
 pub mod config;
 #[cfg(feature = "jacs-crate")]
@@ -18,6 +42,7 @@ pub mod jacs;
 pub mod jacs_local;
 pub mod mime;
 pub mod types;
+pub mod validation;
 pub mod verify;
 
 pub use a2a::{
@@ -46,6 +71,8 @@ pub use email::{
     ParsedEmailParts,
     SignedHeaderEntry,
 };
+#[cfg(feature = "jacs-crate")]
+pub use agent::{Agent, EmailNamespace};
 pub use error::{HaiError, Result};
 pub use jacs::{JacsProvider, NoopJacsProvider, StaticJacsProvider};
 #[cfg(feature = "jacs-crate")]

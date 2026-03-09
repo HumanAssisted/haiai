@@ -9,5 +9,6 @@ from jacs.hai import __all__ as _LEGACY_ALL
 from jacs.hai import __version__
 from . import a2a
 from . import integrations
+from .agent import Agent
 
-__all__ = list(_LEGACY_ALL) + ["integrations", "a2a"]
+__all__ = list(_LEGACY_ALL) + ["integrations", "a2a", "Agent"]
