@@ -134,6 +134,34 @@ func TestCRLFInjectionSanitized(t *testing.T) {
 	}
 }
 
+func TestFilenameQuoteInjectionSanitized(t *testing.T) {
+	opts := SendEmailOptions{
+		To:      "recipient@hai.ai",
+		Subject: "Test",
+		Body:    "Body",
+		Attachments: []EmailAttachment{
+			{
+				Filename:    `file"; name="evil`,
+				ContentType: "text/plain",
+				Data:        []byte("content"),
+			},
+		},
+	}
+
+	raw, err := BuildRFC5322Email(opts, "sender@hai.ai")
+	if err != nil {
+		t.Fatalf("BuildRFC5322Email failed: %v", err)
+	}
+
+	text := string(raw)
+	if strings.Contains(text, `filename="file"`) {
+		t.Error("Quote injection: filename quote broke out of parameter")
+	}
+	if strings.Contains(text, `name="evil"`) {
+		t.Error("Parameter injection succeeded: found injected name parameter")
+	}
+}
+
 func TestCRLFLineEndings(t *testing.T) {
 	opts := SendEmailOptions{
 		To:      "recipient@hai.ai",

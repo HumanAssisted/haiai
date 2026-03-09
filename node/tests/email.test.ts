@@ -507,3 +507,56 @@ describe('sendEmail with attachments', () => {
   });
 });
 
+describe('sendSignedEmail', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('builds MIME, signs, and POSTs to send-signed endpoint', async () => {
+    const client = await makeClient();
+    let signCalled = false;
+    let sendSignedUrl = '';
+    let sendSignedContentType = '';
+
+    // Mock signEmail to return fake signed bytes
+    vi.spyOn(client, 'signEmail').mockImplementation(async (_raw: Buffer | string) => {
+      signCalled = true;
+      return Buffer.from('FAKE-SIGNED-EMAIL');
+    });
+
+    // Mock fetch for the send-signed POST
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      sendSignedUrl = url.toString();
+      sendSignedContentType = (init?.headers as Record<string, string>)?.['Content-Type'] || '';
+      return jsonResponse({ message_id: 'msg-signed-1', status: 'sent' });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await client.sendSignedEmail({
+      to: 'bob@hai.ai',
+      subject: 'Hello Signed',
+      body: 'Signed body',
+    });
+
+    expect(result.messageId).toBe('msg-signed-1');
+    expect(result.status).toBe('sent');
+    expect(signCalled).toBe(true);
+    expect(sendSignedUrl).toContain('/email/send-signed');
+    expect(sendSignedContentType).toBe('message/rfc822');
+  });
+
+  it('throws when agentEmail not set', async () => {
+    const keypair = generateKeypair();
+    const client = await HaiClient.fromCredentials('no-email-agent', keypair.privateKeyPem, {
+      url: 'https://hai.example',
+      privateKeyPassphrase: 'keygen-password',
+    });
+    // Do NOT call setAgentEmail
+
+    await expect(
+      client.sendSignedEmail({ to: 'bob@hai.ai', subject: 'Hi', body: 'test' }),
+    ).rejects.toThrow('agent email not set');
+  });
+});
+

@@ -508,6 +508,54 @@ impl<P: JacsProvider> HaiClient<P> {
         })
     }
 
+    /// Send an agent-signed email.
+    ///
+    /// Builds an RFC 5322 MIME email from the given options, signs it locally
+    /// with the agent's own JACS key (via `JacsProvider::sign_email_locally`),
+    /// and POSTs the signed bytes to the server for countersigning and delivery.
+    ///
+    /// The server validates that the JACS signature matches the authenticated
+    /// agent, countersigns with the HAI authority key (creating a forwarding
+    /// chain), and delivers via JMAP.
+    ///
+    /// # Errors
+    ///
+    /// Returns `HaiError` if:
+    /// - `agent_email` is not set (call `claim_username` first)
+    /// - The provider does not support local signing (use `LocalJacsProvider`)
+    /// - MIME construction or JACS signing fails
+    /// - The server rejects the signed email
+    pub async fn send_signed_email(&self, options: &SendEmailOptions) -> Result<SendEmailResult> {
+        let from = self.agent_email.as_deref().ok_or_else(|| {
+            HaiError::Message("agent email not set — call claim_username first".into())
+        })?;
+
+        // Step 1: Build RFC 5322 MIME locally
+        let raw_mime = crate::mime::build_rfc5322_email(options, from)?;
+
+        // Step 2: Sign with the agent's own JACS key
+        let signed = self.jacs.sign_email_locally(&raw_mime)?;
+
+        // Step 3: POST to the send-signed endpoint
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
+        let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/send-signed"));
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .header("Content-Type", "message/rfc822")
+            .body(signed)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        Ok(SendEmailResult {
+            message_id: value_string(&data, &["message_id"]),
+            status: value_string(&data, &["status"]),
+        })
+    }
+
     pub async fn list_messages(&self, options: &ListMessagesOptions) -> Result<Vec<EmailMessage>> {
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/messages"));

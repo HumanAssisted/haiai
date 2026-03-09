@@ -85,6 +85,27 @@ describe('buildRfc5322Email', () => {
     expect(text).toContain('Subject: BadBcc: attacker@evil.com\r\n');
   });
 
+  it('sanitizes double quotes in filenames to prevent parameter injection', () => {
+    const opts: MimeSendEmailOptions = {
+      to: 'recipient@hai.ai',
+      subject: 'Test',
+      body: 'Body',
+      attachments: [
+        {
+          filename: 'file"; name="evil',
+          contentType: 'text/plain',
+          data: Buffer.from('content'),
+        },
+      ],
+    };
+
+    const raw = buildRfc5322Email(opts, 'sender@hai.ai');
+    const text = raw.toString('utf-8');
+
+    expect(text).not.toContain('filename="file"');
+    expect(text).not.toContain('name="evil"');
+  });
+
   it('uses CRLF line endings', () => {
     const opts: MimeSendEmailOptions = {
       to: 'recipient@hai.ai',

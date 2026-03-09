@@ -35,7 +35,7 @@ export interface MimeEmailAttachment {
  * Strip `\r` and `\n` from a header value to prevent CRLF injection.
  */
 function sanitizeHeader(value: string): string {
-  return value.replace(/[\r\n]/g, '');
+  return value.replace(/[\r\n"]/g, '');
 }
 
 /**

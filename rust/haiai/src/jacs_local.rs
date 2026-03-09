@@ -238,6 +238,12 @@ impl JacsProvider for LocalJacsProvider {
         })
     }
 
+    fn sign_email_locally(&self, raw_email: &[u8]) -> Result<Vec<u8>> {
+        let simple = self.load_simple_agent()?;
+        jacs::email::sign_email(raw_email, &simple)
+            .map_err(|e| HaiError::Provider(format!("JACS email signing failed: {e}")))
+    }
+
     #[cfg(feature = "jacs-crate")]
     fn rotate(&self) -> Result<RotationResult> {
         let simple = self.load_simple_agent()?;

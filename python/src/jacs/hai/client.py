@@ -2169,6 +2169,111 @@ class HaiClient:
         except Exception as exc:
             raise HaiError(f"Email sign failed: {exc}")
 
+    def send_signed_email(
+        self,
+        hai_url: str,
+        to: str,
+        subject: str,
+        body: str,
+        in_reply_to: Optional[str] = None,
+        attachments: Optional[list[dict[str, Any]]] = None,
+    ) -> SendEmailResult:
+        """Send an agent-signed email.
+
+        Builds an RFC 5322 MIME email locally, signs it with the agent's
+        JACS key via the HAI signing API, and POSTs the signed bytes to the
+        server's ``send-signed`` endpoint for countersigning and delivery.
+
+        The server validates the JACS signature, countersigns with the HAI
+        authority key (creating a forwarding chain), and delivers via JMAP.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            to: Recipient address.
+            subject: Email subject line.
+            body: Plain text email body.
+            in_reply_to: Optional Message-ID for threading.
+            attachments: Optional list of attachment dicts, each with keys
+                ``filename`` (str), ``content_type`` (str), and ``data``
+                (bytes).
+
+        Returns:
+            SendEmailResult with message_id and status.
+        """
+        if self._agent_email is None:
+            raise HaiError("agent email not set -- call claim_username first")
+
+        from jacs.hai.mime import build_rfc5322_email
+
+        # Step 1: Build RFC 5322 MIME locally
+        raw_mime = build_rfc5322_email(
+            subject=subject,
+            body=body,
+            to=to,
+            from_email=self._agent_email,
+            in_reply_to=in_reply_to,
+            attachments=attachments,
+        )
+
+        # Step 2: Sign with the agent's JACS key via the HAI API
+        signed = self.sign_email(hai_url, raw_mime)
+
+        # Step 3: POST to send-signed endpoint
+        jacs_id = self._get_hai_agent_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/send-signed")
+        headers = self._build_auth_headers()
+        headers["Content-Type"] = "message/rfc822"
+
+        try:
+            resp = httpx.post(url, content=signed, headers=headers, timeout=self._timeout)
+
+            try:
+                err_data = resp.json()
+                err_code = err_data.get("error_code", "")
+            except (ValueError, KeyError):
+                err_data = {}
+                err_code = ""
+
+            if resp.status_code == 403 and (err_code == "EMAIL_NOT_ACTIVE" or "allocated" in resp.text.lower()):
+                raise EmailNotActive(
+                    err_data.get("message", "Agent email is not active"),
+                    status_code=403,
+                    body=resp.text,
+                )
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Send signed email auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code == 429:
+                raise RateLimited(
+                    err_data.get("message", "Rate limited"),
+                    status_code=429,
+                    body=resp.text,
+                    resets_at=err_data.get("resets_at", ""),
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Send signed email failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            data = resp.json()
+            return SendEmailResult(
+                message_id=data.get("message_id", ""),
+                status=data.get("status", "sent"),
+            )
+
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Send signed email failed: {exc}")
+
     def verify_email(self, hai_url: str, raw_email: bytes) -> EmailVerificationResultV2:
         """Verify a JACS-signed email via the HAI API.
 
@@ -3477,6 +3582,20 @@ def send_email(
 def sign_email(hai_url: str, raw_email: bytes) -> bytes:
     """Sign a raw RFC 5322 email with a JACS attachment via the HAI API."""
     return _get_client().sign_email(hai_url, raw_email)
+
+
+def send_signed_email(
+    hai_url: str,
+    to: str,
+    subject: str,
+    body: str,
+    in_reply_to: Optional[str] = None,
+    attachments: Optional[list[dict[str, Any]]] = None,
+) -> SendEmailResult:
+    """Send an agent-signed email (builds MIME, signs, and sends)."""
+    return _get_client().send_signed_email(
+        hai_url, to, subject, body, in_reply_to, attachments=attachments,
+    )
 
 
 def verify_email(hai_url: str, raw_email: bytes) -> EmailVerificationResultV2:

@@ -829,3 +829,96 @@ func TestVerifyEmailWithErrorField(t *testing.T) {
 		t.Fatalf("unexpected error: %s", *result.Error)
 	}
 }
+
+// ---------------------------------------------------------------
+// SendSignedEmail tests
+// ---------------------------------------------------------------
+
+func TestSendSignedEmailBuildsMIMEAndPosts(t *testing.T) {
+	callCount := map[string]int{"sign": 0, "send": 0}
+	var sendSignedContentType string
+	var sendSignedPath string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/email/sign") {
+			// SignEmail call: return fake signed bytes
+			callCount["sign"]++
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte("FAKE-SIGNED-EMAIL"))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/email/send-signed") {
+			// send-signed call
+			callCount["send"]++
+			sendSignedPath = r.URL.Path
+			sendSignedContentType = r.Header.Get("Content-Type")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"message_id":"msg-signed-1","status":"sent"}`))
+			return
+		}
+		t.Fatalf("unexpected path: %s", r.URL.Path)
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	result, err := cl.SendSignedEmail(context.Background(), SendEmailOptions{
+		To:      "bob@hai.ai",
+		Subject: "Hello Signed",
+		Body:    "Signed body",
+	})
+	if err != nil {
+		t.Fatalf("SendSignedEmail: %v", err)
+	}
+
+	if result.MessageID != "msg-signed-1" {
+		t.Fatalf("unexpected message_id: %s", result.MessageID)
+	}
+	if result.Status != "sent" {
+		t.Fatalf("unexpected status: %s", result.Status)
+	}
+	if callCount["sign"] != 1 {
+		t.Fatalf("expected sign called once, got %d", callCount["sign"])
+	}
+	if callCount["send"] != 1 {
+		t.Fatalf("expected send-signed called once, got %d", callCount["send"])
+	}
+	if !strings.Contains(sendSignedPath, "/email/send-signed") {
+		t.Fatalf("expected send-signed path, got: %s", sendSignedPath)
+	}
+	if sendSignedContentType != "message/rfc822" {
+		t.Fatalf("expected Content-Type message/rfc822, got: %s", sendSignedContentType)
+	}
+}
+
+func TestSendSignedEmailFailsWithoutAgentEmail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("no HTTP call should be made when agentEmail is not set")
+	}))
+	defer srv.Close()
+
+	_, priv, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("GenerateKeyPair: %v", err)
+	}
+	cl, err := NewClient(
+		WithEndpoint(srv.URL),
+		WithJACSID("test-agent-id"),
+		WithPrivateKey(priv),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	// Do NOT call SetAgentEmail
+
+	_, err = cl.SendSignedEmail(context.Background(), SendEmailOptions{
+		To:      "bob@hai.ai",
+		Subject: "Hi",
+		Body:    "test",
+	})
+	if err == nil {
+		t.Fatal("expected error when agentEmail is not set")
+	}
+	if !errors.Is(err, ErrEmailNotActive) {
+		t.Fatalf("expected ErrEmailNotActive, got: %v", err)
+	}
+}

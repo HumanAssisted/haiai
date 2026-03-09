@@ -75,6 +75,21 @@ pub trait JacsProvider: Send + Sync {
         Ok(serde_json::to_string(&result)?)
     }
 
+    /// Sign a raw RFC 5322 email locally using the agent's own JACS key.
+    ///
+    /// The returned bytes are the email with a `jacs-signature.json` attachment
+    /// containing the agent's JACS signature. This is used by `send_signed_email()`
+    /// to produce agent-signed emails (as opposed to HAI-authority-signed).
+    ///
+    /// Default implementation returns an error; override in providers that
+    /// have access to the agent's private key (e.g., `LocalJacsProvider`).
+    fn sign_email_locally(&self, raw_email: &[u8]) -> Result<Vec<u8>> {
+        let _ = raw_email;
+        Err(HaiError::Provider(
+            "local email signing not supported by this provider; use LocalJacsProvider".to_string(),
+        ))
+    }
+
     /// Rotate the agent's keys locally.
     ///
     /// Archives old keys, generates a new keypair, builds a new self-signed

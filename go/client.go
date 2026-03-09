@@ -1111,6 +1111,58 @@ func (c *Client) SignEmail(ctx context.Context, rawEmail []byte) ([]byte, error)
 	return io.ReadAll(resp.Body)
 }
 
+// SendSignedEmail builds an RFC 5322 MIME email, signs it with the agent's
+// JACS key via the HAI signing API, and POSTs the signed bytes to the
+// send-signed endpoint for countersigning and delivery.
+//
+// The server validates the JACS signature matches the authenticated agent,
+// countersigns with the HAI authority key (creating a forwarding chain),
+// and delivers via JMAP.
+func (c *Client) SendSignedEmail(ctx context.Context, opts SendEmailOptions) (*SendEmailResult, error) {
+	if c.agentEmail == "" {
+		return nil, fmt.Errorf("%w: agent email not set — call ClaimUsername first", ErrEmailNotActive)
+	}
+
+	// Step 1: Build RFC 5322 MIME locally
+	rawMime, err := BuildRFC5322Email(opts, c.agentEmail)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to build MIME email")
+	}
+
+	// Step 2: Sign with the agent's JACS key via the HAI API
+	signed, err := c.SignEmail(ctx, rawMime)
+	if err != nil {
+		return nil, err // SignEmail already wraps errors appropriately
+	}
+
+	// Step 3: POST to send-signed endpoint
+	url := c.endpoint + fmt.Sprintf("/api/agents/%s/email/send-signed", neturl.PathEscape(c.HaiAgentID()))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(signed))
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "failed to create send-signed request")
+	}
+	c.setAuthHeaders(req)
+	req.Header.Set("Content-Type", "message/rfc822")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "send-signed request failed")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyEmailError(resp.StatusCode, respBody)
+	}
+
+	var result SendEmailResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode send-signed response")
+	}
+	return &result, nil
+}
+
 // VerifyEmail sends a raw RFC 5322 email to the HAI server for JACS signature verification.
 // The server verifies the JACS attachment signature and returns a detailed result including
 // per-field verification status and the chain of custody.

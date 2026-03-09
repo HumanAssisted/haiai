@@ -9,9 +9,9 @@ use base64::Engine;
 use crate::error::{HaiError, Result};
 use crate::types::SendEmailOptions;
 
-/// Strip `\r` and `\n` from a header value to prevent CRLF injection.
+/// Strip `\r`, `\n`, and `"` from a header value to prevent CRLF and parameter injection.
 fn sanitize_header(value: &str) -> String {
-    value.chars().filter(|c| *c != '\r' && *c != '\n').collect()
+    value.chars().filter(|c| *c != '\r' && *c != '\n' && *c != '"').collect()
 }
 
 /// Build an RFC 5322 email from structured fields.
@@ -233,6 +233,36 @@ mod tests {
         assert!(text.contains("Date:"));
         assert!(text.contains("Message-ID:"));
         assert!(text.contains("MIME-Version: 1.0"));
+    }
+
+    #[test]
+    fn filename_quote_injection_sanitized() {
+        let opts = SendEmailOptions {
+            to: "recipient@hai.ai".to_string(),
+            subject: "Test".to_string(),
+            body: "Body".to_string(),
+            in_reply_to: None,
+            attachments: vec![EmailAttachment::new(
+                "file\"; name=\"evil".to_string(),
+                "text/plain".to_string(),
+                b"content".to_vec(),
+            )],
+        };
+
+        let raw = build_rfc5322_email(&opts, "sender@hai.ai").unwrap();
+        let text = String::from_utf8_lossy(&raw);
+
+        // The quote must be stripped so it can't break out of the filename parameter
+        assert!(
+            !text.contains("filename=\"file\""),
+            "Quote injection: filename quote broke out of parameter"
+        );
+        for line in text.split("\r\n") {
+            assert!(
+                !line.contains("name=\"evil\""),
+                "Parameter injection succeeded: found injected name parameter"
+            );
+        }
     }
 
     #[test]

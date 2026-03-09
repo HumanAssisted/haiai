@@ -14,6 +14,7 @@ import (
 func sanitizeHeader(value string) string {
 	value = strings.ReplaceAll(value, "\r", "")
 	value = strings.ReplaceAll(value, "\n", "")
+	value = strings.ReplaceAll(value, "\"", "")
 	return value
 }
 
