@@ -1837,88 +1837,19 @@ export class HaiClient {
   /**
    * Send an agent-signed email.
    *
-   * Builds an RFC 5322 MIME email locally, signs it with the agent's JACS key
-   * via the HAI signing API, and POSTs the signed bytes to the server's
-   * `send-signed` endpoint for countersigning and delivery.
+   * @deprecated sendSignedEmail currently delegates to sendEmail. The previous
+   * implementation called /api/v1/email/sign (HAI authority key) then POSTed
+   * to send-signed, which rejects because the signer ID does not match the
+   * authenticated agent. True agent-key local signing will be available when
+   * the Rust SDK core (DevEx TASK_017) ships. Use sendEmail directly.
    *
    * @param options - Email options (to, subject, body, attachments, etc.)
    * @returns SendEmailResult with messageId and status.
    */
   async sendSignedEmail(options: SendEmailOptions): Promise<SendEmailResult> {
-    if (!this.agentEmail) {
-      throw new Error('agent email not set — call claimUsername first');
-    }
-
-    // Step 1: Build RFC 5322 MIME locally
-    const { buildRfc5322Email } = await import('./mime.js');
-    const rawMime = buildRfc5322Email({
-      to: options.to,
-      subject: options.subject,
-      body: options.body,
-      inReplyTo: options.inReplyTo,
-      attachments: options.attachments?.map(a => ({
-        filename: a.filename,
-        contentType: a.contentType,
-        data: a.data,
-      })),
-    }, this.agentEmail);
-
-    // Step 2: Sign with the agent's JACS key via the HAI API
-    const signed = await this.signEmail(rawMime);
-
-    // Step 3: POST to send-signed endpoint
-    const safeAgentId = this.encodePathSegment(this.haiAgentId);
-    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/send-signed`);
-    const headers = this.buildAuthHeaders();
-    headers['Content-Type'] = 'message/rfc822';
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: signed,
-        signal: controller.signal,
-      });
-    } catch (e) {
-      clearTimeout(timeoutId);
-      if (e instanceof Error && e.name === 'AbortError') {
-        throw new HaiConnectionError(`Request timed out after ${this.timeout}ms`);
-      }
-      throw e;
-    }
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const text = await response.text();
-      let errCode = '';
-      let errMsg = text;
-      try {
-        const errData = JSON.parse(text) as Record<string, unknown>;
-        errCode = (errData.error_code as string) || '';
-        errMsg = (errData.message as string) || (errData.error as string) || text;
-      } catch { /* non-JSON body */ }
-
-      if (response.status === 401) {
-        throw new AuthenticationError('JACS signature rejected by HAI', 401);
-      }
-      if (response.status === 403 && (errCode === 'EMAIL_NOT_ACTIVE' || text.toLowerCase().includes('allocated'))) {
-        throw new EmailNotActiveError(errMsg, response.status, text);
-      }
-      if (response.status === 429) {
-        throw new RateLimitedError(errMsg, response.status, text);
-      }
-      throw new HaiApiError(errMsg, response.status, undefined, errCode, text);
-    }
-
-    const data = await response.json() as Record<string, unknown>;
-    return {
-      messageId: (data.message_id as string) || '',
-      status: (data.status as string) || '',
-    };
+    // Deprecated: delegates to sendEmail until local agent-key signing
+    // is available (DevEx TASK_017). Use sendEmail directly.
+    return this.sendEmail(options);
   }
 
   /**
