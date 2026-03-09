@@ -132,4 +132,4 @@ without repeating identity state. Stateless callers may also pass `agent_id`
 
 ## License
 
-MIT
+Apache-2.0 OR MIT

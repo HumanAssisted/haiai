@@ -39,7 +39,7 @@
   },
   "engines": { "node": ">=18.0.0" },
   "author": "HAI.AI",
-  "license": "MIT",
+  "license": "(Apache-2.0 OR MIT)",
   "homepage": "https://hai.ai",
   "repository": {
     "type": "git",

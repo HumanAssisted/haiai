@@ -117,4 +117,4 @@ Plus all JACS tools from [jacs-mcp](https://crates.io/crates/jacs-mcp).
 
 ## License
 
-MIT
+Apache-2.0 OR MIT
