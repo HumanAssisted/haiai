@@ -21,7 +21,7 @@
     "haiai-mcp": "./dist/esm/mcp-server.js"
   },
   "dependencies": {
-    "@hai.ai/jacs": "0.9.2",
+    "@hai.ai/jacs": "0.9.3",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "ws": "^8.16.0"
   },
