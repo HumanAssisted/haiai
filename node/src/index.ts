@@ -1,6 +1,10 @@
 // Client
 export { HaiClient } from './client.js';
 
+// MIME construction
+export { buildRfc5322Email } from './mime.js';
+export type { MimeSendEmailOptions, MimeEmailAttachment } from './mime.js';
+
 // Signing (all crypto delegated to JACS core)
 export {
   unwrapSignedEvent,

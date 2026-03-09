@@ -1160,7 +1160,7 @@ wheels = [
 
 [[package]]
 name = "haiai"
-version = "0.1.0"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
@@ -1169,7 +1169,7 @@ dependencies = [
 
 [package.optional-dependencies]
 a2a = [
-    { name = "jacs" },
+    { name = "jacs", extra = ["a2a"] },
 ]
 agentsdk = [
     { name = "jacs" },
@@ -1177,7 +1177,7 @@ agentsdk = [
 all = [
     { name = "dnspython" },
     { name = "httpx-sse" },
-    { name = "jacs", extra = ["anthropic", "crewai", "fastapi", "langchain", "langgraph", "mcp"] },
+    { name = "jacs", extra = ["a2a", "anthropic", "crewai", "fastapi", "langchain", "langgraph", "mcp"] },
     { name = "mcp" },
     { name = "websockets" },
 ]
@@ -1221,7 +1221,7 @@ requires-dist = [
     { name = "haiai", extras = ["ws", "sse", "dns", "langchain", "langgraph", "crewai", "anthropic", "fastapi", "mcp", "agentsdk", "a2a"], marker = "extra == 'all'" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx-sse", marker = "extra == 'sse'", specifier = ">=0.4.0" },
-    { name = "jacs", specifier = ">=0.8.0" },
+    { name = "jacs", specifier = "==0.9.2" },
     { name = "jacs", marker = "extra == 'agentsdk'" },
     { name = "jacs", extras = ["a2a"], marker = "extra == 'a2a'" },
     { name = "jacs", extras = ["anthropic"], marker = "extra == 'anthropic'" },
@@ -1440,18 +1440,21 @@ wheels = [
 
 [[package]]
 name = "jacs"
-version = "0.8.0"
+version = "0.9.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5f/4c/4ca80773ce1031cf889014459c1c253871c468cbb470f46acc6f0e088dc7/jacs-0.8.0.tar.gz", hash = "sha256:1424378470094842b575f4172ad98039f8bb6c64625e6b3f55c9363f6cf465dd", size = 609778 }
+sdist = { url = "https://files.pythonhosted.org/packages/0d/e2/2aeade07d2094c3eaf47468ab45c07808a21158fb4537c8a11abb7ea11ff/jacs-0.9.2.tar.gz", hash = "sha256:b046d1c92a05c98e06af3ed3f5cd58e2604e2d897b6b99c7a1b58745609de271", size = 899777 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/84/8d/81016c199735e4329c754ad69df0de04a599092accbbd44c7ddbcb39034e/jacs-0.8.0-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:f992252798174c918b1d04907ecf6d84f1d16f5a1d5f4aa2ee77c732f9efa73b", size = 6702407 },
-    { url = "https://files.pythonhosted.org/packages/26/9e/957d8a6cd882c90a66cc33924e2ed1462b034fcc53439c6f95a6118f2cc8/jacs-0.8.0-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:dacc0d313f0703e76ce696b9a9cb84d7d30b79909bc342523c71e33c30e172c5", size = 6505992 },
-    { url = "https://files.pythonhosted.org/packages/9a/3a/d854fcd0c424ff911dd198fef06c8b81192baab5ea58082e86d3755edd4c/jacs-0.8.0-cp310-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:2bde05fb76c37159a2e7fd580f7f876847acfe111564c124b28fec135bbd9861", size = 7194990 },
-    { url = "https://files.pythonhosted.org/packages/2f/1c/30940ad339e8fe47e588dfed995ce049f411c6831872da2b8f7115b8912c/jacs-0.8.0-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:98da01a1a9c1e72537518e827899cb9a16c4b67cd3b339c5155e8263192979ef", size = 7154560 },
-    { url = "https://files.pythonhosted.org/packages/39/b9/061ce554a541bee7deb4a4e3a2e96c7395c9d828b6ab71543903b0cae0fd/jacs-0.8.0-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:748943b126d22f2b255bec14c12e2756a665633557a37ca244866ba5f7f8020b", size = 6283867 },
+    { url = "https://files.pythonhosted.org/packages/85/82/724936f8d0f0b6edf9bb3e350f2f700f22357d609f7502d02b4c20212327/jacs-0.9.2-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:ccf76ab70fd3e525257ec2fe7a2b6a92943a7c7bb8cb976ea1d2be3b791632c9", size = 8440544 },
+    { url = "https://files.pythonhosted.org/packages/93/ac/af38c236509988b550d88e34cdb2f61ff96447f74f8c26d576f187c4022d/jacs-0.9.2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:8aac12338608d1527841b411ed01e65333806f07cf2959f0a52cef4bba4f8790", size = 8183574 },
+    { url = "https://files.pythonhosted.org/packages/dc/9b/e7c566f1108b69d02822a9bee017fe4f7ec6a883d86a443047e4656764fc/jacs-0.9.2-cp310-abi3-manylinux_2_38_aarch64.whl", hash = "sha256:2a2ed01e99eabf78d4b8c73665fa5094e5bdca0882e7e661faaf3b9b7593e6aa", size = 8913826 },
+    { url = "https://files.pythonhosted.org/packages/bd/d1/2aaa24a6685eccb87216c8a93cc67a434c8053b2cbb0fe97eb93ab4ec68b/jacs-0.9.2-cp310-abi3-manylinux_2_38_x86_64.whl", hash = "sha256:ab3b41d06fd9d9bb474c32fbdcde50ce8d5178f8f695e628f185cbb29f919349", size = 8931254 },
+    { url = "https://files.pythonhosted.org/packages/25/2e/a066f6ea8a097fb339f0a2b9f266125aed4a877aac0a2c91d524438b7e46/jacs-0.9.2-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:3995abdd3d2cbb0f85b0b2eea3c212e4183a4568c44d1a4b1ea487633aea2cec", size = 7917639 },
 ]
 
 [package.optional-dependencies]
+a2a = [
+    { name = "httpx" },
+]
 anthropic = [
     { name = "anthropic" },
 ]

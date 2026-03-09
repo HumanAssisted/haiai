@@ -16,6 +16,7 @@ pub mod error;
 pub mod jacs;
 #[cfg(feature = "jacs-crate")]
 pub mod jacs_local;
+pub mod mime;
 pub mod types;
 pub mod verify;
 
