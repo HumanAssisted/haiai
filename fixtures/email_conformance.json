@@ -3,17 +3,17 @@
   "version": "1.0",
 
   "content_hash_golden": {
-    "description": "All SDKs must produce identical content hashes for these inputs",
+    "description": "All SDKs must produce identical content hashes for these inputs. Algorithm: sha256(subject + '\\n' + body + '\\n' + sorted_attachment_hashes.join('\\n')) where attachment_hash = sha256(filename_utf8_nfc + ':' + content_type_lower + ':' + raw_bytes). For no attachments: sha256(subject + '\\n' + body).",
     "vectors": [
       {
-        "name": "simple_no_attachments",
+        "name": "with_attachments",
         "subject": "Cross-SDK Test",
         "body": "Verify me",
         "attachments": [
           {"filename": "doc.pdf", "content_type": "application/pdf", "data_utf8": "pdf-content"},
           {"filename": "img.png", "content_type": "image/png", "data_utf8": "png-content"}
         ],
-        "expected_hash": "sha256:a0222afb5f569cb89efd21f2bebdcf84e97c4c98cb31cb5ff54e6e4a2b88c8a1"
+        "expected_hash": "sha256:ee0b55f2f72c2ccaba13ebe86a710cbe69d58972d827ba5fd0687b5fcd30a828"
       },
       {
         "name": "no_attachments",
@@ -111,6 +111,20 @@
     }
   },
 
+  "mime_round_trip": {
+    "description": "All SDKs build this email and must produce the same content hash via compute_content_hash",
+    "input": {
+      "to": "recipient@hai.ai",
+      "from": "sender@hai.ai",
+      "subject": "MIME Round-Trip Test",
+      "body": "This is a cross-SDK conformance test.",
+      "attachments": [
+        {"filename": "test.txt", "content_type": "text/plain", "data_utf8": "Hello conformance"}
+      ]
+    },
+    "expected_content_hash": "sha256:147268b08359556b73026f13ffe03da453a728c98780cb4cc5777c25e5c29e66"
+  },
+
   "mock_verify_response": {
     "description": "A canonical mock response that all SDKs should be able to deserialize into EmailVerificationResultV2",
     "json": {
@@ -128,7 +142,9 @@
       "chain": [
         {"signer": "agent@hai.ai", "jacs_id": "conformance-test-agent-001", "valid": true, "forwarded": false}
       ],
-      "error": null
+      "error": null,
+      "agent_status": "active",
+      "benchmarks_completed": ["free_chaotic"]
     }
   }
 }

@@ -72,6 +72,7 @@ from jacs.hai.errors import (
     SSEError,
     WebSocketError,
 )
+from jacs.hai.hash import compute_content_hash
 from jacs.hai.models import (
     AgentConfig,
     AgentVerificationResult,
@@ -138,6 +139,8 @@ __all__ = [
     "RotationResult",
     "SendEmailResult",
     "TranscriptMessage",
+    # Hash functions
+    "compute_content_hash",
     # Constants
     "MAX_VERIFY_URL_LEN",
     "MAX_VERIFY_DOCUMENT_BYTES",

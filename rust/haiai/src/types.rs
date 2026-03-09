@@ -254,6 +254,12 @@ pub struct EmailVerificationResultV2 {
     pub chain: Vec<ChainEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Agent status from registry: "active", "suspended", or "revoked".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_status: Option<String>,
+    /// Benchmark tiers the agent has completed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub benchmarks_completed: Vec<String>,
 }
 
 impl EmailVerificationResultV2 {
@@ -267,6 +273,8 @@ impl EmailVerificationResultV2 {
             field_results: Vec::new(),
             chain: Vec::new(),
             error: Some(error.to_string()),
+            agent_status: None,
+            benchmarks_completed: Vec::new(),
         }
     }
 }
@@ -434,6 +442,12 @@ pub struct KeyRegistryResponse {
     pub reputation_tier: String,
     #[serde(default)]
     pub registered_at: String,
+    /// Agent status: "active", "suspended", or "revoked".
+    #[serde(default)]
+    pub agent_status: Option<String>,
+    /// Benchmark tiers the agent has completed (e.g., ["free_chaotic", "baseline"]).
+    #[serde(default)]
+    pub benchmarks_completed: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

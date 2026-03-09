@@ -24,6 +24,54 @@ pub use jacs::email::{
 
 use jacs::email::{get_jacs_attachment, verify_email_content, verify_email_document};
 
+/// Input for a single attachment in [`compute_content_hash`].
+pub struct AttachmentInput {
+    pub filename: String,
+    pub content_type: String,
+    pub data: Vec<u8>,
+}
+
+/// Compute a deterministic content hash for email content.
+///
+/// This produces a hash that all SDKs must agree on for the same inputs.
+/// The algorithm uses JACS's `compute_attachment_hash` convention internally:
+///
+/// 1. Compute per-attachment hash: `sha256(filename_utf8 + ":" + content_type_lower + ":" + raw_bytes)`
+/// 2. Sort attachment hashes lexicographically
+/// 3. Compute overall hash:
+///    - No attachments: `sha256(subject + "\n" + body)`
+///    - With attachments: `sha256(subject + "\n" + body + "\n" + sorted_hashes.join("\n"))`
+///
+/// Returns `"sha256:<hex>"` format.
+pub fn compute_content_hash(subject: &str, body: &str, attachments: &[AttachmentInput]) -> String {
+    // Compute per-attachment hashes using JACS convention
+    let mut att_hashes: Vec<String> = attachments
+        .iter()
+        .map(|att| {
+            let content_type_lower = att.content_type.to_lowercase();
+            let mut h = Sha256::new();
+            h.update(att.filename.as_bytes());
+            h.update(b":");
+            h.update(content_type_lower.as_bytes());
+            h.update(b":");
+            h.update(&att.data);
+            format!("sha256:{:x}", h.finalize())
+        })
+        .collect();
+    att_hashes.sort();
+
+    // Compute overall content hash
+    let mut h = Sha256::new();
+    h.update(subject.as_bytes());
+    h.update(b"\n");
+    h.update(body.as_bytes());
+    for ah in &att_hashes {
+        h.update(b"\n");
+        h.update(ah.as_bytes());
+    }
+    format!("sha256:{:x}", h.finalize())
+}
+
 fn convert_field_result(value: jacs::email::FieldResult) -> FieldResult {
     let json = serde_json::to_value(value).expect("FieldResult should serialize");
     serde_json::from_value(json).expect("FieldResult should match SDK schema")
@@ -165,6 +213,26 @@ pub async fn verify_email(raw_email: &[u8], hai_url: &str) -> EmailVerificationR
         );
     }
 
+    // 4d: Check agent status from registry (reject suspended/revoked agents)
+    let agent_status = registry.agent_status.clone();
+    let benchmarks_completed = registry.benchmarks_completed.clone().unwrap_or_default();
+    if let Some(ref status) = agent_status {
+        if status != "active" {
+            return EmailVerificationResultV2 {
+                agent_status: agent_status.clone(),
+                benchmarks_completed: benchmarks_completed.clone(),
+                ..EmailVerificationResultV2::err(
+                    &jacs_id,
+                    reputation_tier,
+                    &format!(
+                        "Agent status is '{}' -- only active agents can send verified email",
+                        status
+                    ),
+                )
+            };
+        }
+    }
+
     // Step 5: Parse PEM to get raw public key bytes
     let raw_pub_key = match extract_public_key_bytes(&registry.public_key) {
         Ok(k) => k,
@@ -260,6 +328,8 @@ pub async fn verify_email(raw_email: &[u8], hai_url: &str) -> EmailVerificationR
         field_results,
         chain,
         error: None,
+        agent_status,
+        benchmarks_completed,
     }
 }
 

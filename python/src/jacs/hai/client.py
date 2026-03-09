@@ -2273,6 +2273,8 @@ class HaiClient:
                     for ce in data.get("chain", [])
                 ],
                 error=data.get("error"),
+                agent_status=data.get("agent_status"),
+                benchmarks_completed=data.get("benchmarks_completed", []),
             )
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
             raise HaiConnectionError(f"Connection failed: {exc}")

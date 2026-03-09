@@ -72,8 +72,54 @@ class _FakeResponse:
 
 
 # ---------------------------------------------------------------------------
-# Content hash golden value conformance
+# Content hash golden value conformance (TASK_013)
 # ---------------------------------------------------------------------------
+
+
+class TestContentHashGoldenVectors:
+    """All golden vectors must produce the expected content hash."""
+
+    def test_golden_vectors(self) -> None:
+        from jacs.hai.hash import compute_content_hash
+
+        vectors = CONFORMANCE["content_hash_golden"]["vectors"]
+        for vector in vectors:
+            name = vector["name"]
+            result = compute_content_hash(
+                subject=vector["subject"],
+                body=vector["body"],
+                attachments=vector.get("attachments", []),
+            )
+            assert result == vector["expected_hash"], (
+                f"Content hash mismatch for vector {name!r}: "
+                f"expected {vector['expected_hash']}, got {result}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# MIME round-trip conformance (TASK_014)
+# ---------------------------------------------------------------------------
+
+
+class TestMimeRoundTripConformance:
+    """MIME round-trip: all SDKs must produce same content hash from same input."""
+
+    def test_round_trip_content_hash(self) -> None:
+        from jacs.hai.hash import compute_content_hash
+
+        rt = CONFORMANCE["mime_round_trip"]
+        inp = rt["input"]
+        expected_hash = rt["expected_content_hash"]
+
+        result = compute_content_hash(
+            subject=inp["subject"],
+            body=inp["body"],
+            attachments=inp.get("attachments", []),
+        )
+        assert result == expected_hash, (
+            f"MIME round-trip content hash mismatch: "
+            f"expected {expected_hash}, got {result}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +161,8 @@ class TestConformanceMockVerifyResponse:
                 for ce in mock_json.get("chain", [])
             ],
             error=mock_json.get("error"),
+            agent_status=mock_json.get("agent_status"),
+            benchmarks_completed=mock_json.get("benchmarks_completed", []),
         )
 
         assert result.valid is True
@@ -137,6 +185,10 @@ class TestConformanceMockVerifyResponse:
         assert result.chain[0].jacs_id == "conformance-test-agent-001"
         assert result.chain[0].valid is True
         assert result.chain[0].forwarded is False
+
+        # agent_status and benchmarks_completed (TASK_012)
+        assert result.agent_status == "active"
+        assert result.benchmarks_completed == ["free_chaotic"]
 
 
 # ---------------------------------------------------------------------------

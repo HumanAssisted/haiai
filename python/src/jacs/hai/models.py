@@ -408,6 +408,8 @@ class EmailVerificationResultV2:
     field_results: list[FieldResult] = field(default_factory=list)
     chain: list[ChainEntry] = field(default_factory=list)
     error: Optional[str] = None
+    agent_status: Optional[str] = None
+    benchmarks_completed: list[str] = field(default_factory=list)
 
 
 @dataclass

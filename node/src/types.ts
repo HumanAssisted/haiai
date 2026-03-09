@@ -536,6 +536,10 @@ export interface EmailVerificationResultV2 {
   chain: ChainEntry[];
   /** Error message if verification failed, or null. */
   error?: string | null;
+  /** Agent status from registry: "active", "suspended", or "revoked". */
+  agentStatus?: string | null;
+  /** Benchmark tiers the agent has completed. */
+  benchmarksCompleted?: string[];
 }
 
 // =============================================================================

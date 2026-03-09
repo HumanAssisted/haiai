@@ -419,14 +419,16 @@ type ChainEntry struct {
 
 // EmailVerificationResultV2 is the result of verifying a JACS attachment-signed email.
 type EmailVerificationResultV2 struct {
-	Valid          bool          `json:"valid"`
-	JacsID         string        `json:"jacs_id"`
-	Algorithm      string        `json:"algorithm"`
-	ReputationTier string        `json:"reputation_tier"`
-	DNSVerified    *bool         `json:"dns_verified"`
-	FieldResults   []FieldResult `json:"field_results"`
-	Chain          []ChainEntry  `json:"chain"`
-	Error          *string       `json:"error,omitempty"`
+	Valid               bool          `json:"valid"`
+	JacsID              string        `json:"jacs_id"`
+	Algorithm           string        `json:"algorithm"`
+	ReputationTier      string        `json:"reputation_tier"`
+	DNSVerified         *bool         `json:"dns_verified"`
+	FieldResults        []FieldResult `json:"field_results"`
+	Chain               []ChainEntry  `json:"chain"`
+	Error               *string       `json:"error,omitempty"`
+	AgentStatus         *string       `json:"agent_status,omitempty"`
+	BenchmarksCompleted []string      `json:"benchmarks_completed,omitempty"`
 }
 
 // HaiAPIError represents a structured error response from the HAI API.

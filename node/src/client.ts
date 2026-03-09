@@ -1902,6 +1902,8 @@ export class HaiClient {
         forwarded: (ce.forwarded as boolean) ?? false,
       })),
       error: data.error as string | null | undefined,
+      agentStatus: data.agent_status as string | null | undefined,
+      benchmarksCompleted: (data.benchmarks_completed as string[]) ?? [],
     };
   }
 

@@ -58,6 +58,8 @@ pub use email::{
     // JACS email types re-exported for consumer convenience
     sign_email,
     verify_email,
+    compute_content_hash,
+    AttachmentInput,
     AttachmentEntry,
     BodyPartEntry,
     ContentVerificationResult,
