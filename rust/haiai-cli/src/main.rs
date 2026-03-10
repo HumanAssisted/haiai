@@ -126,6 +126,19 @@ enum Commands {
         limit: u32,
     },
 
+    /// Update agent metadata and re-sign with existing key
+    Update {
+        /// JSON string with updated agent fields (merged with current doc)
+        #[arg(long)]
+        set: Option<String>,
+    },
+
+    /// Rotate this agent's cryptographic keys
+    Rotate,
+
+    /// Migrate a legacy agent to the current schema
+    Migrate,
+
     /// Run a benchmark against the HAI platform
     Benchmark {
         /// Benchmark name
@@ -404,6 +417,68 @@ async fn main() -> anyhow::Result<()> {
                 .await
                 .context("search messages failed")?;
             print_message_table(&messages);
+        }
+
+        Commands::Update { set } => {
+            let provider = LocalJacsProvider::from_config_path(None)
+                .context("failed to load JACS agent from config")?;
+
+            // Export current agent, apply any --set fields, then update
+            let exported = provider
+                .export_agent_json()
+                .context("failed to export agent JSON")?;
+            let mut doc: Value =
+                serde_json::from_str(&exported).context("failed to parse agent JSON")?;
+
+            if let Some(set_json) = set {
+                let overrides: Value =
+                    serde_json::from_str(&set_json).context("--set must be valid JSON")?;
+                if let Some(obj) = overrides.as_object() {
+                    for (k, v) in obj {
+                        if k == "jacsId" {
+                            anyhow::bail!("jacsId MUST NOT be changed via update");
+                        }
+                        doc[k] = v.clone();
+                    }
+                }
+            }
+
+            let result = provider
+                .update_agent(&doc.to_string())
+                .context("agent update failed")?;
+
+            println!("Agent updated successfully!");
+            println!("  Agent ID:    {}", result.jacs_id);
+            println!("  Old Version: {}", result.old_version);
+            println!("  New Version: {}", result.new_version);
+        }
+
+        Commands::Rotate => {
+            let provider = LocalJacsProvider::from_config_path(None)
+                .context("failed to load JACS agent from config")?;
+
+            let result = provider
+                .rotate()
+                .context("key rotation failed")?;
+
+            println!("Keys rotated successfully!");
+            println!("  Agent ID:       {}", result.jacs_id);
+            println!("  Old Version:    {}", result.old_version);
+            println!("  New Version:    {}", result.new_version);
+            println!("  New Key Hash:   {}", result.new_public_key_hash);
+        }
+
+        Commands::Migrate => {
+            let result = LocalJacsProvider::migrate_agent(None)
+                .context("agent migration failed")?;
+
+            println!("Agent migrated successfully!");
+            println!("  Agent ID:    {}", result.jacs_id);
+            println!("  Old Version: {}", result.old_version);
+            println!("  New Version: {}", result.new_version);
+            if !result.patched_fields.is_empty() {
+                println!("  Patched:     {:?}", result.patched_fields);
+            }
         }
 
         Commands::Benchmark { name, tier } => {
@@ -715,5 +790,44 @@ mod tests {
             }
             _ => panic!("expected Benchmark command"),
         }
+    }
+
+    #[test]
+    fn parse_update_no_args() {
+        let cli = Cli::parse_from(["haiai", "update"]);
+        match cli.command {
+            Commands::Update { set } => {
+                assert!(set.is_none());
+            }
+            _ => panic!("expected Update command"),
+        }
+    }
+
+    #[test]
+    fn parse_update_with_set() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "update",
+            "--set",
+            r#"{"jacsAgentType":"service"}"#,
+        ]);
+        match cli.command {
+            Commands::Update { set } => {
+                assert_eq!(set.as_deref(), Some(r#"{"jacsAgentType":"service"}"#));
+            }
+            _ => panic!("expected Update command"),
+        }
+    }
+
+    #[test]
+    fn parse_rotate() {
+        let cli = Cli::parse_from(["haiai", "rotate"]);
+        assert!(matches!(cli.command, Commands::Rotate));
+    }
+
+    #[test]
+    fn parse_migrate() {
+        let cli = Cli::parse_from(["haiai", "migrate"]);
+        assert!(matches!(cli.command, Commands::Migrate));
     }
 }

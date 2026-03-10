@@ -12,7 +12,7 @@ use crate::error::{HaiError, Result};
 use crate::jacs::JacsProvider;
 #[cfg(feature = "jacs-crate")]
 use crate::types::RotationResult;
-use crate::types::{CreateAgentOptions, CreateAgentResult, SignedPayload};
+use crate::types::{CreateAgentOptions, CreateAgentResult, MigrateAgentResult, SignedPayload, UpdateAgentResult};
 
 /// Local JACS-backed provider using the canonical Rust `jacs` crate.
 ///
@@ -119,6 +119,94 @@ impl LocalJacsProvider {
 
         let info = Self::create_agent(params)?;
         Ok(map_agent_info(info))
+    }
+
+    /// Update the agent document with new data and re-sign with the existing key.
+    /// The new data must contain the same `jacsId` and `jacsVersion` as the current agent.
+    pub fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
+        let old_version = {
+            let agent = self.agent.lock().map_err(|e| {
+                HaiError::Provider(format!("failed to lock JACS agent: {e}"))
+            })?;
+            agent
+                .get_value()
+                .and_then(|v| v["jacsVersion"].as_str().map(String::from))
+                .unwrap_or_default()
+        };
+
+        let updated_json = {
+            let mut agent = self.agent.lock().map_err(|e| {
+                HaiError::Provider(format!("failed to lock JACS agent: {e}"))
+            })?;
+            agent
+                .update_self(new_agent_data)
+                .map_err(|e| HaiError::Provider(format!("failed to update agent: {e}")))?
+        };
+
+        // Parse new version
+        let new_doc: Value = serde_json::from_str(&updated_json)?;
+        let new_version = new_doc["jacsVersion"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+
+        // Save to disk
+        {
+            let agent = self.agent.lock().map_err(|e| {
+                HaiError::Provider(format!("failed to lock agent for save: {e}"))
+            })?;
+            agent.save().map_err(|e| {
+                HaiError::Provider(format!("failed to save updated agent: {e}"))
+            })?;
+        }
+
+        // Update config file with new version
+        self.update_config_version(&self.jacs_id, &new_version)?;
+
+        Ok(UpdateAgentResult {
+            jacs_id: self.jacs_id.clone(),
+            old_version,
+            new_version,
+            signed_agent_json: updated_json,
+        })
+    }
+
+    /// Migrate a legacy agent whose document predates a schema change.
+    /// This is a static method because the agent cannot be loaded before migration.
+    pub fn migrate_agent(config_path: Option<&std::path::Path>) -> Result<MigrateAgentResult> {
+        let path = resolve_jacs_config_path(config_path);
+        let path_str = path.display().to_string();
+        let result = simple::SimpleAgent::migrate_agent(Some(&path_str)).map_err(|e| {
+            HaiError::Provider(format!("agent migration failed: {e}"))
+        })?;
+
+        Ok(MigrateAgentResult {
+            jacs_id: result.jacs_id,
+            old_version: result.old_version,
+            new_version: result.new_version,
+            patched_fields: result.patched_fields,
+        })
+    }
+
+    fn update_config_version(&self, jacs_id: &str, new_version: &str) -> Result<()> {
+        let config_str = std::fs::read_to_string(&self.config_path).map_err(|e| {
+            HaiError::Provider(format!(
+                "failed to read config for version update: {e}"
+            ))
+        })?;
+        let mut config_value: Value = serde_json::from_str(&config_str)?;
+        let new_lookup = format!("{}:{}", jacs_id, new_version);
+        if let Some(obj) = config_value.as_object_mut() {
+            obj.insert(
+                "jacs_agent_id_and_version".to_string(),
+                serde_json::json!(new_lookup),
+            );
+        }
+        let updated_str = serde_json::to_string_pretty(&config_value)?;
+        std::fs::write(&self.config_path, updated_str).map_err(|e| {
+            HaiError::Provider(format!("failed to write updated config: {e}"))
+        })?;
+        Ok(())
     }
 
     fn load_simple_agent(&self) -> Result<SimpleAgent> {

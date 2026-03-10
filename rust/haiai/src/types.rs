@@ -94,6 +94,32 @@ pub struct RotationResult {
     pub signed_agent_json: String,
 }
 
+/// Result of an agent document update (metadata re-sign with existing key).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateAgentResult {
+    /// Agent's stable JACS ID (unchanged).
+    pub jacs_id: String,
+    /// Version before the update.
+    pub old_version: String,
+    /// New version assigned during the update.
+    pub new_version: String,
+    /// Complete self-signed agent JSON string.
+    pub signed_agent_json: String,
+}
+
+/// Result of a legacy agent migration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MigrateAgentResult {
+    /// Agent's stable JACS ID (unchanged).
+    pub jacs_id: String,
+    /// Version before migration.
+    pub old_version: String,
+    /// New version assigned during migration.
+    pub new_version: String,
+    /// Fields that were patched in the raw JSON before loading (e.g. `["iat", "jti"]`).
+    pub patched_fields: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckUsernameResult {
     #[serde(default)]
