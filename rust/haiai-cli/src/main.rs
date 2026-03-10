@@ -451,14 +451,30 @@ async fn main() -> anyhow::Result<()> {
             println!("  Agent ID:    {}", result.jacs_id);
             println!("  Old Version: {}", result.old_version);
             println!("  New Version: {}", result.new_version);
+
+            // Re-register with hai.ai so the platform has the latest agent doc
+            drop(provider);
+            match load_client() {
+                Ok(client) => {
+                    let mut reg_options = RegisterAgentOptions::default();
+                    reg_options.agent_json = result.signed_agent_json;
+                    match client.register(&reg_options).await {
+                        Ok(_) => println!("  Re-registered: yes"),
+                        Err(e) => println!("  Re-registered: no ({e}). Run `haiai register` manually."),
+                    }
+                }
+                Err(_) => {
+                    println!("  Re-registered: no (could not load client). Run `haiai register` manually.");
+                }
+            }
         }
 
         Commands::Rotate => {
-            let provider = LocalJacsProvider::from_config_path(None)
-                .context("failed to load JACS agent from config")?;
+            let client = load_client()?;
 
-            let result = provider
-                .rotate()
+            let result = client
+                .rotate_keys(None)
+                .await
                 .context("key rotation failed")?;
 
             println!("Keys rotated successfully!");
@@ -466,6 +482,11 @@ async fn main() -> anyhow::Result<()> {
             println!("  Old Version:    {}", result.old_version);
             println!("  New Version:    {}", result.new_version);
             println!("  New Key Hash:   {}", result.new_public_key_hash);
+            if result.registered_with_hai {
+                println!("  Re-registered:  yes");
+            } else {
+                println!("  Re-registered:  no (run `haiai register` to register manually)");
+            }
         }
 
         Commands::Migrate => {
