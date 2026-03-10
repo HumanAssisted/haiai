@@ -420,11 +420,9 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Update { set } => {
-            let provider = LocalJacsProvider::from_config_path(None)
-                .context("failed to load JACS agent from config")?;
+            let client = load_client()?;
 
-            // Export current agent, apply any --set fields, then update
-            let exported = provider
+            let exported = client
                 .export_agent_json()
                 .context("failed to export agent JSON")?;
             let mut doc: Value =
@@ -443,29 +441,19 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
-            let result = provider
+            let result = client
                 .update_agent(&doc.to_string())
+                .await
                 .context("agent update failed")?;
 
             println!("Agent updated successfully!");
             println!("  Agent ID:    {}", result.jacs_id);
             println!("  Old Version: {}", result.old_version);
             println!("  New Version: {}", result.new_version);
-
-            // Re-register with hai.ai so the platform has the latest agent doc
-            drop(provider);
-            match load_client() {
-                Ok(client) => {
-                    let mut reg_options = RegisterAgentOptions::default();
-                    reg_options.agent_json = result.signed_agent_json;
-                    match client.register(&reg_options).await {
-                        Ok(_) => println!("  Re-registered: yes"),
-                        Err(e) => println!("  Re-registered: no ({e}). Run `haiai register` manually."),
-                    }
-                }
-                Err(_) => {
-                    println!("  Re-registered: no (could not load client). Run `haiai register` manually.");
-                }
+            if result.registered_with_hai {
+                println!("  Re-registered: yes");
+            } else {
+                println!("  Re-registered: no (run `haiai register` to register manually)");
             }
         }
 

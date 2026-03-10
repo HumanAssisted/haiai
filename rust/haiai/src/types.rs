@@ -105,6 +105,9 @@ pub struct UpdateAgentResult {
     pub new_version: String,
     /// Complete self-signed agent JSON string.
     pub signed_agent_json: String,
+    /// Whether re-registration with HAI succeeded.
+    #[serde(default)]
+    pub registered_with_hai: bool,
 }
 
 /// Result of a legacy agent migration.

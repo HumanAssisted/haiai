@@ -20,6 +20,7 @@ use crate::types::{
     EmailMessage, EmailStatus, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult,
     ListMessagesOptions, PublicKeyInfo, RegisterAgentOptions, RegistrationResult,
     RotateKeysOptions, RotationResult, SearchOptions, SendEmailOptions, SendEmailResult,
+    UpdateAgentResult,
     TranscriptMessage, TransportType, UpdateUsernameResult, VerifyAgentDocumentRequest,
     VerifyAgentResult,
 };
@@ -327,6 +328,47 @@ impl<P: JacsProvider> HaiClient<P> {
                         // HAI registration failure is non-fatal
                     }
                 }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Export the current agent document as JSON.
+    pub fn export_agent_json(&self) -> Result<String> {
+        self.jacs.export_agent_json()
+    }
+
+    /// Update agent metadata and re-sign with the existing key.
+    ///
+    /// Delegates the local update to [`JacsProvider::update_agent()`], then
+    /// re-registers the updated agent document with HAI so the platform has
+    /// the latest version. HAI registration failure is non-fatal.
+    pub async fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
+        let mut result = self.jacs.update_agent(new_agent_data)?;
+
+        // Re-register with HAI using current key (same key, just new doc version)
+        let url = self.url("/api/v1/agents/register");
+        let mut payload = serde_json::Map::new();
+        payload.insert(
+            "agent_json".to_string(),
+            Value::String(result.signed_agent_json.clone()),
+        );
+
+        match self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .header("Content-Type", "application/json")
+            .json(&Value::Object(payload))
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => {
+                result.registered_with_hai = true;
+            }
+            _ => {
+                // HAI registration failure is non-fatal
             }
         }
 

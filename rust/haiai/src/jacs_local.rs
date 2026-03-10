@@ -65,13 +65,6 @@ impl LocalJacsProvider {
         &self.config_path
     }
 
-    pub fn export_agent_json(&self) -> Result<String> {
-        let simple = self.load_simple_agent()?;
-        simple
-            .export_agent()
-            .map_err(|e| HaiError::Provider(format!("failed to export JACS agent json: {e}")))
-    }
-
     pub fn public_key_pem(&self) -> Result<String> {
         let simple = self.load_simple_agent()?;
         simple
@@ -119,56 +112,6 @@ impl LocalJacsProvider {
 
         let info = Self::create_agent(params)?;
         Ok(map_agent_info(info))
-    }
-
-    /// Update the agent document with new data and re-sign with the existing key.
-    /// The new data must contain the same `jacsId` and `jacsVersion` as the current agent.
-    pub fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
-        let old_version = {
-            let agent = self.agent.lock().map_err(|e| {
-                HaiError::Provider(format!("failed to lock JACS agent: {e}"))
-            })?;
-            agent
-                .get_value()
-                .and_then(|v| v["jacsVersion"].as_str().map(String::from))
-                .unwrap_or_default()
-        };
-
-        let updated_json = {
-            let mut agent = self.agent.lock().map_err(|e| {
-                HaiError::Provider(format!("failed to lock JACS agent: {e}"))
-            })?;
-            agent
-                .update_self(new_agent_data)
-                .map_err(|e| HaiError::Provider(format!("failed to update agent: {e}")))?
-        };
-
-        // Parse new version
-        let new_doc: Value = serde_json::from_str(&updated_json)?;
-        let new_version = new_doc["jacsVersion"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
-
-        // Save to disk
-        {
-            let agent = self.agent.lock().map_err(|e| {
-                HaiError::Provider(format!("failed to lock agent for save: {e}"))
-            })?;
-            agent.save().map_err(|e| {
-                HaiError::Provider(format!("failed to save updated agent: {e}"))
-            })?;
-        }
-
-        // Update config file with new version
-        self.update_config_version(&self.jacs_id, &new_version)?;
-
-        Ok(UpdateAgentResult {
-            jacs_id: self.jacs_id.clone(),
-            old_version,
-            new_version,
-            signed_agent_json: updated_json,
-        })
     }
 
     /// Migrate a legacy agent whose document predates a schema change.
@@ -330,6 +273,59 @@ impl JacsProvider for LocalJacsProvider {
         let simple = self.load_simple_agent()?;
         jacs::email::sign_email(raw_email, &simple)
             .map_err(|e| HaiError::Provider(format!("JACS email signing failed: {e}")))
+    }
+
+    fn export_agent_json(&self) -> Result<String> {
+        let simple = self.load_simple_agent()?;
+        simple
+            .export_agent()
+            .map_err(|e| HaiError::Provider(format!("failed to export JACS agent json: {e}")))
+    }
+
+    fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
+        let old_version = {
+            let agent = self.agent.lock().map_err(|e| {
+                HaiError::Provider(format!("failed to lock JACS agent: {e}"))
+            })?;
+            agent
+                .get_value()
+                .and_then(|v| v["jacsVersion"].as_str().map(String::from))
+                .unwrap_or_default()
+        };
+
+        let updated_json = {
+            let mut agent = self.agent.lock().map_err(|e| {
+                HaiError::Provider(format!("failed to lock JACS agent: {e}"))
+            })?;
+            agent
+                .update_self(new_agent_data)
+                .map_err(|e| HaiError::Provider(format!("failed to update agent: {e}")))?
+        };
+
+        let new_doc: Value = serde_json::from_str(&updated_json)?;
+        let new_version = new_doc["jacsVersion"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+
+        {
+            let agent = self.agent.lock().map_err(|e| {
+                HaiError::Provider(format!("failed to lock agent for save: {e}"))
+            })?;
+            agent.save().map_err(|e| {
+                HaiError::Provider(format!("failed to save updated agent: {e}"))
+            })?;
+        }
+
+        self.update_config_version(&self.jacs_id, &new_version)?;
+
+        Ok(UpdateAgentResult {
+            jacs_id: self.jacs_id.clone(),
+            old_version,
+            new_version,
+            signed_agent_json: updated_json,
+            registered_with_hai: false,
+        })
     }
 
     #[cfg(feature = "jacs-crate")]

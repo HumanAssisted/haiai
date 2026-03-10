@@ -11,8 +11,8 @@
 #![cfg(feature = "jacs-crate")]
 
 use haiai::{
-    CreateAgentOptions, HaiClient, HaiClientOptions, ListMessagesOptions, LocalJacsProvider,
-    RegisterAgentOptions, SearchOptions, SendEmailOptions,
+    CreateAgentOptions, HaiClient, HaiClientOptions, JacsProvider, ListMessagesOptions,
+    LocalJacsProvider, RegisterAgentOptions, SearchOptions, SendEmailOptions,
 };
 use std::env;
 
