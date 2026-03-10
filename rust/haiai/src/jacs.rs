@@ -4,7 +4,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::error::{HaiError, Result};
-use crate::types::{RotationResult, SignedPayload};
+use crate::types::{RotationResult, SignedPayload, UpdateAgentResult};
 
 /// Bridge trait for JACS operations that HAI SDK depends on.
 ///
@@ -101,6 +101,30 @@ pub trait JacsProvider: Send + Sync {
     fn rotate(&self) -> Result<RotationResult> {
         Err(HaiError::Provider(
             "key rotation not supported by this provider; use LocalJacsProvider".to_string(),
+        ))
+    }
+
+    /// Export the current agent document as a JSON string.
+    ///
+    /// Default implementation returns an error; override in providers
+    /// that have access to the full agent document (e.g., LocalJacsProvider).
+    fn export_agent_json(&self) -> Result<String> {
+        Err(HaiError::Provider(
+            "export_agent_json not supported by this provider; use LocalJacsProvider".to_string(),
+        ))
+    }
+
+    /// Update agent metadata and re-sign with the existing key.
+    ///
+    /// `new_agent_data` is the full agent JSON with modifications applied.
+    /// The jacsId MUST match the current agent; jacsVersion will be bumped.
+    ///
+    /// Default implementation returns an error; override in providers
+    /// that support local agent management (e.g., LocalJacsProvider).
+    fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
+        let _ = new_agent_data;
+        Err(HaiError::Provider(
+            "update_agent not supported by this provider; use LocalJacsProvider".to_string(),
         ))
     }
 }
