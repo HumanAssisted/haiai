@@ -40,6 +40,7 @@ pub mod error;
 pub mod jacs;
 #[cfg(feature = "jacs-crate")]
 pub mod jacs_local;
+pub mod key_format;
 pub mod mime;
 pub mod types;
 pub mod validation;
@@ -51,16 +52,18 @@ pub use a2a::{
     A2AIntegration, A2AMediatedJobOptions, A2ATrustAssessment, A2ATrustPolicy, A2AWrappedArtifact,
     A2A_JACS_EXTENSION_URI, A2A_PROTOCOL_VERSION_04, A2A_PROTOCOL_VERSION_10,
 };
+#[cfg(feature = "jacs-crate")]
+pub use agent::{Agent, EmailNamespace};
 pub use client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
 pub use config::{load_config, resolve_private_key_candidates, AgentConfig};
 #[cfg(feature = "jacs-crate")]
 pub use email::{
+    compute_content_hash,
     // JACS email types re-exported for consumer convenience
     sign_email,
     verify_email,
-    compute_content_hash,
-    AttachmentInput,
     AttachmentEntry,
+    AttachmentInput,
     BodyPartEntry,
     ContentVerificationResult,
     EmailSignatureHeaders,
@@ -73,8 +76,6 @@ pub use email::{
     ParsedEmailParts,
     SignedHeaderEntry,
 };
-#[cfg(feature = "jacs-crate")]
-pub use agent::{Agent, EmailNamespace};
 pub use error::{HaiError, Result};
 pub use jacs::{JacsProvider, NoopJacsProvider, StaticJacsProvider};
 #[cfg(feature = "jacs-crate")]

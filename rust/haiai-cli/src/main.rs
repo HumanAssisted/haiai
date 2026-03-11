@@ -12,6 +12,10 @@ use serde_json::Value;
 #[derive(Parser)]
 #[command(name = "haiai", version, about = "HAIAI CLI")]
 struct Cli {
+    /// Do not prompt for private key password; require JACS_PRIVATE_KEY_PASSWORD env var
+    #[arg(short, long, global = true)]
+    quiet: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -46,11 +50,7 @@ enum Commands {
     },
 
     /// Start the built-in HAIAI MCP server (stdio transport)
-    Mcp {
-        /// Do not prompt for private key password; require JACS_PRIVATE_KEY_PASSWORD env var
-        #[arg(short, long)]
-        quiet: bool,
-    },
+    Mcp,
 
     /// Ping the HAI API and verify connectivity
     Hello,
@@ -177,15 +177,13 @@ fn resolve_init_password() -> anyhow::Result<String> {
     }
     loop {
         eprintln!("Enter password (used to encrypt private key):");
-        let password = rpassword::read_password()
-            .context("failed to read password")?;
+        let password = rpassword::read_password().context("failed to read password")?;
         if password.is_empty() {
             eprintln!("Password cannot be empty. Try again.");
             continue;
         }
         eprintln!("Confirm password:");
-        let confirm = rpassword::read_password()
-            .context("failed to read password confirmation")?;
+        let confirm = rpassword::read_password().context("failed to read password confirmation")?;
         if password != confirm {
             eprintln!("Passwords do not match. Try again.");
             continue;
@@ -196,8 +194,12 @@ fn resolve_init_password() -> anyhow::Result<String> {
 
 /// If JACS_PRIVATE_KEY_PASSWORD is not set and we're not in quiet mode, prompt for it
 /// (once, hidden) and set the env var so the subsequent agent load can decrypt the key.
-fn ensure_mcp_password(quiet: bool) -> anyhow::Result<()> {
-    if std::env::var("JACS_PRIVATE_KEY_PASSWORD").map(|s| !s.is_empty()).unwrap_or(false) {
+/// Used by all commands that load an existing agent (everything except init).
+fn ensure_agent_password(quiet: bool) -> anyhow::Result<()> {
+    if std::env::var("JACS_PRIVATE_KEY_PASSWORD")
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+    {
         return Ok(());
     }
     if quiet {
@@ -205,9 +207,9 @@ fn ensure_mcp_password(quiet: bool) -> anyhow::Result<()> {
     }
     if !atty::is(atty::Stream::Stdin) {
         anyhow::bail!(
-            "JACS_PRIVATE_KEY_PASSWORD is not set. \
-            Set it to the password for your private key, or run haiai mcp from a terminal to be prompted."
-        );
+                "JACS_PRIVATE_KEY_PASSWORD is not set. \
+                Set it to the password for your private key, or run haiai from a terminal to be prompted."
+            );
     }
     eprintln!("Enter private key password:");
     let password = rpassword::read_password().context("failed to read password")?;
@@ -230,8 +232,7 @@ fn load_client() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
         base_url: hai_url(),
         ..Default::default()
     };
-    let client =
-        HaiClient::new(provider, options).context("failed to construct HaiClient")?;
+    let client = HaiClient::new(provider, options).context("failed to construct HaiClient")?;
     Ok(client)
 }
 
@@ -263,6 +264,11 @@ fn print_message_table(messages: &[haiai::EmailMessage]) {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // Commands that load an existing agent need the private key password. Prompt once if not set and not -q.
+    if !matches!(cli.command, Commands::Init { .. }) {
+        ensure_agent_password(cli.quiet).context("failed to resolve private key password")?;
+    }
 
     match cli.command {
         Commands::Init {
@@ -311,16 +317,13 @@ async fn main() -> anyhow::Result<()> {
             println!("\nStart the MCP server with: haiai mcp");
         }
 
-        Commands::Mcp { quiet } => {
+        Commands::Mcp => {
             tracing_subscriber::fmt()
                 .with_env_filter(
-                    std::env::var("RUST_LOG")
-                        .unwrap_or_else(|_| "info,rmcp=warn".to_string()),
+                    std::env::var("RUST_LOG").unwrap_or_else(|_| "info,rmcp=warn".to_string()),
                 )
                 .with_writer(std::io::stderr)
                 .init();
-
-            ensure_mcp_password(quiet).context("failed to resolve private key password")?;
 
             let shared_agent = LoadedSharedAgent::load_from_config_env()
                 .context("failed to load JACS agent for haiai mcp")?;
@@ -328,18 +331,12 @@ async fn main() -> anyhow::Result<()> {
                 .embedded_provider()
                 .context("failed to construct embedded HAIAI provider from JACS agent")?;
             let fallback_jacs_id = provider.jacs_id().to_string();
-            let default_config_path =
-                Some(shared_agent.config_path().display().to_string());
+            let default_config_path = Some(shared_agent.config_path().display().to_string());
 
-            let context = HaiServerContext::from_process_env(
-                fallback_jacs_id,
-                default_config_path,
-                provider,
-            );
-            let server = HaiMcpServer::new(
-                JacsMcpServer::new(shared_agent.agent_wrapper()),
-                context,
-            );
+            let context =
+                HaiServerContext::from_process_env(fallback_jacs_id, default_config_path, provider);
+            let server =
+                HaiMcpServer::new(JacsMcpServer::new(shared_agent.agent_wrapper()), context);
 
             tracing::info!("haiai mcp ready, waiting for MCP client on stdio");
 
@@ -373,8 +370,8 @@ async fn main() -> anyhow::Result<()> {
                 base_url: hai_url(),
                 ..Default::default()
             };
-            let client = HaiClient::new(provider, options)
-                .context("failed to construct HaiClient")?;
+            let client =
+                HaiClient::new(provider, options).context("failed to construct HaiClient")?;
 
             let reg_options = RegisterAgentOptions {
                 agent_json,
@@ -474,12 +471,7 @@ async fn main() -> anyhow::Result<()> {
             print_message_table(&messages);
         }
 
-        Commands::SearchMessages {
-            q,
-            from,
-            to,
-            limit,
-        } => {
+        Commands::SearchMessages { q, from, to, limit } => {
             let client = load_client()?;
             let options = SearchOptions {
                 q,
@@ -554,8 +546,8 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Migrate => {
-            let result = LocalJacsProvider::migrate_agent(None)
-                .context("agent migration failed")?;
+            let result =
+                LocalJacsProvider::migrate_agent(None).context("agent migration failed")?;
 
             println!("Agent migrated successfully!");
             println!("  Agent ID:    {}", result.jacs_id);
@@ -578,14 +570,8 @@ async fn main() -> anyhow::Result<()> {
                 .or_else(|| result.get("runId"))
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            let status = result
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let tier_val = result
-                .get("tier")
-                .and_then(Value::as_str)
-                .unwrap_or(&tier);
+            let status = result.get("status").and_then(Value::as_str).unwrap_or("");
+            let tier_val = result.get("tier").and_then(Value::as_str).unwrap_or(&tier);
 
             println!("  Run ID: {}", run_id);
             println!("  Status: {}", status);
@@ -610,7 +596,12 @@ mod tests {
     #[test]
     fn parse_init() {
         let cli = Cli::parse_from([
-            "haiai", "init", "--name", "myagent", "--domain", "example.com",
+            "haiai",
+            "init",
+            "--name",
+            "myagent",
+            "--domain",
+            "example.com",
         ]);
         match cli.command {
             Commands::Init {
@@ -635,7 +626,7 @@ mod tests {
     #[test]
     fn parse_mcp() {
         let cli = Cli::parse_from(["haiai", "mcp"]);
-        assert!(matches!(cli.command, Commands::Mcp { .. }));
+        assert!(matches!(cli.command, Commands::Mcp));
     }
 
     #[test]
@@ -646,12 +637,7 @@ mod tests {
 
     #[test]
     fn parse_register_required_args() {
-        let cli = Cli::parse_from([
-            "haiai",
-            "register",
-            "--owner-email",
-            "agent@example.com",
-        ]);
+        let cli = Cli::parse_from(["haiai", "register", "--owner-email", "agent@example.com"]);
         match cli.command {
             Commands::Register {
                 owner_email,
@@ -689,7 +675,10 @@ mod tests {
     #[test]
     fn parse_register_missing_email_fails() {
         let result = Cli::try_parse_from(["haiai", "register"]);
-        assert!(result.is_err(), "register without --owner-email should fail");
+        assert!(
+            result.is_err(),
+            "register without --owner-email should fail"
+        );
     }
 
     #[test]
@@ -712,7 +701,10 @@ mod tests {
     #[test]
     fn parse_check_username_missing_arg_fails() {
         let result = Cli::try_parse_from(["haiai", "check-username"]);
-        assert!(result.is_err(), "check-username without positional arg should fail");
+        assert!(
+            result.is_err(),
+            "check-username without positional arg should fail"
+        );
     }
 
     #[test]
@@ -751,7 +743,10 @@ mod tests {
     #[test]
     fn parse_send_email_missing_args_fails() {
         let result = Cli::try_parse_from(["haiai", "send-email", "--to", "x@hai.ai"]);
-        assert!(result.is_err(), "send-email without --subject and --body should fail");
+        assert!(
+            result.is_err(),
+            "send-email without --subject and --body should fail"
+        );
     }
 
     #[test]
@@ -801,12 +796,7 @@ mod tests {
     fn parse_search_messages_defaults() {
         let cli = Cli::parse_from(["haiai", "search-messages"]);
         match cli.command {
-            Commands::SearchMessages {
-                q,
-                from,
-                to,
-                limit,
-            } => {
+            Commands::SearchMessages { q, from, to, limit } => {
                 assert!(q.is_none());
                 assert!(from.is_none());
                 assert!(to.is_none());
@@ -831,12 +821,7 @@ mod tests {
             "5",
         ]);
         match cli.command {
-            Commands::SearchMessages {
-                q,
-                from,
-                to,
-                limit,
-            } => {
+            Commands::SearchMessages { q, from, to, limit } => {
                 assert_eq!(q.as_deref(), Some("invoice"));
                 assert_eq!(from.as_deref(), Some("sender@hai.ai"));
                 assert_eq!(to.as_deref(), Some("me@hai.ai"));
@@ -890,12 +875,7 @@ mod tests {
 
     #[test]
     fn parse_update_with_set() {
-        let cli = Cli::parse_from([
-            "haiai",
-            "update",
-            "--set",
-            r#"{"jacsAgentType":"service"}"#,
-        ]);
+        let cli = Cli::parse_from(["haiai", "update", "--set", r#"{"jacsAgentType":"service"}"#]);
         match cli.command {
             Commands::Update { set } => {
                 assert_eq!(set.as_deref(), Some(r#"{"jacsAgentType":"service"}"#));

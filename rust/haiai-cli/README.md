@@ -66,6 +66,12 @@ It loads your agent from the config created in step 1 and exposes both JACS
 tools (signing, verification) and HAI platform tools (email, registration,
 usernames).
 
+If `JACS_PRIVATE_KEY_PASSWORD` is not set and you run from a terminal, you
+will be prompted once for the private key password (hidden input). This applies
+to all commands that load an existing agent (mcp, hello, register, status,
+send-email, etc.). Use `-q`/`--quiet` to skip the prompt and require the env var
+(e.g. in scripts or when the client supplies the env).
+
 Connect it to any MCP client (Claude Desktop, Cursor, etc.) by pointing the
 client at:
 
@@ -80,7 +86,7 @@ client at:
 }
 ```
 
-### 3. Environment variables
+### 3. Environment variables and flags
 
 | Variable | Description |
 |----------|-------------|
@@ -90,6 +96,8 @@ client at:
 | `JACS_CONFIG_FILE` | Override config file path |
 | `HAI_URL` | HAI.AI API base URL (default: `https://hai.ai`) |
 | `RUST_LOG` | Logging level (default: `info,rmcp=warn`) |
+
+Global flag: `-q`/`--quiet` — do not prompt for the private key password; require `JACS_PRIVATE_KEY_PASSWORD` to be set (for scripts or non-interactive use).
 
 ## Available MCP tools
 

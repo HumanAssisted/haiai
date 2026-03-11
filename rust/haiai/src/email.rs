@@ -5,7 +5,6 @@
 //! verification, and identity binding -- without duplicating any MIME parsing
 //! or cryptography (those live in JACS).
 
-
 use base64::Engine;
 use sha2::{Digest, Sha256};
 

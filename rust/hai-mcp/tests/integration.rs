@@ -419,9 +419,7 @@ fn standalone_binary_prints_deprecation() {
         return;
     }
 
-    let output = Command::new(&hai_mcp_bin)
-        .output()
-        .expect("run hai-mcp");
+    let output = Command::new(&hai_mcp_bin).output().expect("run hai-mcp");
 
     assert!(
         !output.status.success(),

@@ -2,7 +2,6 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-
 use jacs::agent::boilerplate::BoilerPlate;
 use jacs::crypt::KeyManager;
 use jacs::simple::{self, CreateAgentParams, SimpleAgent};
@@ -10,9 +9,12 @@ use serde_json::Value;
 
 use crate::error::{HaiError, Result};
 use crate::jacs::JacsProvider;
+use crate::key_format::normalize_public_key_pem;
 #[cfg(feature = "jacs-crate")]
 use crate::types::RotationResult;
-use crate::types::{CreateAgentOptions, CreateAgentResult, MigrateAgentResult, SignedPayload, UpdateAgentResult};
+use crate::types::{
+    CreateAgentOptions, CreateAgentResult, MigrateAgentResult, SignedPayload, UpdateAgentResult,
+};
 
 /// Local JACS-backed provider using the canonical Rust `jacs` crate.
 ///
@@ -66,10 +68,14 @@ impl LocalJacsProvider {
     }
 
     pub fn public_key_pem(&self) -> Result<String> {
-        let simple = self.load_simple_agent()?;
-        simple
-            .get_public_key_pem()
-            .map_err(|e| HaiError::Provider(format!("failed to read JACS public key pem: {e}")))
+        let agent = self
+            .agent
+            .lock()
+            .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
+        let public_key = agent
+            .get_public_key()
+            .map_err(|e| HaiError::Provider(format!("failed to get JACS public key: {e}")))?;
+        Ok(normalize_public_key_pem(&public_key))
     }
 
     pub fn create_agent(params: CreateAgentParams) -> Result<simple::AgentInfo> {
@@ -119,9 +125,8 @@ impl LocalJacsProvider {
     pub fn migrate_agent(config_path: Option<&std::path::Path>) -> Result<MigrateAgentResult> {
         let path = resolve_jacs_config_path(config_path);
         let path_str = path.display().to_string();
-        let result = simple::SimpleAgent::migrate_agent(Some(&path_str)).map_err(|e| {
-            HaiError::Provider(format!("agent migration failed: {e}"))
-        })?;
+        let result = simple::SimpleAgent::migrate_agent(Some(&path_str))
+            .map_err(|e| HaiError::Provider(format!("agent migration failed: {e}")))?;
 
         Ok(MigrateAgentResult {
             jacs_id: result.jacs_id,
@@ -133,9 +138,7 @@ impl LocalJacsProvider {
 
     fn update_config_version(&self, jacs_id: &str, new_version: &str) -> Result<()> {
         let config_str = std::fs::read_to_string(&self.config_path).map_err(|e| {
-            HaiError::Provider(format!(
-                "failed to read config for version update: {e}"
-            ))
+            HaiError::Provider(format!("failed to read config for version update: {e}"))
         })?;
         let mut config_value: Value = serde_json::from_str(&config_str)?;
         let new_lookup = format!("{}:{}", jacs_id, new_version);
@@ -146,9 +149,8 @@ impl LocalJacsProvider {
             );
         }
         let updated_str = serde_json::to_string_pretty(&config_value)?;
-        std::fs::write(&self.config_path, updated_str).map_err(|e| {
-            HaiError::Provider(format!("failed to write updated config: {e}"))
-        })?;
+        std::fs::write(&self.config_path, updated_str)
+            .map_err(|e| HaiError::Provider(format!("failed to write updated config: {e}")))?;
         Ok(())
     }
 
@@ -284,9 +286,10 @@ impl JacsProvider for LocalJacsProvider {
 
     fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
         let old_version = {
-            let agent = self.agent.lock().map_err(|e| {
-                HaiError::Provider(format!("failed to lock JACS agent: {e}"))
-            })?;
+            let agent = self
+                .agent
+                .lock()
+                .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
             agent
                 .get_value()
                 .and_then(|v| v["jacsVersion"].as_str().map(String::from))
@@ -294,27 +297,26 @@ impl JacsProvider for LocalJacsProvider {
         };
 
         let updated_json = {
-            let mut agent = self.agent.lock().map_err(|e| {
-                HaiError::Provider(format!("failed to lock JACS agent: {e}"))
-            })?;
+            let mut agent = self
+                .agent
+                .lock()
+                .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
             agent
                 .update_self(new_agent_data)
                 .map_err(|e| HaiError::Provider(format!("failed to update agent: {e}")))?
         };
 
         let new_doc: Value = serde_json::from_str(&updated_json)?;
-        let new_version = new_doc["jacsVersion"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let new_version = new_doc["jacsVersion"].as_str().unwrap_or("").to_string();
 
         {
-            let agent = self.agent.lock().map_err(|e| {
-                HaiError::Provider(format!("failed to lock agent for save: {e}"))
-            })?;
-            agent.save().map_err(|e| {
-                HaiError::Provider(format!("failed to save updated agent: {e}"))
-            })?;
+            let agent = self
+                .agent
+                .lock()
+                .map_err(|e| HaiError::Provider(format!("failed to lock agent for save: {e}")))?;
+            agent
+                .save()
+                .map_err(|e| HaiError::Provider(format!("failed to save updated agent: {e}")))?;
         }
 
         self.update_config_version(&self.jacs_id, &new_version)?;

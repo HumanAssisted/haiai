@@ -11,7 +11,10 @@ use crate::types::SendEmailOptions;
 
 /// Strip `\r`, `\n`, and `"` from a header value to prevent CRLF and parameter injection.
 fn sanitize_header(value: &str) -> String {
-    value.chars().filter(|c| *c != '\r' && *c != '\n' && *c != '"').collect()
+    value
+        .chars()
+        .filter(|c| *c != '\r' && *c != '\n' && *c != '"')
+        .collect()
 }
 
 /// Build an RFC 5322 email from structured fields.
@@ -88,8 +91,7 @@ pub fn build_rfc5322_email(opts: &SendEmailOptions, from_email: &str) -> Result<
         // Attachment parts
         for att in &opts.attachments {
             let raw_data = att.effective_data();
-            let b64 =
-                base64::engine::general_purpose::STANDARD.encode(&raw_data);
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&raw_data);
             let safe_filename = sanitize_header(&att.filename);
             let safe_content_type = sanitize_header(&att.content_type);
 
@@ -271,11 +273,7 @@ mod tests {
         let text = String::from_utf8(raw).unwrap();
         // Every line must end with \r\n (no bare \n)
         for line in text.split("\r\n") {
-            assert!(
-                !line.contains('\n'),
-                "found bare \\n in line: {:?}",
-                line
-            );
+            assert!(!line.contains('\n'), "found bare \\n in line: {:?}", line);
         }
     }
 }

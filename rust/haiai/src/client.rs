@@ -20,9 +20,8 @@ use crate::types::{
     EmailMessage, EmailStatus, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult,
     ListMessagesOptions, PublicKeyInfo, RegisterAgentOptions, RegistrationResult,
     RotateKeysOptions, RotationResult, SearchOptions, SendEmailOptions, SendEmailResult,
-    UpdateAgentResult,
-    TranscriptMessage, TransportType, UpdateUsernameResult, VerifyAgentDocumentRequest,
-    VerifyAgentResult,
+    TranscriptMessage, TransportType, UpdateAgentResult, UpdateUsernameResult,
+    VerifyAgentDocumentRequest, VerifyAgentResult,
 };
 
 const DEFAULT_BASE_URL: &str = "https://hai.ai";

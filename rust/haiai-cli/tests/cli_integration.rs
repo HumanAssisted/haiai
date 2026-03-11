@@ -37,8 +37,14 @@ fn help_flag_exits_zero() {
     assert!(output.status.success(), "exit code: {}", output.status);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("HAIAI CLI"), "stdout: {stdout}");
-    assert!(stdout.contains("init"), "stdout should list init subcommand: {stdout}");
-    assert!(stdout.contains("mcp"), "stdout should list mcp subcommand: {stdout}");
+    assert!(
+        stdout.contains("init"),
+        "stdout should list init subcommand: {stdout}"
+    );
+    assert!(
+        stdout.contains("mcp"),
+        "stdout should list mcp subcommand: {stdout}"
+    );
 }
 
 #[test]
@@ -125,9 +131,15 @@ fn init_creates_config_keys_and_prints_agent_id() {
     );
 
     // Output should contain agent info
-    assert!(stdout.contains("Agent created successfully"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("Agent created successfully"),
+        "stdout: {stdout}"
+    );
     assert!(stdout.contains("Agent ID:"), "stdout: {stdout}");
-    assert!(stdout.contains("haiai mcp"), "should hint about mcp: {stdout}");
+    assert!(
+        stdout.contains("haiai mcp"),
+        "should hint about mcp: {stdout}"
+    );
 
     // Config file should exist and contain agent ID
     assert!(config_path.is_file(), "config not created");
@@ -415,12 +427,18 @@ fn init_then_mcp_fails_due_to_raw_key_format() {
     let init_output = Command::new(haiai_bin())
         .args([
             "init",
-            "--name", "key-format-agent",
-            "--domain", "test.example.com",
-            "--algorithm", "ring-Ed25519",
-            "--config-path", "./jacs.config.json",
-            "--key-dir", "./jacs_keys",
-            "--data-dir", "./jacs",
+            "--name",
+            "key-format-agent",
+            "--domain",
+            "test.example.com",
+            "--algorithm",
+            "ring-Ed25519",
+            "--config-path",
+            "./jacs.config.json",
+            "--key-dir",
+            "./jacs_keys",
+            "--data-dir",
+            "./jacs",
         ])
         .current_dir(temp.path())
         .env("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123")
@@ -480,8 +498,10 @@ fn mcp_without_jacs_config_fails() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("JACS_CONFIG") || stderr.contains("jacs"),
-        "should mention JACS_CONFIG or jacs: {stderr}"
+        stderr.contains("JACS_CONFIG")
+            || stderr.contains("jacs")
+            || stderr.contains("JACS_PRIVATE_KEY_PASSWORD"),
+        "should mention config or password: {stderr}"
     );
 }
 

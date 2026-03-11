@@ -47,10 +47,12 @@ pub fn validate_email_address(address: &str) -> Result<()> {
     // Check for CRLF injection in the address itself
     validate_no_crlf("to", trimmed)?;
 
-    let (local, domain) = trimmed.rsplit_once('@').ok_or_else(|| HaiError::Validation {
-        field: "to".to_string(),
-        message: format!("Invalid email address: '{}' (missing @)", address),
-    })?;
+    let (local, domain) = trimmed
+        .rsplit_once('@')
+        .ok_or_else(|| HaiError::Validation {
+            field: "to".to_string(),
+            message: format!("Invalid email address: '{}' (missing @)", address),
+        })?;
 
     if local.is_empty() {
         return Err(HaiError::Validation {
@@ -88,9 +90,7 @@ pub fn validate_email_address(address: &str) -> Result<()> {
 }
 
 /// Validate attachment constraints (size and count limits).
-pub fn validate_attachments(
-    attachments: &[crate::types::EmailAttachment],
-) -> Result<()> {
+pub fn validate_attachments(attachments: &[crate::types::EmailAttachment]) -> Result<()> {
     if attachments.len() > MAX_ATTACHMENT_COUNT {
         return Err(HaiError::Validation {
             field: "attachments".to_string(),
