@@ -48,6 +48,7 @@ Options:
 |------|---------|-------------|
 | `--name` | (required) | Agent display name |
 | `--domain` | (required) | Domain for DNSSEC fingerprint |
+| `--password` | (optional) | Password for the encrypted private key. If omitted, `JACS_PRIVATE_KEY_PASSWORD` env var is used. |
 | `--algorithm` | `pq2025` | Signing algorithm |
 | `--data-dir` | `./jacs` | JACS data directory |
 | `--key-dir` | `./jacs_keys` | Key storage directory |

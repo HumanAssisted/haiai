@@ -26,6 +26,8 @@ tokio.workspace = true
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 serde_json = "1"
+rpassword = "7"
+atty = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

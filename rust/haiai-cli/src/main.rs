@@ -155,6 +155,41 @@ fn hai_url() -> String {
     std::env::var("HAI_URL").unwrap_or_else(|_| "https://hai.ai".to_string())
 }
 
+/// Resolve password for agent creation: use JACS_PRIVATE_KEY_PASSWORD if set,
+/// otherwise prompt twice on stdin when it's a TTY (hidden input). Non-interactive
+/// runs must set the env var.
+fn resolve_init_password() -> anyhow::Result<String> {
+    if let Ok(pass) = std::env::var("JACS_PRIVATE_KEY_PASSWORD") {
+        if !pass.is_empty() {
+            return Ok(pass);
+        }
+    }
+    if !atty::is(atty::Stream::Stdin) {
+        anyhow::bail!(
+            "Password is required for agent creation. \
+            Set the JACS_PRIVATE_KEY_PASSWORD environment variable, \
+            or run haiai init from a terminal to be prompted for a password."
+        );
+    }
+    loop {
+        eprintln!("Enter password (used to encrypt private key):");
+        let password = rpassword::read_password()
+            .context("failed to read password")?;
+        if password.is_empty() {
+            eprintln!("Password cannot be empty. Try again.");
+            continue;
+        }
+        eprintln!("Confirm password:");
+        let confirm = rpassword::read_password()
+            .context("failed to read password confirmation")?;
+        if password != confirm {
+            eprintln!("Passwords do not match. Try again.");
+            continue;
+        }
+        return Ok(password);
+    }
+}
+
 /// Load the local JACS provider and build a HaiClient.
 ///
 /// The provider is loaded from `JACS_CONFIG` / `JACS_CONFIG_PATH` env vars
@@ -210,9 +245,10 @@ async fn main() -> anyhow::Result<()> {
             key_dir,
             config_path,
         } => {
+            let password_resolved = resolve_init_password()?;
             let options = CreateAgentOptions {
                 name: name.clone(),
-                password: String::new(), // resolved from JACS_PRIVATE_KEY_PASSWORD env var
+                password: password_resolved,
                 algorithm: Some(algorithm),
                 data_directory: Some(data_dir),
                 key_directory: Some(key_dir),
@@ -221,8 +257,18 @@ async fn main() -> anyhow::Result<()> {
                 ..Default::default()
             };
 
-            let result = LocalJacsProvider::create_agent_with_options(&options)
-                .context("failed to create JACS agent")?;
+            let result = LocalJacsProvider::create_agent_with_options(&options).map_err(|e| {
+                let msg = e.to_string();
+                if msg.contains("Password is required") {
+                    anyhow::anyhow!(
+                        "Password is required for agent creation. \
+                        Set the JACS_PRIVATE_KEY_PASSWORD environment variable, \
+                        or run haiai init from a terminal to be prompted for a password."
+                    )
+                } else {
+                    anyhow::anyhow!("{}", msg)
+                }
+            })?;
 
             println!("Agent created successfully!");
             println!("  Agent ID: {}", result.agent_id);
