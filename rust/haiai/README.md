@@ -21,12 +21,17 @@ implementations backed by JACS.
 
 Default builds use the published `jacs` crate pinned to `0.9.3`.
 
-For local development against a checkout at `../../../JACS/jacs`, disable
-default features and enable `jacs-local`:
+For local development against a sibling checkout at `../../JACS`, this repo
+uses a local cargo override in `rust/.cargo/config.toml`:
 
 ```bash
-cargo test -p haiai --no-default-features --features rustls-tls,jacs-local
+[patch.crates-io]
+jacs = { path = "../../JACS/jacs" }
+jacs-binding-core = { path = "../../JACS/binding-core" }
+jacs-mcp = { path = "../../JACS/jacs-mcp" }
 ```
+
+That file is gitignored, so CI and published builds still use crates.io.
 
 ## A2A facade
 
