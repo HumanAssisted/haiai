@@ -16,7 +16,9 @@ const MISSING_JACS_CONFIG_MESSAGE: &str = "JACS_CONFIG environment variable is n
 \n\
 To use hai-mcp, you need to:\n\
 1. Create a jacs.config.json file with your agent configuration\n\
-2. Set JACS_CONFIG=/path/to/jacs.config.json";
+2. Set JACS_CONFIG=/path/to/jacs.config.json\n\
+\n\
+Alternatively, run from a directory that contains jacs.config.json (current directory is checked).";
 
 pub struct LoadedSharedAgent {
     inner: Arc<StdMutex<Agent>>,
@@ -24,9 +26,26 @@ pub struct LoadedSharedAgent {
 }
 
 impl LoadedSharedAgent {
+    /// Load agent from config. Resolution order:
+    /// 1. JACS_CONFIG env var
+    /// 2. JACS_CONFIG_PATH env var
+    /// 3. ./jacs.config.json in the current directory
     pub fn load_from_config_env() -> anyhow::Result<Self> {
-        let cfg_path =
-            std::env::var("JACS_CONFIG").map_err(|_| anyhow!(MISSING_JACS_CONFIG_MESSAGE))?;
+        let default_path = PathBuf::from("./jacs.config.json");
+        let cfg_path = std::env::var("JACS_CONFIG")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var("JACS_CONFIG_PATH")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .map(PathBuf::from)
+            })
+            .unwrap_or_else(|| default_path.clone());
+        if cfg_path == default_path && !cfg_path.exists() {
+            return Err(anyhow!(MISSING_JACS_CONFIG_MESSAGE));
+        }
         Self::load_from_config_path(cfg_path)
     }
 

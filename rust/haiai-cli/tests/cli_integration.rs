@@ -466,9 +466,12 @@ fn jacs_fixture_config() -> PathBuf {
 
 #[test]
 fn mcp_without_jacs_config_fails() {
+    let temp = tempfile::tempdir().expect("temp dir");
     let output = Command::new(haiai_bin())
         .arg("mcp")
+        .current_dir(temp.path())
         .env_remove("JACS_CONFIG")
+        .env_remove("JACS_CONFIG_PATH")
         .env("RUST_LOG", "warn")
         .stdin(Stdio::null())
         .output()
@@ -478,7 +481,7 @@ fn mcp_without_jacs_config_fails() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("JACS_CONFIG") || stderr.contains("jacs"),
-        "should mention JACS_CONFIG: {stderr}"
+        "should mention JACS_CONFIG or jacs: {stderr}"
     );
 }
 
