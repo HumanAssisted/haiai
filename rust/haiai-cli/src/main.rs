@@ -46,7 +46,11 @@ enum Commands {
     },
 
     /// Start the built-in HAIAI MCP server (stdio transport)
-    Mcp,
+    Mcp {
+        /// Do not prompt for private key password; require JACS_PRIVATE_KEY_PASSWORD env var
+        #[arg(short, long)]
+        quiet: bool,
+    },
 
     /// Ping the HAI API and verify connectivity
     Hello,
@@ -190,6 +194,30 @@ fn resolve_init_password() -> anyhow::Result<String> {
     }
 }
 
+/// If JACS_PRIVATE_KEY_PASSWORD is not set and we're not in quiet mode, prompt for it
+/// (once, hidden) and set the env var so the subsequent agent load can decrypt the key.
+fn ensure_mcp_password(quiet: bool) -> anyhow::Result<()> {
+    if std::env::var("JACS_PRIVATE_KEY_PASSWORD").map(|s| !s.is_empty()).unwrap_or(false) {
+        return Ok(());
+    }
+    if quiet {
+        return Ok(());
+    }
+    if !atty::is(atty::Stream::Stdin) {
+        anyhow::bail!(
+            "JACS_PRIVATE_KEY_PASSWORD is not set. \
+            Set it to the password for your private key, or run haiai mcp from a terminal to be prompted."
+        );
+    }
+    eprintln!("Enter private key password:");
+    let password = rpassword::read_password().context("failed to read password")?;
+    if password.is_empty() {
+        anyhow::bail!("Password cannot be empty.");
+    }
+    std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", &password);
+    Ok(())
+}
+
 /// Load the local JACS provider and build a HaiClient.
 ///
 /// The provider is loaded from `JACS_CONFIG` / `JACS_CONFIG_PATH` env vars
@@ -283,7 +311,7 @@ async fn main() -> anyhow::Result<()> {
             println!("\nStart the MCP server with: haiai mcp");
         }
 
-        Commands::Mcp => {
+        Commands::Mcp { quiet } => {
             tracing_subscriber::fmt()
                 .with_env_filter(
                     std::env::var("RUST_LOG")
@@ -291,6 +319,8 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .with_writer(std::io::stderr)
                 .init();
+
+            ensure_mcp_password(quiet).context("failed to resolve private key password")?;
 
             let shared_agent = LoadedSharedAgent::load_from_config_env()
                 .context("failed to load JACS agent for haiai mcp")?;
@@ -605,7 +635,7 @@ mod tests {
     #[test]
     fn parse_mcp() {
         let cli = Cli::parse_from(["haiai", "mcp"]);
-        assert!(matches!(cli.command, Commands::Mcp));
+        assert!(matches!(cli.command, Commands::Mcp { .. }));
     }
 
     #[test]

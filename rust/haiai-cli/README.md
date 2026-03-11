@@ -48,11 +48,12 @@ Options:
 |------|---------|-------------|
 | `--name` | (required) | Agent display name |
 | `--domain` | (required) | Domain for DNSSEC fingerprint |
-| `--password` | (optional) | Password for the encrypted private key. If omitted, `JACS_PRIVATE_KEY_PASSWORD` env var is used. |
 | `--algorithm` | `pq2025` | Signing algorithm |
 | `--data-dir` | `./jacs` | JACS data directory |
 | `--key-dir` | `./jacs_keys` | Key storage directory |
 | `--config-path` | `./jacs.config.json` | Config file path |
+
+When run from a terminal, you will be prompted to enter a password twice (hidden input) to encrypt the private key. Alternatively set `JACS_PRIVATE_KEY_PASSWORD` so no prompt is shown (e.g. for scripts).
 
 ### 2. Start the MCP server
 
