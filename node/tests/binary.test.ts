@@ -1,8 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { execFileSync } from "child_process";
+import { spawnSync } from "child_process";
 import { existsSync } from "fs";
 import path from "path";
-import os from "os";
 
 const PLATFORMS: Record<string, string> = {
   "darwin-arm64": "@haiai/cli-darwin-arm64",
@@ -12,15 +11,32 @@ const PLATFORMS: Record<string, string> = {
   "win32-x64": "@haiai/cli-win32-x64",
 };
 
-const binWrapper = path.resolve(__dirname, "..", "bin", "haiai");
+const binWrapper = path.resolve(__dirname, "..", "bin", "haiai.cjs");
 
 describe("binary wrapper", () => {
   it("wrapper script exists and is valid JS", () => {
     expect(existsSync(binWrapper)).toBe(true);
-    // Should be parseable
     const content = require("fs").readFileSync(binWrapper, "utf-8");
     expect(content).toContain("findBinary");
     expect(content).toContain("PLATFORMS");
+  });
+
+  it("wrapper script can be parsed by Node.js without errors", () => {
+    const result = spawnSync(process.execPath, ["--check", binWrapper]);
+    expect(result.status).toBe(0);
+  });
+
+  it("wrapper exits gracefully when no binary is available", () => {
+    // Run with empty PATH and no platform packages to trigger fallback
+    const result = spawnSync(process.execPath, [binWrapper], {
+      env: { ...process.env, HAIAI_BINARY_PATH: "", PATH: "" },
+      timeout: 5000,
+    });
+    const stderr = result.stderr?.toString() ?? "";
+    // Should not crash with a ReferenceError (CJS/ESM mismatch)
+    expect(stderr).not.toContain("ReferenceError");
+    // Should not crash with a SyntaxError
+    expect(stderr).not.toContain("SyntaxError");
   });
 
   it("platform key matches a known package", () => {
@@ -67,9 +83,6 @@ describe("binary wrapper", () => {
   });
 
   it("wrapper falls back gracefully when binary not present", () => {
-    // The wrapper should not crash when no binary is installed —
-    // it falls back to the TS CLI or exits with a message
-    // We test this by checking the script handles the missing case
     const content = require("fs").readFileSync(binWrapper, "utf-8");
     expect(content).toContain("Fall back to TypeScript CLI");
     expect(content).toContain("process.exit(1)");

@@ -5,15 +5,14 @@
  * Binary wrapper for the haiai Rust CLI.
  *
  * Resolution order:
- * 1. Platform-specific @haiai/cli-{os}-{arch} optional dependency
- * 2. HAIAI_BINARY_PATH environment variable
+ * 1. HAIAI_BINARY_PATH environment variable
+ * 2. Platform-specific @haiai/cli-{os}-{arch} optional dependency
  * 3. Fall back to the TypeScript CLI (./dist/esm/cli.js)
  */
 
 const { execFileSync } = require("child_process");
 const { existsSync } = require("fs");
 const path = require("path");
-const os = require("os");
 
 const PLATFORMS = {
   "darwin-arm64": "@haiai/cli-darwin-arm64",
@@ -54,11 +53,14 @@ const binary = findBinary();
 
 if (binary) {
   // Exec the native binary — replaces this process
-  const result = execFileSync(binary, process.argv.slice(2), {
-    stdio: "inherit",
-    env: process.env,
-  });
-  // execFileSync throws on non-zero exit, so if we reach here it succeeded
+  try {
+    execFileSync(binary, process.argv.slice(2), {
+      stdio: "inherit",
+      env: process.env,
+    });
+  } catch (err) {
+    process.exit(err.status ?? 1);
+  }
 } else {
   // Fall back to TypeScript CLI
   const tsCliPath = path.resolve(__dirname, "..", "dist", "esm", "cli.js");

@@ -65,22 +65,23 @@ jobs:
           cd python
           python scripts/embed_binary.py --platform ${{ matrix.platform }} .. "${VERSION}"
 
+      - name: Update package version
+        run: |
+          cd python
+          sed -i "s/^version = .*/version = \"${VERSION}\"/" pyproject.toml
+
       - name: Build platform-specific wheel
         run: |
           cd python
           python -m build --wheel
-        env:
-          # Force the wheel platform tag
-          HATCH_BUILD_HOOK_ENABLE_PLATFORM: "1"
 
       - name: Rename wheel with platform tag
         run: |
           cd python/dist
           for whl in *.whl; do
-            # Replace 'any' or 'none' platform with the target platform
-            NEW_NAME=$(echo "$whl" | sed "s/py3-none-any/${{ matrix.wheel_plat }}/; s/none-any/${{ matrix.wheel_plat }}/")
+            NEW_NAME=$(echo "$whl" | sed "s/py3-none-any/py3-none-${{ matrix.wheel_plat }}/")
             if [ "$NEW_NAME" != "$whl" ]; then
-              mv "$whl" "$(echo $NEW_NAME | sed 's/py3-/py3-none-/')"
+              mv "$whl" "$NEW_NAME"
             fi
           done
           ls -la
@@ -124,8 +125,9 @@ jobs:
 
       - name: Smoke install wheel (current platform)
         run: |
-          pip install dist/*.whl || pip install dist/*.tar.gz
+          pip install dist/haiai-*manylinux*x86_64*.whl || pip install dist/*.tar.gz
           python -c "import haiai; assert hasattr(haiai, 'HaiClient')"
+          python -c "from haiai._binary import find_binary; b = find_binary(); print(f'Binary: {b}'); assert b is not None, 'No binary found in wheel'"
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

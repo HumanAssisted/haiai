@@ -40,9 +40,6 @@ Repository = "https://github.com/HumanAssisted/haiai"
 [tool.hatch.build.targets.wheel]
 packages = ["src/jacs", "src/haiai"]
 
-[tool.hatch.build.targets.wheel.shared-data]
-"src/haiai/bin" = "haiai/bin"
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

@@ -90,12 +90,26 @@ jobs:
   publish:
     needs: [extract-version, publish-platform-packages]
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.extract-version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           registry-url: "https://registry.npmjs.org"
+      - name: Sync version from git tag
+        run: |
+          cd node
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf-8'));
+            pkg.version = '${VERSION}';
+            for (const dep of Object.keys(pkg.optionalDependencies || {})) {
+              pkg.optionalDependencies[dep] = '${VERSION}';
+            }
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
       - name: Install dependencies
         run: |
           cd node

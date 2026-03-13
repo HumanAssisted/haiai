@@ -17,7 +17,7 @@
     }
   },
   "bin": {
-    "haiai": "./bin/haiai"
+    "haiai": "./bin/haiai.cjs"
   },
   "dependencies": {
     "@hai.ai/jacs": "0.9.3",
