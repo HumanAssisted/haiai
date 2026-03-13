@@ -125,7 +125,7 @@ impl LocalJacsProvider {
     pub fn migrate_agent(config_path: Option<&std::path::Path>) -> Result<MigrateAgentResult> {
         let path = resolve_jacs_config_path(config_path);
         let path_str = path.display().to_string();
-        let result = simple::SimpleAgent::migrate_agent(Some(&path_str))
+        let result = simple::advanced::migrate_agent(Some(&path_str))
             .map_err(|e| HaiError::Provider(format!("agent migration failed: {e}")))?;
 
         Ok(MigrateAgentResult {
@@ -333,8 +333,7 @@ impl JacsProvider for LocalJacsProvider {
     #[cfg(feature = "jacs-crate")]
     fn rotate(&self) -> Result<RotationResult> {
         let simple = self.load_simple_agent()?;
-        let jacs_result = simple
-            .rotate()
+        let jacs_result = simple::advanced::rotate(&simple)
             .map_err(|e| HaiError::Provider(format!("JACS key rotation failed: {e}")))?;
 
         // Reload the agent so in-memory state reflects the rotated keys
