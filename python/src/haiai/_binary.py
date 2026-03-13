@@ -78,20 +78,9 @@ def run_binary(extra_args: list[str] | None = None) -> int:
 
 def main() -> None:
     """Entry point for the `haiai` console script — delegates to the Rust binary."""
-    binary = find_binary()
-    if binary is not None:
-        sys.exit(run_binary())
-    else:
-        # Fall back to the Python CLI
-        from haiai.cli import main as cli_main
-        cli_main()
+    sys.exit(run_binary())
 
 
 def main_mcp() -> None:
     """Entry point for `haiai mcp` — delegates to `haiai mcp`."""
-    binary = find_binary()
-    if binary is not None:
-        sys.exit(run_binary(extra_args=["mcp"] + sys.argv[1:]))
-    else:
-        from haiai.mcp_server import main as mcp_main
-        mcp_main()
+    sys.exit(run_binary(extra_args=["mcp"] + sys.argv[1:]))

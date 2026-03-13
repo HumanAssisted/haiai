@@ -62,16 +62,10 @@ if (binary) {
     process.exit(err.status ?? 1);
   }
 } else {
-  // Fall back to TypeScript CLI
-  const tsCliPath = path.resolve(__dirname, "..", "dist", "esm", "cli.js");
-  if (existsSync(tsCliPath)) {
-    require(tsCliPath);
-  } else {
-    console.error(
-      "haiai: native binary not found for this platform and TypeScript CLI is not built.\n" +
-      `Platform: ${process.platform}-${process.arch}\n` +
-      "Run 'npm run build' or install the correct @haiai/cli-* package."
-    );
-    process.exit(1);
-  }
+  console.error(
+    "haiai: native binary not found for this platform.\n" +
+    `Platform: ${process.platform}-${process.arch}\n` +
+    "Install the correct @haiai/cli-* package or set HAIAI_BINARY_PATH."
+  );
+  process.exit(1);
 }

@@ -39,7 +39,7 @@ scripts/ci/              # CI enforcement (crypto policy denylist)
 ## Gotchas
 
 - **JACS filenames use `:`** (`{id}:{version}.json`) — illegal on Windows. Rust CI uses sparse checkout for Windows builds.
-- **Node dual build.** `mcp-server.ts` and `cli.ts` are ESM-only (`import.meta`), excluded from CJS build in `tsconfig.cjs.json`.
+- **CLI and MCP server are Rust-only.** `cli.ts`, `mcp-server.ts`, `cli.py`, and `mcp_server.py` have been deleted. The `haiai` CLI binary and `haiai mcp` subcommand are the canonical implementations.
 - **Python test deps.** Use `pip install -e ".[dev,mcp]"` not just `.[dev]` — MCP tests need the `mcp` package.
 - **Path segments must be URL-escaped** in all API paths.
 - **Auth header:** `JACS {jacsId}:{timestamp}:{signature_base64}`.

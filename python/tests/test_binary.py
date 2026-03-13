@@ -98,11 +98,10 @@ def test_platform_binary_covers_common_platforms():
         assert key in _PLATFORM_BINARY, f"Missing platform: {key}"
 
 
-def test_main_falls_back_to_python_cli():
-    """main() should fall back to Python CLI when no binary exists."""
+def test_main_raises_when_no_binary():
+    """main() should raise FileNotFoundError when no binary exists."""
     from haiai._binary import main
 
     with patch("haiai._binary.find_binary", return_value=None):
-        with patch("haiai.cli.main") as mock_cli:
+        with pytest.raises(FileNotFoundError, match="haiai binary not found"):
             main()
-            mock_cli.assert_called_once()

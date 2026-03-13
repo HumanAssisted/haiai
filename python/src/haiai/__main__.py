@@ -1,6 +1,6 @@
-"""Entry point for `python -m haiai`."""
+"""Entry point for `python -m haiai` -- delegates to the Rust CLI binary."""
 
-from haiai.cli import main
+from haiai._binary import main
 
 if __name__ == "__main__":
     main()

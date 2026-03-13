@@ -22,12 +22,6 @@ def test_haiai_submodule_imports_work() -> None:
     assert callable(load)
 
 
-def test_haiai_cli_reexports_legacy_main() -> None:
-    from haiai.cli import main as public_main
-    from jacs.hai.cli import main as legacy_main
-
-    assert public_main is legacy_main
-
 
 def test_haiai_library_passthrough_maps_to_legacy_functions() -> None:
     from haiai.crypt import canonicalize_json as public_canonicalize_json
