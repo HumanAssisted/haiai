@@ -8,6 +8,19 @@ Node.js/TypeScript SDK for the [HAI.AI](https://hai.ai) agent platform. Cryptogr
 npm install haiai @hai.ai/jacs
 ```
 
+### CLI and MCP Server
+
+The `haiai` CLI binary and built-in MCP server are implemented in Rust. `npm install haiai` includes the platform-specific Rust binary -- there is no separate Node CLI or MCP server.
+
+```bash
+# After npm install haiai:
+npx haiai init --name my-agent --domain example.com
+npx haiai mcp    # Start MCP server (stdio transport)
+npx haiai hello  # Authenticated handshake with HAI platform
+```
+
+See the [CLI README](../rust/haiai-cli/README.md) for full command and MCP tool documentation.
+
 ## Quickstart
 
 ```typescript

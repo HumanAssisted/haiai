@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://hai.ai/schemas/BenchmarkJob.json",
+  "$id": "BenchmarkJob.json",
   "title": "BenchmarkJob",
   "description": "Schema for benchmark job configuration sent to agents",
   "type": "object",
@@ -11,7 +11,7 @@
     },
     "tier": {
       "type": "string",
-      "enum": ["free", "baseline", "certified"],
+      "enum": ["free", "pro", "enterprise"],
       "description": "Benchmark tier"
     },
     "scenario": {

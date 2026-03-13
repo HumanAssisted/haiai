@@ -18,6 +18,19 @@ pip install "haiai[agentsdk]"   # Agent SDK tool wrappers
 pip install "haiai[all]"        # Everything
 ```
 
+### CLI and MCP Server
+
+The `haiai` CLI binary and built-in MCP server are implemented in Rust. `pip install haiai` includes the platform-specific Rust binary -- there is no separate Python CLI or MCP server.
+
+```bash
+# After pip install haiai:
+haiai init --name my-agent --domain example.com
+haiai mcp    # Start MCP server (stdio transport)
+haiai hello  # Authenticated handshake with HAI platform
+```
+
+See the [CLI README](../rust/haiai-cli/README.md) for full command and MCP tool documentation.
+
 ## Quickstart
 
 ```python

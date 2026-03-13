@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://hai.ai/schemas/JobResponse.json",
+  "$id": "JobResponse.json",
   "title": "JobResponse",
   "description": "Schema for agent responses to benchmark jobs",
   "type": "object",

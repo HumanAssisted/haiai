@@ -483,6 +483,60 @@ let verified = a2a.verify_artifact(&wrapped)?;
 println!("{}", verified.valid);
 ```
 
+## Architecture
+
+### Layered Model
+
+```
+JACS (signing, verification, trust, documents, schemas)
+    |
+    V
+HAIAI SDK (this repo — Rust core + language facades)
+    |
+    +-> haiai          Rust library crate (JacsProvider trait integration)
+    +-> haiai-cli      CLI binary (haiai init / haiai mcp / haiai send-email / ...)
+    +-> hai-mcp        MCP server library (embeds jacs-mcp + HAI platform tools)
+    +-> Python SDK     pip install haiai (thin wrapper, installs Rust CLI binary)
+    +-> Node SDK       npm install haiai (thin wrapper, installs Rust CLI binary)
+    +-> Go SDK         go get haiai-go (cgo wrapper around JACS)
+```
+
+**One source of truth:** The Rust crate is the canonical implementation. Python and Node SDKs provide language-native API wrappers but delegate CLI and MCP functionality to the Rust binary. There are no separate Python or Node CLI/MCP implementations.
+
+### JacsProvider Trait (Rust)
+
+The `JacsProvider` trait is the integration seam between HAIAI and JACS. Any Rust consumer implements or selects a `JacsProvider` to supply signing, verification, and identity operations:
+
+```rust
+use haiai::{HaiClient, HaiClientOptions, StaticJacsProvider};
+
+// StaticJacsProvider: built-in provider backed by a JACS agent
+let provider = StaticJacsProvider::new("my-agent");
+let client = HaiClient::new(provider, HaiClientOptions::default())?;
+```
+
+Custom providers can be implemented for testing, multi-agent setups, or alternative key management strategies. See `rust/haiai/src/jacs.rs` for the trait definition.
+
+### HAIAI Parity Map
+
+HAIAI exposes a **superset** of JACS `SimpleAgent` capabilities plus HAI-platform-specific features. The CLI and MCP surface the full union of JACS + HAIAI tools.
+
+| Category | Source | Examples |
+|----------|--------|----------|
+| **Agent identity** | JACS | Create agent, sign/verify documents, key rotation |
+| **Storage & search** | JACS | Document CRUD, fulltext/hybrid search, backend selection |
+| **Registration** | HAIAI | Register with HAI platform, claim username |
+| **Email** | HAIAI | Send/receive signed @hai.ai email |
+| **Benchmarking** | HAIAI | Run conflict-resolution benchmarks, leaderboard |
+| **Verification** | HAIAI | Trust levels, DNS certification, verify links |
+| **A2A** | HAIAI (delegating to JACS) | Sign/verify A2A artifacts, trust policies |
+
+Capabilities intentionally **excluded** from HAIAI (use JACS directly):
+- Raw DNS record emission (`emit_route53_change_batch`)
+- Low-level protocol wire format (`encode_verify_payload`, `extract_document_id`)
+- Attestation adapter registration
+- Advanced agent struct methods (`set_keys_raw`, `load_custom_schemas`)
+
 ## Repository Structure
 
 ```

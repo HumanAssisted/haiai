@@ -474,7 +474,7 @@ pub struct KeyRegistryResponse {
     /// Agent status: "active", "suspended", or "revoked".
     #[serde(default)]
     pub agent_status: Option<String>,
-    /// Benchmark tiers the agent has completed (e.g., ["free_chaotic", "baseline"]).
+    /// Benchmark tiers the agent has completed (e.g., ["free", "pro"]).
     #[serde(default)]
     pub benchmarks_completed: Option<Vec<String>>,
 }
