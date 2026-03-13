@@ -17,13 +17,19 @@
     }
   },
   "bin": {
-    "haiai": "./dist/esm/cli.js",
-    "haiai-mcp": "./dist/esm/mcp-server.js"
+    "haiai": "./bin/haiai"
   },
   "dependencies": {
     "@hai.ai/jacs": "0.9.3",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "ws": "^8.16.0"
+  },
+  "optionalDependencies": {
+    "@haiai/cli-darwin-arm64": "0.1.2",
+    "@haiai/cli-darwin-x64": "0.1.2",
+    "@haiai/cli-linux-x64": "0.1.2",
+    "@haiai/cli-linux-arm64": "0.1.2",
+    "@haiai/cli-win32-x64": "0.1.2"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

@@ -30,8 +30,7 @@ all = ["haiai[ws,sse,dns,langchain,langgraph,crewai,anthropic,fastapi,mcp,agents
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "respx>=0.22"]
 
 [project.scripts]
-haiai = "haiai.cli:main"
-haiai-mcp = "haiai.mcp_server:main"
+haiai = "haiai._binary:main"
 
 [project.urls]
 Homepage = "https://hai.ai"
@@ -40,6 +39,9 @@ Repository = "https://github.com/HumanAssisted/haiai"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jacs", "src/haiai"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+"src/haiai/bin" = "haiai/bin"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

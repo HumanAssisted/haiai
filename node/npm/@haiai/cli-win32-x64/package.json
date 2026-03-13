@@ -1,0 +1,16 @@
+{
+  "name": "@haiai/cli-win32-x64",
+  "version": "0.1.2",
+  "description": "Platform-specific binary for haiai CLI (Windows x64)",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "bin": {
+    "haiai": "bin/haiai.exe"
+  },
+  "preferUnplugged": true,
+  "license": "(Apache-2.0 OR MIT)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HumanAssisted/haiai.git"
+  }
+}
