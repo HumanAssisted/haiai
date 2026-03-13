@@ -18,7 +18,7 @@ path = "src/main.rs"
 [dependencies]
 hai-mcp = { version = "=0.1.2", path = "../hai-mcp" }
 haiai = { version = "=0.1.2", path = "../haiai" }
-jacs-mcp = { version = "=0.9.3", features = ["mcp"] }
+jacs-mcp = { version = "=0.9.4", features = ["mcp"] }
 anyhow = "1"
 rmcp = { version = "0.12", features = ["server", "transport-io", "macros"] }
 clap = { version = "4", features = ["derive"] }

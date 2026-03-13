@@ -1627,7 +1627,7 @@ checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
 
 [[package]]
 name = "jacs"
-version = "0.9.3"
+version = "0.9.4"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1687,7 +1687,7 @@ dependencies = [
 
 [[package]]
 name = "jacs-binding-core"
-version = "0.9.3"
+version = "0.9.4"
 dependencies = [
  "base64",
  "jacs",
@@ -1698,7 +1698,7 @@ dependencies = [
 
 [[package]]
 name = "jacs-mcp"
-version = "0.9.3"
+version = "0.9.4"
 dependencies = [
  "anyhow",
  "chrono",
