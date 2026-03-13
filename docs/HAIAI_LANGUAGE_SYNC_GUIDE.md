@@ -64,7 +64,7 @@ When updating Rust integrations, use these canonical upstream repos as reference
 1. `~/personal/JACS/jacs`
 2. `~/personal/JACS/jacs-mcp`
 
-Target canonical version pin for both integrations: `0.9.3`.
+Target canonical version pin for both integrations: `0.9.4`.
 
 ### Authentication header format
 

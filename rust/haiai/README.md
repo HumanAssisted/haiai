@@ -19,7 +19,7 @@ implementations backed by JACS.
 
 ## JACS dependency source
 
-Default builds use the published `jacs` crate pinned to `0.9.3`.
+Default builds use the published `jacs` crate pinned to `0.9.4`.
 
 For local development against a sibling checkout at `../../JACS`, this repo
 uses a local cargo override in `rust/.cargo/config.toml`:
