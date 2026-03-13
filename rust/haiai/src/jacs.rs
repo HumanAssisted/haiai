@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use base64::Engine;
@@ -247,6 +248,14 @@ pub trait JacsDocumentProvider: JacsProvider {
         offset: usize,
     ) -> Result<Vec<String>>;
 
+    /// Query documents signed by a specific agent.
+    fn query_by_agent(
+        &self,
+        agent_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<String>>;
+
     /// Report the capabilities of the configured storage backend.
     fn storage_capabilities(&self) -> Result<StorageCapabilities>;
 }
@@ -284,6 +293,17 @@ pub trait JacsVerificationProvider: JacsProvider {
 
     /// Build a JACS Authorization header for HTTP requests.
     fn build_auth_header_jacs(&self) -> Result<String>;
+
+    /// Unwrap a signed event, verifying its signature against known server public keys.
+    ///
+    /// Returns a tuple of (unwrapped data, was_verified). If the signer's key is found
+    /// in `server_public_keys`, the signature is verified and `was_verified` is `true`.
+    /// If the signer's key is not found, the data is returned unverified.
+    fn unwrap_signed_event(
+        &self,
+        event: &Value,
+        server_public_keys: &HashMap<String, Vec<u8>>,
+    ) -> Result<(Value, bool)>;
 }
 
 // =============================================================================

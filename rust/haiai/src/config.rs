@@ -157,6 +157,68 @@ pub fn resolve_storage_backend(
     Ok("fs".to_string())
 }
 
+/// A storage configuration summary safe for logging/display.
+///
+/// Never includes passwords, connection strings, or credentials.
+/// Complies with PRD Section 4.4.6: "Never log backend configuration details."
+#[derive(Debug, Clone, Serialize)]
+pub struct StorageConfigSummary {
+    pub backend: String,
+    pub source: &'static str,
+}
+
+impl std::fmt::Display for StorageConfigSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "backend={} (from {})", self.backend, self.source)
+    }
+}
+
+/// Return a redacted summary of the resolved storage configuration.
+///
+/// This is safe for logging, CLI output, and error messages.
+/// It reports the backend label and its resolution source, but never
+/// exposes connection strings, passwords, or file system paths.
+pub fn redacted_display(explicit: Option<&str>, config_path: Option<&Path>) -> StorageConfigSummary {
+    // Priority 1: explicit parameter
+    if let Some(label) = explicit {
+        return StorageConfigSummary {
+            backend: label.to_string(),
+            source: "--storage flag",
+        };
+    }
+
+    // Priority 2: JACS_STORAGE env var
+    if let Ok(label) = env::var("JACS_STORAGE") {
+        if !label.is_empty() {
+            return StorageConfigSummary {
+                backend: label,
+                source: "JACS_STORAGE env var",
+            };
+        }
+    }
+
+    // Priority 3: config file
+    let config_path_resolved = resolve_config_path(config_path);
+    if config_path_resolved.is_file() {
+        if let Ok(raw) = fs::read_to_string(&config_path_resolved) {
+            if let Ok(data) = serde_json::from_str::<Value>(&raw) {
+                if let Some(label) = get_string(&data, &["default_storage", "defaultStorage"]) {
+                    return StorageConfigSummary {
+                        backend: label,
+                        source: "config file",
+                    };
+                }
+            }
+        }
+    }
+
+    // Priority 4: default
+    StorageConfigSummary {
+        backend: "fs".to_string(),
+        source: "default",
+    }
+}
+
 fn get_string(data: &Value, keys: &[&str]) -> Option<String> {
     for key in keys {
         if let Some(value) = data.get(key).and_then(Value::as_str) {
@@ -196,5 +258,55 @@ mod tests {
             .jacs_private_key_path
             .expect("private key path")
             .ends_with("nested/custom/private.pem"));
+    }
+
+    #[test]
+    fn redacted_display_explicit_flag() {
+        let summary = redacted_display(Some("rusqlite"), None);
+        assert_eq!(summary.backend, "rusqlite");
+        assert_eq!(summary.source, "--storage flag");
+        // Display trait should never expose connection details
+        let rendered = format!("{}", summary);
+        assert!(rendered.contains("rusqlite"));
+        assert!(rendered.contains("--storage flag"));
+    }
+
+    #[test]
+    fn redacted_display_default_fallback() {
+        // When nothing is configured, should return fs/default.
+        // Note: this test may pick up JACS_STORAGE from the environment.
+        // We temporarily clear it for a clean test.
+        let orig = env::var("JACS_STORAGE").ok();
+        env::remove_var("JACS_STORAGE");
+
+        let summary = redacted_display(None, Some(Path::new("/nonexistent/path.json")));
+        assert_eq!(summary.backend, "fs");
+        assert_eq!(summary.source, "default");
+
+        if let Some(val) = orig {
+            env::set_var("JACS_STORAGE", val);
+        }
+    }
+
+    #[test]
+    fn redacted_display_from_config_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("jacs.config.json");
+        fs::write(
+            &config_path,
+            r#"{"default_storage": "sqlite", "jacsAgentName": "test"}"#,
+        )
+        .expect("write config");
+
+        let orig = env::var("JACS_STORAGE").ok();
+        env::remove_var("JACS_STORAGE");
+
+        let summary = redacted_display(None, Some(&config_path));
+        assert_eq!(summary.backend, "sqlite");
+        assert_eq!(summary.source, "config file");
+
+        if let Some(val) = orig {
+            env::set_var("JACS_STORAGE", val);
+        }
     }
 }

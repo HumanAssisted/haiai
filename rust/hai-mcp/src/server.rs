@@ -73,6 +73,10 @@ impl ServerHandler for HaiMcpServer {
             return hai_tools::dispatch(&self.context, &name, request.arguments).await;
         }
 
+        // NOTE: JACS document operations (sign, verify, search, store) are synchronous.
+        // In a long-running async MCP server, they should be wrapped in spawn_blocking
+        // inside the jacs-mcp tool handlers to avoid blocking the tokio runtime.
+        // See SDK Issue 014.
         self.jacs.call_tool(request, context).await
     }
 }

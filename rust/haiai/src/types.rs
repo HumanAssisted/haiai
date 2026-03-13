@@ -683,6 +683,15 @@ pub struct DocVerificationResult {
     pub valid: bool,
     /// Error message if verification failed.
     pub error: Option<String>,
+    /// ID of the agent that signed the document.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signer_id: Option<String>,
+    /// ISO 8601 timestamp of when the document was signed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+    /// Name of the signer (if available).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signer_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

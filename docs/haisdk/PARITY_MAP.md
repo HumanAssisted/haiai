@@ -15,9 +15,9 @@ This document maps every stable JACS 0.9.4 public capability to its SDK exposure
 |---|---|---|---|---|
 | Identity / Signing (Layer 0) | 8 | 0 | 0 | 8 |
 | Agent Lifecycle (Layer 1) | 9 | 0 | 0 | 9 |
-| Document Operations (Layer 2) | 14 | 0 | 1 | 15 |
+| Document Operations (Layer 2) | 15 | 0 | 2 | 17 |
 | Batch Operations (Layer 3) | 2 | 0 | 0 | 2 |
-| Verification (Layer 4) | 5 | 0 | 0 | 5 |
+| Verification (Layer 4) | 6 | 0 | 0 | 6 |
 | Email (Layer 5) | 6 | 0 | 0 | 6 |
 | Agreements (Layer 6) | 3 | 0 | 3 | 6 |
 | Attestation (Layer 7) | 2 | 0 | 3 | 5 |
@@ -26,7 +26,7 @@ This document maps every stable JACS 0.9.4 public capability to its SDK exposure
 | A2A Provenance | 1 | 0 | 0 | 1 |
 | Storage Internals | 0 | 0 | 4 | 4 |
 | Crypto Internals | 0 | 0 | 5 | 5 |
-| **Total** | **53** | **0** | **18** | **71** |
+| **Total** | **55** | **0** | **19** | **74** |
 
 ---
 
@@ -75,6 +75,8 @@ This document maps every stable JACS 0.9.4 public capability to its SDK exposure
 | Query by type | `JacsDocumentProvider::query_by_type()` | Exposed |
 | Query by field | `JacsDocumentProvider::query_by_field()` | Exposed |
 | Capabilities | `JacsDocumentProvider::storage_capabilities()` | Exposed |
+| Query by agent | `JacsDocumentProvider::query_by_agent()` | Exposed |
+| `DocumentService::diff()` | -- | **Excluded**: Power-user feature for version diffing; use JACS directly for change tracking |
 | `DocumentService::set_visibility()` | -- | **Excluded**: Semantics are versioned on routed backends; deferred until PART_2 doc/test alignment |
 
 ## Layer 3: Batch Operations (`JacsBatchProvider`)
@@ -93,6 +95,7 @@ This document maps every stable JACS 0.9.4 public capability to its SDK exposure
 | Storage-backed verification | `JacsVerificationProvider::verify_by_id()` | Exposed |
 | `dns::bootstrap::verify_pubkey_via_dns_or_embedded()` | `JacsVerificationProvider::verify_dns()` | Exposed |
 | `protocol::build_auth_header()` | `JacsVerificationProvider::build_auth_header_jacs()` | Exposed |
+| `protocol::unwrap_signed_event()` | `JacsVerificationProvider::unwrap_signed_event()` | Exposed |
 
 ## Layer 5: Email (`JacsEmailProvider`)
 

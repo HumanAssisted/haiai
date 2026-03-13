@@ -21,6 +21,12 @@ struct Cli {
     #[arg(long, global = true)]
     storage: Option<String>,
 
+    /// Read storage backend label from the named environment variable instead of
+    /// the command line. Keeps credentials out of `ps aux` process listings.
+    /// Example: `--storage-env MY_STORAGE_VAR` reads `$MY_STORAGE_VAR`.
+    #[arg(long, global = true, conflicts_with = "storage")]
+    storage_env: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -202,6 +208,32 @@ enum Commands {
     },
 }
 
+/// Resolve the effective `--storage` value, considering `--storage-env`.
+///
+/// If `--storage-env VARNAME` was passed, read the label from that env var.
+/// Otherwise fall through to the explicit `--storage` flag (which may be None).
+fn resolve_storage_flag(
+    storage: Option<&str>,
+    storage_env: Option<&str>,
+) -> anyhow::Result<Option<String>> {
+    if let Some(var_name) = storage_env {
+        let label = std::env::var(var_name).with_context(|| {
+            format!(
+                "--storage-env: environment variable '{}' is not set",
+                var_name
+            )
+        })?;
+        if label.is_empty() {
+            anyhow::bail!(
+                "--storage-env: environment variable '{}' is set but empty",
+                var_name
+            );
+        }
+        return Ok(Some(label));
+    }
+    Ok(storage.map(|s| s.to_string()))
+}
+
 fn hai_url() -> String {
     std::env::var("HAI_URL").unwrap_or_else(|_| "https://hai.ai".to_string())
 }
@@ -320,6 +352,11 @@ fn print_message_table(messages: &[haiai::EmailMessage]) {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
+    // Resolve effective storage label from --storage or --storage-env.
+    let effective_storage =
+        resolve_storage_flag(cli.storage.as_deref(), cli.storage_env.as_deref())
+            .context("failed to resolve storage flag")?;
+
     // Commands that load an existing agent need the private key password. Prompt once if not set and not -q.
     if !matches!(cli.command, Commands::Init { .. }) {
         ensure_agent_password(cli.quiet).context("failed to resolve private key password")?;
@@ -379,6 +416,16 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .with_writer(std::io::stderr)
                 .init();
+
+            // Honor JACS_STORAGE env var and --storage / --storage-env flags for MCP document
+            // operations (PRD Section 5.2).
+            let storage_summary =
+                haiai::redacted_display(effective_storage.as_deref(), None);
+            tracing::info!(
+                backend = %storage_summary.backend,
+                source = storage_summary.source,
+                "MCP storage backend resolved"
+            );
 
             let shared_agent = LoadedSharedAgent::load_from_config_env()
                 .context("failed to load JACS agent for haiai mcp")?;
@@ -634,7 +681,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Doctor => {
-            let provider = load_provider_with_storage(cli.storage.as_deref())?;
+            let provider = load_provider_with_storage(effective_storage.as_deref())?;
 
             println!("Agent Diagnostics");
             println!("{}", "=".repeat(50));
@@ -671,7 +718,7 @@ async fn main() -> anyhow::Result<()> {
             }
 
             // Storage
-            let storage_label = haiai::resolve_storage_backend(cli.storage.as_deref(), None)
+            let storage_label = haiai::resolve_storage_backend(effective_storage.as_deref(), None)
                 .unwrap_or_else(|_| "fs".to_string());
             println!("\nStorage");
             println!("{}", "-".repeat(50));
@@ -703,7 +750,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::StoreDocument { path } => {
-            let provider = load_provider_with_storage(cli.storage.as_deref())?;
+            let provider = load_provider_with_storage(effective_storage.as_deref())?;
             let content = if path == "-" {
                 use std::io::Read;
                 let mut buf = String::new();
@@ -725,7 +772,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::ListDocuments { doc_type } => {
-            let provider = load_provider_with_storage(cli.storage.as_deref())?;
+            let provider = load_provider_with_storage(effective_storage.as_deref())?;
             let keys = provider
                 .list_documents(doc_type.as_deref())
                 .context("list_documents failed")?;
@@ -740,7 +787,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::SearchDocuments { query, limit } => {
-            let provider = load_provider_with_storage(cli.storage.as_deref())?;
+            let provider = load_provider_with_storage(effective_storage.as_deref())?;
             let results = provider
                 .search_documents(&query, limit, 0)
                 .context("search failed")?;
@@ -758,7 +805,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::GetDocument { key } => {
-            let provider = load_provider_with_storage(cli.storage.as_deref())?;
+            let provider = load_provider_with_storage(effective_storage.as_deref())?;
             let json = provider
                 .get_document(&key)
                 .context("get_document failed")?;
@@ -766,7 +813,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::RemoveDocument { key } => {
-            let provider = load_provider_with_storage(cli.storage.as_deref())?;
+            let provider = load_provider_with_storage(effective_storage.as_deref())?;
             provider
                 .remove_document(&key)
                 .context("remove_document failed")?;
@@ -1176,5 +1223,56 @@ mod tests {
         let cli = Cli::parse_from(["haiai", "--storage", "rusqlite", "list-documents"]);
         assert_eq!(cli.storage.as_deref(), Some("rusqlite"));
         assert!(matches!(cli.command, Commands::ListDocuments { .. }));
+    }
+
+    #[test]
+    fn parse_storage_env_flag() {
+        let cli = Cli::parse_from(["haiai", "--storage-env", "MY_STORAGE", "list-documents"]);
+        assert_eq!(cli.storage_env.as_deref(), Some("MY_STORAGE"));
+        assert!(cli.storage.is_none());
+        assert!(matches!(cli.command, Commands::ListDocuments { .. }));
+    }
+
+    #[test]
+    fn storage_and_storage_env_conflict() {
+        let result = Cli::try_parse_from([
+            "haiai",
+            "--storage",
+            "fs",
+            "--storage-env",
+            "MY_VAR",
+            "doctor",
+        ]);
+        assert!(
+            result.is_err(),
+            "--storage and --storage-env should conflict"
+        );
+    }
+
+    #[test]
+    fn resolve_storage_flag_from_env_var() {
+        std::env::set_var("TEST_HAI_STORAGE_009", "rusqlite");
+        let result = resolve_storage_flag(None, Some("TEST_HAI_STORAGE_009")).unwrap();
+        assert_eq!(result.as_deref(), Some("rusqlite"));
+        std::env::remove_var("TEST_HAI_STORAGE_009");
+    }
+
+    #[test]
+    fn resolve_storage_flag_missing_env_var_errors() {
+        std::env::remove_var("NONEXISTENT_STORAGE_VAR_XYZ");
+        let result = resolve_storage_flag(None, Some("NONEXISTENT_STORAGE_VAR_XYZ"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn resolve_storage_flag_explicit_wins() {
+        let result = resolve_storage_flag(Some("sqlite"), None).unwrap();
+        assert_eq!(result.as_deref(), Some("sqlite"));
+    }
+
+    #[test]
+    fn resolve_storage_flag_none_returns_none() {
+        let result = resolve_storage_flag(None, None).unwrap();
+        assert!(result.is_none());
     }
 }
