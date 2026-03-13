@@ -63,9 +63,9 @@ export class Agent {
     configPath: string = './jacs.config.json',
     options?: AgentOptions,
   ): Promise<Agent> {
-    const client = new HaiClient({
+    const client = await HaiClient.create({
       configPath,
-      baseUrl: options?.baseUrl,
+      url: options?.baseUrl,
       timeout: options?.timeout,
     });
     return new Agent(client);
