@@ -424,7 +424,7 @@ async fn verify_parent_chain_entries(
         };
         if agent
             .verify_with_key(parent_json, raw_pub_key)
-            .map_or(false, |r| r.valid)
+            .is_ok_and(|r| r.valid)
         {
             entry.valid = true;
         }

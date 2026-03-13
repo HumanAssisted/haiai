@@ -1,16 +1,32 @@
+use std::path::Path;
+
 use base64::Engine;
 use serde_json::Value;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::error::{HaiError, Result};
-use crate::types::{RotationResult, SignedPayload, UpdateAgentResult};
+use crate::types::{
+    DocSearchResults, DocVerificationResult, MigrateAgentResult, RotationResult, SignedDocument,
+    SignedPayload, StorageCapabilities, UpdateAgentResult,
+};
+
+// =============================================================================
+// Layer 0: Core Signing (JacsProvider)
+// =============================================================================
 
 /// Bridge trait for JACS operations that HAI SDK depends on.
 ///
 /// Implement this trait by adapting the canonical JACS Rust package (or a
 /// local wrapper around it). HAIAI runtime code should not implement crypto
 /// primitives directly.
+///
+/// # 0.2.0 Breaking Change
+///
+/// `rotate()`, `export_agent_json()`, `update_agent()`, and `sign_email_locally()`
+/// are deprecated on this trait and will be removed in a future release.
+/// Use [`JacsAgentLifecycle`] for lifecycle operations and [`JacsEmailProvider`]
+/// for email operations instead.
 pub trait JacsProvider: Send + Sync {
     fn jacs_id(&self) -> &str;
     fn sign_string(&self, message: &str) -> Result<String>;
@@ -77,12 +93,8 @@ pub trait JacsProvider: Send + Sync {
 
     /// Sign a raw RFC 5322 email locally using the agent's own JACS key.
     ///
-    /// The returned bytes are the email with a `jacs-signature.json` attachment
-    /// containing the agent's JACS signature. This is used by `send_signed_email()`
-    /// to produce agent-signed emails (as opposed to HAI-authority-signed).
-    ///
-    /// Default implementation returns an error; override in providers that
-    /// have access to the agent's private key (e.g., `LocalJacsProvider`).
+    /// **Deprecated:** Use [`JacsEmailProvider::sign_email()`] instead.
+    /// This method will be removed in a future release.
     fn sign_email_locally(&self, raw_email: &[u8]) -> Result<Vec<u8>> {
         let _ = raw_email;
         Err(HaiError::Provider(
@@ -92,12 +104,8 @@ pub trait JacsProvider: Send + Sync {
 
     /// Rotate the agent's keys locally.
     ///
-    /// Archives old keys, generates a new keypair, builds a new self-signed
-    /// agent document, and updates config on disk. Returns a RotationResult
-    /// with old/new versions and the signed agent document.
-    ///
-    /// Default implementation returns an error; override in providers
-    /// that support local key management (e.g., LocalJacsProvider).
+    /// **Deprecated:** Use [`JacsAgentLifecycle::rotate()`] instead.
+    /// This method will be removed in a future release.
     fn rotate(&self) -> Result<RotationResult> {
         Err(HaiError::Provider(
             "key rotation not supported by this provider; use LocalJacsProvider".to_string(),
@@ -106,8 +114,8 @@ pub trait JacsProvider: Send + Sync {
 
     /// Export the current agent document as a JSON string.
     ///
-    /// Default implementation returns an error; override in providers
-    /// that have access to the full agent document (e.g., LocalJacsProvider).
+    /// **Deprecated:** Use [`JacsAgentLifecycle::export_agent_json()`] instead.
+    /// This method will be removed in a future release.
     fn export_agent_json(&self) -> Result<String> {
         Err(HaiError::Provider(
             "export_agent_json not supported by this provider; use LocalJacsProvider".to_string(),
@@ -116,11 +124,8 @@ pub trait JacsProvider: Send + Sync {
 
     /// Update agent metadata and re-sign with the existing key.
     ///
-    /// `new_agent_data` is the full agent JSON with modifications applied.
-    /// The jacsId MUST match the current agent; jacsVersion will be bumped.
-    ///
-    /// Default implementation returns an error; override in providers
-    /// that support local agent management (e.g., LocalJacsProvider).
+    /// **Deprecated:** Use [`JacsAgentLifecycle::update_agent()`] instead.
+    /// This method will be removed in a future release.
     fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
         let _ = new_agent_data;
         Err(HaiError::Provider(
@@ -128,6 +133,223 @@ pub trait JacsProvider: Send + Sync {
         ))
     }
 }
+
+// =============================================================================
+// Layer 1: Agent Lifecycle (JacsAgentLifecycle)
+// =============================================================================
+
+/// Extension trait for agent lifecycle operations.
+///
+/// Provides key rotation, agent migration, metadata update, diagnostics,
+/// self-verification, quickstart creation, key re-encryption, and DNS
+/// setup instructions.
+pub trait JacsAgentLifecycle: JacsProvider {
+    /// Rotate the agent's keys. Archives old keys, generates a new keypair,
+    /// builds a new self-signed agent document, updates config on disk.
+    fn lifecycle_rotate(&self) -> Result<RotationResult>;
+
+    /// Migrate a legacy agent whose document predates a schema change.
+    fn lifecycle_migrate(config_path: Option<&Path>) -> Result<MigrateAgentResult>
+    where
+        Self: Sized;
+
+    /// Update agent metadata and re-sign with the existing key.
+    fn lifecycle_update_agent(&self, new_data: &str) -> Result<UpdateAgentResult>;
+
+    /// Export the current agent document as a JSON string.
+    fn lifecycle_export_agent_json(&self) -> Result<String>;
+
+    /// Return diagnostic information about the agent as a JSON value.
+    fn diagnostics(&self) -> Result<Value>;
+
+    /// Verify the agent's own signature integrity.
+    fn verify_self(&self) -> Result<DocVerificationResult>;
+
+    /// Create a new agent with zero-config onboarding.
+    fn quickstart(
+        name: &str,
+        domain: &str,
+        description: Option<&str>,
+        algorithm: Option<&str>,
+        config_path: Option<&str>,
+    ) -> Result<Value>
+    where
+        Self: Sized;
+
+    /// Re-encrypt the agent's private key with a new password.
+    fn reencrypt_key(&self, old_password: &str, new_password: &str) -> Result<()>;
+
+    /// Get DNS setup instructions for 5 cloud providers.
+    fn get_setup_instructions(&self, domain: &str, ttl: u32) -> Result<Value>;
+}
+
+// =============================================================================
+// Layer 2: Document Operations (JacsDocumentProvider)
+// =============================================================================
+
+/// Extension trait for document storage, retrieval, versioning, and search.
+///
+/// Wraps the JACS `DocumentService` into SDK-friendly signatures
+/// (strings at the boundary, not internal JACS types).
+pub trait JacsDocumentProvider: JacsProvider {
+    /// Sign a document (returns signed JSON, does NOT store).
+    fn sign_document(&self, data: &Value) -> Result<String>;
+
+    /// Store a pre-signed document. Returns the document key (`id:version`).
+    fn store_document(&self, signed_json: &str) -> Result<String>;
+
+    /// Convenience: sign + store in one call.
+    fn sign_and_store(&self, data: &Value) -> Result<SignedDocument>;
+
+    /// Sign a file (with optional embedding). Returns the signed document.
+    fn sign_file(&self, path: &str, embed: bool) -> Result<SignedDocument>;
+
+    /// Get a document by key (`id:version`). Returns signed JSON.
+    fn get_document(&self, key: &str) -> Result<String>;
+
+    /// List document keys, optionally filtered by type.
+    fn list_documents(&self, jacs_type: Option<&str>) -> Result<Vec<String>>;
+
+    /// Get all versions of a document.
+    fn get_document_versions(&self, doc_id: &str) -> Result<Vec<String>>;
+
+    /// Get the latest version of a document.
+    fn get_latest_document(&self, doc_id: &str) -> Result<String>;
+
+    /// Remove (tombstone) a document.
+    fn remove_document(&self, key: &str) -> Result<()>;
+
+    /// Update a document, creating a new signed version.
+    fn update_document(&self, doc_id: &str, data: &str) -> Result<SignedDocument>;
+
+    /// Search documents (fulltext/hybrid depending on backend).
+    fn search_documents(
+        &self,
+        query: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<DocSearchResults>;
+
+    /// Query documents by `jacsType`.
+    fn query_by_type(
+        &self,
+        doc_type: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<String>>;
+
+    /// Query documents by field value.
+    fn query_by_field(
+        &self,
+        field: &str,
+        value: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<String>>;
+
+    /// Report the capabilities of the configured storage backend.
+    fn storage_capabilities(&self) -> Result<StorageCapabilities>;
+}
+
+// =============================================================================
+// Layer 3: Batch Operations (JacsBatchProvider)
+// =============================================================================
+
+/// Extension trait for batch sign/verify operations.
+pub trait JacsBatchProvider: JacsProvider {
+    /// Sign multiple messages in a single batch operation.
+    fn sign_messages(&self, messages: &[&Value]) -> Result<Vec<SignedDocument>>;
+
+    /// Verify multiple documents in a single batch operation.
+    fn verify_batch(&self, documents: &[&str]) -> Vec<DocVerificationResult>;
+}
+
+// =============================================================================
+// Layer 4: Verification (JacsVerificationProvider)
+// =============================================================================
+
+/// Extension trait for document verification, DNS trust, and auth headers.
+pub trait JacsVerificationProvider: JacsProvider {
+    /// Verify a signed document.
+    fn verify_document(&self, document: &str) -> Result<DocVerificationResult>;
+
+    /// Verify a document with an explicit public key.
+    fn verify_with_key(&self, document: &str, key: Vec<u8>) -> Result<DocVerificationResult>;
+
+    /// Verify a document by storage lookup (requires document service).
+    fn verify_by_id(&self, doc_id: &str) -> Result<DocVerificationResult>;
+
+    /// Verify an agent's public key via DNS (L2 trust).
+    fn verify_dns(&self, domain: &str) -> Result<()>;
+
+    /// Build a JACS Authorization header for HTTP requests.
+    fn build_auth_header_jacs(&self) -> Result<String>;
+}
+
+// =============================================================================
+// Layer 5: Email (JacsEmailProvider)
+// =============================================================================
+
+/// Extension trait for email signing, verification, and attachment management.
+pub trait JacsEmailProvider: JacsProvider {
+    /// Sign a raw RFC 5322 email.
+    fn sign_email(&self, raw: &[u8]) -> Result<Vec<u8>>;
+
+    /// Verify a signed email with the given public key.
+    fn verify_email(&self, raw: &[u8], key: Vec<u8>) -> Result<Value>;
+
+    /// Add a JACS attachment to an email.
+    fn add_jacs_attachment(&self, email: &[u8], doc: &[u8]) -> Result<Vec<u8>>;
+
+    /// Extract a JACS attachment from an email.
+    fn get_jacs_attachment(&self, email: &[u8]) -> Result<Vec<u8>>;
+
+    /// Remove a JACS attachment from an email.
+    fn remove_jacs_attachment(&self, email: &[u8]) -> Result<Vec<u8>>;
+
+    /// Parse an email into structured parts.
+    fn extract_email_parts(&self, raw: &[u8]) -> Result<Value>;
+}
+
+// =============================================================================
+// Layer 6: Agreements (feature-gated)
+// =============================================================================
+
+/// Extension trait for multi-party agreements.
+#[cfg(feature = "agreements")]
+pub trait JacsAgreementProvider: JacsProvider {
+    /// Create an agreement with specified agents and optional quorum.
+    fn create_agreement(
+        &self,
+        doc: &str,
+        agent_ids: &[String],
+        quorum: Option<&str>,
+    ) -> Result<SignedDocument>;
+
+    /// Sign an existing agreement.
+    fn sign_agreement(&self, document: &str) -> Result<SignedDocument>;
+
+    /// Check the status of an agreement.
+    fn check_agreement(&self, document: &str) -> Result<Value>;
+}
+
+// =============================================================================
+// Layer 7: Attestation (feature-gated)
+// =============================================================================
+
+/// Extension trait for verifiable attestation claims.
+#[cfg(feature = "attestation")]
+pub trait JacsAttestationProvider: JacsProvider {
+    /// Create an attestation with subject and claims.
+    fn create_attestation(&self, subject: &Value, claims: &[Value]) -> Result<String>;
+
+    /// Verify an attestation document.
+    fn verify_attestation(&self, doc_key: &str) -> Result<Value>;
+}
+
+// =============================================================================
+// Providers
+// =============================================================================
 
 /// Provider that permits unauthenticated methods only.
 #[derive(Debug, Clone)]
@@ -265,6 +487,10 @@ impl JacsProvider for StaticJacsProvider {
         })
     }
 }
+
+// =============================================================================
+// Canonical JSON
+// =============================================================================
 
 /// Canonical JSON per RFC 8785 (JSON Canonicalization Scheme / JCS).
 ///

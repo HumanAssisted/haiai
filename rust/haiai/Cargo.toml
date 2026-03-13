@@ -16,6 +16,8 @@ default = ["rustls-tls", "jacs-crate"]
 rustls-tls = ["reqwest/rustls"]
 native-tls = ["reqwest/native-tls"]
 jacs-crate = ["dep:jacs"]
+agreements = ["jacs-crate", "jacs/agreements"]
+attestation = ["jacs-crate", "jacs/attestation"]
 
 [dependencies]
 async-trait.workspace = true
@@ -34,7 +36,7 @@ tokio-tungstenite = "0.28"
 url.workspace = true
 uuid.workspace = true
 tempfile = "3"
-jacs = { version = "=0.9.4", optional = true }
+jacs = { version = "=0.9.4", optional = true, features = ["a2a"] }
 
 [dev-dependencies]
 httpmock = "0.8"

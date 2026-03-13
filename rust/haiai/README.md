@@ -12,6 +12,29 @@ JACS integration via `JacsProvider`. It owns HAI-specific concerns such as:
 - verify-link generation
 - A2A facade composition (`client.get_a2a(...)`) on top of JACS-backed signing
 
+## Trait Architecture (Layers 0-7)
+
+JACS 0.9.4 capabilities are exposed through 8 layered extension traits, all
+defined in `src/jacs.rs` and implemented on `LocalJacsProvider` in `src/jacs_local.rs`:
+
+| Layer | Trait | Purpose | Feature |
+|-------|-------|---------|---------|
+| 0 | `JacsProvider` | Core signing, identity, canonical JSON, A2A verification | -- |
+| 1 | `JacsAgentLifecycle` | Key rotation, migration, diagnostics, quickstart | -- |
+| 2 | `JacsDocumentProvider` | Document CRUD, versioning, search, storage capabilities | -- |
+| 3 | `JacsBatchProvider` | Batch sign/verify | -- |
+| 4 | `JacsVerificationProvider` | Document verification, DNS trust, auth headers | -- |
+| 5 | `JacsEmailProvider` | Email signing/verification, attachments | -- |
+| 6 | `JacsAgreementProvider` | Multi-party agreements | `agreements` |
+| 7 | `JacsAttestationProvider` | Verifiable attestation claims | `attestation` |
+
+## Storage Backend Selection
+
+Storage backends are selected by label via `config.rs`:
+
+- `resolve_storage_backend_label(label)` -- validates `fs`, `rusqlite`, `sqlite`
+- `resolve_storage_backend(explicit, config_path)` -- priority: flag > env > config > default
+
 ## Crypto policy
 
 Do not implement runtime crypto primitives in this crate. Use `JacsProvider`

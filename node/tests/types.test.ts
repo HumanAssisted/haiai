@@ -66,7 +66,7 @@ describe('type definitions', () => {
   });
 
   it('BenchmarkTier accepts all three tiers', () => {
-    const tiers: BenchmarkTier[] = ['free', 'dns_certified', 'fully_certified'];
+    const tiers: BenchmarkTier[] = ['free', 'pro', 'enterprise'];
     expect(tiers).toHaveLength(3);
   });
 
@@ -245,12 +245,12 @@ describe('type definitions', () => {
 
   it('BenchmarkJobConfig has correct shape', () => {
     const config: BenchmarkJobConfig = {
-      tier: 'dns_certified',
+      tier: 'pro',
       name: 'Test Run',
       transport: 'sse',
       paymentId: 'pay-1',
     };
-    expect(config.tier).toBe('dns_certified');
+    expect(config.tier).toBe('pro');
   });
 
   it('ConnectOptions has correct shape', () => {

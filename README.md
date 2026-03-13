@@ -503,39 +503,106 @@ HAIAI SDK (this repo — Rust core + language facades)
 
 **One source of truth:** The Rust crate is the canonical implementation. Python and Node SDKs provide language-native API wrappers but delegate CLI and MCP functionality to the Rust binary. There are no separate Python or Node CLI/MCP implementations.
 
-### JacsProvider Trait (Rust)
+### Trait Architecture (Layers 0-7)
 
-The `JacsProvider` trait is the integration seam between HAIAI and JACS. Any Rust consumer implements or selects a `JacsProvider` to supply signing, verification, and identity operations:
+The SDK exposes JACS 0.9.4 capabilities through 8 layered extension traits. Each layer builds on `JacsProvider` (Layer 0) and adds a focused set of operations. Feature-gated traits (Layers 6-7) require compile-time feature flags.
 
-```rust
-use haiai::{HaiClient, HaiClientOptions, StaticJacsProvider};
-
-// StaticJacsProvider: built-in provider backed by a JACS agent
-let provider = StaticJacsProvider::new("my-agent");
-let client = HaiClient::new(provider, HaiClientOptions::default())?;
+```
+Layer 0: JacsProvider          -- Core signing, identity, canonical JSON, A2A verification
+Layer 1: JacsAgentLifecycle    -- Key rotation, migration, diagnostics, quickstart
+Layer 2: JacsDocumentProvider  -- Document CRUD, versioning, search, storage capabilities
+Layer 3: JacsBatchProvider     -- Batch sign/verify
+Layer 4: JacsVerificationProvider -- Document verification, DNS trust, auth headers
+Layer 5: JacsEmailProvider     -- Email signing/verification, attachment management
+Layer 6: JacsAgreementProvider -- Multi-party agreements (feature: "agreements")
+Layer 7: JacsAttestationProvider -- Verifiable attestation claims (feature: "attestation")
 ```
 
-Custom providers can be implemented for testing, multi-agent setups, or alternative key management strategies. See `rust/haiai/src/jacs.rs` for the trait definition.
+`LocalJacsProvider` (in `jacs_local.rs`) implements all 8 layers by wrapping a JACS `SimpleAgent`. See `rust/haiai/src/jacs.rs` for all trait definitions.
+
+**Example: Using extension traits**
+
+```rust
+use haiai::{LocalJacsProvider, JacsAgentLifecycle, JacsDocumentProvider};
+
+let provider = LocalJacsProvider::from_config_path(None)?;
+
+// Layer 1: Agent lifecycle
+let diag = provider.diagnostics()?;
+let result = provider.verify_self()?;
+
+// Layer 2: Document operations
+let doc = provider.sign_and_store(&serde_json::json!({"title": "My Document"}))?;
+let found = provider.search_documents("title", 10, 0)?;
+let caps = provider.storage_capabilities()?;
+```
+
+### Storage Backend Selection
+
+JACS supports routed `DocumentService` backends selected by label. The SDK exposes backend selection through CLI, environment variable, and config file with a clear priority order:
+
+| Priority | Method | Example |
+|----------|--------|---------|
+| 1 (highest) | `--storage` CLI flag | `haiai store-document --storage sqlite doc.json` |
+| 2 | `JACS_STORAGE` env var | `JACS_STORAGE=rusqlite haiai list-documents` |
+| 3 | `default_storage` in `jacs.config.json` | `"defaultStorage": "sqlite"` |
+| 4 (lowest) | Default | `fs` (filesystem) |
+
+**Available backends:**
+
+| Label | Alias | Backend | Capabilities |
+|-------|-------|---------|-------------|
+| `fs` | -- | Filesystem | Document CRUD, basic search |
+| `rusqlite` | `sqlite` | SQLite (via rusqlite) | Document CRUD, fulltext search, versioning |
+
+Invalid labels produce a helpful error listing valid options.
+
+**Programmatic resolution (Rust):**
+
+```rust
+use haiai::{resolve_storage_backend, resolve_storage_backend_label};
+
+// Validate a single label
+let label = resolve_storage_backend_label("sqlite")?;  // returns "rusqlite"
+
+// Full priority resolution
+let backend = resolve_storage_backend(Some("sqlite"), None)?;  // returns "rusqlite"
+```
+
+### `haiai doctor` Command
+
+The `haiai doctor` command provides a comprehensive health check of your agent setup:
+
+```bash
+haiai doctor                     # check with default (fs) storage
+haiai doctor --storage sqlite    # check with SQLite storage
+```
+
+Reports: agent identity, self-signature verification, diagnostics, storage backend info, and document count.
 
 ### HAIAI Parity Map
 
-HAIAI exposes a **superset** of JACS `SimpleAgent` capabilities plus HAI-platform-specific features. The CLI and MCP surface the full union of JACS + HAIAI tools.
+HAIAI exposes 53 JACS 0.9.4 capabilities through 8 SDK traits, with 18 capabilities explicitly excluded (all with documented rationale). See [docs/haisdk/PARITY_MAP.md](docs/haisdk/PARITY_MAP.md) for the complete mapping.
 
-| Category | Source | Examples |
-|----------|--------|----------|
-| **Agent identity** | JACS | Create agent, sign/verify documents, key rotation |
-| **Storage & search** | JACS | Document CRUD, fulltext/hybrid search, backend selection |
-| **Registration** | HAIAI | Register with HAI platform, claim username |
-| **Email** | HAIAI | Send/receive signed @hai.ai email |
-| **Benchmarking** | HAIAI | Run conflict-resolution benchmarks, leaderboard |
-| **Verification** | HAIAI | Trust levels, DNS certification, verify links |
-| **A2A** | HAIAI (delegating to JACS) | Sign/verify A2A artifacts, trust policies |
+| Category | Exposed | Excluded | Total |
+|----------|---------|----------|-------|
+| Identity / Signing (Layer 0) | 8 | 0 | 8 |
+| Agent Lifecycle (Layer 1) | 9 | 0 | 9 |
+| Document Operations (Layer 2) | 14 | 1 | 15 |
+| Batch Operations (Layer 3) | 2 | 0 | 2 |
+| Verification (Layer 4) | 5 | 0 | 5 |
+| Email (Layer 5) | 6 | 0 | 6 |
+| Agreements (Layer 6) | 3 | 3 | 6 |
+| Attestation (Layer 7) | 2 | 3 | 5 |
+| Protocol / DNS / A2A | 4 | 2 | 6 |
+| Storage / Crypto Internals | 0 | 9 | 9 |
+| **Total** | **53** | **18** | **71** |
 
 Capabilities intentionally **excluded** from HAIAI (use JACS directly):
-- Raw DNS record emission (`emit_route53_change_batch`)
-- Low-level protocol wire format (`encode_verify_payload`, `extract_document_id`)
-- Attestation adapter registration
-- Advanced agent struct methods (`set_keys_raw`, `load_custom_schemas`)
+- Low-level storage/crypto internals (`StorageType`, `KeyManager`, `hash_string`)
+- Low-level agent trait methods (`add_agents_to_agreement`, `remove_agents_from_agreement`)
+- Deferred features (`set_visibility`, `verify_attestation_full`, `export_dsse`)
+- Internal helpers (`extract_document_id`, `resolve_dns_record`)
 
 ## Repository Structure
 

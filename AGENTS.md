@@ -25,6 +25,23 @@ schemas/                 # JSON schemas for HAI events
 scripts/ci/              # CI enforcement (crypto policy denylist)
 ```
 
+## Trait Architecture (JACS 0.9.4)
+
+The Rust SDK exposes JACS capabilities through 8 layered extension traits defined in `rust/haiai/src/jacs.rs`, implemented in `rust/haiai/src/jacs_local.rs`:
+
+- **Layer 0** `JacsProvider` -- Core signing, identity, canonical JSON
+- **Layer 1** `JacsAgentLifecycle` -- Key rotation, migration, diagnostics, quickstart
+- **Layer 2** `JacsDocumentProvider` -- Document CRUD, versioning, search
+- **Layer 3** `JacsBatchProvider` -- Batch sign/verify
+- **Layer 4** `JacsVerificationProvider` -- Document verification, DNS trust, auth headers
+- **Layer 5** `JacsEmailProvider` -- Email signing/verification, attachments
+- **Layer 6** `JacsAgreementProvider` -- Multi-party agreements (feature: `agreements`)
+- **Layer 7** `JacsAttestationProvider` -- Attestation claims (feature: `attestation`)
+
+Storage backend selection: `rust/haiai/src/config.rs` (`resolve_storage_backend()`). Labels: `fs`, `rusqlite`, `sqlite` (alias).
+
+Full parity map: `docs/haisdk/PARITY_MAP.md` (53 exposed, 18 excluded, 71 total).
+
 ## Rules
 
 1. **No local crypto in haiai.** Delegate to `jacs`. CI enforces via `scripts/ci/check_no_local_crypto.sh`.

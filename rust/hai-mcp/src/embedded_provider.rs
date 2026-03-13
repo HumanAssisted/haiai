@@ -182,7 +182,7 @@ impl JacsProvider for EmbeddedJacsProvider {
             .inner
             .lock()
             .map_err(|error| HaiError::Provider(format!("failed to lock JACS agent: {error}")))?;
-        jacs::agent::Agent::sign_bytes(&mut *agent, data).map_err(|error| {
+        jacs::agent::Agent::sign_bytes(&mut agent, data).map_err(|error| {
             HaiError::Provider(format!("embedded JACS sign_bytes failed: {error}"))
         })
     }

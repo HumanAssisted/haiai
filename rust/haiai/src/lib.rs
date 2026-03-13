@@ -55,7 +55,10 @@ pub use a2a::{
 #[cfg(feature = "jacs-crate")]
 pub use agent::{Agent, EmailNamespace};
 pub use client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
-pub use config::{load_config, resolve_private_key_candidates, AgentConfig};
+pub use config::{
+    load_config, resolve_private_key_candidates, resolve_storage_backend,
+    resolve_storage_backend_label, AgentConfig,
+};
 #[cfg(feature = "jacs-crate")]
 pub use email::{
     compute_content_hash,
@@ -77,7 +80,14 @@ pub use email::{
     SignedHeaderEntry,
 };
 pub use error::{HaiError, Result};
-pub use jacs::{JacsProvider, NoopJacsProvider, StaticJacsProvider};
+pub use jacs::{
+    JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider, JacsProvider,
+    JacsVerificationProvider, NoopJacsProvider, StaticJacsProvider,
+};
+#[cfg(feature = "agreements")]
+pub use jacs::JacsAgreementProvider;
+#[cfg(feature = "attestation")]
+pub use jacs::JacsAttestationProvider;
 #[cfg(feature = "jacs-crate")]
 pub use jacs_local::LocalJacsProvider;
 pub use types::*;

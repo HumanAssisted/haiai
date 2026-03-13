@@ -19,18 +19,13 @@ pub const A2A_PROTOCOL_VERSION_04: &str = "0.4.0";
 pub const A2A_PROTOCOL_VERSION_10: &str = "1.0";
 pub const A2A_JACS_EXTENSION_URI: &str = "urn:jacs:provenance-v1";
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum A2ATrustPolicy {
     Open,
+    #[default]
     Verified,
     Strict,
-}
-
-impl Default for A2ATrustPolicy {
-    fn default() -> Self {
-        Self::Verified
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -647,7 +642,7 @@ impl<'a, P: JacsProvider> A2AIntegration<'a, P> {
 
                         self.client
                             .submit_response(
-                                &job_id,
+                                job_id,
                                 &message,
                                 Some(json!({
                                     "a2aTask": task_artifact,

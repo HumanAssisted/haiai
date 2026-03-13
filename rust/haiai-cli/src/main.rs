@@ -2,8 +2,9 @@ use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use hai_mcp::{HaiMcpServer, HaiServerContext, LoadedSharedAgent};
 use haiai::{
-    CreateAgentOptions, HaiClient, HaiClientOptions, JacsProvider, ListMessagesOptions,
-    LocalJacsProvider, RegisterAgentOptions, SearchOptions, SendEmailOptions,
+    CreateAgentOptions, HaiClient, HaiClientOptions, JacsAgentLifecycle, JacsDocumentProvider,
+    JacsProvider, ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions, SearchOptions,
+    SendEmailOptions,
 };
 use jacs_mcp::JacsMcpServer;
 use rmcp::{transport::stdio, ServiceExt};
@@ -15,6 +16,10 @@ struct Cli {
     /// Do not prompt for private key password; require JACS_PRIVATE_KEY_PASSWORD env var
     #[arg(short, long, global = true)]
     quiet: bool,
+
+    /// Document storage backend: fs, rusqlite, sqlite
+    #[arg(long, global = true)]
+    storage: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -153,6 +158,48 @@ enum Commands {
         #[arg(long, default_value = "free")]
         tier: String,
     },
+
+    /// Diagnose agent health, storage, and configuration
+    Doctor,
+
+    /// Store a signed document
+    StoreDocument {
+        /// Path to JSON file, or "-" for stdin
+        #[arg()]
+        path: String,
+    },
+
+    /// List stored documents
+    ListDocuments {
+        /// Filter by document type
+        #[arg(long)]
+        doc_type: Option<String>,
+    },
+
+    /// Search stored documents
+    SearchDocuments {
+        /// Search query
+        #[arg()]
+        query: String,
+
+        /// Maximum results
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Get a document by key (id:version)
+    GetDocument {
+        /// Document key (id:version)
+        #[arg()]
+        key: String,
+    },
+
+    /// Remove a document
+    RemoveDocument {
+        /// Document key (id:version)
+        #[arg()]
+        key: String,
+    },
 }
 
 fn hai_url() -> String {
@@ -234,6 +281,14 @@ fn load_client() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
     };
     let client = HaiClient::new(provider, options).context("failed to construct HaiClient")?;
     Ok(client)
+}
+
+/// Load a local JACS provider with document storage configured.
+fn load_provider_with_storage(storage_flag: Option<&str>) -> anyhow::Result<LocalJacsProvider> {
+    let label = haiai::resolve_storage_backend(storage_flag, None)
+        .context("failed to resolve storage backend")?;
+    LocalJacsProvider::from_config_path_with_storage(None, &label)
+        .context("failed to load JACS agent with storage")
 }
 
 /// Print a table of email messages in a consistent format.
@@ -577,6 +632,146 @@ async fn main() -> anyhow::Result<()> {
             println!("  Status: {}", status);
             println!("  Tier:   {}", tier_val);
         }
+
+        Commands::Doctor => {
+            let provider = load_provider_with_storage(cli.storage.as_deref())?;
+
+            println!("Agent Diagnostics");
+            println!("{}", "=".repeat(50));
+
+            // Identity
+            println!("  JACS ID:    {}", provider.jacs_id());
+            println!("  Algorithm:  {}", provider.algorithm());
+            println!("  Config:     {}", provider.config_path().display());
+
+            // Self-verification
+            match provider.verify_self() {
+                Ok(result) => {
+                    println!(
+                        "  Self-Check: {}",
+                        if result.valid { "PASS" } else { "FAIL" }
+                    );
+                    if let Some(err) = &result.error {
+                        println!("  Error:      {}", err);
+                    }
+                }
+                Err(e) => println!("  Self-Check: ERROR ({})", e),
+            }
+
+            // Diagnostics
+            match provider.diagnostics() {
+                Ok(diag) => {
+                    if let Some(obj) = diag.as_object() {
+                        for (k, v) in obj {
+                            println!("  {}: {}", k, v);
+                        }
+                    }
+                }
+                Err(e) => println!("  Diagnostics: ERROR ({})", e),
+            }
+
+            // Storage
+            let storage_label = haiai::resolve_storage_backend(cli.storage.as_deref(), None)
+                .unwrap_or_else(|_| "fs".to_string());
+            println!("\nStorage");
+            println!("{}", "-".repeat(50));
+            println!("  Backend:    {}", storage_label);
+            println!(
+                "  Configured: {}",
+                if provider.has_document_service() {
+                    "yes"
+                } else {
+                    "no"
+                }
+            );
+            if provider.has_document_service() {
+                match provider.storage_capabilities() {
+                    Ok(caps) => {
+                        println!("  Fulltext:   {}", caps.fulltext);
+                        println!("  Vector:     {}", caps.vector);
+                        println!("  Pagination: {}", caps.pagination);
+                    }
+                    Err(e) => println!("  Capabilities: ERROR ({})", e),
+                }
+
+                // Document count
+                match provider.list_documents(None) {
+                    Ok(docs) => println!("  Documents:  {}", docs.len()),
+                    Err(e) => println!("  Documents:  ERROR ({})", e),
+                }
+            }
+        }
+
+        Commands::StoreDocument { path } => {
+            let provider = load_provider_with_storage(cli.storage.as_deref())?;
+            let content = if path == "-" {
+                use std::io::Read;
+                let mut buf = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut buf)
+                    .context("failed to read stdin")?;
+                buf
+            } else {
+                std::fs::read_to_string(&path)
+                    .with_context(|| format!("failed to read file: {}", path))?
+            };
+            let data: Value = serde_json::from_str(&content)
+                .with_context(|| format!("invalid JSON in {}", path))?;
+            let doc = provider
+                .sign_and_store(&data)
+                .context("sign_and_store failed")?;
+            println!("Document stored:");
+            println!("  Key: {}", doc.key);
+        }
+
+        Commands::ListDocuments { doc_type } => {
+            let provider = load_provider_with_storage(cli.storage.as_deref())?;
+            let keys = provider
+                .list_documents(doc_type.as_deref())
+                .context("list_documents failed")?;
+            if keys.is_empty() {
+                println!("No documents found.");
+            } else {
+                for key in &keys {
+                    println!("{}", key);
+                }
+                println!("\n{} document(s)", keys.len());
+            }
+        }
+
+        Commands::SearchDocuments { query, limit } => {
+            let provider = load_provider_with_storage(cli.storage.as_deref())?;
+            let results = provider
+                .search_documents(&query, limit, 0)
+                .context("search failed")?;
+            if results.results.is_empty() {
+                println!("No results.");
+            } else {
+                for hit in &results.results {
+                    println!("{} (score: {:.2})", hit.key, hit.score);
+                }
+                println!(
+                    "\n{} result(s), method: {}",
+                    results.total_count, results.method
+                );
+            }
+        }
+
+        Commands::GetDocument { key } => {
+            let provider = load_provider_with_storage(cli.storage.as_deref())?;
+            let json = provider
+                .get_document(&key)
+                .context("get_document failed")?;
+            println!("{}", json);
+        }
+
+        Commands::RemoveDocument { key } => {
+            let provider = load_provider_with_storage(cli.storage.as_deref())?;
+            provider
+                .remove_document(&key)
+                .context("remove_document failed")?;
+            println!("Document removed: {}", key);
+        }
     }
 
     Ok(())
@@ -894,5 +1089,92 @@ mod tests {
     fn parse_migrate() {
         let cli = Cli::parse_from(["haiai", "migrate"]);
         assert!(matches!(cli.command, Commands::Migrate));
+    }
+
+    #[test]
+    fn parse_doctor() {
+        let cli = Cli::parse_from(["haiai", "doctor"]);
+        assert!(matches!(cli.command, Commands::Doctor));
+    }
+
+    #[test]
+    fn parse_doctor_with_storage() {
+        let cli = Cli::parse_from(["haiai", "--storage", "sqlite", "doctor"]);
+        assert!(matches!(cli.command, Commands::Doctor));
+        assert_eq!(cli.storage.as_deref(), Some("sqlite"));
+    }
+
+    #[test]
+    fn parse_store_document() {
+        let cli = Cli::parse_from(["haiai", "store-document", "doc.json"]);
+        match cli.command {
+            Commands::StoreDocument { path } => {
+                assert_eq!(path, "doc.json");
+            }
+            _ => panic!("expected StoreDocument command"),
+        }
+    }
+
+    #[test]
+    fn parse_list_documents() {
+        let cli = Cli::parse_from(["haiai", "list-documents"]);
+        match cli.command {
+            Commands::ListDocuments { doc_type } => {
+                assert!(doc_type.is_none());
+            }
+            _ => panic!("expected ListDocuments command"),
+        }
+    }
+
+    #[test]
+    fn parse_list_documents_with_type() {
+        let cli = Cli::parse_from(["haiai", "list-documents", "--doc-type", "invoice"]);
+        match cli.command {
+            Commands::ListDocuments { doc_type } => {
+                assert_eq!(doc_type.as_deref(), Some("invoice"));
+            }
+            _ => panic!("expected ListDocuments command"),
+        }
+    }
+
+    #[test]
+    fn parse_search_documents() {
+        let cli = Cli::parse_from(["haiai", "search-documents", "my query"]);
+        match cli.command {
+            Commands::SearchDocuments { query, limit } => {
+                assert_eq!(query, "my query");
+                assert_eq!(limit, 20);
+            }
+            _ => panic!("expected SearchDocuments command"),
+        }
+    }
+
+    #[test]
+    fn parse_get_document() {
+        let cli = Cli::parse_from(["haiai", "get-document", "abc:1"]);
+        match cli.command {
+            Commands::GetDocument { key } => {
+                assert_eq!(key, "abc:1");
+            }
+            _ => panic!("expected GetDocument command"),
+        }
+    }
+
+    #[test]
+    fn parse_remove_document() {
+        let cli = Cli::parse_from(["haiai", "remove-document", "abc:1"]);
+        match cli.command {
+            Commands::RemoveDocument { key } => {
+                assert_eq!(key, "abc:1");
+            }
+            _ => panic!("expected RemoveDocument command"),
+        }
+    }
+
+    #[test]
+    fn parse_global_storage_flag() {
+        let cli = Cli::parse_from(["haiai", "--storage", "rusqlite", "list-documents"]);
+        assert_eq!(cli.storage.as_deref(), Some("rusqlite"));
+        assert!(matches!(cli.command, Commands::ListDocuments { .. }));
     }
 }

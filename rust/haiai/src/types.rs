@@ -620,6 +620,71 @@ pub struct ProRunResult {
 /// Deprecated: Use `ProRunResult` instead.
 pub type DnsCertifiedResult = ProRunResult;
 
+// =============================================================================
+// Document & Search Types (SDK boundary)
+// =============================================================================
+
+/// A signed document returned by document operations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedDocument {
+    /// The document key (`id:version`).
+    pub key: String,
+    /// The signed document JSON.
+    pub json: String,
+}
+
+/// Results from a search operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocSearchResults {
+    /// The matched documents, ordered by relevance.
+    pub results: Vec<DocSearchHit>,
+    /// Total number of matching documents (for pagination).
+    pub total_count: usize,
+    /// Which search method the backend used.
+    pub method: String,
+}
+
+/// A single search result with relevance metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocSearchHit {
+    /// The document key (`id:version`).
+    pub key: String,
+    /// The signed document JSON.
+    pub json: String,
+    /// Relevance score (0.0 - 1.0).
+    pub score: f64,
+    /// Which field(s) matched, if applicable.
+    pub matched_fields: Vec<String>,
+}
+
+/// Capabilities of the configured storage backend.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StorageCapabilities {
+    /// Whether fulltext search is supported.
+    pub fulltext: bool,
+    /// Whether vector similarity search is supported.
+    pub vector: bool,
+    /// Whether field-level queries are supported.
+    pub query_by_field: bool,
+    /// Whether type-based queries are supported.
+    pub query_by_type: bool,
+    /// Whether pagination is supported.
+    pub pagination: bool,
+    /// Whether soft-delete (tombstone) is used instead of hard delete.
+    pub tombstone: bool,
+}
+
+/// Result of a document verification operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocVerificationResult {
+    /// The document key (if available).
+    pub key: String,
+    /// Whether the document is valid.
+    pub valid: bool,
+    /// Error message if verification failed.
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VerificationStatus {
     #[serde(default)]

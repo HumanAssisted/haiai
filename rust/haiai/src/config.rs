@@ -103,6 +103,60 @@ fn resolve_config_path(path: Option<&Path>) -> PathBuf {
     PathBuf::from("./jacs.config.json")
 }
 
+/// Validate a routed backend label for DocumentService-backed operations.
+///
+/// Accepts: `fs`, `rusqlite`, `sqlite` (alias for `rusqlite`).
+/// Returns the canonical label on success, or an error with valid options on failure.
+pub fn resolve_storage_backend_label(label: &str) -> Result<String> {
+    match label {
+        "fs" => Ok("fs".to_string()),
+        "rusqlite" | "sqlite" => Ok("rusqlite".to_string()),
+        other => Err(HaiError::ConfigInvalid {
+            message: format!(
+                "Unsupported storage backend '{}'. Valid routed labels: fs, rusqlite, sqlite",
+                other
+            ),
+        }),
+    }
+}
+
+/// Resolve which storage backend to use with priority:
+/// 1. Explicit parameter (CLI `--storage` flag)
+/// 2. `JACS_STORAGE` env var
+/// 3. `default_storage` field in `jacs.config.json`
+/// 4. `"fs"` default
+pub fn resolve_storage_backend(
+    explicit: Option<&str>,
+    config_path: Option<&Path>,
+) -> Result<String> {
+    // Priority 1: explicit parameter
+    if let Some(label) = explicit {
+        return resolve_storage_backend_label(label);
+    }
+
+    // Priority 2: JACS_STORAGE env var
+    if let Ok(label) = env::var("JACS_STORAGE") {
+        if !label.is_empty() {
+            return resolve_storage_backend_label(&label);
+        }
+    }
+
+    // Priority 3: default_storage in config
+    let config_path_resolved = resolve_config_path(config_path);
+    if config_path_resolved.is_file() {
+        if let Ok(raw) = fs::read_to_string(&config_path_resolved) {
+            if let Ok(data) = serde_json::from_str::<Value>(&raw) {
+                if let Some(label) = get_string(&data, &["default_storage", "defaultStorage"]) {
+                    return resolve_storage_backend_label(&label);
+                }
+            }
+        }
+    }
+
+    // Priority 4: default to fs
+    Ok("fs".to_string())
+}
+
 fn get_string(data: &Value, keys: &[&str]) -> Option<String> {
     for key in keys {
         if let Some(value) = data.get(key).and_then(Value::as_str) {

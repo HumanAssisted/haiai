@@ -29,7 +29,7 @@ Use this guide whenever HAIAI behavior changes so each language implementation c
 1. HAI endpoint contracts and request/response shaping
 2. JACS auth header usage (`Authorization: JACS ...`) and when auth is required
 3. transport behavior for HAI event APIs (SSE/WS)
-4. benchmark orchestration (free/dns_certified/certified tier flows)
+4. benchmark orchestration (free/pro/enterprise tier flows)
 5. username, email, key-discovery, and HAI verification endpoints
 6. verify-link generation rules for `hai.ai` verifier URLs
 

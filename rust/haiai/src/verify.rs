@@ -39,12 +39,13 @@ fn encode_verify_payload(document: &str) -> String {
 /// Extract document ID from a JACS document.
 /// Delegates to `jacs::protocol` when the `jacs-crate` feature is enabled.
 #[cfg(feature = "jacs-crate")]
-fn extract_document_id(document: &str) -> std::result::Result<String, Box<dyn std::error::Error>> {
+fn extract_document_id(document: &str) -> Result<String> {
     jacs::protocol::extract_document_id(document)
+        .map_err(|e| HaiError::Provider(format!("extract_document_id: {e}")))
 }
 
 #[cfg(not(feature = "jacs-crate"))]
-fn extract_document_id(document: &str) -> std::result::Result<String, Box<dyn std::error::Error>> {
+fn extract_document_id(document: &str) -> Result<String> {
     let value: serde_json::Value = serde_json::from_str(document)?;
     value
         .get("jacsDocumentId")
@@ -52,7 +53,7 @@ fn extract_document_id(document: &str) -> std::result::Result<String, Box<dyn st
         .or_else(|| value.get("document_id").and_then(serde_json::Value::as_str))
         .or_else(|| value.get("id").and_then(serde_json::Value::as_str))
         .map(String::from)
-        .ok_or_else(|| "no document ID field found".into())
+        .ok_or_else(|| HaiError::Provider("no document ID field found".to_string()))
 }
 
 #[cfg(test)]
