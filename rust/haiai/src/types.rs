@@ -556,13 +556,13 @@ impl TransportType {
 }
 
 #[derive(Debug, Clone)]
-pub struct DnsCertifiedRunOptions {
+pub struct ProRunOptions {
     pub transport: TransportType,
     pub poll_interval: Duration,
     pub poll_timeout: Duration,
 }
 
-impl Default for DnsCertifiedRunOptions {
+impl Default for ProRunOptions {
     fn default() -> Self {
         Self {
             transport: TransportType::Sse,
@@ -571,6 +571,9 @@ impl Default for DnsCertifiedRunOptions {
         }
     }
 }
+
+/// Deprecated: Use `ProRunOptions` instead.
+pub type DnsCertifiedRunOptions = ProRunOptions;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TranscriptMessage {
@@ -599,7 +602,7 @@ pub struct FreeChaoticResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct DnsCertifiedResult {
+pub struct ProRunResult {
     #[serde(default)]
     pub success: bool,
     #[serde(default)]
@@ -613,6 +616,9 @@ pub struct DnsCertifiedResult {
     #[serde(default)]
     pub raw_response: Value,
 }
+
+/// Deprecated: Use `ProRunResult` instead.
+pub type DnsCertifiedResult = ProRunResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct VerificationStatus {

@@ -704,13 +704,15 @@ func (c *Client) Benchmark(ctx context.Context, tier string) (*BenchmarkResult, 
 // generateBenchmarkName creates a descriptive benchmark run name.
 func generateBenchmarkName(tier, jacsID string) string {
 	displayNames := map[string]string{
-		"free":            "Free",
-		"dns_certified":   "DNS Certified",
-		"fully_certified": "Fully Certified",
+		"free":       "Free",
+		"pro":        "Pro",
+		"enterprise": "Enterprise",
 		// Legacy names (backward compat during transition)
-		"free_chaotic": "Free",
-		"baseline":     "DNS Certified",
-		"certified":    "Fully Certified",
+		"dns_certified":   "Pro",
+		"fully_certified": "Enterprise",
+		"free_chaotic":    "Free",
+		"baseline":        "Pro",
+		"certified":       "Enterprise",
 	}
 
 	display, ok := displayNames[tier]
@@ -734,10 +736,10 @@ func (c *Client) FreeRun(ctx context.Context) (*BenchmarkResult, error) {
 	return c.Benchmark(ctx, "free")
 }
 
-// DnsCertifiedRun runs the dns_certified benchmark tier with Stripe checkout.
+// ProRun runs the pro benchmark tier with Stripe checkout.
 // It creates a subscription session, opens the user's browser, polls for
 // payment confirmation, then runs the benchmark.
-func (c *Client) DnsCertifiedRun(ctx context.Context) (*BenchmarkResult, error) {
+func (c *Client) ProRun(ctx context.Context) (*BenchmarkResult, error) {
 	// 1. Create subscription session.
 	var sub struct {
 		CheckoutURL string `json:"checkout_url"`
@@ -745,7 +747,7 @@ func (c *Client) DnsCertifiedRun(ctx context.Context) (*BenchmarkResult, error) 
 		AlreadyPaid bool   `json:"already_paid"`
 	}
 	err := c.doRequest(ctx, http.MethodPost, "/api/benchmark/subscribe", map[string]string{
-		"tier": "dns_certified",
+		"tier": "pro",
 	}, &sub)
 	if err != nil {
 		return nil, err
@@ -780,18 +782,30 @@ func (c *Client) DnsCertifiedRun(ctx context.Context) (*BenchmarkResult, error) 
 	}
 
 runBenchmark:
-	return c.Benchmark(ctx, "dns_certified")
+	return c.Benchmark(ctx, "pro")
 }
 
-// CertifiedRun runs a fully_certified tier benchmark.
+// DnsCertifiedRun is a deprecated alias for ProRun.
+// Deprecated: Use ProRun instead. The tier was renamed from dns_certified to pro.
+func (c *Client) DnsCertifiedRun(ctx context.Context) (*BenchmarkResult, error) {
+	return c.ProRun(ctx)
+}
+
+// EnterpriseRun runs an enterprise tier benchmark.
 //
-// The fully_certified tier ($499/month) is coming soon.
+// The enterprise tier is coming soon.
 // Contact support@hai.ai for early access.
-func (c *Client) CertifiedRun(ctx context.Context) (*BenchmarkResult, error) {
+func (c *Client) EnterpriseRun(ctx context.Context) (*BenchmarkResult, error) {
 	return nil, fmt.Errorf(
-		"the fully_certified tier ($499/month) is coming soon; " +
+		"the enterprise tier is coming soon; " +
 			"contact support@hai.ai for early access",
 	)
+}
+
+// CertifiedRun is a deprecated alias for EnterpriseRun.
+// Deprecated: Use EnterpriseRun instead. The tier was renamed from fully_certified to enterprise.
+func (c *Client) CertifiedRun(ctx context.Context) (*BenchmarkResult, error) {
+	return c.EnterpriseRun(ctx)
 }
 
 // SubmitResponse submits a moderation response for a benchmark job, wrapped
@@ -1434,7 +1448,7 @@ func (c *Client) RegisterNewAgent(ctx context.Context, agentName string, opts *R
 			fmt.Printf("  Name:  _jacs.%s\n", opts.Domain)
 			fmt.Println("  Type:  TXT")
 			fmt.Printf("  Value: sha256:%x\n", hash)
-			fmt.Println("DNS verification enables the dns_certified tier.")
+			fmt.Println("DNS verification enables the pro tier.")
 		}
 		fmt.Println()
 	}

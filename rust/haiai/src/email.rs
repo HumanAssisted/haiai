@@ -88,7 +88,7 @@ fn convert_chain_entry(value: jacs::email::ChainEntry) -> ChainEntry {
 /// 2. HAI registry lookup for the signer's public key
 /// 3. Identity binding checks (PRD lines 681-694)
 /// 4. Cryptographic signature verification (delegated to JACS)
-/// 5. DNS verification (for dns_certified and fully_certified tiers)
+/// 5. DNS verification (for pro and enterprise tiers)
 /// 6. Content hash comparison
 /// 7. Forwarding chain verification
 ///
@@ -267,8 +267,8 @@ pub async fn verify_email(raw_email: &[u8], hai_url: &str) -> EmailVerificationR
         }
     };
 
-    // Step 7: DNS verification (for dns_certified and fully_certified tiers)
-    let dns_verified = if reputation_tier == "dns_certified" || reputation_tier == "fully_certified"
+    // Step 7: DNS verification (for pro and enterprise tiers)
+    let dns_verified = if reputation_tier == "pro" || reputation_tier == "enterprise"
     {
         let domain = extract_domain(&from_email);
         match verify_dns_public_key(&domain, &registry.public_key).await {

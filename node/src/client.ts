@@ -8,6 +8,7 @@ import type {
   RotateKeysOptions,
   RotationResult,
   FreeChaoticResult,
+  ProRunResult,
   DnsCertifiedResult,
   FullyCertifiedResult,
   JobResponseResult,
@@ -21,6 +22,7 @@ import type {
   ConnectionMode,
   ConnectOptions,
   OnBenchmarkJobOptions,
+  ProRunOptions,
   DnsCertifiedRunOptions,
   FreeChaoticRunOptions,
   JobResponse,
@@ -752,21 +754,21 @@ export class HaiClient {
   }
 
   // ---------------------------------------------------------------------------
-  // dnsCertifiedRun()
+  // proRun()
   // ---------------------------------------------------------------------------
 
   /**
-   * Run a $5 DNS-certified benchmark.
+   * Run a pro tier benchmark ($20/month).
    *
    * Flow: create Stripe checkout -> poll for payment -> run benchmark.
    */
-  async dnsCertifiedRun(options?: DnsCertifiedRunOptions): Promise<DnsCertifiedResult> {
+  async proRun(options?: ProRunOptions): Promise<ProRunResult> {
     const pollIntervalMs = options?.pollIntervalMs ?? 2000;
     const pollTimeoutMs = options?.pollTimeoutMs ?? 300000;
 
     // Step 1: Create Stripe Checkout session
     const purchaseUrl = this.makeUrl('/api/benchmark/purchase');
-    const purchasePayload = { tier: 'dns_certified', agent_id: this.jacsId };
+    const purchasePayload = { tier: 'pro', agent_id: this.jacsId };
 
     const purchaseResp = await this.fetchWithRetry(purchaseUrl, {
       method: 'POST',
@@ -823,8 +825,8 @@ export class HaiClient {
     // Step 4: Run the benchmark
     const runUrl = this.makeUrl('/api/benchmark/run');
     const runPayload = {
-      name: `DNS Certified Run - ${this.jacsId.slice(0, 8)}`,
-      tier: 'dns_certified',
+      name: `Pro Run - ${this.jacsId.slice(0, 8)}`,
+      tier: 'pro',
       payment_id: paymentId,
       transport: options?.transport ?? 'sse',
     };
@@ -847,21 +849,31 @@ export class HaiClient {
     };
   }
 
+  /** @deprecated Use proRun instead. The tier was renamed from dns_certified to pro. */
+  async dnsCertifiedRun(options?: DnsCertifiedRunOptions): Promise<DnsCertifiedResult> {
+    return this.proRun(options);
+  }
+
   // ---------------------------------------------------------------------------
-  // certifiedRun()
+  // enterpriseRun()
   // ---------------------------------------------------------------------------
 
   /**
-   * Run a fully_certified tier benchmark.
+   * Run an enterprise tier benchmark.
    *
-   * The fully_certified tier ($499/month) is coming soon.
+   * The enterprise tier is coming soon.
    * Contact support@hai.ai for early access.
    */
-  async certifiedRun(_options?: Record<string, unknown>): Promise<never> {
+  async enterpriseRun(_options?: Record<string, unknown>): Promise<never> {
     throw new Error(
-      'The fully_certified tier ($499/month) is coming soon. ' +
+      'The enterprise tier is coming soon. ' +
       'Contact support@hai.ai for early access.'
     );
+  }
+
+  /** @deprecated Use enterpriseRun instead. The tier was renamed from fully_certified to enterprise. */
+  async certifiedRun(_options?: Record<string, unknown>): Promise<never> {
+    return this.enterpriseRun(_options);
   }
 
   // ---------------------------------------------------------------------------
@@ -1303,7 +1315,7 @@ export class HaiClient {
         console.log(`  Name:  _jacs.${options.domain}`);
         console.log(`  Type:  TXT`);
         console.log(`  Value: sha256:${pubKeyHash}`);
-        console.log(`DNS verification enables the dns_certified tier.\n`);
+        console.log(`DNS verification enables the pro tier.\n`);
       } else {
         console.log();
       }
@@ -1705,7 +1717,7 @@ export class HaiClient {
    * Run a benchmark with specified name and tier.
    *
    * @param name - Benchmark run name
-   * @param tier - Benchmark tier ("free", "dns_certified", "fully_certified"). Default: "free"
+   * @param tier - Benchmark tier ("free", "pro", "enterprise"). Default: "free"
    * @returns Benchmark result with scores
    */
   async benchmark(name: string = 'mediation_basic', tier: string = 'free'): Promise<Record<string, unknown>> {

@@ -58,7 +58,7 @@ export type ConnectionMode = 'sse' | 'ws';
 // =============================================================================
 
 /** Benchmark tier identifiers. */
-export type BenchmarkTier = 'free' | 'dns_certified' | 'fully_certified';
+export type BenchmarkTier = 'free' | 'pro' | 'enterprise';
 
 /** A benchmark job received from HAI via SSE or WebSocket. */
 export interface BenchmarkJob {
@@ -78,7 +78,7 @@ export interface BenchmarkJobConfig {
   name?: string;
   /** Transport protocol for the benchmark. */
   transport?: ConnectionMode;
-  /** Stripe payment ID (required for dns_certified). */
+  /** Stripe payment ID (required for pro tier). */
   paymentId?: string;
 }
 
@@ -174,8 +174,8 @@ export interface FreeChaoticResult {
   rawResponse: Record<string, unknown>;
 }
 
-/** Result of a $5 DNS-certified benchmark run. Single score, no breakdown. */
-export interface DnsCertifiedResult {
+/** Result of a pro tier benchmark run. Single score, no breakdown. */
+export interface ProRunResult {
   /** Whether the run completed. */
   success: boolean;
   /** Unique ID for this benchmark run. */
@@ -190,8 +190,8 @@ export interface DnsCertifiedResult {
   rawResponse: Record<string, unknown>;
 }
 
-/** Result of a $499 fully-certified benchmark run. */
-export interface FullyCertifiedResult {
+/** Result of an enterprise tier benchmark run. */
+export interface EnterpriseRunResult {
   /** Whether the run completed. */
   success: boolean;
   /** Unique ID for this benchmark run. */
@@ -209,7 +209,12 @@ export interface FullyCertifiedResult {
 }
 
 /** Generic benchmark result (union of all tiers). */
-export type BenchmarkResult = FreeChaoticResult | DnsCertifiedResult | FullyCertifiedResult;
+export type BenchmarkResult = FreeChaoticResult | ProRunResult | EnterpriseRunResult;
+
+/** @deprecated Use ProRunResult instead. */
+export type DnsCertifiedResult = ProRunResult;
+/** @deprecated Use EnterpriseRunResult instead. */
+export type FullyCertifiedResult = EnterpriseRunResult;
 
 /** Result of submitting a benchmark job response. */
 export interface JobResponseResult {
@@ -331,8 +336,8 @@ export interface OnBenchmarkJobOptions {
   transport?: ConnectionMode;
 }
 
-/** Options for DNS-certified benchmark run. */
-export interface DnsCertifiedRunOptions {
+/** Options for pro tier benchmark run. */
+export interface ProRunOptions {
   /** Transport protocol. */
   transport?: ConnectionMode;
   /** Milliseconds between payment status checks. Default: 2000. */
@@ -342,6 +347,9 @@ export interface DnsCertifiedRunOptions {
   /** Callback with checkout URL (e.g., to open in browser). */
   onCheckoutUrl?: (url: string) => void;
 }
+
+/** @deprecated Use ProRunOptions instead. */
+export type DnsCertifiedRunOptions = ProRunOptions;
 
 /** Options for free chaotic run. */
 export interface FreeChaoticRunOptions {

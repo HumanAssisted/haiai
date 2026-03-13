@@ -16,7 +16,7 @@ use crate::error::{HaiError, Result};
 use crate::jacs::JacsProvider;
 use crate::types::{
     AgentKeyHistory, AgentVerificationResult, CheckUsernameResult, ClaimUsernameResult,
-    DeleteUsernameResult, DnsCertifiedResult, DnsCertifiedRunOptions, DocumentVerificationResult,
+    DeleteUsernameResult, DnsCertifiedResult, DnsCertifiedRunOptions, ProRunResult, ProRunOptions, DocumentVerificationResult,
     EmailMessage, EmailStatus, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult,
     ListMessagesOptions, PublicKeyInfo, RegisterAgentOptions, RegistrationResult,
     RotateKeysOptions, RotationResult, SearchOptions, SendEmailOptions, SendEmailResult,
@@ -960,10 +960,10 @@ impl<P: JacsProvider> HaiClient<P> {
         })
     }
 
-    pub async fn dns_certified_run(
+    pub async fn pro_run(
         &self,
-        options: &DnsCertifiedRunOptions,
-    ) -> Result<DnsCertifiedResult> {
+        options: &ProRunOptions,
+    ) -> Result<ProRunResult> {
         let purchase_url = self.url("/api/benchmark/purchase");
         let purchase_response = self
             .http
@@ -971,7 +971,7 @@ impl<P: JacsProvider> HaiClient<P> {
             .header("Authorization", self.build_auth_header()?)
             .header("Content-Type", "application/json")
             .json(&json!({
-                "tier": "dns_certified",
+                "tier": "pro",
                 "agent_id": self.jacs.jacs_id(),
             }))
             .send()
@@ -980,13 +980,13 @@ impl<P: JacsProvider> HaiClient<P> {
         let checkout_url = value_string(&purchase_data, &["checkout_url"]);
         if checkout_url.is_empty() {
             return Err(HaiError::Message(
-                "dns_certified purchase did not return checkout_url".to_string(),
+                "pro purchase did not return checkout_url".to_string(),
             ));
         }
         let payment_id = value_string(&purchase_data, &["payment_id"]);
         if payment_id.is_empty() {
             return Err(HaiError::Message(
-                "dns_certified purchase did not return payment_id".to_string(),
+                "pro purchase did not return payment_id".to_string(),
             ));
         }
 
@@ -1031,8 +1031,8 @@ impl<P: JacsProvider> HaiClient<P> {
             .header("Authorization", self.build_auth_header()?)
             .header("Content-Type", "application/json")
             .json(&json!({
-                "name": format!("DNS Certified Run - {short_id}"),
-                "tier": "dns_certified",
+                "name": format!("Pro Run - {short_id}"),
+                "tier": "pro",
                 "payment_id": payment_id,
                 "transport": options.transport.as_str(),
             }))
@@ -1040,7 +1040,7 @@ impl<P: JacsProvider> HaiClient<P> {
             .await?;
 
         let data = response_json(run_response).await?;
-        Ok(DnsCertifiedResult {
+        Ok(ProRunResult {
             success: true,
             run_id: value_string(&data, &["run_id", "runId"]),
             score: data.get("score").and_then(Value::as_f64).unwrap_or(0.0),
@@ -1050,10 +1050,25 @@ impl<P: JacsProvider> HaiClient<P> {
         })
     }
 
-    pub async fn certified_run(&self) -> Result<()> {
+    /// Deprecated: Use `pro_run` instead. The tier was renamed from dns_certified to pro.
+    #[deprecated(note = "Use pro_run instead. The tier was renamed from dns_certified to pro.")]
+    pub async fn dns_certified_run(
+        &self,
+        options: &DnsCertifiedRunOptions,
+    ) -> Result<DnsCertifiedResult> {
+        self.pro_run(options).await
+    }
+
+    pub async fn enterprise_run(&self) -> Result<()> {
         Err(HaiError::Message(
-            "the fully_certified tier ($499/month) is coming soon; contact support@hai.ai for early access".to_string(),
+            "the enterprise tier is coming soon; contact support@hai.ai for early access".to_string(),
         ))
+    }
+
+    /// Deprecated: Use `enterprise_run` instead. The tier was renamed from fully_certified to enterprise.
+    #[deprecated(note = "Use enterprise_run instead. The tier was renamed from fully_certified to enterprise.")]
+    pub async fn certified_run(&self) -> Result<()> {
+        self.enterprise_run().await
     }
 
     pub async fn connect_sse(&self) -> Result<SseConnection> {

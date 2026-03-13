@@ -217,7 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # benchmark
     p = sub.add_parser("benchmark", help="Run a benchmark")
-    p.add_argument("--tier", default="free", choices=["free", "dns_certified", "fully_certified"])
+    p.add_argument("--tier", default="free", choices=["free", "pro", "enterprise"])
     p.add_argument("--name", default="mediator", help="Benchmark scenario name")
 
     # status

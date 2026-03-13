@@ -1457,7 +1457,7 @@ class HaiClient:
         Args:
             hai_url: Base URL of the HAI server.
             name: Benchmark scenario name (default: "mediator").
-            tier: Benchmark tier: "free", "dns_certified", or "fully_certified".
+            tier: Benchmark tier: "free", "pro", or "enterprise".
             timeout: Optional timeout override for benchmark execution.
 
         Returns:
@@ -1654,10 +1654,10 @@ class HaiClient:
             raise HaiError(f"Free chaotic run failed: {exc}")
 
     # ------------------------------------------------------------------
-    # dns_certified_run
+    # pro_run
     # ------------------------------------------------------------------
 
-    def dns_certified_run(
+    def pro_run(
         self,
         hai_url: str,
         transport: str = "sse",
@@ -1665,7 +1665,7 @@ class HaiClient:
         payment_poll_interval: float = 2.0,
         payment_poll_timeout: float = 300.0,
     ) -> BaselineRunResult:
-        """Run a $5 DNS-certified benchmark.
+        """Run a pro tier benchmark ($20/month).
 
         Flow:
         1. Creates a Stripe Checkout session via the API.
@@ -1691,7 +1691,7 @@ class HaiClient:
         headers = self._build_auth_headers()
         headers["Content-Type"] = "application/json"
 
-        purchase_payload = {"tier": "dns_certified", "agent_id": jacs_id}
+        purchase_payload = {"tier": "pro", "agent_id": jacs_id}
 
         try:
             resp = httpx.post(
@@ -1772,8 +1772,8 @@ class HaiClient:
         run_headers["Content-Type"] = "application/json"
 
         run_payload: dict[str, Any] = {
-            "name": f"DNS Certified Run - {jacs_id[:8]}",
-            "tier": "dns_certified",
+            "name": f"Pro Run - {jacs_id[:8]}",
+            "tier": "pro",
             "payment_id": payment_id,
             "transport": transport,
         }
@@ -1813,19 +1813,23 @@ class HaiClient:
             raise BenchmarkError(f"Baseline run failed: {exc}")
 
     # ------------------------------------------------------------------
-    # certified_run
+    # enterprise_run
     # ------------------------------------------------------------------
 
-    def certified_run(self, **kwargs: Any) -> None:
-        """Run a fully_certified tier benchmark.
+    def enterprise_run(self, **kwargs: Any) -> None:
+        """Run an enterprise tier benchmark.
 
-        The fully_certified tier ($499/month) is coming soon.
+        The enterprise tier is coming soon.
         Contact support@hai.ai for early access.
         """
         raise NotImplementedError(
-            "The fully_certified tier ($499/month) is coming soon. "
+            "The enterprise tier is coming soon. "
             "Contact support@hai.ai for early access."
         )
+
+    # Deprecated aliases for backward compatibility
+    dns_certified_run = pro_run
+    certified_run = enterprise_run
 
     # ------------------------------------------------------------------
     # submit_benchmark_response
@@ -1957,7 +1961,7 @@ class HaiClient:
         Args:
             run_id: The benchmark run ID from HAI.
             score: The benchmark score (0-100), if available.
-            tier: Benchmark tier ("free", "dns_certified", "fully_certified").
+            tier: Benchmark tier ("free", "pro", "enterprise").
             transcript: Optional transcript messages to include.
             metadata: Optional additional metadata.
 
@@ -3446,23 +3450,31 @@ def free_run(
     return _get_client().free_run(hai_url, transport)
 
 
-def dns_certified_run(
+def pro_run(
     hai_url: str, transport: str = "sse", open_browser: bool = True
 ) -> BaselineRunResult:
-    """Run a $5 DNS-certified benchmark."""
-    return _get_client().dns_certified_run(hai_url, transport, open_browser)
+    """Run a pro tier benchmark ($20/month)."""
+    return _get_client().pro_run(hai_url, transport, open_browser)
 
 
-def certified_run(**kwargs: Any) -> None:
-    """Run a fully_certified tier benchmark.
+# Deprecated alias for backward compatibility
+dns_certified_run = pro_run
 
-    The fully_certified tier ($499/month) is coming soon.
+
+def enterprise_run(**kwargs: Any) -> None:
+    """Run an enterprise tier benchmark.
+
+    The enterprise tier is coming soon.
     Contact support@hai.ai for early access.
     """
     raise NotImplementedError(
-        "The fully_certified tier ($499/month) is coming soon. "
+        "The enterprise tier is coming soon. "
         "Contact support@hai.ai for early access."
     )
+
+
+# Deprecated alias for backward compatibility
+certified_run = enterprise_run
 
 
 def submit_benchmark_response(
@@ -3977,7 +3989,7 @@ def register_new_agent(
             print(f"  Name:  _jacs.{domain}")
             print(f"  Type:  TXT")
             print(f"  Value: {key_hash}")
-            print(f"DNS verification enables the dns_certified tier.\n")
+            print(f"DNS verification enables the pro tier.\n")
         else:
             print()
 
