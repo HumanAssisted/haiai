@@ -48,9 +48,12 @@ from jacs.hai.models import (
     BenchmarkResult,
     ChainEntry,
     Contact,
+    EmailDeliveryInfo,
     EmailMessage,
+    EmailReputationInfo,
     EmailStatus,
     EmailVerificationResultV2,
+    EmailVolumeInfo,
     FieldResult,
     FieldStatus,
     FreeChaoticResult,
@@ -1032,21 +1035,70 @@ class AsyncHaiClient:
             if resp.status_code not in (200, 201):
                 raise HaiApiError(f"Email status failed: HTTP {resp.status_code}", status_code=resp.status_code, body=resp.text)
             data = resp.json()
-            return EmailStatus(
-                email=data.get("email", ""),
-                status=data.get("status", ""),
-                tier=data.get("tier", ""),
-                billing_tier=data.get("billing_tier", ""),
-                messages_sent_24h=int(data.get("messages_sent_24h", 0)),
-                daily_limit=int(data.get("daily_limit", 0)),
-                daily_used=int(data.get("daily_used", 0)),
-                resets_at=data.get("resets_at", ""),
-                messages_sent_total=int(data.get("messages_sent_total", 0)),
-            )
+            return self._parse_email_status(data)
         except HaiError:
             raise
         except Exception as exc:
             raise HaiError(f"Email status failed: {exc}")
+
+    @staticmethod
+    def _parse_email_status(data: dict) -> EmailStatus:
+        """Parse an EmailStatus from a JSON dict, including nested fields."""
+        volume_data = data.get("volume")
+        volume = (
+            EmailVolumeInfo(
+                sent_total=int(volume_data.get("sent_total", 0)),
+                received_total=int(volume_data.get("received_total", 0)),
+                sent_24h=int(volume_data.get("sent_24h", 0)),
+            )
+            if volume_data
+            else None
+        )
+
+        delivery_data = data.get("delivery")
+        delivery = (
+            EmailDeliveryInfo(
+                bounce_count=int(delivery_data.get("bounce_count", 0)),
+                spam_report_count=int(delivery_data.get("spam_report_count", 0)),
+                delivery_rate=float(delivery_data.get("delivery_rate", 0.0)),
+            )
+            if delivery_data
+            else None
+        )
+
+        reputation_data = data.get("reputation")
+        reputation = (
+            EmailReputationInfo(
+                score=float(reputation_data.get("score", 0.0)),
+                tier=reputation_data.get("tier", ""),
+                email_score=float(reputation_data.get("email_score", 0.0)),
+                hai_score=(
+                    float(reputation_data["hai_score"])
+                    if reputation_data.get("hai_score") is not None
+                    else None
+                ),
+            )
+            if reputation_data
+            else None
+        )
+
+        return EmailStatus(
+            email=data.get("email", ""),
+            status=data.get("status", ""),
+            tier=data.get("tier", ""),
+            billing_tier=data.get("billing_tier", ""),
+            messages_sent_24h=int(data.get("messages_sent_24h", 0)),
+            daily_limit=int(data.get("daily_limit", 0)),
+            daily_used=int(data.get("daily_used", 0)),
+            resets_at=data.get("resets_at", ""),
+            messages_sent_total=int(data.get("messages_sent_total", 0)),
+            external_enabled=bool(data.get("external_enabled", False)),
+            external_sends_today=int(data.get("external_sends_today", 0)),
+            last_tier_change=data.get("last_tier_change"),
+            volume=volume,
+            delivery=delivery,
+            reputation=reputation,
+        )
 
     async def get_message(self, hai_url: str, message_id: str) -> EmailMessage:
         """Get a single email message by ID."""

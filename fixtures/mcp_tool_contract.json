@@ -88,6 +88,7 @@
         "is_read": "boolean",
         "folder": "string",
         "label": "string",
+        "has_attachments": "boolean",
         "config_path": "string",
         "hai_url": "string"
       },
@@ -150,6 +151,7 @@
         "jacs_verified": "boolean",
         "folder": "string",
         "label": "string",
+        "has_attachments": "boolean",
         "limit": "number",
         "offset": "number",
         "config_path": "string",

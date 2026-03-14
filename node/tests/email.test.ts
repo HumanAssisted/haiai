@@ -560,3 +560,81 @@ describe('sendSignedEmail', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// getContacts
+// ---------------------------------------------------------------------------
+
+describe('getContacts', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('parses wrapped contacts response with all fields', async () => {
+    const client = await makeClient();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          contacts: [
+            {
+              email: 'alice@hai.ai',
+              display_name: 'Alice Agent',
+              last_contact: '2026-03-13T10:00:00+00:00',
+              jacs_verified: true,
+              reputation_tier: 'established',
+            },
+            {
+              email: 'external@example.com',
+              last_contact: '2026-03-12T08:00:00+00:00',
+              jacs_verified: false,
+            },
+          ],
+        }),
+      ),
+    );
+
+    const contacts = await client.getContacts();
+    expect(contacts).toHaveLength(2);
+    expect(contacts[0].email).toBe('alice@hai.ai');
+    expect(contacts[0].displayName).toBe('Alice Agent');
+    expect(contacts[0].lastContact).toBe('2026-03-13T10:00:00+00:00');
+    expect(contacts[0].jacsVerified).toBe(true);
+    expect(contacts[0].reputationTier).toBe('established');
+    expect(contacts[1].email).toBe('external@example.com');
+    expect(contacts[1].jacsVerified).toBe(false);
+    expect(contacts[1].reputationTier).toBeUndefined();
+    expect(contacts[1].displayName).toBeUndefined();
+  });
+
+  it('handles bare array response', async () => {
+    const client = await makeClient();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify([
+            { email: 'alice@hai.ai', last_contact: '2026-01-01T00:00:00Z', jacs_verified: false },
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    );
+
+    const contacts = await client.getContacts();
+    expect(contacts).toHaveLength(1);
+    expect(contacts[0].email).toBe('alice@hai.ai');
+  });
+
+  it('returns empty array when no contacts', async () => {
+    const client = await makeClient();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse({ contacts: [] })),
+    );
+
+    const contacts = await client.getContacts();
+    expect(contacts).toHaveLength(0);
+  });
+});
+

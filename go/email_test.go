@@ -1126,6 +1126,100 @@ func TestSearchMessagesWithNewFilters(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// SearchMessages with has_attachments filter
+// ---------------------------------------------------------------------------
+
+func TestSearchMessagesWithHasAttachments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("has_attachments") != "true" {
+			t.Fatalf("expected has_attachments=true, got %s", q.Get("has_attachments"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"messages":[],"total":0,"unread":0}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	hasAttachments := true
+	_, err := cl.SearchMessages(context.Background(), SearchOptions{
+		Q:              "test",
+		HasAttachments: &hasAttachments,
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+}
+
+func TestSearchMessagesOmitsHasAttachmentsWhenNil(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"messages":[],"total":0,"unread":0}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	_, err := cl.SearchMessages(context.Background(), SearchOptions{
+		Q: "test",
+	})
+	if err != nil {
+		t.Fatalf("SearchMessages: %v", err)
+	}
+	if strings.Contains(gotQuery, "has_attachments=") {
+		t.Fatalf("has_attachments should not be in query when nil: %s", gotQuery)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ListMessages with has_attachments filter
+// ---------------------------------------------------------------------------
+
+func TestListMessagesWithHasAttachments(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Get("has_attachments") != "false" {
+			t.Fatalf("expected has_attachments=false, got %s", q.Get("has_attachments"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"messages":[],"total":0,"unread":0}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	hasAttachments := false
+	_, err := cl.ListMessages(context.Background(), ListMessagesOptions{
+		Limit:          10,
+		HasAttachments: &hasAttachments,
+	})
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+}
+
+func TestListMessagesOmitsHasAttachmentsWhenNil(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"messages":[],"total":0,"unread":0}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	_, err := cl.ListMessages(context.Background(), ListMessagesOptions{
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if strings.Contains(gotQuery, "has_attachments=") {
+		t.Fatalf("has_attachments should not be in query when nil: %s", gotQuery)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // EmailMessage new fields (CcAddresses, Labels, Folder)
 // ---------------------------------------------------------------------------
 
@@ -1319,8 +1413,8 @@ func TestGetContactsReturnsList(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"contacts":[
-			{"email":"alice@hai.ai","display_name":"Alice","message_count":5,"last_contact":"2026-01-01T00:00:00Z","is_hai_agent":true,"jacs_verified":true},
-			{"email":"bob@example.com","message_count":2,"last_contact":"2026-01-02T00:00:00Z"}
+			{"email":"alice@hai.ai","display_name":"Alice","last_contact":"2026-01-01T00:00:00Z","jacs_verified":true,"reputation_tier":"established"},
+			{"email":"bob@example.com","last_contact":"2026-01-02T00:00:00Z"}
 		]}`))
 	}))
 	defer srv.Close()
@@ -1339,20 +1433,20 @@ func TestGetContactsReturnsList(t *testing.T) {
 	if contacts[0].DisplayName != "Alice" {
 		t.Fatalf("unexpected display_name: %s", contacts[0].DisplayName)
 	}
-	if contacts[0].MessageCount != 5 {
-		t.Fatalf("unexpected message_count: %d", contacts[0].MessageCount)
-	}
-	if !contacts[0].IsHaiAgent {
-		t.Fatal("expected is_hai_agent=true")
-	}
 	if !contacts[0].JacsVerified {
 		t.Fatal("expected jacs_verified=true")
+	}
+	if contacts[0].ReputationTier != "established" {
+		t.Fatalf("unexpected reputation_tier: %s", contacts[0].ReputationTier)
 	}
 	if contacts[1].DisplayName != "" {
 		t.Fatalf("display_name should be empty when missing, got %s", contacts[1].DisplayName)
 	}
-	if contacts[1].IsHaiAgent {
-		t.Fatal("is_hai_agent should be false when missing")
+	if contacts[1].JacsVerified {
+		t.Fatal("jacs_verified should be false when missing")
+	}
+	if contacts[1].ReputationTier != "" {
+		t.Fatalf("reputation_tier should be empty when missing, got %s", contacts[1].ReputationTier)
 	}
 }
 
@@ -1361,7 +1455,7 @@ func TestGetContactsBareArray(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		// API might return bare array instead of wrapped object
 		_, _ = w.Write([]byte(`[
-			{"email":"alice@hai.ai","message_count":3,"last_contact":"2026-01-01T00:00:00Z"}
+			{"email":"alice@hai.ai","last_contact":"2026-01-01T00:00:00Z","jacs_verified":false}
 		]`))
 	}))
 	defer srv.Close()
@@ -1385,12 +1479,11 @@ func TestGetContactsBareArray(t *testing.T) {
 
 func TestContactSerialization(t *testing.T) {
 	c := Contact{
-		Email:        "alice@hai.ai",
-		DisplayName:  "Alice Agent",
-		MessageCount: 10,
-		LastContact:  "2026-01-01T00:00:00Z",
-		IsHaiAgent:   true,
-		JacsVerified: true,
+		Email:          "alice@hai.ai",
+		DisplayName:    "Alice Agent",
+		LastContact:    "2026-01-01T00:00:00Z",
+		JacsVerified:   true,
+		ReputationTier: "established",
 	}
 	data, err := json.Marshal(c)
 	if err != nil {
@@ -1406,14 +1499,11 @@ func TestContactSerialization(t *testing.T) {
 	if parsed.DisplayName != c.DisplayName {
 		t.Fatalf("display_name mismatch: %s vs %s", parsed.DisplayName, c.DisplayName)
 	}
-	if parsed.MessageCount != c.MessageCount {
-		t.Fatalf("message_count mismatch: %d vs %d", parsed.MessageCount, c.MessageCount)
-	}
-	if parsed.IsHaiAgent != c.IsHaiAgent {
-		t.Fatalf("is_hai_agent mismatch: %v vs %v", parsed.IsHaiAgent, c.IsHaiAgent)
-	}
 	if parsed.JacsVerified != c.JacsVerified {
 		t.Fatalf("jacs_verified mismatch: %v vs %v", parsed.JacsVerified, c.JacsVerified)
+	}
+	if parsed.ReputationTier != c.ReputationTier {
+		t.Fatalf("reputation_tier mismatch: %s vs %s", parsed.ReputationTier, c.ReputationTier)
 	}
 }
 
@@ -1481,7 +1571,7 @@ func TestEmailNamespaceArchiveUnarchive(t *testing.T) {
 func TestEmailNamespaceContacts(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"contacts":[{"email":"alice@hai.ai","message_count":1,"last_contact":"2026-01-01T00:00:00Z"}]}`))
+		_, _ = w.Write([]byte(`{"contacts":[{"email":"alice@hai.ai","last_contact":"2026-01-01T00:00:00Z","jacs_verified":false}]}`))
 	}))
 	defer srv.Close()
 
@@ -1493,5 +1583,173 @@ func TestEmailNamespaceContacts(t *testing.T) {
 	}
 	if len(contacts) != 1 {
 		t.Fatalf("expected 1 contact, got %d", len(contacts))
+	}
+}
+
+func TestEmailStatusNestedFieldsDeserialization(t *testing.T) {
+	raw := `{
+		"email": "bot@hai.ai",
+		"status": "active",
+		"tier": "established",
+		"billing_tier": "pro",
+		"messages_sent_24h": 10,
+		"daily_limit": 100,
+		"daily_used": 10,
+		"resets_at": "2026-03-15T00:00:00Z",
+		"messages_sent_total": 500,
+		"external_enabled": true,
+		"external_sends_today": 3,
+		"last_tier_change": "2026-01-01T00:00:00Z",
+		"volume": {
+			"sent_total": 500,
+			"received_total": 300,
+			"sent_24h": 10
+		},
+		"delivery": {
+			"bounce_count": 2,
+			"spam_report_count": 1,
+			"delivery_rate": 0.98
+		},
+		"reputation": {
+			"score": 85.5,
+			"tier": "established",
+			"email_score": 90.0,
+			"hai_score": 80.0
+		}
+	}`
+
+	var status EmailStatus
+	if err := json.Unmarshal([]byte(raw), &status); err != nil {
+		t.Fatalf("unmarshal EmailStatus with nested fields: %v", err)
+	}
+
+	// Top-level fields
+	if status.Email != "bot@hai.ai" {
+		t.Errorf("email: got %q, want %q", status.Email, "bot@hai.ai")
+	}
+	if status.Tier != "established" {
+		t.Errorf("tier: got %q, want %q", status.Tier, "established")
+	}
+
+	// Volume
+	if status.Volume == nil {
+		t.Fatal("volume should not be nil")
+	}
+	if status.Volume.SentTotal != 500 {
+		t.Errorf("volume.sent_total: got %d, want 500", status.Volume.SentTotal)
+	}
+	if status.Volume.ReceivedTotal != 300 {
+		t.Errorf("volume.received_total: got %d, want 300", status.Volume.ReceivedTotal)
+	}
+	if status.Volume.Sent24h != 10 {
+		t.Errorf("volume.sent_24h: got %d, want 10", status.Volume.Sent24h)
+	}
+
+	// Delivery
+	if status.Delivery == nil {
+		t.Fatal("delivery should not be nil")
+	}
+	if status.Delivery.BounceCount != 2 {
+		t.Errorf("delivery.bounce_count: got %d, want 2", status.Delivery.BounceCount)
+	}
+	if status.Delivery.SpamReportCount != 1 {
+		t.Errorf("delivery.spam_report_count: got %d, want 1", status.Delivery.SpamReportCount)
+	}
+	if status.Delivery.DeliveryRate != 0.98 {
+		t.Errorf("delivery.delivery_rate: got %f, want 0.98", status.Delivery.DeliveryRate)
+	}
+
+	// Reputation
+	if status.Reputation == nil {
+		t.Fatal("reputation should not be nil")
+	}
+	if status.Reputation.Score != 85.5 {
+		t.Errorf("reputation.score: got %f, want 85.5", status.Reputation.Score)
+	}
+	if status.Reputation.Tier != "established" {
+		t.Errorf("reputation.tier: got %q, want %q", status.Reputation.Tier, "established")
+	}
+	if status.Reputation.EmailScore != 90.0 {
+		t.Errorf("reputation.email_score: got %f, want 90.0", status.Reputation.EmailScore)
+	}
+	if status.Reputation.HaiScore == nil || *status.Reputation.HaiScore != 80.0 {
+		t.Errorf("reputation.hai_score: got %v, want 80.0", status.Reputation.HaiScore)
+	}
+}
+
+func TestEmailStatusNestedFieldsDefaultToNilWhenMissing(t *testing.T) {
+	raw := `{
+		"email": "bot@hai.ai",
+		"status": "active",
+		"tier": "new",
+		"billing_tier": "free",
+		"messages_sent_24h": 0,
+		"daily_limit": 10,
+		"daily_used": 0,
+		"resets_at": "2026-03-15T00:00:00Z"
+	}`
+
+	var status EmailStatus
+	if err := json.Unmarshal([]byte(raw), &status); err != nil {
+		t.Fatalf("unmarshal EmailStatus without nested fields: %v", err)
+	}
+
+	if status.Volume != nil {
+		t.Errorf("volume should be nil when absent, got %+v", status.Volume)
+	}
+	if status.Delivery != nil {
+		t.Errorf("delivery should be nil when absent, got %+v", status.Delivery)
+	}
+	if status.Reputation != nil {
+		t.Errorf("reputation should be nil when absent, got %+v", status.Reputation)
+	}
+}
+
+func TestEmailStatusNestedFieldsRoundTrip(t *testing.T) {
+	haiScore := 80.0
+	status := EmailStatus{
+		Email:       "bot@hai.ai",
+		Status:      "active",
+		Tier:        "established",
+		BillingTier: "pro",
+		Volume: &EmailVolumeInfo{
+			SentTotal:     500,
+			ReceivedTotal: 300,
+			Sent24h:       10,
+		},
+		Delivery: &EmailDeliveryInfo{
+			BounceCount:     2,
+			SpamReportCount: 1,
+			DeliveryRate:    0.98,
+		},
+		Reputation: &EmailReputationInfo{
+			Score:      85.5,
+			Tier:       "established",
+			EmailScore: 90.0,
+			HaiScore:   &haiScore,
+		},
+	}
+
+	data, err := json.Marshal(status)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var parsed EmailStatus
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if parsed.Volume == nil || parsed.Volume.SentTotal != 500 {
+		t.Errorf("round-trip volume.sent_total mismatch")
+	}
+	if parsed.Delivery == nil || parsed.Delivery.BounceCount != 2 {
+		t.Errorf("round-trip delivery.bounce_count mismatch")
+	}
+	if parsed.Reputation == nil || parsed.Reputation.Score != 85.5 {
+		t.Errorf("round-trip reputation.score mismatch")
+	}
+	if parsed.Reputation.HaiScore == nil || *parsed.Reputation.HaiScore != 80.0 {
+		t.Errorf("round-trip reputation.hai_score mismatch")
 	}
 }

@@ -1187,6 +1187,9 @@ func (c *Client) ListMessages(ctx context.Context, opts ListMessagesOptions) ([]
 	if opts.Label != "" {
 		query.Set("label", opts.Label)
 	}
+	if opts.HasAttachments != nil {
+		query.Set("has_attachments", fmt.Sprintf("%t", *opts.HasAttachments))
+	}
 	path := fmt.Sprintf("/api/agents/%s/email/messages?%s", neturl.PathEscape(c.HaiAgentID()), query.Encode())
 	var wrapper ListMessagesResponse
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &wrapper); err != nil {
@@ -1281,6 +1284,9 @@ func (c *Client) SearchMessages(ctx context.Context, opts SearchOptions) ([]Emai
 	}
 	if opts.Label != "" {
 		query.Set("label", opts.Label)
+	}
+	if opts.HasAttachments != nil {
+		query.Set("has_attachments", fmt.Sprintf("%t", *opts.HasAttachments))
 	}
 	path := fmt.Sprintf("/api/agents/%s/email/search?%s", neturl.PathEscape(c.HaiAgentID()), query.Encode())
 	var wrapper ListMessagesResponse

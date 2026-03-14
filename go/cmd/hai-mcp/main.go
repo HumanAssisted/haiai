@@ -121,6 +121,7 @@ func requiredToolDefinitions() []server.ServerTool {
 				mcp.WithBoolean("is_read", mcp.Description("Filter by read status")),
 				mcp.WithString("folder", mcp.Description("Filter by folder: 'inbox' or 'archive'")),
 				mcp.WithString("label", mcp.Description("Filter by label")),
+				mcp.WithBoolean("has_attachments", mcp.Description("Filter by attachment presence")),
 				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
 				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
 			),
@@ -175,6 +176,7 @@ func requiredToolDefinitions() []server.ServerTool {
 				mcp.WithBoolean("jacs_verified", mcp.Description("Filter by JACS verification status")),
 				mcp.WithString("folder", mcp.Description("Filter by folder: 'inbox' or 'archive'")),
 				mcp.WithString("label", mcp.Description("Filter by label")),
+				mcp.WithBoolean("has_attachments", mcp.Description("Filter by attachment presence")),
 				mcp.WithNumber("limit", mcp.Description("Max results (default 20)")),
 				mcp.WithNumber("offset", mcp.Description("Pagination offset")),
 				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
@@ -455,6 +457,10 @@ func handleListMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.Call
 		v := req.GetBool("is_read", false)
 		opts.IsRead = &v
 	}
+	if hasBoolArg(req, "has_attachments") {
+		v := req.GetBool("has_attachments", false)
+		opts.HasAttachments = &v
+	}
 	result, err := client.ListMessages(ctx, opts)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -545,6 +551,10 @@ func handleSearchMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
 	if hasBoolArg(req, "jacs_verified") {
 		v := req.GetBool("jacs_verified", false)
 		opts.JacsVerified = &v
+	}
+	if hasBoolArg(req, "has_attachments") {
+		v := req.GetBool("has_attachments", false)
+		opts.HasAttachments = &v
 	}
 	result, err := client.SearchMessages(ctx, opts)
 	if err != nil {

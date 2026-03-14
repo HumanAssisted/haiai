@@ -1389,6 +1389,208 @@ class TestContacts:
 # ---------------------------------------------------------------
 
 
+class TestEmailMessageReplyTextFields:
+    """Verify body_text_clean, quoted_text, and thread fields on EmailMessage."""
+
+    def test_defaults_are_none(self) -> None:
+        """New optional fields default to None when not supplied."""
+        msg = EmailMessage(
+            id="m1", from_address="a@hai.ai", to_address="b@hai.ai",
+            subject="Hi", body_text="Body", created_at="2026-01-01T00:00:00Z",
+        )
+        assert msg.body_text_clean is None
+        assert msg.quoted_text is None
+        assert msg.thread is None
+
+    def test_construction_with_new_fields(self) -> None:
+        """EmailMessage accepts body_text_clean, quoted_text, and thread."""
+        child = EmailMessage(
+            id="m0", from_address="b@hai.ai", to_address="a@hai.ai",
+            subject="Re: Hi", body_text="Previous msg", created_at="2026-01-01T00:00:00Z",
+            body_text_clean="Previous msg", quoted_text=None,
+        )
+        msg = EmailMessage(
+            id="m1", from_address="a@hai.ai", to_address="b@hai.ai",
+            subject="Re: Hi", body_text="New text\n\n> Previous msg",
+            created_at="2026-01-01T01:00:00Z",
+            body_text_clean="New text",
+            quoted_text="Previous msg",
+            thread=[child],
+        )
+        assert msg.body_text_clean == "New text"
+        assert msg.quoted_text == "Previous msg"
+        assert msg.thread is not None
+        assert len(msg.thread) == 1
+        assert msg.thread[0].id == "m0"
+
+    def test_list_messages_parses_reply_text_fields(
+        self,
+        loaded_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """list_messages must populate body_text_clean and quoted_text."""
+        msg_data = [{
+            "id": "m1", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
+            "subject": "Re: Hi", "body_text": "New\n\n> Old",
+            "created_at": "2026-01-01T00:00:00Z",
+            "direction": "inbound", "message_id": "<m1@hai.ai>",
+            "is_read": False, "delivery_status": "delivered",
+            "body_text_clean": "New",
+            "quoted_text": "Old",
+        }]
+
+        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
+            return _FakeResponse(200, msg_data)
+
+        import httpx
+        monkeypatch.setattr(httpx, "get", fake_get)
+
+        result = HaiClient().list_messages(BASE_URL)
+        assert len(result) == 1
+        assert result[0].body_text_clean == "New"
+        assert result[0].quoted_text == "Old"
+
+    def test_list_messages_missing_reply_fields_default_none(
+        self,
+        loaded_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When API omits body_text_clean/quoted_text they should be None."""
+        msg_data = [{
+            "id": "m1", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
+            "subject": "Hi", "body_text": "No quoting here",
+            "created_at": "2026-01-01T00:00:00Z",
+            "direction": "inbound", "message_id": "<m1@hai.ai>",
+            "is_read": False, "delivery_status": "delivered",
+        }]
+
+        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
+            return _FakeResponse(200, msg_data)
+
+        import httpx
+        monkeypatch.setattr(httpx, "get", fake_get)
+
+        result = HaiClient().list_messages(BASE_URL)
+        assert result[0].body_text_clean is None
+        assert result[0].quoted_text is None
+
+    def test_get_message_parses_reply_text_and_thread(
+        self,
+        loaded_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """get_message must populate body_text_clean, quoted_text, and thread."""
+        msg_data = {
+            "id": "m2", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
+            "subject": "Re: Hi", "body_text": "Reply\n\n> Original",
+            "created_at": "2026-01-01T01:00:00Z",
+            "direction": "inbound", "message_id": "<m2@hai.ai>",
+            "is_read": False, "delivery_status": "delivered",
+            "body_text_clean": "Reply",
+            "quoted_text": "Original",
+            "thread": [
+                {
+                    "id": "m1", "from_address": "b@hai.ai", "to_address": "a@hai.ai",
+                    "subject": "Hi", "body_text": "Original",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "direction": "outbound", "message_id": "<m1@hai.ai>",
+                    "is_read": True, "delivery_status": "delivered",
+                    "body_text_clean": "Original",
+                },
+            ],
+        }
+
+        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
+            return _FakeResponse(200, msg_data)
+
+        import httpx
+        monkeypatch.setattr(httpx, "get", fake_get)
+
+        result = HaiClient().get_message(BASE_URL, "m2")
+        assert isinstance(result, EmailMessage)
+        assert result.body_text_clean == "Reply"
+        assert result.quoted_text == "Original"
+        assert result.thread is not None
+        assert len(result.thread) == 1
+        assert result.thread[0].id == "m1"
+        assert result.thread[0].body_text_clean == "Original"
+        assert result.thread[0].quoted_text is None
+
+    def test_get_message_no_thread_defaults_none(
+        self,
+        loaded_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """get_message with no thread key should leave thread as None."""
+        msg_data = {
+            "id": "m1", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
+            "subject": "Hi", "body_text": "Body",
+            "created_at": "2026-01-01T00:00:00Z",
+            "direction": "inbound", "message_id": "<m1@hai.ai>",
+            "is_read": False, "delivery_status": "delivered",
+        }
+
+        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
+            return _FakeResponse(200, msg_data)
+
+        import httpx
+        monkeypatch.setattr(httpx, "get", fake_get)
+
+        result = HaiClient().get_message(BASE_URL, "m1")
+        assert result.thread is None
+
+    def test_get_message_empty_thread(
+        self,
+        loaded_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """get_message with empty thread list should return empty list."""
+        msg_data = {
+            "id": "m1", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
+            "subject": "Hi", "body_text": "Body",
+            "created_at": "2026-01-01T00:00:00Z",
+            "direction": "inbound", "message_id": "<m1@hai.ai>",
+            "is_read": False, "delivery_status": "delivered",
+            "thread": [],
+        }
+
+        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
+            return _FakeResponse(200, msg_data)
+
+        import httpx
+        monkeypatch.setattr(httpx, "get", fake_get)
+
+        result = HaiClient().get_message(BASE_URL, "m1")
+        assert result.thread == []
+
+    def test_search_messages_parses_reply_text_fields(
+        self,
+        loaded_config: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """search_messages must populate body_text_clean and quoted_text."""
+        msg_data = [{
+            "id": "m1", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
+            "subject": "Re: Hi", "body_text": "New\n\n> Old",
+            "created_at": "2026-01-01T00:00:00Z",
+            "direction": "inbound", "message_id": "<m1@hai.ai>",
+            "is_read": False, "delivery_status": "delivered",
+            "body_text_clean": "New",
+            "quoted_text": "Old",
+        }]
+
+        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
+            return _FakeResponse(200, msg_data)
+
+        import httpx
+        monkeypatch.setattr(httpx, "get", fake_get)
+
+        result = HaiClient().search_messages(BASE_URL, query="Hi")
+        assert len(result) == 1
+        assert result[0].body_text_clean == "New"
+        assert result[0].quoted_text == "Old"
+
+
 class TestContactModel:
     """Verify Contact dataclass."""
 

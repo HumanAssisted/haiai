@@ -318,6 +318,43 @@ class EmailMessage:
     cc_addresses: list[str] = field(default_factory=list)
     labels: list[str] = field(default_factory=list)
     folder: str = "inbox"
+    body_text_clean: Optional[str] = None
+    quoted_text: Optional[str] = None
+    thread: Optional[list[EmailMessage]] = None
+
+    @staticmethod
+    def from_dict(m: dict[str, Any]) -> EmailMessage:
+        """Parse an EmailMessage from an API response dict.
+
+        Handles body_text_clean, quoted_text, and recursive thread parsing.
+        Missing optional fields default to None.
+        """
+        thread_data = m.get("thread")
+        thread: list[EmailMessage] | None = None
+        if thread_data is not None:
+            thread = [EmailMessage.from_dict(t) for t in thread_data]
+
+        return EmailMessage(
+            id=m.get("id", ""),
+            from_address=m.get("from_address", m.get("from", "")),
+            to_address=m.get("to_address", m.get("to", "")),
+            subject=m.get("subject", ""),
+            body_text=m.get("body_text", ""),
+            created_at=m.get("created_at", ""),
+            direction=m.get("direction", ""),
+            message_id=m.get("message_id", ""),
+            in_reply_to=m.get("in_reply_to"),
+            is_read=m.get("is_read", False),
+            delivery_status=m.get("delivery_status", ""),
+            read_at=m.get("read_at"),
+            jacs_verified=m.get("jacs_verified"),
+            cc_addresses=m.get("cc_addresses", []),
+            labels=m.get("labels", []),
+            folder=m.get("folder", "inbox"),
+            body_text_clean=m.get("body_text_clean"),
+            quoted_text=m.get("quoted_text"),
+            thread=thread,
+        )
 
 
 @dataclass
@@ -329,6 +366,34 @@ class Contact:
     last_contact: str = ""
     jacs_verified: bool = False
     reputation_tier: Optional[str] = None
+
+
+@dataclass
+class EmailVolumeInfo:
+    """Volume statistics from the email status response."""
+
+    sent_total: int = 0
+    received_total: int = 0
+    sent_24h: int = 0
+
+
+@dataclass
+class EmailDeliveryInfo:
+    """Delivery metrics from the email status response."""
+
+    bounce_count: int = 0
+    spam_report_count: int = 0
+    delivery_rate: float = 0.0
+
+
+@dataclass
+class EmailReputationInfo:
+    """Reputation scoring from the email status response."""
+
+    score: float = 0.0
+    tier: str = ""
+    email_score: float = 0.0
+    hai_score: Optional[float] = None
 
 
 @dataclass
@@ -347,6 +412,9 @@ class EmailStatus:
     external_enabled: bool = False
     external_sends_today: int = 0
     last_tier_change: Optional[str] = None
+    volume: Optional[EmailVolumeInfo] = None
+    delivery: Optional[EmailDeliveryInfo] = None
+    reputation: Optional[EmailReputationInfo] = None
 
 
 @dataclass

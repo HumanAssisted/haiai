@@ -320,7 +320,8 @@ type SearchOptions struct {
 	IsRead       *bool  `json:"is_read,omitempty"`
 	JacsVerified *bool  `json:"jacs_verified,omitempty"`
 	Folder       string `json:"folder,omitempty"`
-	Label        string `json:"label,omitempty"`
+	Label          string `json:"label,omitempty"`
+	HasAttachments *bool  `json:"has_attachments,omitempty"`
 }
 
 // UnreadCountResult is the response from the unread count endpoint.
@@ -363,12 +364,13 @@ type ListMessagesResponse struct {
 
 // ListMessagesOptions configures a list messages request.
 type ListMessagesOptions struct {
-	Limit     int    // Maximum number of messages to return.
-	Offset    int    // Number of messages to skip.
-	Direction string // "inbound" or "outbound".
-	IsRead    *bool  // Filter by read status (nil = no filter).
-	Folder    string // Filter by folder ("inbox", "archive").
-	Label     string // Filter by label.
+	Limit          int    // Maximum number of messages to return.
+	Offset         int    // Number of messages to skip.
+	Direction      string // "inbound" or "outbound".
+	IsRead         *bool  // Filter by read status (nil = no filter).
+	Folder         string // Filter by folder ("inbox", "archive").
+	Label          string // Filter by label.
+	HasAttachments *bool  // Filter by attachment presence (nil = no filter).
 }
 
 // MarkReadResult is the response from marking a message as read.
@@ -376,20 +378,45 @@ type MarkReadResult struct {
 	Success bool `json:"success"`
 }
 
+// EmailVolumeInfo contains volume statistics from the email status response.
+type EmailVolumeInfo struct {
+	SentTotal     int64 `json:"sent_total"`
+	ReceivedTotal int64 `json:"received_total"`
+	Sent24h       int64 `json:"sent_24h"`
+}
+
+// EmailDeliveryInfo contains delivery metrics from the email status response.
+type EmailDeliveryInfo struct {
+	BounceCount     int     `json:"bounce_count"`
+	SpamReportCount int     `json:"spam_report_count"`
+	DeliveryRate    float64 `json:"delivery_rate"`
+}
+
+// EmailReputationInfo contains reputation scoring from the email status response.
+type EmailReputationInfo struct {
+	Score      float64  `json:"score"`
+	Tier       string   `json:"tier"`
+	EmailScore float64  `json:"email_score"`
+	HaiScore   *float64 `json:"hai_score"`
+}
+
 // EmailStatus describes the agent's email usage and limits.
 type EmailStatus struct {
-	Email              string  `json:"email"`
-	Status             string  `json:"status"`
-	Tier               string  `json:"tier"`
-	BillingTier        string  `json:"billing_tier"`
-	MessagesSent24h    int     `json:"messages_sent_24h"`
-	DailyLimit         int     `json:"daily_limit"`
-	DailyUsed          int     `json:"daily_used"`
-	ResetsAt           string  `json:"resets_at"`
-	MessagesSentTotal  int     `json:"messages_sent_total"`
-	ExternalEnabled    bool    `json:"external_enabled"`
-	ExternalSendsToday int     `json:"external_sends_today"`
-	LastTierChange     *string `json:"last_tier_change"`
+	Email              string               `json:"email"`
+	Status             string               `json:"status"`
+	Tier               string               `json:"tier"`
+	BillingTier        string               `json:"billing_tier"`
+	MessagesSent24h    int                  `json:"messages_sent_24h"`
+	DailyLimit         int                  `json:"daily_limit"`
+	DailyUsed          int                  `json:"daily_used"`
+	ResetsAt           string               `json:"resets_at"`
+	MessagesSentTotal  int                  `json:"messages_sent_total"`
+	ExternalEnabled    bool                 `json:"external_enabled"`
+	ExternalSendsToday int                  `json:"external_sends_today"`
+	LastTierChange     *string              `json:"last_tier_change"`
+	Volume             *EmailVolumeInfo     `json:"volume,omitempty"`
+	Delivery           *EmailDeliveryInfo   `json:"delivery,omitempty"`
+	Reputation         *EmailReputationInfo `json:"reputation,omitempty"`
 }
 
 // KeyRegistryResponse is the response from GET /api/agents/keys/{email}.
@@ -462,12 +489,11 @@ func (e *HaiAPIError) Error() string {
 
 // Contact represents a contact derived from email history.
 type Contact struct {
-	Email        string `json:"email"`
-	DisplayName  string `json:"display_name,omitempty"`
-	MessageCount int    `json:"message_count"`
-	LastContact  string `json:"last_contact"`
-	IsHaiAgent   bool   `json:"is_hai_agent,omitempty"`
-	JacsVerified bool   `json:"jacs_verified,omitempty"`
+	Email          string `json:"email"`
+	DisplayName    string `json:"display_name,omitempty"`
+	LastContact    string `json:"last_contact"`
+	JacsVerified   bool   `json:"jacs_verified,omitempty"`
+	ReputationTier string `json:"reputation_tier,omitempty"`
 }
 
 // ContactsResponse is the wrapper returned by the contacts API.
