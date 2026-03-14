@@ -669,6 +669,7 @@ async fn main() -> anyhow::Result<()> {
                 is_read,
                 folder,
                 label,
+                ..Default::default()
             };
             let messages = client
                 .list_messages(&options)
