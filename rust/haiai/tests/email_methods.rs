@@ -137,6 +137,43 @@ async fn send_email_includes_in_reply_to_when_set() {
     mock.assert_async().await;
 }
 
+#[tokio::test]
+async fn send_email_includes_labels_when_set() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/api/agents/test-agent-001/email/send")
+                .body_includes("\"labels\"")
+                .body_includes("urgent")
+                .body_includes("project-x");
+            then.status(200).json_body(json!({
+                "message_id": "msg-labels-001",
+                "status": "queued"
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let result = client
+        .send_email(&SendEmailOptions {
+            to: "bob@hai.ai".to_string(),
+            subject: "Labeled".to_string(),
+            body: "Message with labels".to_string(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
+            in_reply_to: None,
+            attachments: Vec::new(),
+            labels: vec!["urgent".to_string(), "project-x".to_string()],
+        })
+        .await
+        .expect("send_email with labels");
+
+    assert_eq!(result.message_id, "msg-labels-001");
+    mock.assert_async().await;
+}
+
 // --- Task #39: New email methods ---
 
 #[tokio::test]

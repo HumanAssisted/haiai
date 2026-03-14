@@ -518,6 +518,9 @@ impl<P: JacsProvider> HaiClient<P> {
         if !options.bcc.is_empty() {
             payload["bcc"] = json!(options.bcc);
         }
+        if !options.labels.is_empty() {
+            payload["labels"] = json!(options.labels);
+        }
         if let Some(ref in_reply_to) = options.in_reply_to {
             payload["in_reply_to"] = Value::String(in_reply_to.clone());
         }
