@@ -726,7 +726,7 @@ async fn main() -> anyhow::Result<()> {
             body,
             subject_override,
         } => {
-            let client = load_client()?;
+            let client = load_client_with_email().await?;
             let result = client
                 .reply(&message_id, &body, subject_override.as_deref())
                 .await
@@ -740,7 +740,7 @@ async fn main() -> anyhow::Result<()> {
             to,
             comment,
         } => {
-            let client = load_client()?;
+            let client = load_client_with_email().await?;
             let result = client
                 .forward(&message_id, &to, comment.as_deref())
                 .await
@@ -768,7 +768,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::ListContacts => {
-            let client = load_client()?;
+            let client = load_client_with_email().await?;
             let contacts = client
                 .contacts()
                 .await
