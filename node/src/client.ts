@@ -32,6 +32,8 @@ import type {
   ListMessagesOptions,
   SearchOptions,
   EmailStatus,
+  Contact,
+  ForwardOptions,
   PublicKeyInfo,
   VerificationResult,
   DocumentVerificationResult,
@@ -1628,6 +1630,9 @@ export class HaiClient {
       createdAt: (m.created_at as string) || '',
       readAt: (m.read_at as string | null) ?? null,
       jacsVerified: (m.jacs_verified as boolean) ?? false,
+      ccAddresses: (m.cc_addresses as string[]) || [],
+      labels: (m.labels as string[]) || [],
+      folder: (m.folder as string) || 'inbox',
     };
   }
 
@@ -1758,10 +1763,7 @@ export class HaiClient {
 
     let response: Response;
     try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers: this.buildAuthHeaders(),
-        body: JSON.stringify({
+      const payload: Record<string, unknown> = {
           to: options.to,
           subject: options.subject,
           body: options.body,
@@ -1771,7 +1773,15 @@ export class HaiClient {
             content_type: a.contentType,
             data_base64: a.data.toString('base64'),
           })),
-        }),
+        };
+      if (options.cc?.length) payload.cc = options.cc;
+      if (options.bcc?.length) payload.bcc = options.bcc;
+      if (options.labels?.length) payload.labels = options.labels;
+
+      response = await fetch(url, {
+        method: 'POST',
+        headers: this.buildAuthHeaders(),
+        body: JSON.stringify(payload),
         signal: controller.signal,
       });
     } catch (e) {
@@ -1930,6 +1940,9 @@ export class HaiClient {
     if (options?.limit != null) params.set('limit', String(options.limit));
     if (options?.offset != null) params.set('offset', String(options.offset));
     if (options?.direction) params.set('direction', options.direction);
+    if (options?.isRead != null) params.set('is_read', String(options.isRead));
+    if (options?.folder) params.set('folder', options.folder);
+    if (options?.label) params.set('label', options.label);
 
     const qs = params.toString();
     const safeAgentId = this.encodePathSegment(this.haiAgentId);
@@ -2053,6 +2066,10 @@ export class HaiClient {
     if (options.direction) params.set('direction', options.direction);
     if (options.fromAddress) params.set('from_address', options.fromAddress);
     if (options.toAddress) params.set('to_address', options.toAddress);
+    if (options.isRead != null) params.set('is_read', String(options.isRead));
+    if (options.jacsVerified != null) params.set('jacs_verified', String(options.jacsVerified));
+    if (options.folder) params.set('folder', options.folder);
+    if (options.label) params.set('label', options.label);
 
     const safeAgentId = this.encodePathSegment(this.haiAgentId);
     const url = this.makeUrl(`/api/agents/${safeAgentId}/email/search?${params.toString()}`);
@@ -2103,6 +2120,89 @@ export class HaiClient {
       body,
       inReplyTo: original.messageId ?? messageId,
     });
+  }
+
+  /**
+   * Forward an email message to another recipient.
+   *
+   * @param options - Forward options (messageId, to, optional comment)
+   * @returns Send result with message ID and status
+   */
+  async forward(options: ForwardOptions): Promise<SendEmailResult> {
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/forward`);
+
+    const payload: Record<string, unknown> = {
+      message_id: options.messageId,
+      to: options.to,
+    };
+    if (options.comment) payload.comment = options.comment;
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: this.buildAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    return {
+      messageId: (data.message_id as string) || '',
+      status: (data.status as string) || '',
+    };
+  }
+
+  /**
+   * Archive an email message.
+   *
+   * @param messageId - The message ID to archive
+   */
+  async archive(messageId: string): Promise<void> {
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const safeMessageId = this.encodePathSegment(messageId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/messages/${safeMessageId}/archive`);
+    await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: this.buildAuthHeaders(),
+    });
+  }
+
+  /**
+   * Unarchive (restore) an email message.
+   *
+   * @param messageId - The message ID to unarchive
+   */
+  async unarchive(messageId: string): Promise<void> {
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const safeMessageId = this.encodePathSegment(messageId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/messages/${safeMessageId}/unarchive`);
+    await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: this.buildAuthHeaders(),
+    });
+  }
+
+  /**
+   * List contacts derived from email message history.
+   *
+   * @returns Array of Contact objects
+   */
+  async getContacts(): Promise<Contact[]> {
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/contacts`);
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: this.buildAuthHeaders(),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    const items = Array.isArray(data) ? data : (data.contacts as Array<Record<string, unknown>>) || [];
+    return items.map((c: Record<string, unknown>) => ({
+      email: (c.email as string) || '',
+      displayName: (c.display_name as string) || undefined,
+      lastContact: (c.last_contact as string) || '',
+      jacsVerified: (c.jacs_verified as boolean) ?? false,
+      reputationTier: (c.reputation_tier as string) || undefined,
+    }));
   }
 
   // ---------------------------------------------------------------------------

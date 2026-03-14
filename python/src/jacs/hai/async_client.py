@@ -47,6 +47,7 @@ from jacs.hai.models import (
     BaselineRunResult,
     BenchmarkResult,
     ChainEntry,
+    Contact,
     EmailMessage,
     EmailStatus,
     EmailVerificationResultV2,
@@ -719,6 +720,9 @@ class AsyncHaiClient:
         body: str,
         in_reply_to: Optional[str] = None,
         attachments: Optional[list[dict[str, Any]]] = None,
+        cc: Optional[list[str]] = None,
+        bcc: Optional[list[str]] = None,
+        labels: Optional[list[str]] = None,
     ) -> SendEmailResult:
         """Send an email from this agent's @hai.ai address."""
         if self._agent_email is None:
@@ -751,6 +755,12 @@ class AsyncHaiClient:
                 }
                 for a in attachments
             ]
+        if cc:
+            payload["cc"] = cc
+        if bcc:
+            payload["bcc"] = bcc
+        if labels:
+            payload["labels"] = labels
 
         try:
             resp = await http.post(url, json=payload, headers=headers)
@@ -923,7 +933,14 @@ class AsyncHaiClient:
             raise HaiError(f"Email verify failed: {exc}")
 
     async def list_messages(
-        self, hai_url: str, limit: int = 20, offset: int = 0, direction: Optional[str] = None,
+        self,
+        hai_url: str,
+        limit: int = 20,
+        offset: int = 0,
+        direction: Optional[str] = None,
+        is_read: Optional[bool] = None,
+        folder: Optional[str] = None,
+        label: Optional[str] = None,
     ) -> list[EmailMessage]:
         """List email messages for this agent."""
         http = await self._get_http()
@@ -935,6 +952,12 @@ class AsyncHaiClient:
         params: dict[str, Any] = {"limit": limit, "offset": offset}
         if direction is not None:
             params["direction"] = direction
+        if is_read is not None:
+            params["is_read"] = str(is_read).lower()
+        if folder is not None:
+            params["folder"] = folder
+        if label is not None:
+            params["label"] = label
 
         try:
             resp = await http.get(url, params=params, headers=headers)
@@ -959,6 +982,9 @@ class AsyncHaiClient:
                     delivery_status=m.get("delivery_status", ""),
                     read_at=m.get("read_at"),
                     jacs_verified=m.get("jacs_verified"),
+                    cc_addresses=m.get("cc_addresses", []),
+                    labels=m.get("labels", []),
+                    folder=m.get("folder", "inbox"),
                 )
                 for m in messages
             ]
@@ -1057,6 +1083,9 @@ class AsyncHaiClient:
                 delivery_status=m.get("delivery_status", ""),
                 read_at=m.get("read_at"),
                 jacs_verified=m.get("jacs_verified"),
+                cc_addresses=m.get("cc_addresses", []),
+                labels=m.get("labels", []),
+                folder=m.get("folder", "inbox"),
             )
         except HaiError:
             raise
@@ -1122,6 +1151,10 @@ class AsyncHaiClient:
         to_address: Optional[str] = None,
         since: Optional[str] = None,
         until: Optional[str] = None,
+        is_read: Optional[bool] = None,
+        jacs_verified: Optional[bool] = None,
+        folder: Optional[str] = None,
+        label: Optional[str] = None,
         limit: int = 20,
         offset: int = 0,
     ) -> list[EmailMessage]:
@@ -1145,6 +1178,14 @@ class AsyncHaiClient:
             params["since"] = since
         if until is not None:
             params["until"] = until
+        if is_read is not None:
+            params["is_read"] = str(is_read).lower()
+        if jacs_verified is not None:
+            params["jacs_verified"] = str(jacs_verified).lower()
+        if folder is not None:
+            params["folder"] = folder
+        if label is not None:
+            params["label"] = label
 
         try:
             resp = await http.get(url, params=params, headers=headers)
@@ -1169,6 +1210,9 @@ class AsyncHaiClient:
                     delivery_status=m.get("delivery_status", ""),
                     read_at=m.get("read_at"),
                     jacs_verified=m.get("jacs_verified"),
+                    cc_addresses=m.get("cc_addresses", []),
+                    labels=m.get("labels", []),
+                    folder=m.get("folder", "inbox"),
                 )
                 for m in messages
             ]
@@ -1215,6 +1259,148 @@ class AsyncHaiClient:
             body=body,
             in_reply_to=original.message_id,
         )
+
+    async def forward(
+        self,
+        hai_url: str,
+        message_id: str,
+        to: str,
+        comment: Optional[str] = None,
+    ) -> SendEmailResult:
+        """Forward an email message to another recipient."""
+        http = await self._get_http()
+        jacs_id = self._get_hai_agent_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        safe_message_id = self._escape_path_segment(message_id)
+        url = self._make_url(
+            hai_url,
+            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/forward",
+        )
+        headers = self._build_auth_headers()
+        headers["Content-Type"] = "application/json"
+
+        payload: dict[str, Any] = {"to": to}
+        if comment is not None:
+            payload["comment"] = comment
+
+        try:
+            resp = await http.post(url, json=payload, headers=headers)
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email forward auth failed",
+                    status_code=resp.status_code, body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Email forward failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code, body=resp.text,
+                )
+            data = resp.json()
+            return SendEmailResult(
+                message_id=data.get("message_id", ""),
+                status=data.get("status", "sent"),
+            )
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email forward failed: {exc}")
+
+    async def archive(self, hai_url: str, message_id: str) -> bool:
+        """Archive an email message."""
+        http = await self._get_http()
+        jacs_id = self._get_hai_agent_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        safe_message_id = self._escape_path_segment(message_id)
+        url = self._make_url(
+            hai_url,
+            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/archive",
+        )
+        headers = self._build_auth_headers()
+
+        try:
+            resp = await http.post(url, headers=headers)
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email archive auth failed",
+                    status_code=resp.status_code, body=resp.text,
+                )
+            if resp.status_code not in (200, 201, 204):
+                raise HaiApiError(
+                    f"Email archive failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code, body=resp.text,
+                )
+            return True
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email archive failed: {exc}")
+
+    async def unarchive(self, hai_url: str, message_id: str) -> bool:
+        """Unarchive an email message."""
+        http = await self._get_http()
+        jacs_id = self._get_hai_agent_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        safe_message_id = self._escape_path_segment(message_id)
+        url = self._make_url(
+            hai_url,
+            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/unarchive",
+        )
+        headers = self._build_auth_headers()
+
+        try:
+            resp = await http.post(url, headers=headers)
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email unarchive auth failed",
+                    status_code=resp.status_code, body=resp.text,
+                )
+            if resp.status_code not in (200, 201, 204):
+                raise HaiApiError(
+                    f"Email unarchive failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code, body=resp.text,
+                )
+            return True
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email unarchive failed: {exc}")
+
+    async def contacts(self, hai_url: str) -> list[Contact]:
+        """List contacts derived from email history."""
+        http = await self._get_http()
+        jacs_id = self._get_hai_agent_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/contacts")
+        headers = self._build_auth_headers()
+
+        try:
+            resp = await http.get(url, headers=headers)
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email contacts auth failed",
+                    status_code=resp.status_code, body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Email contacts failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code, body=resp.text,
+                )
+            data = resp.json()
+            items = data if isinstance(data, list) else data.get("contacts", [])
+            return [
+                Contact(
+                    email=c.get("email", ""),
+                    display_name=c.get("display_name"),
+                    last_contact=c.get("last_contact", ""),
+                    jacs_verified=c.get("jacs_verified", False),
+                    reputation_tier=c.get("reputation_tier"),
+                )
+                for c in items
+            ]
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email contacts failed: {exc}")
 
     # ------------------------------------------------------------------
     # fetch_remote_key

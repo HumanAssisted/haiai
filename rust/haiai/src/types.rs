@@ -365,6 +365,9 @@ pub struct SendEmailOptions {
     pub in_reply_to: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<EmailAttachment>,
+    /// Labels/tags to apply to the sent message
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -389,6 +392,9 @@ pub struct ListMessagesOptions {
     /// Filter by folder: "inbox", "sent", "archive", "trash"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
+    /// Filter by label
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -422,6 +428,9 @@ pub struct EmailMessage {
     /// CC recipients on this message
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cc_addresses: Vec<String>,
+    /// Labels/tags applied to this message
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
     /// Clean body text with quoted reply text removed (derived at response time)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_text_clean: Option<String>,

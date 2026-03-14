@@ -103,6 +103,9 @@ func requiredToolDefinitions() []server.ServerTool {
 				mcp.WithString("to", mcp.Required(), mcp.Description("Recipient email address")),
 				mcp.WithString("subject", mcp.Required(), mcp.Description("Email subject line")),
 				mcp.WithString("body", mcp.Required(), mcp.Description("Plain text email body")),
+				mcp.WithArray("cc", mcp.Description("CC recipient addresses")),
+				mcp.WithArray("bcc", mcp.Description("BCC recipient addresses")),
+				mcp.WithArray("labels", mcp.Description("Labels/tags for the message")),
 				mcp.WithString("in_reply_to", mcp.Description("Message-ID to reply to (for threading)")),
 				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
 				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
@@ -115,6 +118,9 @@ func requiredToolDefinitions() []server.ServerTool {
 				mcp.WithNumber("limit", mcp.Description("Max messages to return (default 20)")),
 				mcp.WithNumber("offset", mcp.Description("Pagination offset")),
 				mcp.WithString("direction", mcp.Description("Filter: 'inbound' or 'outbound'")),
+				mcp.WithBoolean("is_read", mcp.Description("Filter by read status")),
+				mcp.WithString("folder", mcp.Description("Filter by folder: 'inbox' or 'archive'")),
+				mcp.WithString("label", mcp.Description("Filter by label")),
 				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
 				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
 			),
@@ -165,6 +171,10 @@ func requiredToolDefinitions() []server.ServerTool {
 				mcp.WithString("to_address", mcp.Description("Filter by recipient address")),
 				mcp.WithString("since", mcp.Description("Filter: messages after this ISO date")),
 				mcp.WithString("until", mcp.Description("Filter: messages before this ISO date")),
+				mcp.WithBoolean("is_read", mcp.Description("Filter by read status")),
+				mcp.WithBoolean("jacs_verified", mcp.Description("Filter by JACS verification status")),
+				mcp.WithString("folder", mcp.Description("Filter by folder: 'inbox' or 'archive'")),
+				mcp.WithString("label", mcp.Description("Filter by label")),
 				mcp.WithNumber("limit", mcp.Description("Max results (default 20)")),
 				mcp.WithNumber("offset", mcp.Description("Pagination offset")),
 				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
@@ -198,6 +208,43 @@ func requiredToolDefinitions() []server.ServerTool {
 				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
 			),
 			Handler: handleReplyEmail,
+		},
+		{
+			Tool: mcp.NewTool("hai_forward_email",
+				mcp.WithDescription("Forward an email message to another recipient"),
+				mcp.WithString("message_id", mcp.Required(), mcp.Description("ID of the message to forward")),
+				mcp.WithString("to", mcp.Required(), mcp.Description("Recipient email address to forward to")),
+				mcp.WithString("comment", mcp.Description("Optional comment to prepend")),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleForwardEmail,
+		},
+		{
+			Tool: mcp.NewTool("hai_archive_message",
+				mcp.WithDescription("Archive an email message"),
+				mcp.WithString("message_id", mcp.Required(), mcp.Description("Message UUID")),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleArchiveMessage,
+		},
+		{
+			Tool: mcp.NewTool("hai_unarchive_message",
+				mcp.WithDescription("Unarchive (restore) an email message to the inbox"),
+				mcp.WithString("message_id", mcp.Required(), mcp.Description("Message UUID")),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleUnarchiveMessage,
+		},
+		{
+			Tool: mcp.NewTool("hai_list_contacts",
+				mcp.WithDescription("List contacts derived from email history"),
+				mcp.WithString("config_path", mcp.Description("Path to jacs.config.json")),
+				mcp.WithString("hai_url", mcp.Description("HAI API URL override")),
+			),
+			Handler: handleListContacts,
 		},
 	}
 }
@@ -376,6 +423,15 @@ func handleSendEmail(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToo
 	if replyTo := req.GetString("in_reply_to", ""); replyTo != "" {
 		opts.InReplyTo = replyTo
 	}
+	if cc := req.GetStringSlice("cc", nil); len(cc) > 0 {
+		opts.CC = cc
+	}
+	if bcc := req.GetStringSlice("bcc", nil); len(bcc) > 0 {
+		opts.BCC = bcc
+	}
+	if labels := req.GetStringSlice("labels", nil); len(labels) > 0 {
+		opts.Labels = labels
+	}
 	result, err := client.SendEmailWithOptions(ctx, opts)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
@@ -392,6 +448,12 @@ func handleListMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.Call
 		Limit:     int(req.GetFloat("limit", 0)),
 		Offset:    int(req.GetFloat("offset", 0)),
 		Direction: req.GetString("direction", ""),
+		Folder:    req.GetString("folder", ""),
+		Label:     req.GetString("label", ""),
+	}
+	if hasBoolArg(req, "is_read") {
+		v := req.GetBool("is_read", false)
+		opts.IsRead = &v
 	}
 	result, err := client.ListMessages(ctx, opts)
 	if err != nil {
@@ -473,6 +535,16 @@ func handleSearchMessages(ctx context.Context, req mcp.CallToolRequest) (*mcp.Ca
 		ToAddress:   req.GetString("to_address", ""),
 		Limit:       int(req.GetFloat("limit", 0)),
 		Offset:      int(req.GetFloat("offset", 0)),
+		Folder:      req.GetString("folder", ""),
+		Label:       req.GetString("label", ""),
+	}
+	if hasBoolArg(req, "is_read") {
+		v := req.GetBool("is_read", false)
+		opts.IsRead = &v
+	}
+	if hasBoolArg(req, "jacs_verified") {
+		v := req.GetBool("jacs_verified", false)
+		opts.JacsVerified = &v
 	}
 	result, err := client.SearchMessages(ctx, opts)
 	if err != nil {
@@ -524,4 +596,82 @@ func handleReplyEmail(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallTo
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 	return mcp.NewToolResultText(toJSON(result)), nil
+}
+
+func handleForwardEmail(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	messageID, err := req.RequireString("message_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	to, err := req.RequireString("to")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	client, err := getClient(req)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	opts := haiai.ForwardOptions{
+		MessageID: messageID,
+		To:        to,
+		Comment:   req.GetString("comment", ""),
+	}
+	result, err := client.Forward(ctx, opts)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(toJSON(result)), nil
+}
+
+func handleArchiveMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	messageID, err := req.RequireString("message_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	client, err := getClient(req)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if err := client.Archive(ctx, messageID); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(fmt.Sprintf(`{"archived":true,"message_id":"%s"}`, messageID)), nil
+}
+
+func handleUnarchiveMessage(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	messageID, err := req.RequireString("message_id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	client, err := getClient(req)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if err := client.Unarchive(ctx, messageID); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(fmt.Sprintf(`{"unarchived":true,"message_id":"%s"}`, messageID)), nil
+}
+
+func handleListContacts(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	client, err := getClient(req)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	result, err := client.GetContacts(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return mcp.NewToolResultText(toJSON(result)), nil
+}
+
+// hasBoolArg checks if a boolean argument was explicitly provided in the request.
+// GetBool always returns a default, so we need this to distinguish "not set" from "set to false".
+func hasBoolArg(req mcp.CallToolRequest, key string) bool {
+	args := req.GetArguments()
+	if args == nil {
+		return false
+	}
+	_, exists := args[key]
+	return exists
 }

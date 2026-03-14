@@ -48,6 +48,7 @@ from jacs.hai.models import (
     BaselineRunResult,
     BenchmarkResult,
     ChainEntry,
+    Contact,
     EmailMessage,
     EmailStatus,
     EmailVerificationResultV2,
@@ -2000,6 +2001,9 @@ class HaiClient:
         body: str,
         in_reply_to: Optional[str] = None,
         attachments: Optional[list[dict[str, Any]]] = None,
+        cc: Optional[list[str]] = None,
+        bcc: Optional[list[str]] = None,
+        labels: Optional[list[str]] = None,
     ) -> SendEmailResult:
         """Send an email from this agent's @hai.ai address.
 
@@ -2013,6 +2017,9 @@ class HaiClient:
                 ``filename`` (str), ``content_type`` (str), and ``data``
                 (bytes).  Included in the content hash and sent as
                 base64-encoded payloads.
+            cc: Optional list of CC recipient addresses.
+            bcc: Optional list of BCC recipient addresses.
+            labels: Optional list of labels/tags to apply.
 
         Returns:
             SendEmailResult with message_id and status.
@@ -2035,6 +2042,12 @@ class HaiClient:
         }
         if in_reply_to is not None:
             payload["in_reply_to"] = in_reply_to
+        if cc:
+            payload["cc"] = cc
+        if bcc:
+            payload["bcc"] = bcc
+        if labels:
+            payload["labels"] = labels
         if attachments:
             payload["attachments"] = [
                 {
@@ -2181,6 +2194,9 @@ class HaiClient:
         body: str,
         in_reply_to: Optional[str] = None,
         attachments: Optional[list[dict[str, Any]]] = None,
+        cc: Optional[list[str]] = None,
+        bcc: Optional[list[str]] = None,
+        labels: Optional[list[str]] = None,
     ) -> SendEmailResult:
         """Send an agent-signed email.
 
@@ -2214,6 +2230,9 @@ class HaiClient:
             body,
             in_reply_to=in_reply_to,
             attachments=attachments,
+            cc=cc,
+            bcc=bcc,
+            labels=labels,
         )
 
     def verify_email(self, hai_url: str, raw_email: bytes) -> EmailVerificationResultV2:
@@ -2293,6 +2312,9 @@ class HaiClient:
         limit: int = 20,
         offset: int = 0,
         direction: Optional[str] = None,
+        is_read: Optional[bool] = None,
+        folder: Optional[str] = None,
+        label: Optional[str] = None,
     ) -> list[EmailMessage]:
         """List email messages for this agent.
 
@@ -2301,6 +2323,9 @@ class HaiClient:
             limit: Max messages to return.
             offset: Pagination offset.
             direction: Filter by direction ("inbound" or "outbound").
+            is_read: Filter by read status.
+            folder: Filter by folder (e.g. "inbox", "archive").
+            label: Filter by label/tag.
 
         Returns:
             List of EmailMessage objects.
@@ -2313,6 +2338,12 @@ class HaiClient:
         params: dict[str, Any] = {"limit": limit, "offset": offset}
         if direction is not None:
             params["direction"] = direction
+        if is_read is not None:
+            params["is_read"] = str(is_read).lower()
+        if folder is not None:
+            params["folder"] = folder
+        if label is not None:
+            params["label"] = label
 
         try:
             resp = httpx.get(
@@ -2352,6 +2383,9 @@ class HaiClient:
                     delivery_status=m.get("delivery_status", ""),
                     read_at=m.get("read_at"),
                     jacs_verified=m.get("jacs_verified"),
+                    cc_addresses=m.get("cc_addresses", []),
+                    labels=m.get("labels", []),
+                    folder=m.get("folder", "inbox"),
                 )
                 for m in messages
             ]
@@ -2622,6 +2656,10 @@ class HaiClient:
         to_address: Optional[str] = None,
         since: Optional[str] = None,
         until: Optional[str] = None,
+        is_read: Optional[bool] = None,
+        jacs_verified: Optional[bool] = None,
+        folder: Optional[str] = None,
+        label: Optional[str] = None,
         limit: int = 20,
         offset: int = 0,
     ) -> list[EmailMessage]:
@@ -2635,6 +2673,10 @@ class HaiClient:
             to_address: Filter by recipient address.
             since: ISO 8601 start date filter.
             until: ISO 8601 end date filter.
+            is_read: Filter by read status.
+            jacs_verified: Filter by JACS verification status.
+            folder: Filter by folder.
+            label: Filter by label/tag.
             limit: Max messages to return.
             offset: Pagination offset.
 
@@ -2659,6 +2701,14 @@ class HaiClient:
             params["since"] = since
         if until is not None:
             params["until"] = until
+        if is_read is not None:
+            params["is_read"] = str(is_read).lower()
+        if jacs_verified is not None:
+            params["jacs_verified"] = str(jacs_verified).lower()
+        if folder is not None:
+            params["folder"] = folder
+        if label is not None:
+            params["label"] = label
 
         try:
             resp = httpx.get(
@@ -2695,6 +2745,9 @@ class HaiClient:
                     delivery_status=m.get("delivery_status", ""),
                     read_at=m.get("read_at"),
                     jacs_verified=m.get("jacs_verified"),
+                    cc_addresses=m.get("cc_addresses", []),
+                    labels=m.get("labels", []),
+                    folder=m.get("folder", "inbox"),
                 )
                 for m in messages
             ]
@@ -2776,6 +2829,195 @@ class HaiClient:
             body=body,
             in_reply_to=original.message_id,
         )
+
+    def forward(
+        self,
+        hai_url: str,
+        message_id: str,
+        to: str,
+        comment: Optional[str] = None,
+    ) -> SendEmailResult:
+        """Forward an email message to another recipient.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            message_id: ID of the message to forward.
+            to: Recipient email address.
+            comment: Optional comment to include above the forwarded message.
+
+        Returns:
+            SendEmailResult with message_id and status.
+        """
+        if self._agent_email is None:
+            raise HaiError("agent email not set -- call claim_username first")
+
+        jacs_id = self._get_hai_agent_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/forward")
+        headers = self._build_auth_headers()
+        headers["Content-Type"] = "application/json"
+
+        payload: dict[str, Any] = {
+            "message_id": message_id,
+            "to": to,
+        }
+        if comment is not None:
+            payload["comment"] = comment
+
+        try:
+            resp = httpx.post(url, json=payload, headers=headers, timeout=self._timeout)
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email forward auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Email forward failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            data = resp.json()
+            return SendEmailResult(
+                message_id=data.get("message_id", ""),
+                status=data.get("status", ""),
+            )
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email forward failed: {exc}")
+
+    def archive(self, hai_url: str, message_id: str) -> bool:
+        """Archive an email message.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            message_id: ID of the message to archive.
+
+        Returns:
+            True if successful.
+        """
+        jacs_id = self._get_hai_agent_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        safe_message_id = self._escape_path_segment(message_id)
+        url = self._make_url(
+            hai_url,
+            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/archive",
+        )
+        headers = self._build_auth_headers()
+
+        try:
+            resp = httpx.post(url, headers=headers, timeout=self._timeout)
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email archive auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201, 204):
+                raise HaiApiError(
+                    f"Email archive failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return True
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email archive failed: {exc}")
+
+    def unarchive(self, hai_url: str, message_id: str) -> bool:
+        """Unarchive an email message.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            message_id: ID of the message to unarchive.
+
+        Returns:
+            True if successful.
+        """
+        jacs_id = self._get_hai_agent_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        safe_message_id = self._escape_path_segment(message_id)
+        url = self._make_url(
+            hai_url,
+            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/unarchive",
+        )
+        headers = self._build_auth_headers()
+
+        try:
+            resp = httpx.post(url, headers=headers, timeout=self._timeout)
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email unarchive auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201, 204):
+                raise HaiApiError(
+                    f"Email unarchive failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            return True
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email unarchive failed: {exc}")
+
+    def contacts(self, hai_url: str) -> list["Contact"]:
+        """List contacts derived from email message history.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+
+        Returns:
+            List of Contact objects.
+        """
+        jacs_id = self._get_hai_agent_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/contacts")
+        headers = self._build_auth_headers()
+
+        try:
+            resp = httpx.get(url, headers=headers, timeout=self._timeout)
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Email contacts auth failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Email contacts failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            data = resp.json()
+            items = data if isinstance(data, list) else data.get("contacts", [])
+            return [
+                Contact(
+                    email=c.get("email", ""),
+                    display_name=c.get("display_name"),
+                    last_contact=c.get("last_contact", ""),
+                    jacs_verified=c.get("jacs_verified", False),
+                    reputation_tier=c.get("reputation_tier"),
+                )
+                for c in items
+            ]
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Email contacts failed: {exc}")
 
     # ------------------------------------------------------------------
     # fetch_remote_key
@@ -3524,10 +3766,14 @@ def send_email(
     body: str,
     in_reply_to: Optional[str] = None,
     attachments: Optional[list[dict[str, Any]]] = None,
+    cc: Optional[list[str]] = None,
+    bcc: Optional[list[str]] = None,
+    labels: Optional[list[str]] = None,
 ) -> SendEmailResult:
     """Send an email from this agent's @hai.ai address."""
     return _get_client().send_email(
-        hai_url, to, subject, body, in_reply_to, attachments=attachments,
+        hai_url, to, subject, body, in_reply_to,
+        attachments=attachments, cc=cc, bcc=bcc, labels=labels,
     )
 
 
@@ -3543,10 +3789,14 @@ def send_signed_email(
     body: str,
     in_reply_to: Optional[str] = None,
     attachments: Optional[list[dict[str, Any]]] = None,
+    cc: Optional[list[str]] = None,
+    bcc: Optional[list[str]] = None,
+    labels: Optional[list[str]] = None,
 ) -> SendEmailResult:
     """Send an agent-signed email (builds MIME, signs, and sends)."""
     return _get_client().send_signed_email(
-        hai_url, to, subject, body, in_reply_to, attachments=attachments,
+        hai_url, to, subject, body, in_reply_to,
+        attachments=attachments, cc=cc, bcc=bcc, labels=labels,
     )
 
 
@@ -3560,9 +3810,15 @@ def list_messages(
     limit: int = 20,
     offset: int = 0,
     direction: Optional[str] = None,
+    is_read: Optional[bool] = None,
+    folder: Optional[str] = None,
+    label: Optional[str] = None,
 ) -> list[EmailMessage]:
     """List email messages for this agent."""
-    return _get_client().list_messages(hai_url, limit, offset, direction)
+    return _get_client().list_messages(
+        hai_url, limit, offset, direction,
+        is_read=is_read, folder=folder, label=label,
+    )
 
 
 def mark_read(hai_url: str, message_id: str) -> bool:
@@ -3598,13 +3854,20 @@ def search_messages(
     to_address: Optional[str] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
+    is_read: Optional[bool] = None,
+    jacs_verified: Optional[bool] = None,
+    folder: Optional[str] = None,
+    label: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
 ) -> list[EmailMessage]:
     """Search email messages."""
     return _get_client().search_messages(
         hai_url, q=q, direction=direction, from_address=from_address,
-        to_address=to_address, since=since, until=until, limit=limit, offset=offset,
+        to_address=to_address, since=since, until=until,
+        is_read=is_read, jacs_verified=jacs_verified,
+        folder=folder, label=label,
+        limit=limit, offset=offset,
     )
 
 
@@ -3621,6 +3884,31 @@ def reply(
 ) -> SendEmailResult:
     """Reply to an email message."""
     return _get_client().reply(hai_url, message_id, body, subject)
+
+
+def forward(
+    hai_url: str,
+    message_id: str,
+    to: str,
+    comment: Optional[str] = None,
+) -> SendEmailResult:
+    """Forward an email message to another recipient."""
+    return _get_client().forward(hai_url, message_id, to, comment)
+
+
+def archive(hai_url: str, message_id: str) -> bool:
+    """Archive an email message."""
+    return _get_client().archive(hai_url, message_id)
+
+
+def unarchive(hai_url: str, message_id: str) -> bool:
+    """Unarchive an email message."""
+    return _get_client().unarchive(hai_url, message_id)
+
+
+def contacts(hai_url: str) -> list:
+    """List contacts derived from email history."""
+    return _get_client().contacts(hai_url)
 
 
 def fetch_remote_key(

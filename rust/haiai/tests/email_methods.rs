@@ -51,6 +51,7 @@ async fn send_email_sends_content_fields() {
             bcc: Vec::new(),
             in_reply_to: None,
             attachments: Vec::new(),
+            labels: Vec::new(),
         })
         .await
         .expect("send_email");
@@ -85,6 +86,7 @@ async fn send_email_signature_uses_correct_hash_format() {
             bcc: Vec::new(),
             in_reply_to: None,
             attachments: Vec::new(),
+            labels: Vec::new(),
         })
         .await
         .expect("send_email");
@@ -127,6 +129,7 @@ async fn send_email_includes_in_reply_to_when_set() {
             bcc: Vec::new(),
             in_reply_to: Some("orig-msg-id".to_string()),
             attachments: Vec::new(),
+            labels: Vec::new(),
         })
         .await
         .expect("send_email with in_reply_to");
@@ -731,5 +734,70 @@ async fn search_with_combined_filters() {
 
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].id, "msg-504");
+    mock.assert_async().await;
+}
+
+// --- Task 012: Contacts ---
+
+#[tokio::test]
+async fn contacts_returns_contacts_from_wrapped_response() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/api/agents/test-agent-001/email/contacts")
+                .header_exists("authorization");
+            then.status(200).json_body(json!({
+                "contacts": [
+                    {
+                        "email": "alice@hai.ai",
+                        "display_name": "Alice Agent",
+                        "last_contact": "2026-03-13T10:00:00+00:00",
+                        "jacs_verified": true,
+                        "reputation_tier": "established"
+                    },
+                    {
+                        "email": "external@example.com",
+                        "last_contact": "2026-03-12T08:00:00+00:00",
+                        "jacs_verified": false
+                    }
+                ]
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let contacts = client.contacts().await.expect("contacts");
+
+    assert_eq!(contacts.len(), 2);
+    assert_eq!(contacts[0].email, "alice@hai.ai");
+    assert_eq!(contacts[0].display_name.as_deref(), Some("Alice Agent"));
+    assert!(contacts[0].jacs_verified);
+    assert_eq!(contacts[0].reputation_tier.as_deref(), Some("established"));
+    assert_eq!(contacts[1].email, "external@example.com");
+    assert!(!contacts[1].jacs_verified);
+    assert!(contacts[1].reputation_tier.is_none());
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn contacts_returns_empty_for_no_correspondents() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/api/agents/test-agent-001/email/contacts");
+            then.status(200).json_body(json!({
+                "contacts": []
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let contacts = client.contacts().await.expect("empty contacts");
+
+    assert!(contacts.is_empty());
     mock.assert_async().await;
 }

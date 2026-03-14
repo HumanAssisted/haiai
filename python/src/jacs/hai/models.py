@@ -315,6 +315,20 @@ class EmailMessage:
     delivery_status: str = ""
     read_at: Optional[str] = None
     jacs_verified: Optional[bool] = None
+    cc_addresses: list[str] = field(default_factory=list)
+    labels: list[str] = field(default_factory=list)
+    folder: str = "inbox"
+
+
+@dataclass
+class Contact:
+    """A contact derived from email message history."""
+
+    email: str
+    display_name: Optional[str] = None
+    last_contact: str = ""
+    jacs_verified: bool = False
+    reputation_tier: Optional[str] = None
 
 
 @dataclass

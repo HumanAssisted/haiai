@@ -385,6 +385,12 @@ export interface SendEmailOptions {
   inReplyTo?: string;
   /** File attachments to include with the email. */
   attachments?: EmailAttachment[];
+  /** CC recipient addresses. */
+  cc?: string[];
+  /** BCC recipient addresses. */
+  bcc?: string[];
+  /** Labels/tags for the message. */
+  labels?: string[];
 }
 
 /** Result of sending an email. */
@@ -423,6 +429,12 @@ export interface EmailMessage {
   readAt: string | null;
   /** Whether the JACS signature on this message was verified. */
   jacsVerified: boolean;
+  /** CC recipient addresses. */
+  ccAddresses: string[];
+  /** Labels/tags on the message. */
+  labels: string[];
+  /** Folder the message is in (e.g., "inbox", "archive"). */
+  folder: string;
 }
 
 /** Options for listing email messages. */
@@ -433,6 +445,12 @@ export interface ListMessagesOptions {
   offset?: number;
   /** Filter by direction: "inbound" or "outbound". */
   direction?: 'inbound' | 'outbound';
+  /** Filter by read status (true/false/undefined for all). */
+  isRead?: boolean;
+  /** Filter by folder (e.g., "inbox", "archive"). */
+  folder?: string;
+  /** Filter by label/tag. */
+  label?: string;
 }
 
 /** Options for searching email messages. */
@@ -449,6 +467,38 @@ export interface SearchOptions {
   fromAddress?: string;
   /** Filter by recipient address. */
   toAddress?: string;
+  /** Filter by read status. */
+  isRead?: boolean;
+  /** Filter by JACS verification status. */
+  jacsVerified?: boolean;
+  /** Filter by folder (e.g., "inbox", "archive"). */
+  folder?: string;
+  /** Filter by label/tag. */
+  label?: string;
+}
+
+/** A contact derived from email message history. */
+export interface Contact {
+  /** Contact email address. */
+  email: string;
+  /** Display name, if known. */
+  displayName?: string;
+  /** ISO 8601 timestamp of last contact. */
+  lastContact: string;
+  /** Whether this contact's agent is JACS-verified. */
+  jacsVerified: boolean;
+  /** Reputation tier of this contact. */
+  reputationTier?: string;
+}
+
+/** Options for forwarding an email. */
+export interface ForwardOptions {
+  /** ID of the message to forward. */
+  messageId: string;
+  /** Recipient to forward to. */
+  to: string;
+  /** Optional comment prepended to the forwarded body. */
+  comment?: string;
 }
 
 /** Email rate limit and status info. */

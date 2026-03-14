@@ -26,6 +26,7 @@ from typing import Any, Optional, Union
 from jacs.hai.client import HaiClient
 from jacs.hai.errors import HaiError, RateLimited
 from jacs.hai.models import (
+    Contact,
     EmailMessage,
     EmailStatus,
     EmailVerificationResultV2,
@@ -100,6 +101,9 @@ class EmailNamespace:
         *,
         in_reply_to: Optional[str] = None,
         attachments: Optional[list[dict[str, Any]]] = None,
+        cc: Optional[list[str]] = None,
+        bcc: Optional[list[str]] = None,
+        labels: Optional[list[str]] = None,
     ) -> SendEmailResult:
         """Send an email, always signed with the agent's JACS key.
 
@@ -114,6 +118,9 @@ class EmailNamespace:
             in_reply_to: Optional Message-ID for threading.
             attachments: Optional list of dicts with keys ``filename``
                 (str), ``content_type`` (str), ``data`` (bytes).
+            cc: Optional list of CC recipient addresses.
+            bcc: Optional list of BCC recipient addresses.
+            labels: Optional list of labels/tags for the message.
 
         Returns:
             :class:`SendEmailResult` with ``message_id`` and ``status``.
@@ -129,6 +136,9 @@ class EmailNamespace:
             body=body,
             in_reply_to=in_reply_to,
             attachments=attachments,
+            cc=cc,
+            bcc=bcc,
+            labels=labels,
         )
 
     def inbox(
@@ -136,12 +146,18 @@ class EmailNamespace:
         *,
         limit: int = 20,
         offset: int = 0,
+        is_read: Optional[bool] = None,
+        folder: Optional[str] = None,
+        label: Optional[str] = None,
     ) -> list[EmailMessage]:
         """List inbox messages (direction=inbound).
 
         Args:
             limit: Maximum number of messages to return.
             offset: Offset for pagination.
+            is_read: Filter by read status (``True``/``False``/``None``).
+            folder: Filter by folder (e.g. ``"inbox"``, ``"archive"``).
+            label: Filter by label/tag.
 
         Returns:
             List of :class:`EmailMessage` objects.
@@ -151,6 +167,9 @@ class EmailNamespace:
             limit=limit,
             offset=offset,
             direction="inbound",
+            is_read=is_read,
+            folder=folder,
+            label=label,
         )
 
     def outbox(
@@ -158,12 +177,18 @@ class EmailNamespace:
         *,
         limit: int = 20,
         offset: int = 0,
+        is_read: Optional[bool] = None,
+        folder: Optional[str] = None,
+        label: Optional[str] = None,
     ) -> list[EmailMessage]:
         """List outbox messages (direction=outbound).
 
         Args:
             limit: Maximum number of messages to return.
             offset: Offset for pagination.
+            is_read: Filter by read status (``True``/``False``/``None``).
+            folder: Filter by folder (e.g. ``"inbox"``, ``"archive"``).
+            label: Filter by label/tag.
 
         Returns:
             List of :class:`EmailMessage` objects.
@@ -173,6 +198,9 @@ class EmailNamespace:
             limit=limit,
             offset=offset,
             direction="outbound",
+            is_read=is_read,
+            folder=folder,
+            label=label,
         )
 
     def get(self, message_id: str) -> EmailMessage:
@@ -198,6 +226,10 @@ class EmailNamespace:
         to_address: Optional[str] = None,
         since: Optional[str] = None,
         until: Optional[str] = None,
+        is_read: Optional[bool] = None,
+        jacs_verified: Optional[bool] = None,
+        folder: Optional[str] = None,
+        label: Optional[str] = None,
         limit: int = 20,
         offset: int = 0,
     ) -> list[EmailMessage]:
@@ -210,6 +242,10 @@ class EmailNamespace:
             to_address: Filter by recipient.
             since: Messages after this ISO datetime.
             until: Messages before this ISO datetime.
+            is_read: Filter by read status.
+            jacs_verified: Filter by JACS verification status.
+            folder: Filter by folder (e.g. ``"inbox"``, ``"archive"``).
+            label: Filter by label/tag.
             limit: Maximum results.
             offset: Pagination offset.
 
@@ -224,6 +260,10 @@ class EmailNamespace:
             to_address=to_address,
             since=since,
             until=until,
+            is_read=is_read,
+            jacs_verified=jacs_verified,
+            folder=folder,
+            label=label,
             limit=limit,
             offset=offset,
         )
@@ -321,3 +361,63 @@ class EmailNamespace:
             body=body,
             in_reply_to=original.message_id or original.id,
         )
+
+    def forward(
+        self,
+        message_id: str,
+        to: str,
+        *,
+        comment: Optional[str] = None,
+    ) -> SendEmailResult:
+        """Forward a message to another recipient.
+
+        Args:
+            message_id: The message ID to forward.
+            to: Recipient email address to forward to.
+            comment: Optional comment to prepend to the forwarded body.
+
+        Returns:
+            :class:`SendEmailResult` with ``message_id`` and ``status``.
+        """
+        return self._client.forward(
+            hai_url=self._hai_url,
+            message_id=message_id,
+            to=to,
+            comment=comment,
+        )
+
+    def archive(self, message_id: str) -> bool:
+        """Archive a message.
+
+        Args:
+            message_id: The message ID to archive.
+
+        Returns:
+            ``True`` if the message was archived.
+        """
+        return self._client.archive(
+            hai_url=self._hai_url,
+            message_id=message_id,
+        )
+
+    def unarchive(self, message_id: str) -> bool:
+        """Unarchive (restore) a message back to the inbox.
+
+        Args:
+            message_id: The message ID to unarchive.
+
+        Returns:
+            ``True`` if the message was unarchived.
+        """
+        return self._client.unarchive(
+            hai_url=self._hai_url,
+            message_id=message_id,
+        )
+
+    def contacts(self) -> list[Contact]:
+        """List contacts derived from email history.
+
+        Returns:
+            List of :class:`Contact` objects.
+        """
+        return self._client.contacts(hai_url=self._hai_url)

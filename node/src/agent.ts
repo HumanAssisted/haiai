@@ -16,8 +16,10 @@
 
 import { HaiClient } from './client.js';
 import type {
+  Contact,
   EmailMessage,
   EmailStatus,
+  ForwardOptions,
   ListMessagesOptions,
   SearchOptions,
   SendEmailOptions,
@@ -93,6 +95,12 @@ export interface SendOptions {
     contentType: string;
     data: Buffer;
   }>;
+  /** CC recipient addresses. */
+  cc?: string[];
+  /** BCC recipient addresses. */
+  bcc?: string[];
+  /** Labels/tags for the message. */
+  labels?: string[];
 }
 
 /**
@@ -129,6 +137,9 @@ export class EmailNamespace {
         contentType: a.contentType,
         data: a.data,
       })),
+      cc: options.cc,
+      bcc: options.bcc,
+      labels: options.labels,
     });
   }
 
@@ -138,25 +149,31 @@ export class EmailNamespace {
    * @param options - Optional list options (limit, offset).
    * @returns Array of EmailMessage objects.
    */
-  async inbox(options?: { limit?: number; offset?: number }): Promise<EmailMessage[]> {
+  async inbox(options?: { limit?: number; offset?: number; isRead?: boolean; folder?: string; label?: string }): Promise<EmailMessage[]> {
     return this._client.listMessages({
       limit: options?.limit,
       offset: options?.offset,
       direction: 'inbound',
+      isRead: options?.isRead,
+      folder: options?.folder,
+      label: options?.label,
     });
   }
 
   /**
    * List outbox messages (direction=outbound).
    *
-   * @param options - Optional list options (limit, offset).
+   * @param options - Optional list options (limit, offset, filters).
    * @returns Array of EmailMessage objects.
    */
-  async outbox(options?: { limit?: number; offset?: number }): Promise<EmailMessage[]> {
+  async outbox(options?: { limit?: number; offset?: number; isRead?: boolean; folder?: string; label?: string }): Promise<EmailMessage[]> {
     return this._client.listMessages({
       limit: options?.limit,
       offset: options?.offset,
       direction: 'outbound',
+      isRead: options?.isRead,
+      folder: options?.folder,
+      label: options?.label,
     });
   }
 
@@ -242,5 +259,44 @@ export class EmailNamespace {
     subjectOverride?: string,
   ): Promise<SendEmailResult> {
     return this._client.reply(messageId, body, subjectOverride);
+  }
+
+  /**
+   * Forward a message to another recipient.
+   *
+   * @param messageId - The message ID to forward.
+   * @param to - Recipient email address to forward to.
+   * @param comment - Optional comment to prepend.
+   * @returns SendEmailResult with messageId and status.
+   */
+  async forward(messageId: string, to: string, comment?: string): Promise<SendEmailResult> {
+    return this._client.forward({ messageId, to, comment });
+  }
+
+  /**
+   * Archive a message.
+   *
+   * @param messageId - The message ID to archive.
+   */
+  async archive(messageId: string): Promise<void> {
+    return this._client.archive(messageId);
+  }
+
+  /**
+   * Unarchive (restore) a message back to the inbox.
+   *
+   * @param messageId - The message ID to unarchive.
+   */
+  async unarchive(messageId: string): Promise<void> {
+    return this._client.unarchive(messageId);
+  }
+
+  /**
+   * List contacts derived from email history.
+   *
+   * @returns Array of Contact objects.
+   */
+  async contacts(): Promise<Contact[]> {
+    return this._client.getContacts();
   }
 }

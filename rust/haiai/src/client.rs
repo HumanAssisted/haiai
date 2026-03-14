@@ -627,6 +627,9 @@ impl<P: JacsProvider> HaiClient<P> {
         if let Some(folder) = options.folder.as_deref() {
             request = request.query(&[("folder", folder)]);
         }
+        if let Some(label) = options.label.as_deref() {
+            request = request.query(&[("label", label)]);
+        }
 
         let response = request.send().await?;
         let data = response_json(response).await?;
@@ -636,6 +639,49 @@ impl<P: JacsProvider> HaiClient<P> {
             .cloned()
             .unwrap_or_else(|| Value::Array(Vec::new()));
         Ok(serde_json::from_value(messages)?)
+    }
+
+    /// Update labels on a message. Adds and removes labels atomically.
+    pub async fn update_labels(
+        &self,
+        message_id: &str,
+        add: &[&str],
+        remove: &[&str],
+    ) -> Result<Vec<String>> {
+        let _ = self.agent_email.as_deref().ok_or_else(|| {
+            HaiError::Message("agent email not set — call claim_username first".into())
+        })?;
+        let agent_id = self.hai_agent_id();
+        let safe_agent_id = encode_path_segment(agent_id);
+        let safe_message_id = encode_path_segment(message_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_agent_id}/email/messages/{safe_message_id}/labels"
+        ));
+
+        let body = json!({
+            "add": add,
+            "remove": remove,
+        });
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .json(&body)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        let labels = data
+            .get("labels")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(labels)
     }
 
     pub async fn mark_read(&self, message_id: &str) -> Result<()> {
@@ -876,7 +922,7 @@ impl<P: JacsProvider> HaiClient<P> {
             HaiError::Message("agent email not set — call claim_username first".into())
         })?;
         let agent_id = self.hai_agent_id();
-        let safe_agent_id = encode_path_segment(&agent_id);
+        let safe_agent_id = encode_path_segment(agent_id);
         let url = self.url(&format!(
             "/api/agents/{safe_agent_id}/email/reply"
         ));
@@ -919,7 +965,7 @@ impl<P: JacsProvider> HaiClient<P> {
             HaiError::Message("agent email not set — call claim_username first".into())
         })?;
         let agent_id = self.hai_agent_id();
-        let safe_agent_id = encode_path_segment(&agent_id);
+        let safe_agent_id = encode_path_segment(agent_id);
         let url = self.url(&format!(
             "/api/agents/{safe_agent_id}/email/forward"
         ));
@@ -951,7 +997,7 @@ impl<P: JacsProvider> HaiClient<P> {
             HaiError::Message("agent email not set — call claim_username first".into())
         })?;
         let agent_id = self.hai_agent_id();
-        let safe_agent_id = encode_path_segment(&agent_id);
+        let safe_agent_id = encode_path_segment(agent_id);
         let url = self.url(&format!(
             "/api/agents/{safe_agent_id}/email/contacts"
         ));

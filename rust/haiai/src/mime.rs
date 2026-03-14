@@ -145,6 +145,7 @@ mod tests {
             bcc: vec![],
             in_reply_to: None,
             attachments: vec![],
+            labels: vec![],
         }
     }
 
@@ -183,6 +184,7 @@ mod tests {
                     b"fake pdf content".to_vec(),
                 ),
             ],
+            labels: vec![],
         };
 
         let raw = build_rfc5322_email(&opts, "sender@hai.ai").unwrap();
@@ -205,6 +207,7 @@ mod tests {
             bcc: vec![],
             in_reply_to: Some("<original-id@hai.ai>".to_string()),
             attachments: vec![],
+            labels: vec![],
         };
 
         let raw = build_rfc5322_email(&opts, "sender@hai.ai").unwrap();
@@ -224,6 +227,7 @@ mod tests {
             bcc: vec![],
             in_reply_to: None,
             attachments: vec![],
+            labels: vec![],
         };
 
         let raw = build_rfc5322_email(&opts, "sender@hai.ai").unwrap();
@@ -270,6 +274,7 @@ mod tests {
                 "text/plain".to_string(),
                 b"content".to_vec(),
             )],
+            labels: vec![],
         };
 
         let raw = build_rfc5322_email(&opts, "sender@hai.ai").unwrap();

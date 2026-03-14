@@ -138,6 +138,8 @@ export type {
   ListMessagesOptions,
   SearchOptions,
   EmailStatus,
+  Contact,
+  ForwardOptions,
   KeyRegistryResponse,
   EmailVerificationResultV2,
   FieldStatus,

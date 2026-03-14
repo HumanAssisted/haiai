@@ -106,3 +106,23 @@ func (e *EmailNamespace) MarkUnread(ctx context.Context, messageID string) error
 func (e *EmailNamespace) Reply(ctx context.Context, messageID, body, subjectOverride string) (*SendEmailResult, error) {
 	return e.client.Reply(ctx, messageID, body, subjectOverride)
 }
+
+// Forward forwards a message to another recipient.
+func (e *EmailNamespace) Forward(ctx context.Context, opts ForwardOptions) (*SendEmailResult, error) {
+	return e.client.Forward(ctx, opts)
+}
+
+// Archive moves a message to the archive folder.
+func (e *EmailNamespace) Archive(ctx context.Context, messageID string) error {
+	return e.client.Archive(ctx, messageID)
+}
+
+// Unarchive restores a message from the archive back to the inbox.
+func (e *EmailNamespace) Unarchive(ctx context.Context, messageID string) error {
+	return e.client.Unarchive(ctx, messageID)
+}
+
+// Contacts retrieves contacts derived from email history.
+func (e *EmailNamespace) Contacts(ctx context.Context) ([]Contact, error) {
+	return e.client.GetContacts(ctx)
+}

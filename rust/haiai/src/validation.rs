@@ -247,6 +247,7 @@ mod tests {
             bcc: vec![],
             in_reply_to: None,
             attachments: vec![],
+            labels: vec![],
         };
         assert!(validate_send_email(&opts).is_ok());
     }
@@ -261,6 +262,7 @@ mod tests {
             bcc: vec![],
             in_reply_to: None,
             attachments: vec![],
+            labels: vec![],
         };
         assert!(validate_send_email(&opts).is_err());
     }

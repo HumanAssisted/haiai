@@ -1178,6 +1178,15 @@ func (c *Client) ListMessages(ctx context.Context, opts ListMessagesOptions) ([]
 	if opts.Direction != "" {
 		query.Set("direction", opts.Direction)
 	}
+	if opts.IsRead != nil {
+		query.Set("is_read", fmt.Sprintf("%t", *opts.IsRead))
+	}
+	if opts.Folder != "" {
+		query.Set("folder", opts.Folder)
+	}
+	if opts.Label != "" {
+		query.Set("label", opts.Label)
+	}
 	path := fmt.Sprintf("/api/agents/%s/email/messages?%s", neturl.PathEscape(c.HaiAgentID()), query.Encode())
 	var wrapper ListMessagesResponse
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &wrapper); err != nil {
@@ -1261,6 +1270,18 @@ func (c *Client) SearchMessages(ctx context.Context, opts SearchOptions) ([]Emai
 	if opts.Offset > 0 {
 		query.Set("offset", fmt.Sprintf("%d", opts.Offset))
 	}
+	if opts.IsRead != nil {
+		query.Set("is_read", fmt.Sprintf("%t", *opts.IsRead))
+	}
+	if opts.JacsVerified != nil {
+		query.Set("jacs_verified", fmt.Sprintf("%t", *opts.JacsVerified))
+	}
+	if opts.Folder != "" {
+		query.Set("folder", opts.Folder)
+	}
+	if opts.Label != "" {
+		query.Set("label", opts.Label)
+	}
 	path := fmt.Sprintf("/api/agents/%s/email/search?%s", neturl.PathEscape(c.HaiAgentID()), query.Encode())
 	var wrapper ListMessagesResponse
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &wrapper); err != nil {
@@ -1308,6 +1329,79 @@ func (c *Client) Reply(ctx context.Context, messageID, body, subjectOverride str
 		Body:      body,
 		InReplyTo: inReplyTo,
 	})
+}
+
+// Forward forwards a message to another recipient.
+func (c *Client) Forward(ctx context.Context, opts ForwardOptions) (*SendEmailResult, error) {
+	path := fmt.Sprintf("/api/agents/%s/email/forward", neturl.PathEscape(c.HaiAgentID()))
+	var result SendEmailResult
+	if err := c.doRequest(ctx, http.MethodPost, path, opts, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// Archive moves a message to the archive folder.
+func (c *Client) Archive(ctx context.Context, messageID string) error {
+	path := fmt.Sprintf(
+		"/api/agents/%s/email/messages/%s/archive",
+		neturl.PathEscape(c.HaiAgentID()),
+		neturl.PathEscape(messageID),
+	)
+	return c.doRequest(ctx, http.MethodPost, path, nil, nil)
+}
+
+// Unarchive restores a message from the archive back to the inbox.
+func (c *Client) Unarchive(ctx context.Context, messageID string) error {
+	path := fmt.Sprintf(
+		"/api/agents/%s/email/messages/%s/unarchive",
+		neturl.PathEscape(c.HaiAgentID()),
+		neturl.PathEscape(messageID),
+	)
+	return c.doRequest(ctx, http.MethodPost, path, nil, nil)
+}
+
+// GetContacts retrieves the agent's contacts derived from email history.
+// Handles both wrapped {"contacts": [...]} and bare array [...] responses.
+func (c *Client) GetContacts(ctx context.Context) ([]Contact, error) {
+	path := fmt.Sprintf("/api/agents/%s/email/contacts", neturl.PathEscape(c.HaiAgentID()))
+
+	url := c.endpoint + path
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "failed to create request")
+	}
+	c.setAuthHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "request failed")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyHTTPError(resp.StatusCode, respBody)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to read response body")
+	}
+
+	// Try wrapped format first: {"contacts": [...]}
+	var wrapper ContactsResponse
+	if err := json.Unmarshal(body, &wrapper); err == nil && wrapper.Contacts != nil {
+		return wrapper.Contacts, nil
+	}
+
+	// Fall back to bare array: [...]
+	var contacts []Contact
+	if err := json.Unmarshal(body, &contacts); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode contacts response")
+	}
+	return contacts, nil
 }
 
 // RegisterNewAgent generates a new Ed25519 keypair, creates a flat JACS agent

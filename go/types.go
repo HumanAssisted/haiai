@@ -304,16 +304,23 @@ type SendEmailOptions struct {
 	Body        string            `json:"body"`
 	InReplyTo   string            `json:"in_reply_to,omitempty"`
 	Attachments []EmailAttachment `json:"attachments,omitempty"`
+	CC          []string          `json:"cc,omitempty"`
+	BCC         []string          `json:"bcc,omitempty"`
+	Labels      []string          `json:"labels,omitempty"`
 }
 
 // SearchOptions configures a message search request.
 type SearchOptions struct {
-	Q          string `json:"q,omitempty"`
-	Direction  string `json:"direction,omitempty"`
-	FromAddress string `json:"from_address,omitempty"`
-	ToAddress  string `json:"to_address,omitempty"`
-	Limit      int    `json:"limit,omitempty"`
-	Offset     int    `json:"offset,omitempty"`
+	Q            string `json:"q,omitempty"`
+	Direction    string `json:"direction,omitempty"`
+	FromAddress  string `json:"from_address,omitempty"`
+	ToAddress    string `json:"to_address,omitempty"`
+	Limit        int    `json:"limit,omitempty"`
+	Offset       int    `json:"offset,omitempty"`
+	IsRead       *bool  `json:"is_read,omitempty"`
+	JacsVerified *bool  `json:"jacs_verified,omitempty"`
+	Folder       string `json:"folder,omitempty"`
+	Label        string `json:"label,omitempty"`
 }
 
 // UnreadCountResult is the response from the unread count endpoint.
@@ -329,19 +336,22 @@ type SendEmailResult struct {
 
 // EmailMessage represents an email message in the agent's mailbox.
 type EmailMessage struct {
-	ID             string  `json:"id"`
-	Direction      string  `json:"direction"`
-	FromAddress    string  `json:"from_address"`
-	ToAddress      string  `json:"to_address"`
-	Subject        string  `json:"subject"`
-	BodyText       string  `json:"body_text"`
-	MessageID      string  `json:"message_id,omitempty"`
-	InReplyTo      string  `json:"in_reply_to,omitempty"`
-	IsRead         bool    `json:"is_read"`
-	DeliveryStatus string  `json:"delivery_status"`
-	CreatedAt      string  `json:"created_at"`
-	ReadAt         *string `json:"read_at"`
-	JacsVerified   *bool   `json:"jacs_verified"`
+	ID             string   `json:"id"`
+	Direction      string   `json:"direction"`
+	FromAddress    string   `json:"from_address"`
+	ToAddress      string   `json:"to_address"`
+	Subject        string   `json:"subject"`
+	BodyText       string   `json:"body_text"`
+	MessageID      string   `json:"message_id,omitempty"`
+	InReplyTo      string   `json:"in_reply_to,omitempty"`
+	IsRead         bool     `json:"is_read"`
+	DeliveryStatus string   `json:"delivery_status"`
+	CreatedAt      string   `json:"created_at"`
+	ReadAt         *string  `json:"read_at"`
+	JacsVerified   *bool    `json:"jacs_verified"`
+	CcAddresses    []string `json:"cc_addresses,omitempty"`
+	Labels         []string `json:"labels,omitempty"`
+	Folder         string   `json:"folder,omitempty"`
 }
 
 // ListMessagesResponse is the wrapper returned by the list messages API.
@@ -356,6 +366,9 @@ type ListMessagesOptions struct {
 	Limit     int    // Maximum number of messages to return.
 	Offset    int    // Number of messages to skip.
 	Direction string // "inbound" or "outbound".
+	IsRead    *bool  // Filter by read status (nil = no filter).
+	Folder    string // Filter by folder ("inbox", "archive").
+	Label     string // Filter by label.
 }
 
 // MarkReadResult is the response from marking a message as read.
@@ -445,6 +458,28 @@ func (e *HaiAPIError) Error() string {
 		return fmt.Sprintf("%s (code: %s, HTTP %d)", e.Message, e.ErrorCode, e.Status)
 	}
 	return fmt.Sprintf("%s (HTTP %d)", e.Message, e.Status)
+}
+
+// Contact represents a contact derived from email history.
+type Contact struct {
+	Email        string `json:"email"`
+	DisplayName  string `json:"display_name,omitempty"`
+	MessageCount int    `json:"message_count"`
+	LastContact  string `json:"last_contact"`
+	IsHaiAgent   bool   `json:"is_hai_agent,omitempty"`
+	JacsVerified bool   `json:"jacs_verified,omitempty"`
+}
+
+// ContactsResponse is the wrapper returned by the contacts API.
+type ContactsResponse struct {
+	Contacts []Contact `json:"contacts"`
+}
+
+// ForwardOptions configures a forward email request.
+type ForwardOptions struct {
+	MessageID string `json:"message_id"`
+	To        string `json:"to"`
+	Comment   string `json:"comment,omitempty"`
 }
 
 // Sentinel error types for email-related API errors.

@@ -129,6 +129,7 @@ async fn email_integration_lifecycle() {
             bcc: Vec::new(),
             in_reply_to: None,
             attachments: Vec::new(),
+            labels: Vec::new(),
         })
         .await
         .expect("send_email");
@@ -144,10 +145,7 @@ async fn email_integration_lifecycle() {
     let messages = client
         .list_messages(&ListMessagesOptions {
             limit: Some(10),
-            offset: None,
-            direction: None,
-            is_read: None,
-            folder: None,
+            ..Default::default()
         })
         .await
         .expect("list_messages");

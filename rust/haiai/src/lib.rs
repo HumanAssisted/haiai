@@ -27,6 +27,7 @@
 //!     bcc: vec![],
 //!     in_reply_to: None,
 //!     attachments: vec![],
+//!     labels: vec![],
 //! }).await?;
 //! # Ok(())
 //! # }

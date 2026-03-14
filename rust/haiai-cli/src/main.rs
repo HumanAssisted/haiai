@@ -105,6 +105,18 @@ enum Commands {
         /// Email body text
         #[arg(long)]
         body: String,
+
+        /// CC recipients (repeatable)
+        #[arg(long)]
+        cc: Vec<String>,
+
+        /// BCC recipients (repeatable)
+        #[arg(long)]
+        bcc: Vec<String>,
+
+        /// Labels/tags to apply (repeatable)
+        #[arg(long)]
+        labels: Vec<String>,
     },
 
     /// List email messages
@@ -120,6 +132,18 @@ enum Commands {
         /// Filter by direction: inbound or outbound
         #[arg(long)]
         direction: Option<String>,
+
+        /// Filter by read status (true = read only, false = unread only)
+        #[arg(long)]
+        is_read: Option<bool>,
+
+        /// Filter by folder (e.g. 'inbox', 'archive')
+        #[arg(long)]
+        folder: Option<String>,
+
+        /// Filter by label/tag
+        #[arg(long)]
+        label: Option<String>,
     },
 
     /// Search email messages
@@ -136,10 +160,74 @@ enum Commands {
         #[arg(long)]
         to: Option<String>,
 
+        /// Filter by read status
+        #[arg(long)]
+        is_read: Option<bool>,
+
+        /// Filter by JACS verification status
+        #[arg(long)]
+        jacs_verified: Option<bool>,
+
+        /// Filter by folder
+        #[arg(long)]
+        folder: Option<String>,
+
+        /// Filter by label/tag
+        #[arg(long)]
+        label: Option<String>,
+
         /// Maximum number of results
         #[arg(long, default_value = "20")]
         limit: u32,
     },
+
+    /// Reply to an email message
+    ReplyEmail {
+        /// Message ID to reply to
+        #[arg(long)]
+        message_id: String,
+
+        /// Reply body text
+        #[arg(long)]
+        body: String,
+
+        /// Override the Re: subject line
+        #[arg(long)]
+        subject_override: Option<String>,
+    },
+
+    /// Forward an email message to another recipient
+    ForwardEmail {
+        /// Message ID to forward
+        #[arg(long)]
+        message_id: String,
+
+        /// Recipient email address
+        #[arg(long)]
+        to: String,
+
+        /// Optional comment to include above the forwarded message
+        #[arg(long)]
+        comment: Option<String>,
+    },
+
+    /// Archive an email message (move to archive folder)
+    ArchiveMessage {
+        /// Message ID to archive
+        message_id: String,
+    },
+
+    /// Unarchive an email message (move back to inbox)
+    UnarchiveMessage {
+        /// Message ID to unarchive
+        message_id: String,
+    },
+
+    /// List contacts derived from email history
+    ListContacts,
+
+    /// Get email account status including usage limits
+    EmailStatus,
 
     /// Update agent metadata and re-sign with existing key
     Update {
@@ -538,14 +626,24 @@ async fn main() -> anyhow::Result<()> {
             println!("  Agent ID: {}", result.agent_id);
         }
 
-        Commands::SendEmail { to, subject, body } => {
+        Commands::SendEmail {
+            to,
+            subject,
+            body,
+            cc,
+            bcc,
+            labels,
+        } => {
             let client = load_client()?;
             let options = SendEmailOptions {
                 to,
                 subject,
                 body,
+                cc,
+                bcc,
                 in_reply_to: None,
                 attachments: vec![],
+                labels,
             };
             let result = client
                 .send_signed_email(&options)
@@ -559,12 +657,18 @@ async fn main() -> anyhow::Result<()> {
             limit,
             offset,
             direction,
+            is_read,
+            folder,
+            label,
         } => {
             let client = load_client()?;
             let options = ListMessagesOptions {
                 limit: Some(limit),
                 offset: Some(offset),
                 direction,
+                is_read,
+                folder,
+                label,
             };
             let messages = client
                 .list_messages(&options)
@@ -573,12 +677,25 @@ async fn main() -> anyhow::Result<()> {
             print_message_table(&messages);
         }
 
-        Commands::SearchMessages { q, from, to, limit } => {
+        Commands::SearchMessages {
+            q,
+            from,
+            to,
+            is_read,
+            jacs_verified,
+            folder,
+            label,
+            limit,
+        } => {
             let client = load_client()?;
             let options = SearchOptions {
                 q,
                 from_address: from,
                 to_address: to,
+                is_read,
+                jacs_verified,
+                folder,
+                label,
                 limit: Some(limit),
                 ..Default::default()
             };
@@ -587,6 +704,91 @@ async fn main() -> anyhow::Result<()> {
                 .await
                 .context("search messages failed")?;
             print_message_table(&messages);
+        }
+
+        Commands::ReplyEmail {
+            message_id,
+            body,
+            subject_override,
+        } => {
+            let client = load_client()?;
+            let result = client
+                .reply(&message_id, &body, subject_override.as_deref())
+                .await
+                .context("reply failed")?;
+            println!("  Message ID: {}", result.message_id);
+            println!("  Status:     {}", result.status);
+        }
+
+        Commands::ForwardEmail {
+            message_id,
+            to,
+            comment,
+        } => {
+            let client = load_client()?;
+            let result = client
+                .forward(&message_id, &to, comment.as_deref())
+                .await
+                .context("forward failed")?;
+            println!("  Message ID: {}", result.message_id);
+            println!("  Status:     {}", result.status);
+        }
+
+        Commands::ArchiveMessage { message_id } => {
+            let client = load_client()?;
+            client
+                .archive(&message_id)
+                .await
+                .context("archive failed")?;
+            println!("  Archived: {}", message_id);
+        }
+
+        Commands::UnarchiveMessage { message_id } => {
+            let client = load_client()?;
+            client
+                .unarchive(&message_id)
+                .await
+                .context("unarchive failed")?;
+            println!("  Unarchived: {}", message_id);
+        }
+
+        Commands::ListContacts => {
+            let client = load_client()?;
+            let contacts = client
+                .contacts()
+                .await
+                .context("list contacts failed")?;
+            if contacts.is_empty() {
+                println!("No contacts.");
+            } else {
+                println!(
+                    "{:<30} {:<25} {:<20} {:<8} {:<10}",
+                    "EMAIL", "DISPLAY NAME", "LAST CONTACT", "JACS", "REPUTATION"
+                );
+                println!("{}", "-".repeat(93));
+                for c in &contacts {
+                    println!(
+                        "{:<30} {:<25} {:<20} {:<8} {:<10}",
+                        c.email,
+                        c.display_name.as_deref().unwrap_or("-"),
+                        c.last_contact,
+                        if c.jacs_verified { "yes" } else { "no" },
+                        c.reputation_tier.as_deref().unwrap_or("-"),
+                    );
+                }
+            }
+        }
+
+        Commands::EmailStatus => {
+            let client = load_client()?;
+            let status = client
+                .get_email_status()
+                .await
+                .context("email status failed")?;
+            println!("  Email:       {}", status.email);
+            println!("  Status:      {}", status.status);
+            println!("  Tier:        {}", status.tier);
+            println!("  Daily Used:  {}/{}", status.daily_used, status.daily_limit);
         }
 
         Commands::Update { set } => {
@@ -973,10 +1175,57 @@ mod tests {
             "Hi there!",
         ]);
         match cli.command {
-            Commands::SendEmail { to, subject, body } => {
+            Commands::SendEmail {
+                to,
+                subject,
+                body,
+                cc,
+                bcc,
+                labels,
+            } => {
                 assert_eq!(to, "friend@hai.ai");
                 assert_eq!(subject, "Hello");
                 assert_eq!(body, "Hi there!");
+                assert!(cc.is_empty());
+                assert!(bcc.is_empty());
+                assert!(labels.is_empty());
+            }
+            _ => panic!("expected SendEmail command"),
+        }
+    }
+
+    #[test]
+    fn parse_send_email_with_cc_bcc_labels() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "send-email",
+            "--to",
+            "friend@hai.ai",
+            "--subject",
+            "Hello",
+            "--body",
+            "Hi",
+            "--cc",
+            "a@hai.ai",
+            "--cc",
+            "b@hai.ai",
+            "--bcc",
+            "secret@hai.ai",
+            "--labels",
+            "important",
+            "--labels",
+            "urgent",
+        ]);
+        match cli.command {
+            Commands::SendEmail {
+                cc,
+                bcc,
+                labels,
+                ..
+            } => {
+                assert_eq!(cc, vec!["a@hai.ai", "b@hai.ai"]);
+                assert_eq!(bcc, vec!["secret@hai.ai"]);
+                assert_eq!(labels, vec!["important", "urgent"]);
             }
             _ => panic!("expected SendEmail command"),
         }
@@ -999,10 +1248,16 @@ mod tests {
                 limit,
                 offset,
                 direction,
+                is_read,
+                folder,
+                label,
             } => {
                 assert_eq!(limit, 20);
                 assert_eq!(offset, 0);
                 assert!(direction.is_none());
+                assert!(is_read.is_none());
+                assert!(folder.is_none());
+                assert!(label.is_none());
             }
             _ => panic!("expected ListMessages command"),
         }
@@ -1025,6 +1280,7 @@ mod tests {
                 limit,
                 offset,
                 direction,
+                ..
             } => {
                 assert_eq!(limit, 50);
                 assert_eq!(offset, 10);
@@ -1035,13 +1291,53 @@ mod tests {
     }
 
     #[test]
+    fn parse_list_messages_with_filters() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "list-messages",
+            "--is-read",
+            "false",
+            "--folder",
+            "archive",
+            "--label",
+            "important",
+        ]);
+        match cli.command {
+            Commands::ListMessages {
+                is_read,
+                folder,
+                label,
+                ..
+            } => {
+                assert_eq!(is_read, Some(false));
+                assert_eq!(folder.as_deref(), Some("archive"));
+                assert_eq!(label.as_deref(), Some("important"));
+            }
+            _ => panic!("expected ListMessages command"),
+        }
+    }
+
+    #[test]
     fn parse_search_messages_defaults() {
         let cli = Cli::parse_from(["haiai", "search-messages"]);
         match cli.command {
-            Commands::SearchMessages { q, from, to, limit } => {
+            Commands::SearchMessages {
+                q,
+                from,
+                to,
+                is_read,
+                jacs_verified,
+                folder,
+                label,
+                limit,
+            } => {
                 assert!(q.is_none());
                 assert!(from.is_none());
                 assert!(to.is_none());
+                assert!(is_read.is_none());
+                assert!(jacs_verified.is_none());
+                assert!(folder.is_none());
+                assert!(label.is_none());
                 assert_eq!(limit, 20);
             }
             _ => panic!("expected SearchMessages command"),
@@ -1063,7 +1359,7 @@ mod tests {
             "5",
         ]);
         match cli.command {
-            Commands::SearchMessages { q, from, to, limit } => {
+            Commands::SearchMessages { q, from, to, limit, .. } => {
                 assert_eq!(q.as_deref(), Some("invoice"));
                 assert_eq!(from.as_deref(), Some("sender@hai.ai"));
                 assert_eq!(to.as_deref(), Some("me@hai.ai"));
@@ -1071,6 +1367,182 @@ mod tests {
             }
             _ => panic!("expected SearchMessages command"),
         }
+    }
+
+    #[test]
+    fn parse_search_messages_with_filters() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "search-messages",
+            "--is-read",
+            "true",
+            "--jacs-verified",
+            "true",
+            "--folder",
+            "inbox",
+            "--label",
+            "billing",
+        ]);
+        match cli.command {
+            Commands::SearchMessages {
+                is_read,
+                jacs_verified,
+                folder,
+                label,
+                ..
+            } => {
+                assert_eq!(is_read, Some(true));
+                assert_eq!(jacs_verified, Some(true));
+                assert_eq!(folder.as_deref(), Some("inbox"));
+                assert_eq!(label.as_deref(), Some("billing"));
+            }
+            _ => panic!("expected SearchMessages command"),
+        }
+    }
+
+    #[test]
+    fn parse_reply_email() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "reply-email",
+            "--message-id",
+            "abc-123",
+            "--body",
+            "Thanks!",
+        ]);
+        match cli.command {
+            Commands::ReplyEmail {
+                message_id,
+                body,
+                subject_override,
+            } => {
+                assert_eq!(message_id, "abc-123");
+                assert_eq!(body, "Thanks!");
+                assert!(subject_override.is_none());
+            }
+            _ => panic!("expected ReplyEmail command"),
+        }
+    }
+
+    #[test]
+    fn parse_reply_email_with_subject_override() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "reply-email",
+            "--message-id",
+            "abc-123",
+            "--body",
+            "Thanks!",
+            "--subject-override",
+            "Custom Subject",
+        ]);
+        match cli.command {
+            Commands::ReplyEmail {
+                subject_override, ..
+            } => {
+                assert_eq!(subject_override.as_deref(), Some("Custom Subject"));
+            }
+            _ => panic!("expected ReplyEmail command"),
+        }
+    }
+
+    #[test]
+    fn parse_reply_email_missing_args_fails() {
+        let result = Cli::try_parse_from(["haiai", "reply-email", "--message-id", "abc"]);
+        assert!(result.is_err(), "reply-email without --body should fail");
+    }
+
+    #[test]
+    fn parse_forward_email() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "forward-email",
+            "--message-id",
+            "abc-123",
+            "--to",
+            "other@hai.ai",
+        ]);
+        match cli.command {
+            Commands::ForwardEmail {
+                message_id,
+                to,
+                comment,
+            } => {
+                assert_eq!(message_id, "abc-123");
+                assert_eq!(to, "other@hai.ai");
+                assert!(comment.is_none());
+            }
+            _ => panic!("expected ForwardEmail command"),
+        }
+    }
+
+    #[test]
+    fn parse_forward_email_with_comment() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "forward-email",
+            "--message-id",
+            "abc-123",
+            "--to",
+            "other@hai.ai",
+            "--comment",
+            "FYI",
+        ]);
+        match cli.command {
+            Commands::ForwardEmail { comment, .. } => {
+                assert_eq!(comment.as_deref(), Some("FYI"));
+            }
+            _ => panic!("expected ForwardEmail command"),
+        }
+    }
+
+    #[test]
+    fn parse_forward_email_missing_args_fails() {
+        let result = Cli::try_parse_from(["haiai", "forward-email", "--message-id", "abc"]);
+        assert!(result.is_err(), "forward-email without --to should fail");
+    }
+
+    #[test]
+    fn parse_archive_message() {
+        let cli = Cli::parse_from(["haiai", "archive-message", "msg-123"]);
+        match cli.command {
+            Commands::ArchiveMessage { message_id } => {
+                assert_eq!(message_id, "msg-123");
+            }
+            _ => panic!("expected ArchiveMessage command"),
+        }
+    }
+
+    #[test]
+    fn parse_archive_message_missing_arg_fails() {
+        let result = Cli::try_parse_from(["haiai", "archive-message"]);
+        assert!(
+            result.is_err(),
+            "archive-message without message_id should fail"
+        );
+    }
+
+    #[test]
+    fn parse_unarchive_message() {
+        let cli = Cli::parse_from(["haiai", "unarchive-message", "msg-123"]);
+        match cli.command {
+            Commands::UnarchiveMessage { message_id } => {
+                assert_eq!(message_id, "msg-123");
+            }
+            _ => panic!("expected UnarchiveMessage command"),
+        }
+    }
+
+    #[test]
+    fn parse_list_contacts() {
+        let cli = Cli::parse_from(["haiai", "list-contacts"]);
+        assert!(matches!(cli.command, Commands::ListContacts));
+    }
+
+    #[test]
+    fn parse_email_status() {
+        let cli = Cli::parse_from(["haiai", "email-status"]);
+        assert!(matches!(cli.command, Commands::EmailStatus));
     }
 
     #[test]

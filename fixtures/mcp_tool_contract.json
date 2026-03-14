@@ -66,6 +66,9 @@
         "to": "string",
         "subject": "string",
         "body": "string",
+        "cc": "array",
+        "bcc": "array",
+        "labels": "array",
         "in_reply_to": "string",
         "config_path": "string",
         "hai_url": "string"
@@ -82,6 +85,9 @@
         "limit": "number",
         "offset": "number",
         "direction": "string",
+        "is_read": "boolean",
+        "folder": "string",
+        "label": "string",
         "config_path": "string",
         "hai_url": "string"
       },
@@ -140,6 +146,10 @@
         "to_address": "string",
         "since": "string",
         "until": "string",
+        "is_read": "boolean",
+        "jacs_verified": "boolean",
+        "folder": "string",
+        "label": "string",
         "limit": "number",
         "offset": "number",
         "config_path": "string",
@@ -176,6 +186,50 @@
         "message_id",
         "body"
       ]
+    },
+    {
+      "name": "hai_forward_email",
+      "properties": {
+        "message_id": "string",
+        "to": "string",
+        "comment": "string",
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": [
+        "message_id",
+        "to"
+      ]
+    },
+    {
+      "name": "hai_archive_message",
+      "properties": {
+        "message_id": "string",
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": [
+        "message_id"
+      ]
+    },
+    {
+      "name": "hai_unarchive_message",
+      "properties": {
+        "message_id": "string",
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": [
+        "message_id"
+      ]
+    },
+    {
+      "name": "hai_list_contacts",
+      "properties": {
+        "config_path": "string",
+        "hai_url": "string"
+      },
+      "required": []
     }
   ]
 }
