@@ -174,13 +174,7 @@ async fn email_integration_lifecycle() {
     let search_results = client
         .search_messages(&SearchOptions {
             q: Some(subject.clone()),
-            direction: None,
-            from_address: None,
-            to_address: None,
-            since: None,
-            until: None,
-            limit: None,
-            offset: None,
+            ..Default::default()
         })
         .await
         .expect("search_messages");

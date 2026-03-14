@@ -447,6 +447,18 @@ pub struct SearchOptions {
     pub since: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub until: Option<String>,
+    /// Filter by read status
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_read: Option<bool>,
+    /// Filter by JACS verification status
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jacs_verified: Option<bool>,
+    /// Filter by folder (inbox, sent, archive, trash)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    /// Filter by label
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -523,6 +535,21 @@ pub struct EmailReputationInfo {
     pub email_score: f64,
     #[serde(default)]
     pub hai_score: Option<f64>,
+}
+
+/// A contact (correspondent) from the email contacts endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Contact {
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub last_contact: String,
+    #[serde(default)]
+    pub jacs_verified: bool,
+    #[serde(default)]
+    pub reputation_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -16,7 +16,7 @@ use crate::error::{HaiError, Result};
 use crate::jacs::JacsProvider;
 use crate::types::{
     AgentKeyHistory, AgentVerificationResult, CheckUsernameResult, ClaimUsernameResult,
-    DeleteUsernameResult, DnsCertifiedResult, DnsCertifiedRunOptions, ProRunResult, ProRunOptions, DocumentVerificationResult,
+    Contact, DeleteUsernameResult, DnsCertifiedResult, DnsCertifiedRunOptions, ProRunResult, ProRunOptions, DocumentVerificationResult,
     EmailMessage, EmailStatus, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult,
     ListMessagesOptions, PublicKeyInfo, RegisterAgentOptions, RegistrationResult,
     RotateKeysOptions, RotationResult, SearchOptions, SendEmailOptions, SendEmailResult,
@@ -804,6 +804,18 @@ impl<P: JacsProvider> HaiClient<P> {
         if let Some(offset) = options.offset {
             request = request.query(&[("offset", &offset.to_string())]);
         }
+        if let Some(is_read) = options.is_read {
+            request = request.query(&[("is_read", &is_read.to_string())]);
+        }
+        if let Some(ref jacs_verified) = options.jacs_verified {
+            request = request.query(&[("jacs_verified", &jacs_verified.to_string())]);
+        }
+        if let Some(ref folder) = options.folder {
+            request = request.query(&[("folder", folder.as_str())]);
+        }
+        if let Some(ref label) = options.label {
+            request = request.query(&[("label", label.as_str())]);
+        }
 
         let response = request.send().await?;
         let data = response_json(response).await?;
@@ -835,36 +847,125 @@ impl<P: JacsProvider> HaiClient<P> {
         Ok(count)
     }
 
+    /// Reply to a message.
+    ///
+    /// - `reply_type`: "sender" (default), "all", or "custom"
+    /// - `recipients`: required when reply_type is "custom"
     pub async fn reply(
         &self,
         message_id: &str,
         body: &str,
         subject_override: Option<&str>,
     ) -> Result<SendEmailResult> {
-        let original = self.get_message(message_id).await?;
+        self.reply_with_options(message_id, body, subject_override, None, &[]).await
+    }
 
-        let subject = match subject_override {
-            Some(s) => s.to_string(),
-            None => {
-                if original.subject.starts_with("Re: ") {
-                    original.subject.clone()
-                } else {
-                    format!("Re: {}", original.subject)
-                }
-            }
-        };
+    /// Reply with reply_type and optional recipients.
+    ///
+    /// - `reply_type`: "sender" (default), "all", or "custom"
+    /// - `recipients`: required when reply_type is "custom"
+    pub async fn reply_with_options(
+        &self,
+        message_id: &str,
+        body: &str,
+        subject_override: Option<&str>,
+        reply_type: Option<&str>,
+        recipients: &[String],
+    ) -> Result<SendEmailResult> {
+        let _ = self.agent_email.as_deref().ok_or_else(|| {
+            HaiError::Message("agent email not set — call claim_username first".into())
+        })?;
+        let agent_id = self.hai_agent_id();
+        let safe_agent_id = encode_path_segment(&agent_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_agent_id}/email/reply"
+        ));
 
-        let options = SendEmailOptions {
-            to: original.from_address,
-            subject,
-            body: body.to_string(),
-            cc: Vec::new(),
-            bcc: Vec::new(),
-            in_reply_to: original.message_id.clone().or(Some(original.id)),
-            attachments: Vec::new(),
-        };
+        let mut payload = serde_json::json!({
+            "message_id": message_id,
+            "body": body,
+        });
 
-        self.send_email(&options).await
+        if let Some(rt) = reply_type {
+            payload["reply_type"] = serde_json::Value::String(rt.to_string());
+        }
+        if !recipients.is_empty() {
+            payload["recipients_override"] = serde_json::json!(recipients);
+        }
+        if let Some(s) = subject_override {
+            payload["subject_override"] = serde_json::Value::String(s.to_string());
+        }
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .json(&payload)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        Ok(serde_json::from_value(data)?)
+    }
+
+    /// Forward a message to another agent with an optional comment.
+    pub async fn forward(
+        &self,
+        message_id: &str,
+        to: &str,
+        comment: Option<&str>,
+    ) -> Result<SendEmailResult> {
+        let _ = self.agent_email.as_deref().ok_or_else(|| {
+            HaiError::Message("agent email not set — call claim_username first".into())
+        })?;
+        let agent_id = self.hai_agent_id();
+        let safe_agent_id = encode_path_segment(&agent_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_agent_id}/email/forward"
+        ));
+
+        let mut payload = serde_json::json!({
+            "message_id": message_id,
+            "to": to,
+        });
+
+        if let Some(c) = comment {
+            payload["comment"] = serde_json::Value::String(c.to_string());
+        }
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .json(&payload)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        Ok(serde_json::from_value(data)?)
+    }
+
+    /// Convenience alias for contacts endpoint.
+    pub async fn contacts(&self) -> Result<Vec<Contact>> {
+        let _ = self.agent_email.as_deref().ok_or_else(|| {
+            HaiError::Message("agent email not set — call claim_username first".into())
+        })?;
+        let agent_id = self.hai_agent_id();
+        let safe_agent_id = encode_path_segment(&agent_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_agent_id}/email/contacts"
+        ));
+
+        let response = self
+            .http
+            .get(url)
+            .header("Authorization", self.build_auth_header()?)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        let contacts_val = data.get("contacts").cloned().unwrap_or(data.clone());
+        Ok(serde_json::from_value(contacts_val)?)
     }
 
     pub async fn fetch_remote_key(&self, jacs_id: &str, version: &str) -> Result<PublicKeyInfo> {
