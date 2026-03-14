@@ -634,7 +634,15 @@ async fn main() -> anyhow::Result<()> {
             bcc,
             labels,
         } => {
-            let client = load_client()?;
+            let mut client = load_client()?;
+            // Resolve agent email from server if not already set
+            if client.agent_email().is_none() {
+                if let Ok(status) = client.get_email_status().await {
+                    if !status.email.is_empty() {
+                        client.set_agent_email(status.email);
+                    }
+                }
+            }
             let options = SendEmailOptions {
                 to,
                 subject,
