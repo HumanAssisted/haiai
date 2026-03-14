@@ -630,6 +630,9 @@ impl<P: JacsProvider> HaiClient<P> {
         if let Some(label) = options.label.as_deref() {
             request = request.query(&[("label", label)]);
         }
+        if let Some(has_attachments) = options.has_attachments {
+            request = request.query(&[("has_attachments", &has_attachments.to_string())]);
+        }
 
         let response = request.send().await?;
         let data = response_json(response).await?;
@@ -861,6 +864,9 @@ impl<P: JacsProvider> HaiClient<P> {
         }
         if let Some(ref label) = options.label {
             request = request.query(&[("label", label.as_str())]);
+        }
+        if let Some(has_attachments) = options.has_attachments {
+            request = request.query(&[("has_attachments", &has_attachments.to_string())]);
         }
 
         let response = request.send().await?;

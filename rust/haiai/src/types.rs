@@ -395,6 +395,9 @@ pub struct ListMessagesOptions {
     /// Filter by label
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Filter by attachment presence
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_attachments: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -468,6 +471,9 @@ pub struct SearchOptions {
     /// Filter by label
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// Filter by attachment presence
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_attachments: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]

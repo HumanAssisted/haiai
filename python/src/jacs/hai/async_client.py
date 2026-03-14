@@ -970,27 +970,7 @@ class AsyncHaiClient:
                 raise HaiApiError(f"Email list failed: HTTP {resp.status_code}", status_code=resp.status_code, body=resp.text)
             data = resp.json()
             messages = data if isinstance(data, list) else data.get("messages", [])
-            return [
-                EmailMessage(
-                    id=m.get("id", ""),
-                    from_address=m.get("from_address", m.get("from", "")),
-                    to_address=m.get("to_address", m.get("to", "")),
-                    subject=m.get("subject", ""),
-                    body_text=m.get("body_text", ""),
-                    created_at=m.get("created_at", ""),
-                    direction=m.get("direction", ""),
-                    message_id=m.get("message_id", ""),
-                    in_reply_to=m.get("in_reply_to"),
-                    is_read=m.get("is_read", False),
-                    delivery_status=m.get("delivery_status", ""),
-                    read_at=m.get("read_at"),
-                    jacs_verified=m.get("jacs_verified"),
-                    cc_addresses=m.get("cc_addresses", []),
-                    labels=m.get("labels", []),
-                    folder=m.get("folder", "inbox"),
-                )
-                for m in messages
-            ]
+            return [EmailMessage.from_dict(m) for m in messages]
         except HaiError:
             raise
         except Exception as exc:
@@ -1121,24 +1101,7 @@ class AsyncHaiClient:
             if resp.status_code not in (200, 201):
                 raise HaiApiError(f"Email get_message failed: HTTP {resp.status_code}", status_code=resp.status_code, body=resp.text)
             m = resp.json()
-            return EmailMessage(
-                id=m.get("id", ""),
-                from_address=m.get("from_address", m.get("from", "")),
-                to_address=m.get("to_address", m.get("to", "")),
-                subject=m.get("subject", ""),
-                body_text=m.get("body_text", ""),
-                created_at=m.get("created_at", ""),
-                direction=m.get("direction", ""),
-                message_id=m.get("message_id", ""),
-                in_reply_to=m.get("in_reply_to"),
-                is_read=m.get("is_read", False),
-                delivery_status=m.get("delivery_status", ""),
-                read_at=m.get("read_at"),
-                jacs_verified=m.get("jacs_verified"),
-                cc_addresses=m.get("cc_addresses", []),
-                labels=m.get("labels", []),
-                folder=m.get("folder", "inbox"),
-            )
+            return EmailMessage.from_dict(m)
         except HaiError:
             raise
         except Exception as exc:
@@ -1247,27 +1210,7 @@ class AsyncHaiClient:
                 raise HaiApiError(f"Email search failed: HTTP {resp.status_code}", status_code=resp.status_code, body=resp.text)
             data = resp.json()
             messages = data if isinstance(data, list) else data.get("messages", [])
-            return [
-                EmailMessage(
-                    id=m.get("id", ""),
-                    from_address=m.get("from_address", m.get("from", "")),
-                    to_address=m.get("to_address", m.get("to", "")),
-                    subject=m.get("subject", ""),
-                    body_text=m.get("body_text", ""),
-                    created_at=m.get("created_at", ""),
-                    direction=m.get("direction", ""),
-                    message_id=m.get("message_id", ""),
-                    in_reply_to=m.get("in_reply_to"),
-                    is_read=m.get("is_read", False),
-                    delivery_status=m.get("delivery_status", ""),
-                    read_at=m.get("read_at"),
-                    jacs_verified=m.get("jacs_verified"),
-                    cc_addresses=m.get("cc_addresses", []),
-                    labels=m.get("labels", []),
-                    folder=m.get("folder", "inbox"),
-                )
-                for m in messages
-            ]
+            return [EmailMessage.from_dict(m) for m in messages]
         except HaiError:
             raise
         except Exception as exc:

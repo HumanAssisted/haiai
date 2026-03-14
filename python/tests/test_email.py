@@ -21,7 +21,15 @@ from jacs.hai.errors import (
     RecipientNotFound,
     SubjectTooLong,
 )
-from jacs.hai.models import Contact, EmailMessage, SendEmailResult
+from jacs.hai.models import (
+    Contact,
+    EmailDeliveryInfo,
+    EmailMessage,
+    EmailReputationInfo,
+    EmailStatus,
+    EmailVolumeInfo,
+    SendEmailResult,
+)
 
 
 BASE_URL = "https://test.hai.ai"
@@ -1585,7 +1593,7 @@ class TestEmailMessageReplyTextFields:
         import httpx
         monkeypatch.setattr(httpx, "get", fake_get)
 
-        result = HaiClient().search_messages(BASE_URL, query="Hi")
+        result = HaiClient().search_messages(BASE_URL, q="Hi")
         assert len(result) == 1
         assert result[0].body_text_clean == "New"
         assert result[0].quoted_text == "Old"
@@ -1612,5 +1620,154 @@ class TestContactModel:
         assert c.display_name == "Test Agent"
         assert c.jacs_verified is True
         assert c.reputation_tier == "excellent"
+
+
+class TestEmailStatusNestedFields:
+    """Tests for EmailStatus volume, delivery, and reputation nested fields."""
+
+    def test_email_status_with_nested_fields(self) -> None:
+        status = EmailStatus(
+            email="bot@hai.ai",
+            status="active",
+            tier="established",
+            billing_tier="pro",
+            messages_sent_24h=10,
+            daily_limit=100,
+            daily_used=10,
+            resets_at="2026-03-15T00:00:00Z",
+            messages_sent_total=500,
+            external_enabled=True,
+            external_sends_today=3,
+            last_tier_change="2026-01-01T00:00:00Z",
+            volume=EmailVolumeInfo(sent_total=500, received_total=300, sent_24h=10),
+            delivery=EmailDeliveryInfo(bounce_count=2, spam_report_count=1, delivery_rate=0.98),
+            reputation=EmailReputationInfo(score=85.5, tier="established", email_score=90.0, hai_score=80.0),
+        )
+        assert status.volume is not None
+        assert status.volume.sent_total == 500
+        assert status.volume.received_total == 300
+        assert status.volume.sent_24h == 10
+
+        assert status.delivery is not None
+        assert status.delivery.bounce_count == 2
+        assert status.delivery.spam_report_count == 1
+        assert status.delivery.delivery_rate == 0.98
+
+        assert status.reputation is not None
+        assert status.reputation.score == 85.5
+        assert status.reputation.tier == "established"
+        assert status.reputation.email_score == 90.0
+        assert status.reputation.hai_score == 80.0
+
+    def test_email_status_nested_fields_default_to_none(self) -> None:
+        status = EmailStatus(
+            email="bot@hai.ai",
+            status="active",
+            tier="new",
+            billing_tier="free",
+            messages_sent_24h=0,
+            daily_limit=10,
+            daily_used=0,
+            resets_at="2026-03-15T00:00:00Z",
+        )
+        assert status.volume is None
+        assert status.delivery is None
+        assert status.reputation is None
+
+    def test_email_status_nested_fields_from_dict(self) -> None:
+        """Test parsing nested fields from a JSON-like dict (simulates API response)."""
+        from jacs.hai.client import HaiClient
+
+        data = {
+            "email": "bot@hai.ai",
+            "status": "active",
+            "tier": "established",
+            "billing_tier": "pro",
+            "messages_sent_24h": 10,
+            "daily_limit": 100,
+            "daily_used": 10,
+            "resets_at": "2026-03-15T00:00:00Z",
+            "messages_sent_total": 500,
+            "external_enabled": True,
+            "external_sends_today": 3,
+            "last_tier_change": "2026-01-01T00:00:00Z",
+            "volume": {
+                "sent_total": 500,
+                "received_total": 300,
+                "sent_24h": 10,
+            },
+            "delivery": {
+                "bounce_count": 2,
+                "spam_report_count": 1,
+                "delivery_rate": 0.98,
+            },
+            "reputation": {
+                "score": 85.5,
+                "tier": "established",
+                "email_score": 90.0,
+                "hai_score": 80.0,
+            },
+        }
+
+        status = HaiClient._parse_email_status(data)
+
+        assert status.volume is not None
+        assert status.volume.sent_total == 500
+        assert status.volume.received_total == 300
+
+        assert status.delivery is not None
+        assert status.delivery.bounce_count == 2
+        assert status.delivery.delivery_rate == 0.98
+
+        assert status.reputation is not None
+        assert status.reputation.score == 85.5
+        assert status.reputation.hai_score == 80.0
+
+    def test_email_status_parse_without_nested_fields(self) -> None:
+        """Test that parsing works when nested fields are absent."""
+        from jacs.hai.client import HaiClient
+
+        data = {
+            "email": "bot@hai.ai",
+            "status": "active",
+            "tier": "new",
+            "billing_tier": "free",
+            "messages_sent_24h": 0,
+            "daily_limit": 10,
+            "daily_used": 0,
+            "resets_at": "2026-03-15T00:00:00Z",
+        }
+
+        status = HaiClient._parse_email_status(data)
+
+        assert status.volume is None
+        assert status.delivery is None
+        assert status.reputation is None
+
+    def test_reputation_hai_score_null(self) -> None:
+        """Test that hai_score=null maps to None."""
+        from jacs.hai.client import HaiClient
+
+        data = {
+            "email": "bot@hai.ai",
+            "status": "active",
+            "tier": "new",
+            "billing_tier": "free",
+            "messages_sent_24h": 0,
+            "daily_limit": 10,
+            "daily_used": 0,
+            "resets_at": "2026-03-15T00:00:00Z",
+            "reputation": {
+                "score": 50.0,
+                "tier": "new",
+                "email_score": 50.0,
+                "hai_score": None,
+            },
+        }
+
+        status = HaiClient._parse_email_status(data)
+
+        assert status.reputation is not None
+        assert status.reputation.hai_score is None
 
 

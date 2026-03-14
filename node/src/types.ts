@@ -501,6 +501,38 @@ export interface ForwardOptions {
   comment?: string;
 }
 
+/** Volume statistics from the email status response. */
+export interface EmailVolumeInfo {
+  /** Total messages sent all time. */
+  sentTotal: number;
+  /** Total messages received all time. */
+  receivedTotal: number;
+  /** Messages sent in the last 24 hours. */
+  sent24h: number;
+}
+
+/** Delivery metrics from the email status response. */
+export interface EmailDeliveryInfo {
+  /** Number of bounced messages. */
+  bounceCount: number;
+  /** Number of spam reports received. */
+  spamReportCount: number;
+  /** Delivery success rate (0.0 to 1.0). */
+  deliveryRate: number;
+}
+
+/** Reputation scoring from the email status response. */
+export interface EmailReputationInfo {
+  /** Overall reputation score. */
+  score: number;
+  /** Reputation tier string. */
+  tier: string;
+  /** Email-specific reputation score. */
+  emailScore: number;
+  /** HAI platform reputation score, or null if not yet computed. */
+  haiScore: number | null;
+}
+
 /** Email rate limit and status info. */
 export interface EmailStatus {
   /** The agent's email address. */
@@ -527,6 +559,12 @@ export interface EmailStatus {
   externalSendsToday: number;
   /** ISO 8601 timestamp of last tier change, or null. */
   lastTierChange: string | null;
+  /** Volume statistics (from consolidated status). */
+  volume?: EmailVolumeInfo | null;
+  /** Delivery metrics (from consolidated status). */
+  delivery?: EmailDeliveryInfo | null;
+  /** Reputation scoring (from consolidated status). */
+  reputation?: EmailReputationInfo | null;
 }
 
 /** Response from the public key registry endpoint. */

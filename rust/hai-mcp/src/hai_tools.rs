@@ -243,6 +243,7 @@ fn definition_values() -> Vec<Value> {
                     "is_read": { "type": "boolean", "description": "Filter by read status" },
                     "folder": { "type": "string", "description": "Filter by folder (e.g. 'inbox', 'archive')" },
                     "label": { "type": "string", "description": "Filter by label/tag" },
+                    "has_attachments": { "type": "boolean", "description": "Filter by attachment presence" },
                     "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
                     "config_path": { "type": "string" },
                     "hai_url": { "type": "string" }
@@ -321,6 +322,7 @@ fn definition_values() -> Vec<Value> {
                     "jacs_verified": { "type": "boolean", "description": "Filter by JACS verification status" },
                     "folder": { "type": "string", "description": "Filter by folder (e.g. 'inbox', 'archive')" },
                     "label": { "type": "string", "description": "Filter by label/tag" },
+                    "has_attachments": { "type": "boolean", "description": "Filter by attachment presence" },
                     "limit": { "type": "integer", "description": "Max results (default 20)" },
                     "offset": { "type": "integer", "description": "Pagination offset" },
                     "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
@@ -710,6 +712,7 @@ async fn call_list_messages(context: &HaiServerContext, args: &Value) -> ToolRes
             is_read: optional_bool(args, "is_read"),
             folder: optional_string(args, "folder").map(ToString::to_string),
             label: optional_string(args, "label").map(ToString::to_string),
+            has_attachments: optional_bool(args, "has_attachments"),
         })
         .await
         .map_err(tool_message)?;
@@ -785,6 +788,7 @@ async fn call_search_messages(context: &HaiServerContext, args: &Value) -> ToolR
             jacs_verified: optional_bool(args, "jacs_verified"),
             folder: optional_string(args, "folder").map(ToString::to_string),
             label: optional_string(args, "label").map(ToString::to_string),
+            has_attachments: optional_bool(args, "has_attachments"),
             limit: optional_u32(args, "limit"),
             offset: optional_u32(args, "offset"),
         })

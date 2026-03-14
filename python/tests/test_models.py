@@ -7,6 +7,7 @@ from jacs.hai.models import (
     AgentVerificationResult,
     BaselineRunResult,
     BenchmarkResult,
+    EmailMessage,
     FreeChaoticResult,
     HaiEvent,
     HaiRegistrationPreview,
@@ -146,3 +147,64 @@ class TestAgentVerificationResult:
             hai_signatures=["ed25519"],
         )
         assert v.hai_signatures == ["ed25519"]
+
+
+class TestEmailMessageFromDict:
+    """Verify EmailMessage.from_dict() parses all fields including new ones."""
+
+    def test_from_dict_minimal(self) -> None:
+        """Minimal dict produces valid EmailMessage with None for optional fields."""
+        m = EmailMessage.from_dict({
+            "id": "m1", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
+            "subject": "Hi", "body_text": "Body", "created_at": "2026-01-01T00:00:00Z",
+        })
+        assert m.id == "m1"
+        assert m.body_text_clean is None
+        assert m.quoted_text is None
+        assert m.thread is None
+        assert m.cc_addresses == []
+        assert m.labels == []
+        assert m.folder == "inbox"
+
+    def test_from_dict_with_reply_text(self) -> None:
+        """from_dict parses body_text_clean and quoted_text."""
+        m = EmailMessage.from_dict({
+            "id": "m1", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
+            "subject": "Re: Hi", "body_text": "New\n\n> Old",
+            "created_at": "2026-01-01T00:00:00Z",
+            "body_text_clean": "New",
+            "quoted_text": "Old",
+        })
+        assert m.body_text_clean == "New"
+        assert m.quoted_text == "Old"
+
+    def test_from_dict_with_recursive_thread(self) -> None:
+        """from_dict recursively parses thread entries as EmailMessage."""
+        m = EmailMessage.from_dict({
+            "id": "m2", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
+            "subject": "Re: Hi", "body_text": "Reply",
+            "created_at": "2026-01-01T01:00:00Z",
+            "body_text_clean": "Reply",
+            "thread": [
+                {
+                    "id": "m1", "from_address": "b@hai.ai", "to_address": "a@hai.ai",
+                    "subject": "Hi", "body_text": "Original",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "body_text_clean": "Original",
+                },
+            ],
+        })
+        assert m.thread is not None
+        assert len(m.thread) == 1
+        assert isinstance(m.thread[0], EmailMessage)
+        assert m.thread[0].id == "m1"
+        assert m.thread[0].body_text_clean == "Original"
+        assert m.thread[0].thread is None
+
+    def test_from_dict_from_fallback(self) -> None:
+        """from_dict falls back to 'from' key when 'from_address' is missing."""
+        m = EmailMessage.from_dict({
+            "id": "m1", "from": "sender@hai.ai", "to": "rcpt@hai.ai",
+            "subject": "X", "body_text": "Y", "created_at": "2026-01-01T00:00:00Z",
+        })
+        assert m.from_address == "sender@hai.ai"

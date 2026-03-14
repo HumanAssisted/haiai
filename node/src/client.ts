@@ -1987,6 +1987,10 @@ export class HaiClient {
     });
 
     const data = await response.json() as Record<string, unknown>;
+    const volumeRaw = data.volume as Record<string, unknown> | undefined;
+    const deliveryRaw = data.delivery as Record<string, unknown> | undefined;
+    const reputationRaw = data.reputation as Record<string, unknown> | undefined;
+
     return {
       email: (data.email as string) || '',
       status: (data.status as string) || '',
@@ -2000,6 +2004,22 @@ export class HaiClient {
       externalEnabled: (data.external_enabled as boolean) || false,
       externalSendsToday: (data.external_sends_today as number) || 0,
       lastTierChange: (data.last_tier_change as string) || null,
+      volume: volumeRaw ? {
+        sentTotal: (volumeRaw.sent_total as number) || 0,
+        receivedTotal: (volumeRaw.received_total as number) || 0,
+        sent24h: (volumeRaw.sent_24h as number) || 0,
+      } : null,
+      delivery: deliveryRaw ? {
+        bounceCount: (deliveryRaw.bounce_count as number) || 0,
+        spamReportCount: (deliveryRaw.spam_report_count as number) || 0,
+        deliveryRate: (deliveryRaw.delivery_rate as number) || 0,
+      } : null,
+      reputation: reputationRaw ? {
+        score: (reputationRaw.score as number) || 0,
+        tier: (reputationRaw.tier as string) || '',
+        emailScore: (reputationRaw.email_score as number) || 0,
+        haiScore: reputationRaw.hai_score != null ? (reputationRaw.hai_score as number) : null,
+      } : null,
     };
   }
 
