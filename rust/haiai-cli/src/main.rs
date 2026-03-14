@@ -403,6 +403,20 @@ fn load_client() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
     Ok(client)
 }
 
+/// Load client and resolve the agent email address from the server.
+/// Required for commands that need agent_email (send, reply, forward, contacts).
+async fn load_client_with_email() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
+    let mut client = load_client()?;
+    if client.agent_email().is_none() {
+        if let Ok(status) = client.get_email_status().await {
+            if !status.email.is_empty() {
+                client.set_agent_email(status.email);
+            }
+        }
+    }
+    Ok(client)
+}
+
 /// Load a local JACS provider with document storage configured.
 fn load_provider_with_storage(storage_flag: Option<&str>) -> anyhow::Result<LocalJacsProvider> {
     let label = haiai::resolve_storage_backend(storage_flag, None)
@@ -634,15 +648,7 @@ async fn main() -> anyhow::Result<()> {
             bcc,
             labels,
         } => {
-            let mut client = load_client()?;
-            // Resolve agent email from server if not already set
-            if client.agent_email().is_none() {
-                if let Ok(status) = client.get_email_status().await {
-                    if !status.email.is_empty() {
-                        client.set_agent_email(status.email);
-                    }
-                }
-            }
+            let client = load_client_with_email().await?;
             let options = SendEmailOptions {
                 to,
                 subject,
