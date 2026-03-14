@@ -355,6 +355,12 @@ pub struct SendEmailOptions {
     pub to: String,
     pub subject: String,
     pub body: String,
+    /// CC recipients
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cc: Vec<String>,
+    /// BCC recipients (not visible to other recipients)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bcc: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub in_reply_to: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -377,6 +383,12 @@ pub struct ListMessagesOptions {
     pub offset: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub direction: Option<String>,
+    /// Filter by read status: true=read only, false=unread only, None=all
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_read: Option<bool>,
+    /// Filter by folder: "inbox", "sent", "archive", "trash"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -407,6 +419,18 @@ pub struct EmailMessage {
     pub read_at: Option<String>,
     #[serde(default)]
     pub jacs_verified: Option<bool>,
+    /// CC recipients on this message
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cc_addresses: Vec<String>,
+    /// Clean body text with quoted reply text removed (derived at response time)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_text_clean: Option<String>,
+    /// Quoted reply text extracted from the body (derived at response time)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quoted_text: Option<String>,
+    /// Thread context: other messages in the same conversation (populated on get_message)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<Vec<EmailMessage>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -455,6 +479,50 @@ pub struct EmailStatus {
     pub external_sends_today: i32,
     #[serde(default)]
     pub last_tier_change: Option<String>,
+    /// Volume statistics (from consolidated status)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume: Option<EmailVolumeInfo>,
+    /// Delivery metrics (from consolidated status)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<EmailDeliveryInfo>,
+    /// Reputation scoring (from consolidated status)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reputation: Option<EmailReputationInfo>,
+}
+
+/// Volume statistics from the email status response.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EmailVolumeInfo {
+    #[serde(default)]
+    pub sent_total: i64,
+    #[serde(default)]
+    pub received_total: i64,
+    #[serde(default)]
+    pub sent_24h: i64,
+}
+
+/// Delivery metrics from the email status response.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EmailDeliveryInfo {
+    #[serde(default)]
+    pub bounce_count: i32,
+    #[serde(default)]
+    pub spam_report_count: i32,
+    #[serde(default)]
+    pub delivery_rate: f64,
+}
+
+/// Reputation scoring from the email status response.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EmailReputationInfo {
+    #[serde(default)]
+    pub score: f64,
+    #[serde(default)]
+    pub tier: String,
+    #[serde(default)]
+    pub email_score: f64,
+    #[serde(default)]
+    pub hai_score: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -125,6 +125,8 @@ async fn email_integration_lifecycle() {
             to: format!("{}@hai.ai", agent_name),
             subject: subject.clone(),
             body: body.to_string(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
             in_reply_to: None,
             attachments: Vec::new(),
         })
@@ -144,6 +146,8 @@ async fn email_integration_lifecycle() {
             limit: Some(10),
             offset: None,
             direction: None,
+            is_read: None,
+            folder: None,
         })
         .await
         .expect("list_messages");

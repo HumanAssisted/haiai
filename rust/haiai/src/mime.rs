@@ -37,11 +37,21 @@ pub fn build_rfc5322_email(opts: &SendEmailOptions, from_email: &str) -> Result<
     let safe_from = sanitize_header(from_email);
     let safe_subject = sanitize_header(&opts.subject);
 
+    // Build CC header if any CC recipients
+    let cc_header = if !opts.cc.is_empty() {
+        let safe_cc: Vec<String> = opts.cc.iter().map(|a| sanitize_header(a)).collect();
+        format!("Cc: {}\r\n", safe_cc.join(", "))
+    } else {
+        String::new()
+    };
+    // BCC is NOT included in headers per RFC 5322 — envelope only
+
     if opts.attachments.is_empty() {
         // Simple text/plain email (no MIME multipart needed)
         let mut email = String::new();
         email.push_str(&format!("From: <{}>\r\n", safe_from));
         email.push_str(&format!("To: {}\r\n", safe_to));
+        email.push_str(&cc_header);
         email.push_str(&format!("Subject: {}\r\n", safe_subject));
         email.push_str(&format!("Date: {}\r\n", date_str));
         email.push_str(&format!("Message-ID: {}\r\n", message_id));
@@ -65,6 +75,7 @@ pub fn build_rfc5322_email(opts: &SendEmailOptions, from_email: &str) -> Result<
         let mut email = String::new();
         email.push_str(&format!("From: <{}>\r\n", safe_from));
         email.push_str(&format!("To: {}\r\n", safe_to));
+        email.push_str(&cc_header);
         email.push_str(&format!("Subject: {}\r\n", safe_subject));
         email.push_str(&format!("Date: {}\r\n", date_str));
         email.push_str(&format!("Message-ID: {}\r\n", message_id));
@@ -130,6 +141,8 @@ mod tests {
             to: "recipient@hai.ai".to_string(),
             subject: "Test Subject".to_string(),
             body: "Hello, world!".to_string(),
+            cc: vec![],
+            bcc: vec![],
             in_reply_to: None,
             attachments: vec![],
         }
@@ -155,6 +168,8 @@ mod tests {
             to: "recipient@hai.ai".to_string(),
             subject: "With Attachments".to_string(),
             body: "See attached.".to_string(),
+            cc: vec![],
+            bcc: vec![],
             in_reply_to: None,
             attachments: vec![
                 EmailAttachment::new(
@@ -186,6 +201,8 @@ mod tests {
             to: "recipient@hai.ai".to_string(),
             subject: "Re: Original".to_string(),
             body: "Reply body".to_string(),
+            cc: vec![],
+            bcc: vec![],
             in_reply_to: Some("<original-id@hai.ai>".to_string()),
             attachments: vec![],
         };
@@ -203,6 +220,8 @@ mod tests {
             to: "recipient@hai.ai".to_string(),
             subject: "Bad\r\nBcc: attacker@evil.com".to_string(),
             body: "Body".to_string(),
+            cc: vec![],
+            bcc: vec![],
             in_reply_to: None,
             attachments: vec![],
         };
@@ -243,6 +262,8 @@ mod tests {
             to: "recipient@hai.ai".to_string(),
             subject: "Test".to_string(),
             body: "Body".to_string(),
+            cc: vec![],
+            bcc: vec![],
             in_reply_to: None,
             attachments: vec![EmailAttachment::new(
                 "file\"; name=\"evil".to_string(),

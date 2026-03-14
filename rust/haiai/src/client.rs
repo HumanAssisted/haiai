@@ -512,6 +512,12 @@ impl<P: JacsProvider> HaiClient<P> {
             "subject": options.subject,
             "body": options.body,
         });
+        if !options.cc.is_empty() {
+            payload["cc"] = json!(options.cc);
+        }
+        if !options.bcc.is_empty() {
+            payload["bcc"] = json!(options.bcc);
+        }
         if let Some(ref in_reply_to) = options.in_reply_to {
             payload["in_reply_to"] = Value::String(in_reply_to.clone());
         }
@@ -614,6 +620,12 @@ impl<P: JacsProvider> HaiClient<P> {
         }
         if let Some(direction) = options.direction.as_deref() {
             request = request.query(&[("direction", direction)]);
+        }
+        if let Some(is_read) = options.is_read {
+            request = request.query(&[("is_read", &is_read.to_string())]);
+        }
+        if let Some(folder) = options.folder.as_deref() {
+            request = request.query(&[("folder", folder)]);
         }
 
         let response = request.send().await?;
@@ -719,6 +731,46 @@ impl<P: JacsProvider> HaiClient<P> {
         }
     }
 
+    pub async fn archive(&self, message_id: &str) -> Result<()> {
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
+        let safe_message_id = encode_path_segment(message_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/archive"
+        ));
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .send()
+            .await?;
+
+        match response.status() {
+            StatusCode::OK | StatusCode::CREATED | StatusCode::NO_CONTENT => Ok(()),
+            _ => Err(response_error(response).await),
+        }
+    }
+
+    pub async fn unarchive(&self, message_id: &str) -> Result<()> {
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
+        let safe_message_id = encode_path_segment(message_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/unarchive"
+        ));
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .send()
+            .await?;
+
+        match response.status() {
+            StatusCode::OK | StatusCode::CREATED | StatusCode::NO_CONTENT => Ok(()),
+            _ => Err(response_error(response).await),
+        }
+    }
+
     pub async fn search_messages(&self, options: &SearchOptions) -> Result<Vec<EmailMessage>> {
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/search"));
@@ -806,6 +858,8 @@ impl<P: JacsProvider> HaiClient<P> {
             to: original.from_address,
             subject,
             body: body.to_string(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
             in_reply_to: original.message_id.clone().or(Some(original.id)),
             attachments: Vec::new(),
         };

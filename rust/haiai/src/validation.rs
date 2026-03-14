@@ -141,6 +141,12 @@ pub fn validate_filename(filename: &str) -> Result<()> {
 /// Validate all fields of a SendEmailOptions before constructing MIME.
 pub fn validate_send_email(options: &crate::types::SendEmailOptions) -> Result<()> {
     validate_email_address(&options.to)?;
+    for cc_addr in &options.cc {
+        validate_email_address(cc_addr)?;
+    }
+    for bcc_addr in &options.bcc {
+        validate_email_address(bcc_addr)?;
+    }
     validate_no_crlf("subject", &options.subject)?;
     validate_no_crlf("body", &options.body)?;
     if let Some(ref reply_to) = options.in_reply_to {
@@ -237,6 +243,8 @@ mod tests {
             to: "agent@hai.ai".into(),
             subject: "Test".into(),
             body: "Hello".into(),
+            cc: vec![],
+            bcc: vec![],
             in_reply_to: None,
             attachments: vec![],
         };
@@ -249,6 +257,8 @@ mod tests {
             to: "not-an-email".into(),
             subject: "Test".into(),
             body: "Hello".into(),
+            cc: vec![],
+            bcc: vec![],
             in_reply_to: None,
             attachments: vec![],
         };

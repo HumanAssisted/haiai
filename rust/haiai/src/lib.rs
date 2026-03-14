@@ -23,6 +23,8 @@
 //!     to: "other@hai.ai".into(),
 //!     subject: "Hello".into(),
 //!     body: "World".into(),
+//!     cc: vec![],
+//!     bcc: vec![],
 //!     in_reply_to: None,
 //!     attachments: vec![],
 //! }).await?;

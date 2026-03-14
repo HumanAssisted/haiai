@@ -47,6 +47,8 @@ async fn send_email_sends_content_fields() {
             to: "bob@hai.ai".to_string(),
             subject: "Hello".to_string(),
             body: "World".to_string(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
             in_reply_to: None,
             attachments: Vec::new(),
         })
@@ -79,6 +81,8 @@ async fn send_email_signature_uses_correct_hash_format() {
             to: "bob@hai.ai".to_string(),
             subject: "Test Subject".to_string(),
             body: "Test Body".to_string(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
             in_reply_to: None,
             attachments: Vec::new(),
         })
@@ -119,6 +123,8 @@ async fn send_email_includes_in_reply_to_when_set() {
             to: "bob@hai.ai".to_string(),
             subject: "Re: Original".to_string(),
             body: "Reply body".to_string(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
             in_reply_to: Some("orig-msg-id".to_string()),
             attachments: Vec::new(),
         })
