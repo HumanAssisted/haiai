@@ -83,6 +83,10 @@ impl MiniHaiServer {
             "expected request matching {description}, got {requests:?}"
         );
     }
+
+    fn request_count(&self) -> usize {
+        self.requests.lock().expect("lock requests").len()
+    }
 }
 
 impl Drop for MiniHaiServer {
@@ -207,6 +211,16 @@ impl McpSession {
     }
 
     fn call_tool(&mut self, id: i64, name: &str, arguments: Value) -> Value {
+        let result = self.call_tool_allow_error(id, name, arguments);
+        let is_error = result
+            .get("isError")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        assert!(!is_error, "tool '{}' returned MCP error: {}", name, result);
+        result
+    }
+
+    fn call_tool_allow_error(&mut self, id: i64, name: &str, arguments: Value) -> Value {
         self.send(json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -217,17 +231,7 @@ impl McpSession {
             }
         }));
         let response = self.read_message();
-        let result = response["result"].clone();
-        let is_error = result
-            .get("isError")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        assert!(
-            !is_error,
-            "tool '{}' returned MCP error: {}",
-            name, response
-        );
-        result
+        response["result"].clone()
     }
 
     fn send(&mut self, message: Value) {
@@ -447,6 +451,7 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     assert!(tools.contains(&"hai_register_agent".to_string()));
     assert!(tools.contains(&"hai_send_email".to_string()));
     assert!(tools.contains(&"jacs_export_agent".to_string()));
+    assert!(!tools.contains(&"hai_create_agent".to_string()));
 
     let exported = session.call_tool(10, "jacs_export_agent", json!({}));
     let export_text = exported["content"][0]["text"]
@@ -506,6 +511,35 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
         },
         "GET /api/agents/hai-agent-123/email/status with JACS auth",
     );
+}
+
+#[test]
+fn rejects_runtime_hai_url_override_before_network_request() {
+    let workspace = TestWorkspace::new();
+    let jacs_config = workspace.write_embedded_jacs_config();
+    let server = MiniHaiServer::start();
+
+    let mut session = McpSession::spawn(&workspace, server.base_url(), &jacs_config);
+    session.initialize();
+
+    let result = session.call_tool_allow_error(
+        30,
+        "hai_check_username",
+        json!({
+            "username": "demo-agent",
+            "hai_url": "http://127.0.0.1:9"
+        }),
+    );
+
+    assert_eq!(result["isError"].as_bool(), Some(true));
+    assert!(
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("HAI_URL"),
+        "unexpected result: {result}"
+    );
+    assert_eq!(server.request_count(), 0);
 }
 
 #[test]

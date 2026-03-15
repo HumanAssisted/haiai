@@ -181,7 +181,11 @@ func (b *clientEd25519Backend) CanonicalizeJSON(jsonStr string) (string, error) 
 }
 
 func (b *clientEd25519Backend) SignResponse(payloadJSON string) (string, error) {
-	return "", fmt.Errorf("ed25519 fallback: SignResponse requires JACS backend; build with '-tags jacs'")
+	signed, err := signResponseLocally(b.privateKey, b.jacsID, payloadJSON)
+	if err != nil {
+		return "", fmt.Errorf("ed25519 fallback: %w", err)
+	}
+	return signed, nil
 }
 
 func (b *clientEd25519Backend) EncodeVerifyPayload(document string) (string, error) {

@@ -235,10 +235,10 @@ func TestSearchMessagesEncodesQuery(t *testing.T) {
 
 	cl, _ := newTestClient(t, srv.URL)
 	msgs, err := cl.SearchMessages(context.Background(), SearchOptions{
-		Q:          "important",
-		Direction:  "inbound",
+		Q:           "important",
+		Direction:   "inbound",
 		FromAddress: "alice@hai.ai",
-		Limit:      10,
+		Limit:       10,
 	})
 	if err != nil {
 		t.Fatalf("SearchMessages: %v", err)
@@ -834,29 +834,17 @@ func TestVerifyEmailWithErrorField(t *testing.T) {
 // SendSignedEmail tests
 // ---------------------------------------------------------------
 
-func TestSendSignedEmailBuildsMIMEAndPosts(t *testing.T) {
-	callCount := map[string]int{"sign": 0, "send": 0}
-	var sendSignedContentType string
-	var sendSignedPath string
+func TestSendSignedEmailDelegatesToSendEndpoint(t *testing.T) {
+	callCount := 0
+	var sendContentType string
+	var sendPath string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/email/sign") {
-			// SignEmail call: return fake signed bytes
-			callCount["sign"]++
-			w.WriteHeader(200)
-			_, _ = w.Write([]byte("FAKE-SIGNED-EMAIL"))
-			return
-		}
-		if strings.Contains(r.URL.Path, "/email/send-signed") {
-			// send-signed call
-			callCount["send"]++
-			sendSignedPath = r.URL.Path
-			sendSignedContentType = r.Header.Get("Content-Type")
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"message_id":"msg-signed-1","status":"sent"}`))
-			return
-		}
-		t.Fatalf("unexpected path: %s", r.URL.Path)
+		callCount++
+		sendPath = r.URL.Path
+		sendContentType = r.Header.Get("Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message_id":"msg-signed-1","status":"sent"}`))
 	}))
 	defer srv.Close()
 
@@ -876,17 +864,14 @@ func TestSendSignedEmailBuildsMIMEAndPosts(t *testing.T) {
 	if result.Status != "sent" {
 		t.Fatalf("unexpected status: %s", result.Status)
 	}
-	if callCount["sign"] != 1 {
-		t.Fatalf("expected sign called once, got %d", callCount["sign"])
+	if callCount != 1 {
+		t.Fatalf("expected one send call, got %d", callCount)
 	}
-	if callCount["send"] != 1 {
-		t.Fatalf("expected send-signed called once, got %d", callCount["send"])
+	if !strings.Contains(sendPath, "/email/send") {
+		t.Fatalf("expected send path, got: %s", sendPath)
 	}
-	if !strings.Contains(sendSignedPath, "/email/send-signed") {
-		t.Fatalf("expected send-signed path, got: %s", sendSignedPath)
-	}
-	if sendSignedContentType != "message/rfc822" {
-		t.Fatalf("expected Content-Type message/rfc822, got: %s", sendSignedContentType)
+	if sendContentType != "application/json" {
+		t.Fatalf("expected Content-Type application/json, got: %s", sendContentType)
 	}
 }
 

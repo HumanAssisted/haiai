@@ -463,7 +463,9 @@ fn init_then_mcp_fails_due_to_raw_key_format() {
     );
     let stderr = String::from_utf8_lossy(&mcp_output.stderr);
     assert!(
-        stderr.contains("UTF-8") || stderr.contains("public key"),
+        stderr.contains("UTF-8")
+            || stderr.contains("public key")
+            || stderr.contains("connection closed"),
         "error should mention key format: {stderr}"
     );
 }

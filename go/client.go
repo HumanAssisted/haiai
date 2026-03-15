@@ -199,7 +199,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 		return wrapError(ErrConnection, err, "failed to create request")
 	}
 
-	c.setAuthHeaders(req)
+	if err := c.setAuthHeaders(req); err != nil {
+		return err
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -578,14 +580,16 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 			if reqErr == nil {
 				// Build 4-part auth header signed by OLD key via CryptoBackend
 				oldKeyBackend := newClientCryptoBackend(oldPrivateKey, c.jacsID)
-				authHeader := build4PartAuthHeaderWithBackend(c.jacsID, oldVersion, oldKeyBackend, oldPrivateKey)
-				req.Header.Set("Authorization", authHeader)
-				req.Header.Set("Content-Type", "application/json")
-				resp, doErr := c.httpClient.Do(req)
-				if doErr == nil {
-					defer resp.Body.Close()
-					if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-						registeredWithHai = true
+				authHeader, authErr := build4PartAuthHeaderWithBackend(c.jacsID, oldVersion, oldKeyBackend)
+				if authErr == nil {
+					req.Header.Set("Authorization", authHeader)
+					req.Header.Set("Content-Type", "application/json")
+					resp, doErr := c.httpClient.Do(req)
+					if doErr == nil {
+						defer resp.Body.Close()
+						if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+							registeredWithHai = true
+						}
 					}
 				}
 			}
@@ -651,7 +655,9 @@ func (c *Client) Status(ctx context.Context) (*StatusResult, error) {
 	if err != nil {
 		return nil, wrapError(ErrConnection, err, "failed to create request")
 	}
-	c.setAuthHeaders(req)
+	if err := c.setAuthHeaders(req); err != nil {
+		return nil, err
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -826,51 +832,28 @@ func (c *Client) SubmitResponse(ctx context.Context, jobID string, response Mode
 
 // signResponse wraps a response payload in a JACS document envelope and signs it.
 //
-// Delegates to CryptoBackend.SignResponse (JACS core) when available. Falls back
-// to local envelope construction + SignBytes for backends that don't support it.
+// Delegates to CryptoBackend.SignResponse and fails closed if the backend
+// cannot produce a signed envelope.
 func (c *Client) signResponse(response interface{}) (map[string]interface{}, error) {
-	// Try JACS delegation first
-	if c.crypto != nil {
-		payloadBytes, err := json.Marshal(response)
-		if err != nil {
-			return nil, wrapError(ErrSigningFailed, err, "failed to marshal response for signing")
-		}
-		signedJSON, signErr := c.crypto.SignResponse(string(payloadBytes))
-		if signErr == nil {
-			var result map[string]interface{}
-			if parseErr := json.Unmarshal([]byte(signedJSON), &result); parseErr != nil {
-				return nil, wrapError(ErrSigningFailed, parseErr, "failed to parse signed response")
-			}
-			return result, nil
-		}
-		// Fall through to local construction if SignResponse not supported
+	if c.crypto == nil {
+		return nil, newError(ErrSigningFailed, "crypto backend is not initialized")
 	}
 
-	// Fallback: local envelope construction
-	now := time.Now().UTC().Format(time.RFC3339)
-
-	doc := map[string]interface{}{
-		"jacsId":      c.jacsID,
-		"jacsVersion": "1.0.0",
-		"jacsSignature": map[string]interface{}{
-			"agentID": c.jacsID,
-			"date":    now,
-		},
-		"response": response,
-	}
-
-	canonical, err := json.Marshal(doc)
+	payloadBytes, err := json.Marshal(response)
 	if err != nil {
 		return nil, wrapError(ErrSigningFailed, err, "failed to marshal response for signing")
 	}
 
-	sig, signErr := c.crypto.SignBytes(canonical)
+	signedJSON, signErr := c.crypto.SignResponse(string(payloadBytes))
 	if signErr != nil {
 		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign response")
 	}
-	doc["jacsSignature"].(map[string]interface{})["signature"] = base64.StdEncoding.EncodeToString(sig)
 
-	return doc, nil
+	var result map[string]interface{}
+	if parseErr := json.Unmarshal([]byte(signedJSON), &result); parseErr != nil {
+		return nil, wrapError(ErrSigningFailed, parseErr, "failed to parse signed response")
+	}
+	return result, nil
 }
 
 // GetAgentAttestation gets the agent's attestation from HAI.
@@ -1057,7 +1040,9 @@ func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions
 	if err != nil {
 		return nil, wrapError(ErrConnection, err, "failed to create request")
 	}
-	c.setAuthHeaders(req)
+	if err := c.setAuthHeaders(req); err != nil {
+		return nil, err
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -1108,7 +1093,9 @@ func (c *Client) SignEmail(ctx context.Context, rawEmail []byte) ([]byte, error)
 	if err != nil {
 		return nil, wrapError(ErrConnection, err, "failed to create sign email request")
 	}
-	c.setAuthHeaders(req)
+	if err := c.setAuthHeaders(req); err != nil {
+		return nil, err
+	}
 	req.Header.Set("Content-Type", "message/rfc822")
 
 	resp, err := c.httpClient.Do(req)
@@ -1149,7 +1136,9 @@ func (c *Client) VerifyEmail(ctx context.Context, rawEmail []byte) (*EmailVerifi
 	if err != nil {
 		return nil, wrapError(ErrConnection, err, "failed to create verify email request")
 	}
-	c.setAuthHeaders(req)
+	if err := c.setAuthHeaders(req); err != nil {
+		return nil, err
+	}
 	req.Header.Set("Content-Type", "message/rfc822")
 
 	resp, err := c.httpClient.Do(req)
@@ -1378,7 +1367,9 @@ func (c *Client) GetContacts(ctx context.Context) ([]Contact, error) {
 	if err != nil {
 		return nil, wrapError(ErrConnection, err, "failed to create request")
 	}
-	c.setAuthHeaders(req)
+	if err := c.setAuthHeaders(req); err != nil {
+		return nil, err
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

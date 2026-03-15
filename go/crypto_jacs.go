@@ -302,9 +302,9 @@ func newClientCryptoBackend(privateKey ed25519.PrivateKey, jacsID string) Crypto
 // It signs with local Ed25519 as a last resort and emits a one-time deprecation
 // warning on first use.
 type clientEd25519FallbackInJacs struct {
-	privateKey  ed25519.PrivateKey
-	jacsID      string
-	warnOnce    sync.Once
+	privateKey ed25519.PrivateKey
+	jacsID     string
+	warnOnce   sync.Once
 }
 
 // logFallbackWarning emits a one-time warning that the JACS agent could not be
@@ -365,7 +365,11 @@ func (b *clientEd25519FallbackInJacs) CanonicalizeJSON(jsonStr string) (string, 
 }
 
 func (b *clientEd25519FallbackInJacs) SignResponse(payloadJSON string) (string, error) {
-	return "", fmt.Errorf("jacs fallback: SignResponse requires loaded JACS agent")
+	signed, err := signResponseLocally(b.privateKey, b.jacsID, payloadJSON)
+	if err != nil {
+		return "", fmt.Errorf("jacs fallback: %w", err)
+	}
+	return signed, nil
 }
 
 func (b *clientEd25519FallbackInJacs) EncodeVerifyPayload(document string) (string, error) {

@@ -13,10 +13,10 @@ import (
 
 // SSEConnection represents an active SSE connection to HAI.
 type SSEConnection struct {
-	client  *Client
-	events  chan AgentEvent
-	done    chan struct{}
-	cancel  context.CancelFunc
+	client *Client
+	events chan AgentEvent
+	done   chan struct{}
+	cancel context.CancelFunc
 }
 
 // Events returns the channel that receives AgentEvent values from the server.
@@ -46,7 +46,10 @@ func (c *Client) ConnectSSE(ctx context.Context) (*SSEConnection, error) {
 		return nil, wrapError(ErrTransport, err, "failed to create SSE request")
 	}
 
-	c.setAuthHeaders(req)
+	if err := c.setAuthHeaders(req); err != nil {
+		cancel()
+		return nil, wrapError(ErrTransport, err, "failed to authenticate SSE request")
+	}
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
 
