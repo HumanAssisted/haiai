@@ -281,18 +281,17 @@ mod tests {
     use haiai::LocalJacsProvider;
     use tempfile::TempDir;
 
-    fn jacs_fixture_config_path() -> Option<PathBuf> {
+    fn jacs_fixture_config_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../JACS/jacs/jacs.config.json")
+            .join("../../fixtures/jacs-agent/jacs.config.json")
             .canonicalize()
-            .ok()
+            .expect("fixtures/jacs-agent/jacs.config.json must exist in repo")
     }
 
     fn write_temp_fixture_config() -> (TempDir, PathBuf) {
         std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "secretpassord");
 
-        let source = jacs_fixture_config_path()
-            .expect("JACS sibling checkout not found — skip with #[ignore]");
+        let source = jacs_fixture_config_path();
         let source_dir = source.parent().expect("fixture config dir");
         let mut value: Value =
             serde_json::from_str(&fs::read_to_string(&source).expect("read fixture config"))
@@ -323,10 +322,6 @@ mod tests {
 
     #[test]
     fn embedded_provider_matches_local_provider_registration_material() {
-        if jacs_fixture_config_path().is_none() {
-            eprintln!("SKIP: JACS sibling checkout not found at ../../../JACS/jacs/");
-            return;
-        }
         let (_temp_dir, config_path) = write_temp_fixture_config();
         let shared = LoadedSharedAgent::load_from_config_path(&config_path).expect("load shared");
         let embedded = shared.embedded_provider().expect("embedded provider");

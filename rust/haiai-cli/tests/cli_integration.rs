@@ -472,14 +472,9 @@ fn init_then_mcp_fails_due_to_raw_key_format() {
 
 fn jacs_fixture_config() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let path = manifest_dir.join("../../../JACS/jacs/jacs.config.json");
-    let canonical = path.canonicalize().expect("canonical JACS fixture config");
-    assert!(
-        canonical.exists(),
-        "expected JACS fixture config at {}",
-        canonical.display()
-    );
-    canonical
+    let path = manifest_dir.join("../../fixtures/jacs-agent/jacs.config.json");
+    path.canonicalize()
+        .expect("fixtures/jacs-agent/jacs.config.json must exist in repo")
 }
 
 // ── MCP without config fails gracefully ─────────────────────────
