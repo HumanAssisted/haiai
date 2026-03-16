@@ -1,4 +1,5 @@
 jacs.config.json
+!fixtures/jacs-agent/jacs.config.json
 jacs_data
 private
 var
