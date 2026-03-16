@@ -27,7 +27,7 @@ mcp = ["jacs[mcp]", "mcp>=1.0.0"]
 agentsdk = ["jacs"]
 a2a = ["jacs[a2a]"]
 all = ["haiai[ws,sse,dns,langchain,langgraph,crewai,anthropic,fastapi,mcp,agentsdk,a2a]"]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "respx>=0.22"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-timeout>=2.3", "respx>=0.22"]
 
 [project.scripts]
 haiai = "haiai._binary:main"
