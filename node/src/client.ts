@@ -254,8 +254,8 @@ export class HaiClient {
   /** Build the JACS Authorization header value string. */
   buildAuthHeader(): string {
     // Prefer JACS binding delegation
-    if ('buildAuthHeaderSync' in this.agent && typeof (this.agent as Record<string, unknown>).buildAuthHeaderSync === 'function') {
-      return (this.agent as Record<string, unknown> & { buildAuthHeaderSync: () => string }).buildAuthHeaderSync();
+    if ('buildAuthHeaderSync' in this.agent && typeof (this.agent as unknown as Record<string, unknown>).buildAuthHeaderSync === 'function') {
+      return (this.agent as unknown as Record<string, unknown> & { buildAuthHeaderSync: () => string }).buildAuthHeaderSync();
     }
     // Fallback: local construction
     const timestamp = Math.floor(Date.now() / 1000).toString();

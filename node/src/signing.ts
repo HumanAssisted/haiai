@@ -58,10 +58,10 @@ export function clearServerKeysCache(): void {
  * where the JACS native module is not loaded.
  */
 export function canonicalJson(obj: unknown, agent?: JacsAgent): string {
-  if (agent && 'canonicalizeJsonSync' in agent && typeof (agent as Record<string, unknown>).canonicalizeJsonSync === 'function') {
+  if (agent && 'canonicalizeJsonSync' in agent && typeof (agent as unknown as Record<string, unknown>).canonicalizeJsonSync === 'function') {
     try {
       const jsonStr = canonicalJsonLocal(obj);
-      return (agent as Record<string, unknown> & { canonicalizeJsonSync: (s: string) => string }).canonicalizeJsonSync(jsonStr);
+      return (agent as unknown as Record<string, unknown> & { canonicalizeJsonSync: (s: string) => string }).canonicalizeJsonSync(jsonStr);
     } catch {
       // Fall through to local implementation
     }
@@ -102,7 +102,7 @@ export function unwrapSignedEvent(
   agent?: JacsAgent,
 ): unknown {
   // Try JACS binding-core delegation first
-  if (agent && 'unwrapSignedEventSync' in agent && typeof (agent as Record<string, unknown>).unwrapSignedEventSync === 'function') {
+  if (agent && 'unwrapSignedEventSync' in agent && typeof (agent as unknown as Record<string, unknown>).unwrapSignedEventSync === 'function') {
     try {
       const eventJson = JSON.stringify(eventData);
       const serverKeysJson = JSON.stringify({
@@ -111,7 +111,7 @@ export function unwrapSignedEvent(
           public_key: publicKey,
         })),
       });
-      const resultJson = (agent as Record<string, unknown> & { unwrapSignedEventSync: (e: string, k: string) => string }).unwrapSignedEventSync(eventJson, serverKeysJson);
+      const resultJson = (agent as unknown as Record<string, unknown> & { unwrapSignedEventSync: (e: string, k: string) => string }).unwrapSignedEventSync(eventJson, serverKeysJson);
       const result = JSON.parse(resultJson) as { data: unknown; verified: boolean };
       return result.data ?? eventData;
     } catch {
@@ -195,9 +195,9 @@ export function signResponse(
   jacsId: string,
 ): { signed_document: string; agent_jacs_id: string } {
   // Prefer JACS binding delegation (JACS canonicalizes internally via RFC 8785)
-  if ('signResponseSync' in agent && typeof (agent as Record<string, unknown>).signResponseSync === 'function') {
+  if ('signResponseSync' in agent && typeof (agent as unknown as Record<string, unknown>).signResponseSync === 'function') {
     const rawJson = JSON.stringify(jobResponse);
-    const resultJson = (agent as Record<string, unknown> & { signResponseSync: (p: string) => string }).signResponseSync(rawJson);
+    const resultJson = (agent as unknown as Record<string, unknown> & { signResponseSync: (p: string) => string }).signResponseSync(rawJson);
     return { signed_document: resultJson, agent_jacs_id: jacsId };
   }
 

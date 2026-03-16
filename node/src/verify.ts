@@ -17,9 +17,9 @@ export const MAX_VERIFY_DOCUMENT_BYTES = 1515;
  * is provided. Falls back to local base64url encoding.
  */
 function encodeVerifyPayload(document: string, agent?: JacsAgent): string {
-  if (agent && 'encodeVerifyPayloadSync' in agent && typeof (agent as Record<string, unknown>).encodeVerifyPayloadSync === 'function') {
+  if (agent && 'encodeVerifyPayloadSync' in agent && typeof (agent as unknown as Record<string, unknown>).encodeVerifyPayloadSync === 'function') {
     try {
-      return (agent as Record<string, unknown> & { encodeVerifyPayloadSync: (d: string) => string }).encodeVerifyPayloadSync(document);
+      return (agent as unknown as Record<string, unknown> & { encodeVerifyPayloadSync: (d: string) => string }).encodeVerifyPayloadSync(document);
     } catch {
       // Fall through to local implementation
     }

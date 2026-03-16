@@ -21,17 +21,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from jacs.hai.client import HaiClient
 from jacs.hai.errors import HaiError, RateLimited
 from jacs.hai.models import (
-    Contact,
     EmailMessage,
     EmailStatus,
-    EmailVerificationResultV2,
     SendEmailResult,
 )
+
+if TYPE_CHECKING:
+    from jacs.hai.models import Contact
 
 
 class Agent:
