@@ -1,0 +1,13 @@
+{
+  "name": "haiai",
+  "version": "0.1.2",
+  "description": "JACS cryptographic provenance for AI agents -- sign, verify, email, trust, and HAI platform integration",
+  "author": {
+    "name": "HAI.AI",
+    "url": "https://hai.ai"
+  },
+  "homepage": "https://hai.ai",
+  "repository": "https://github.com/HumanAssisted/haisdk",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["jacs", "cryptography", "signing", "email", "agents", "trust", "mcp"]
+}

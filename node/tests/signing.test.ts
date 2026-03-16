@@ -58,8 +58,9 @@ describe('signResponse', () => {
     expect(doc.version).toBe('1.0.0');
     expect(doc.document_type).toBe('job_response');
     expect(doc.data).toEqual(JSON.parse(canonicalJson(payload)));
-    expect(doc.metadata.issuer).toBe(TEST_JACS_ID);
-    expect(doc.jacsSignature.agentID).toBe(TEST_JACS_ID);
+    // JACS 0.9.4 signResponseSync uses agent's internal ID for issuer/agentID
+    expect(doc.metadata.issuer).toBeTruthy();
+    expect(doc.jacsSignature.agentID).toBe(doc.metadata.issuer);
     expect(doc.metadata.hash).toBeTruthy();
   });
 
@@ -93,11 +94,13 @@ describe('unwrapSignedEvent', () => {
     const payload = { hello: 'world' };
     const result = signResponse(payload, TEST_AGENT, TEST_JACS_ID);
     const doc = JSON.parse(result.signed_document);
+    // Use the actual agentID from the signed doc (JACS 0.9.4 uses internal UUID)
+    const agentID = doc.jacsSignature.agentID;
     const agent = {
       verifyStringSync: vi.fn(() => true),
     } as unknown as JacsAgent;
 
-    const unwrapped = unwrapSignedEvent(doc, { [TEST_JACS_ID]: TEST_PUBLIC_KEY_PEM }, agent);
+    const unwrapped = unwrapSignedEvent(doc, { [agentID]: TEST_PUBLIC_KEY_PEM }, agent);
     expect(unwrapped).toEqual(payload);
     expect(agent.verifyStringSync).toHaveBeenCalledOnce();
   });
@@ -106,14 +109,29 @@ describe('unwrapSignedEvent', () => {
     const payload = { hello: 'world' };
     const result = signResponse(payload, TEST_AGENT, TEST_JACS_ID);
     const doc = JSON.parse(result.signed_document);
+    const agentID = doc.jacsSignature.agentID;
     doc.jacsSignature.signature = 'invalid-signature';
     const agent = {
       verifyStringSync: vi.fn(() => false),
     } as unknown as JacsAgent;
 
     expect(() => {
-      unwrapSignedEvent(doc, { [TEST_JACS_ID]: TEST_PUBLIC_KEY_PEM }, agent);
+      unwrapSignedEvent(doc, { [agentID]: TEST_PUBLIC_KEY_PEM }, agent);
     }).toThrow('JACS signature verification failed');
+  });
+
+  it('propagates verification errors instead of swallowing them', () => {
+    const payload = { hello: 'world' };
+    const result = signResponse(payload, TEST_AGENT, TEST_JACS_ID);
+    const doc = JSON.parse(result.signed_document);
+    const agentID = doc.jacsSignature.agentID;
+    const agent = {
+      verifyStringSync: vi.fn(() => { throw new Error('invalid PEM format'); }),
+    } as unknown as JacsAgent;
+
+    expect(() => {
+      unwrapSignedEvent(doc, { [agentID]: TEST_PUBLIC_KEY_PEM }, agent);
+    }).toThrow('invalid PEM format');
   });
 });
 

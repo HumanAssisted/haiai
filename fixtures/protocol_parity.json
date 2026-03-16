@@ -1,0 +1,122 @@
+{
+  "description": "Cross-language protocol parity test vectors. Each SDK must produce identical output for these inputs.",
+  "sign_response": {
+    "description": "signResponse must produce a JACS document with this structure, given the input payload.",
+    "cases": [
+      {
+        "name": "simple_payload",
+        "input": {
+          "response": {
+            "message": "test",
+            "metadata": null,
+            "processing_time_ms": 0
+          }
+        },
+        "expected_structure": {
+          "version": "1.0.0",
+          "document_type": "job_response",
+          "has_data": true,
+          "has_metadata": true,
+          "has_jacsSignature": true,
+          "metadata_fields": ["issuer", "document_id", "created_at", "hash"],
+          "signature_fields": ["agentID", "signature", "signedAt"]
+        }
+      }
+    ]
+  },
+  "unwrap_signed_event": {
+    "description": "unwrapSignedEvent must return the inner payload from a signed document, or pass through non-JACS events.",
+    "cases": [
+      {
+        "name": "non_jacs_passthrough",
+        "input": {
+          "type": "heartbeat",
+          "timestamp": 123
+        },
+        "expected": {
+          "type": "heartbeat",
+          "timestamp": 123
+        },
+        "note": "Events without JACS document structure pass through unchanged"
+      },
+      {
+        "name": "jacs_document_unwrap",
+        "input": {
+          "payload": {
+            "message": "inner-data"
+          },
+          "metadata": {
+            "issuer": "agent-1",
+            "document_id": "doc-1",
+            "created_at": "2024-01-01T00:00:00Z",
+            "hash": "abc123"
+          },
+          "signature": {
+            "key_id": "unknown-key",
+            "algorithm": "Ed25519",
+            "signature": "sig-placeholder",
+            "signed_at": "2024-01-01T00:00:00Z"
+          }
+        },
+        "expected": {
+          "message": "inner-data"
+        },
+        "note": "Without a known server key, unwraps payload without verification"
+      }
+    ]
+  },
+  "canonical_json": {
+    "description": "canonicalizeJson must produce RFC 8785 output. These vectors supplement cross_lang_test.json.",
+    "cases": [
+      {
+        "name": "unicode_escaping",
+        "input": {
+          "emoji": "\ud83d\ude00",
+          "ascii": "hello"
+        },
+        "expected": "{\"ascii\":\"hello\",\"emoji\":\"\ud83d\ude00\"}"
+      },
+      {
+        "name": "integer_vs_float",
+        "input": {
+          "int": 1,
+          "float": 1.0
+        },
+        "note": "JSON spec does not distinguish int/float; canonical form depends on language. SDKs should match their JACS binding output."
+      },
+      {
+        "name": "empty_structures",
+        "input": {
+          "obj": {},
+          "arr": [],
+          "str": ""
+        },
+        "expected": "{\"arr\":[],\"obj\":{},\"str\":\"\"}"
+      },
+      {
+        "name": "deeply_nested",
+        "input": {
+          "c": {
+            "b": {
+              "a": 1
+            }
+          },
+          "a": {
+            "z": true
+          }
+        },
+        "expected": "{\"a\":{\"z\":true},\"c\":{\"b\":{\"a\":1}}}"
+      }
+    ]
+  },
+  "build_auth_header": {
+    "description": "buildAuthHeader must produce 'JACS {jacsId}:{timestamp}:{signature_base64}'. Vectors in cross_lang_test.json cover format; these cover edge cases.",
+    "cases": [
+      {
+        "name": "special_chars_in_id",
+        "jacs_id": "agent/with:special",
+        "note": "The jacsId is used as-is in the header (no URL encoding). Colon in jacsId is disambiguated by SplitN(3)."
+      }
+    ]
+  }
+}

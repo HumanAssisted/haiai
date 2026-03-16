@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use haiai::{
-    DnsCertifiedRunOptions, HaiClient, HaiClientOptions, StaticJacsProvider, TransportType,
+    ProRunOptions, HaiClient, HaiClientOptions, StaticJacsProvider, TransportType,
 };
 use httpmock::Method::{GET, POST};
 use httpmock::MockServer;
@@ -63,7 +63,7 @@ async fn free_run_posts_expected_payload_and_parses_result() {
 }
 
 #[tokio::test]
-async fn dns_certified_run_polls_payment_and_runs_benchmark() {
+async fn pro_run_polls_payment_and_runs_benchmark() {
     let server = MockServer::start_async().await;
 
     let purchase = server
@@ -71,7 +71,7 @@ async fn dns_certified_run_polls_payment_and_runs_benchmark() {
             when.method(POST)
                 .path("/api/benchmark/purchase")
                 .json_body(json!({
-                    "tier": "dns_certified",
+                    "tier": "pro",
                     "agent_id": "agent123456"
                 }));
             then.status(200).json_body(json!({
@@ -96,13 +96,13 @@ async fn dns_certified_run_polls_payment_and_runs_benchmark() {
             when.method(POST)
                 .path("/api/benchmark/run")
                 .json_body(json!({
-                    "name": "DNS Certified Run - agent123",
-                    "tier": "dns_certified",
+                    "name": "Pro Run - agent123",
+                    "tier": "pro",
                     "payment_id": "pay/123",
                     "transport": "ws"
                 }));
             then.status(200).json_body(json!({
-                "run_id": "run-dns-1",
+                "run_id": "run-pro-1",
                 "score": 93.5,
                 "transcript": [],
                 "payment_id": "pay/123"
@@ -112,16 +112,16 @@ async fn dns_certified_run_polls_payment_and_runs_benchmark() {
 
     let client = make_client(&server.base_url());
     let result = client
-        .dns_certified_run(&DnsCertifiedRunOptions {
+        .pro_run(&ProRunOptions {
             transport: TransportType::Ws,
             poll_interval: Duration::from_millis(1),
             poll_timeout: Duration::from_secs(1),
         })
         .await
-        .expect("dns certified run");
+        .expect("pro run");
 
     assert!(result.success);
-    assert_eq!(result.run_id, "run-dns-1");
+    assert_eq!(result.run_id, "run-pro-1");
     assert_eq!(result.score, 93.5);
     assert_eq!(result.payment_id, "pay/123");
 

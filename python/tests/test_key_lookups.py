@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from jacs.hai.async_client import AsyncHaiClient
-from jacs.hai.client import HaiClient
-from jacs.hai.errors import HaiApiError
+from haiai.async_client import AsyncHaiClient
+from haiai.client import HaiClient
+from haiai.errors import HaiApiError
 
 
 # ---------------------------------------------------------------------------

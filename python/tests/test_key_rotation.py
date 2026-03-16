@@ -13,10 +13,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from jacs.hai.client import HaiClient
-from jacs.hai.config import load, reset, get_config
-from jacs.hai.errors import HaiAuthError
-from jacs.hai.models import AgentConfig, RotationResult
+from haiai.client import HaiClient
+from haiai.config import load, reset, get_config
+from haiai.errors import HaiAuthError
+from haiai.models import AgentConfig, RotationResult
 
 
 @pytest.fixture(autouse=True)
@@ -178,7 +178,7 @@ class TestRotateKeysGeneratesNewKeypair:
 
 
 class TestRotateKeysRegistersWithHai:
-    @patch("jacs.hai.client.httpx.post")
+    @patch("haiai.client.httpx.post")
     def test_registers_with_hai(self, mock_post, agent_dir):
         mock_post.return_value = MagicMock(
             status_code=200,
@@ -201,7 +201,7 @@ class TestRotateKeysRegistersWithHai:
 
 
 class TestRotateKeysHaiFailureKeepsLocal:
-    @patch("jacs.hai.client.httpx.post")
+    @patch("haiai.client.httpx.post")
     def test_hai_failure_preserves_local(self, mock_post, agent_dir):
         mock_post.return_value = MagicMock(
             status_code=500,

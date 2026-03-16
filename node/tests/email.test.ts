@@ -507,3 +507,261 @@ describe('sendEmail with attachments', () => {
   });
 });
 
+describe('sendSignedEmail', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('delegates to sendEmail (deprecated, TASK_017)', async () => {
+    const client = await makeClient();
+    let sendUrl = '';
+    let sendBody: Record<string, unknown> = {};
+
+    // Mock fetch for the send POST
+    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      sendUrl = url.toString();
+      sendBody = JSON.parse(init?.body as string ?? '{}');
+      return jsonResponse({ message_id: 'msg-signed-1', status: 'sent' });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await client.sendSignedEmail({
+      to: 'bob@hai.ai',
+      subject: 'Hello Signed',
+      body: 'Signed body',
+    });
+
+    expect(result.messageId).toBe('msg-signed-1');
+    expect(result.status).toBe('sent');
+    // Delegates to sendEmail which POSTs to /email/send (not send-signed)
+    expect(sendUrl).toContain('/email/send');
+    expect(sendBody.to).toBe('bob@hai.ai');
+    expect(sendBody.subject).toBe('Hello Signed');
+  });
+
+  it('throws when agentEmail not set', async () => {
+    const keypair = generateKeypair();
+    const client = await HaiClient.fromCredentials('no-email-agent', keypair.privateKeyPem, {
+      url: 'https://hai.example',
+      privateKeyPassphrase: 'keygen-password',
+    });
+    // Do NOT call setAgentEmail
+
+    await expect(
+      client.sendSignedEmail({ to: 'bob@hai.ai', subject: 'Hi', body: 'test' }),
+    ).rejects.toThrow('agent email not set');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getContacts
+// ---------------------------------------------------------------------------
+
+describe('getContacts', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('parses wrapped contacts response with all fields', async () => {
+    const client = await makeClient();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          contacts: [
+            {
+              email: 'alice@hai.ai',
+              display_name: 'Alice Agent',
+              last_contact: '2026-03-13T10:00:00+00:00',
+              jacs_verified: true,
+              reputation_tier: 'established',
+            },
+            {
+              email: 'external@example.com',
+              last_contact: '2026-03-12T08:00:00+00:00',
+              jacs_verified: false,
+            },
+          ],
+        }),
+      ),
+    );
+
+    const contacts = await client.getContacts();
+    expect(contacts).toHaveLength(2);
+    expect(contacts[0].email).toBe('alice@hai.ai');
+    expect(contacts[0].displayName).toBe('Alice Agent');
+    expect(contacts[0].lastContact).toBe('2026-03-13T10:00:00+00:00');
+    expect(contacts[0].jacsVerified).toBe(true);
+    expect(contacts[0].reputationTier).toBe('established');
+    expect(contacts[1].email).toBe('external@example.com');
+    expect(contacts[1].jacsVerified).toBe(false);
+    expect(contacts[1].reputationTier).toBeUndefined();
+    expect(contacts[1].displayName).toBeUndefined();
+  });
+
+  it('handles bare array response', async () => {
+    const client = await makeClient();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify([
+            { email: 'alice@hai.ai', last_contact: '2026-01-01T00:00:00Z', jacs_verified: false },
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    );
+
+    const contacts = await client.getContacts();
+    expect(contacts).toHaveLength(1);
+    expect(contacts[0].email).toBe('alice@hai.ai');
+  });
+
+  it('returns empty array when no contacts', async () => {
+    const client = await makeClient();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse({ contacts: [] })),
+    );
+
+    const contacts = await client.getContacts();
+    expect(contacts).toHaveLength(0);
+  });
+});
+
+describe('getEmailStatus nested fields', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('parses volume, delivery, and reputation from response', async () => {
+    const client = await makeClient();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          email: 'bot@hai.ai',
+          status: 'active',
+          tier: 'established',
+          billing_tier: 'pro',
+          messages_sent_24h: 10,
+          daily_limit: 100,
+          daily_used: 10,
+          resets_at: '2026-03-15T00:00:00Z',
+          messages_sent_total: 500,
+          external_enabled: true,
+          external_sends_today: 3,
+          last_tier_change: '2026-01-01T00:00:00Z',
+          volume: {
+            sent_total: 500,
+            received_total: 300,
+            sent_24h: 10,
+          },
+          delivery: {
+            bounce_count: 2,
+            spam_report_count: 1,
+            delivery_rate: 0.98,
+          },
+          reputation: {
+            score: 85.5,
+            tier: 'established',
+            email_score: 90.0,
+            hai_score: 80.0,
+          },
+        }),
+      ),
+    );
+
+    const status = await client.getEmailStatus();
+
+    expect(status.email).toBe('bot@hai.ai');
+    expect(status.tier).toBe('established');
+
+    // Volume
+    expect(status.volume).not.toBeNull();
+    expect(status.volume!.sentTotal).toBe(500);
+    expect(status.volume!.receivedTotal).toBe(300);
+    expect(status.volume!.sent24h).toBe(10);
+
+    // Delivery
+    expect(status.delivery).not.toBeNull();
+    expect(status.delivery!.bounceCount).toBe(2);
+    expect(status.delivery!.spamReportCount).toBe(1);
+    expect(status.delivery!.deliveryRate).toBe(0.98);
+
+    // Reputation
+    expect(status.reputation).not.toBeNull();
+    expect(status.reputation!.score).toBe(85.5);
+    expect(status.reputation!.tier).toBe('established');
+    expect(status.reputation!.emailScore).toBe(90.0);
+    expect(status.reputation!.haiScore).toBe(80.0);
+  });
+
+  it('returns null for nested fields when absent', async () => {
+    const client = await makeClient();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          email: 'bot@hai.ai',
+          status: 'active',
+          tier: 'new',
+          billing_tier: 'free',
+          messages_sent_24h: 0,
+          daily_limit: 10,
+          daily_used: 0,
+          resets_at: '2026-03-15T00:00:00Z',
+          messages_sent_total: 0,
+          external_enabled: false,
+          external_sends_today: 0,
+          last_tier_change: null,
+        }),
+      ),
+    );
+
+    const status = await client.getEmailStatus();
+
+    expect(status.volume).toBeNull();
+    expect(status.delivery).toBeNull();
+    expect(status.reputation).toBeNull();
+  });
+
+  it('handles hai_score null in reputation', async () => {
+    const client = await makeClient();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          email: 'bot@hai.ai',
+          status: 'active',
+          tier: 'new',
+          billing_tier: 'free',
+          messages_sent_24h: 0,
+          daily_limit: 10,
+          daily_used: 0,
+          resets_at: '2026-03-15T00:00:00Z',
+          messages_sent_total: 0,
+          external_enabled: false,
+          external_sends_today: 0,
+          last_tier_change: null,
+          reputation: {
+            score: 50.0,
+            tier: 'new',
+            email_score: 50.0,
+            hai_score: null,
+          },
+        }),
+      ),
+    );
+
+    const status = await client.getEmailStatus();
+
+    expect(status.reputation).not.toBeNull();
+    expect(status.reputation!.haiScore).toBeNull();
+  });
+});
+

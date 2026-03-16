@@ -1,0 +1,17 @@
+{
+  "name": "haisdk",
+  "owner": {
+    "name": "HumanAssisted",
+    "email": "support@hai.ai"
+  },
+  "metadata": {
+    "description": "JACS cryptographic provenance and HAI platform tools for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "haiai",
+      "source": "./",
+      "description": "Sign, verify, email, and manage agent trust with JACS post-quantum cryptography"
+    }
+  ]
+}

@@ -4,16 +4,14 @@
     {
       "name": "hai_hello",
       "properties": {
-        "config_path": "string",
-        "hai_url": "string"
+        "config_path": "string"
       },
       "required": []
     },
     {
       "name": "hai_check_username",
       "properties": {
-        "username": "string",
-        "hai_url": "string"
+        "username": "string"
       },
       "required": [
         "username"
@@ -24,8 +22,7 @@
       "properties": {
         "agent_id": "string",
         "username": "string",
-        "config_path": "string",
-        "hai_url": "string"
+        "config_path": "string"
       },
       "required": [
         "agent_id",
@@ -36,16 +33,14 @@
       "name": "hai_register_agent",
       "properties": {
         "owner_email": "string",
-        "config_path": "string",
-        "hai_url": "string"
+        "config_path": "string"
       },
       "required": []
     },
     {
       "name": "hai_agent_status",
       "properties": {
-        "config_path": "string",
-        "hai_url": "string"
+        "config_path": "string"
       },
       "required": []
     },
@@ -66,9 +61,11 @@
         "to": "string",
         "subject": "string",
         "body": "string",
+        "cc": "array",
+        "bcc": "array",
+        "labels": "array",
         "in_reply_to": "string",
-        "config_path": "string",
-        "hai_url": "string"
+        "config_path": "string"
       },
       "required": [
         "to",
@@ -82,8 +79,11 @@
         "limit": "number",
         "offset": "number",
         "direction": "string",
-        "config_path": "string",
-        "hai_url": "string"
+        "is_read": "boolean",
+        "folder": "string",
+        "label": "string",
+        "has_attachments": "boolean",
+        "config_path": "string"
       },
       "required": []
     },
@@ -91,8 +91,7 @@
       "name": "hai_get_message",
       "properties": {
         "message_id": "string",
-        "config_path": "string",
-        "hai_url": "string"
+        "config_path": "string"
       },
       "required": [
         "message_id"
@@ -102,8 +101,7 @@
       "name": "hai_delete_message",
       "properties": {
         "message_id": "string",
-        "config_path": "string",
-        "hai_url": "string"
+        "config_path": "string"
       },
       "required": [
         "message_id"
@@ -113,8 +111,7 @@
       "name": "hai_mark_read",
       "properties": {
         "message_id": "string",
-        "config_path": "string",
-        "hai_url": "string"
+        "config_path": "string"
       },
       "required": [
         "message_id"
@@ -124,8 +121,7 @@
       "name": "hai_mark_unread",
       "properties": {
         "message_id": "string",
-        "config_path": "string",
-        "hai_url": "string"
+        "config_path": "string"
       },
       "required": [
         "message_id"
@@ -140,26 +136,28 @@
         "to_address": "string",
         "since": "string",
         "until": "string",
+        "is_read": "boolean",
+        "jacs_verified": "boolean",
+        "folder": "string",
+        "label": "string",
+        "has_attachments": "boolean",
         "limit": "number",
         "offset": "number",
-        "config_path": "string",
-        "hai_url": "string"
+        "config_path": "string"
       },
       "required": []
     },
     {
       "name": "hai_get_unread_count",
       "properties": {
-        "config_path": "string",
-        "hai_url": "string"
+        "config_path": "string"
       },
       "required": []
     },
     {
       "name": "hai_get_email_status",
       "properties": {
-        "config_path": "string",
-        "hai_url": "string"
+        "config_path": "string"
       },
       "required": []
     },
@@ -169,13 +167,52 @@
         "message_id": "string",
         "body": "string",
         "subject_override": "string",
-        "config_path": "string",
-        "hai_url": "string"
+        "config_path": "string"
       },
       "required": [
         "message_id",
         "body"
       ]
+    },
+    {
+      "name": "hai_forward_email",
+      "properties": {
+        "message_id": "string",
+        "to": "string",
+        "comment": "string",
+        "config_path": "string"
+      },
+      "required": [
+        "message_id",
+        "to"
+      ]
+    },
+    {
+      "name": "hai_archive_message",
+      "properties": {
+        "message_id": "string",
+        "config_path": "string"
+      },
+      "required": [
+        "message_id"
+      ]
+    },
+    {
+      "name": "hai_unarchive_message",
+      "properties": {
+        "message_id": "string",
+        "config_path": "string"
+      },
+      "required": [
+        "message_id"
+      ]
+    },
+    {
+      "name": "hai_list_contacts",
+      "properties": {
+        "config_path": "string"
+      },
+      "required": []
     }
   ]
 }

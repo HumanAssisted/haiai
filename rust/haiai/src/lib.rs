@@ -6,8 +6,35 @@
 //! # Feature flags
 //!
 //! * `jacs-crate` (default) -- Use the published jacs crate from crates.io.
+//!
+//! # Agent API
+//!
+//! The recommended entry point is [`agent::Agent`], which provides an
+//! ergonomic `agent.email.*` namespace. All email operations sign with
+//! the agent's JACS key -- there is no unsigned send path.
+//!
+//! ```rust,no_run
+//! use haiai::agent::Agent;
+//! use haiai::types::SendEmailOptions;
+//!
+//! # async fn example() -> haiai::Result<()> {
+//! let agent = Agent::from_config(None).await?;
+//! agent.email.send(SendEmailOptions {
+//!     to: "other@hai.ai".into(),
+//!     subject: "Hello".into(),
+//!     body: "World".into(),
+//!     cc: vec![],
+//!     bcc: vec![],
+//!     in_reply_to: None,
+//!     attachments: vec![],
+//!     labels: vec![],
+//! }).await?;
+//! # Ok(())
+//! # }
+//! ```
 
 pub mod a2a;
+pub mod agent;
 pub mod client;
 pub mod config;
 #[cfg(feature = "jacs-crate")]
@@ -16,7 +43,10 @@ pub mod error;
 pub mod jacs;
 #[cfg(feature = "jacs-crate")]
 pub mod jacs_local;
+pub mod key_format;
+pub mod mime;
 pub mod types;
+pub mod validation;
 pub mod verify;
 
 pub use a2a::{
@@ -25,14 +55,21 @@ pub use a2a::{
     A2AIntegration, A2AMediatedJobOptions, A2ATrustAssessment, A2ATrustPolicy, A2AWrappedArtifact,
     A2A_JACS_EXTENSION_URI, A2A_PROTOCOL_VERSION_04, A2A_PROTOCOL_VERSION_10,
 };
+#[cfg(feature = "jacs-crate")]
+pub use agent::{Agent, EmailNamespace};
 pub use client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
-pub use config::{load_config, resolve_private_key_candidates, AgentConfig};
+pub use config::{
+    load_config, redacted_display, resolve_private_key_candidates, resolve_storage_backend,
+    resolve_storage_backend_label, AgentConfig, StorageConfigSummary,
+};
 #[cfg(feature = "jacs-crate")]
 pub use email::{
+    compute_content_hash,
     // JACS email types re-exported for consumer convenience
     sign_email,
     verify_email,
     AttachmentEntry,
+    AttachmentInput,
     BodyPartEntry,
     ContentVerificationResult,
     EmailSignatureHeaders,
@@ -46,7 +83,14 @@ pub use email::{
     SignedHeaderEntry,
 };
 pub use error::{HaiError, Result};
-pub use jacs::{JacsProvider, NoopJacsProvider, StaticJacsProvider};
+pub use jacs::{
+    JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider, JacsProvider,
+    JacsVerificationProvider, NoopJacsProvider, StaticJacsProvider,
+};
+#[cfg(feature = "agreements")]
+pub use jacs::JacsAgreementProvider;
+#[cfg(feature = "attestation")]
+pub use jacs::JacsAttestationProvider;
 #[cfg(feature = "jacs-crate")]
 pub use jacs_local::LocalJacsProvider;
 pub use types::*;

@@ -26,7 +26,9 @@ impl HaiServerContext {
         default_config_path: Option<String>,
         embedded_provider: EmbeddedJacsProvider,
     ) -> Self {
-        let base_url = std::env::var("HAI_URL").unwrap_or_else(|_| "https://hai.ai".to_string());
+        let base_url = normalize_base_url(
+            &std::env::var("HAI_URL").unwrap_or_else(|_| "https://hai.ai".to_string()),
+        );
         let default_config_path = default_config_path.map(PathBuf::from);
         Self {
             base_url,
@@ -104,7 +106,7 @@ impl HaiServerContext {
         provider: P,
         base_url_override: Option<&str>,
     ) -> Result<HaiClient<P>, String> {
-        let base_url = base_url_override.unwrap_or(&self.base_url).to_string();
+        let base_url = self.resolve_base_url(base_url_override)?;
         HaiClient::new(
             provider,
             HaiClientOptions {
@@ -113,6 +115,23 @@ impl HaiServerContext {
             },
         )
         .map_err(|e| e.to_string())
+    }
+
+    fn resolve_base_url(&self, base_url_override: Option<&str>) -> Result<String, String> {
+        let configured = normalize_base_url(&self.base_url);
+        match base_url_override {
+            None => Ok(configured),
+            Some(override_url) => {
+                let requested = normalize_base_url(override_url);
+                if requested == configured {
+                    Ok(configured)
+                } else {
+                    Err(format!(
+                        "hai-mcp pins outgoing HAI requests to startup HAI_URL={configured}. Runtime hai_url overrides are not supported."
+                    ))
+                }
+            }
+        }
     }
 
     pub fn apply_cached_agent_state<P: JacsProvider>(
@@ -160,6 +179,22 @@ impl HaiServerContext {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         cached.entry(jacs_id.to_string()).or_default().agent_email = Some(email.to_string());
     }
+
+    pub fn cached_hai_agent_id(&self, jacs_id: &str) -> Option<String> {
+        self.cached_agent_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(jacs_id)
+            .and_then(|cached| cached.hai_agent_id.clone())
+    }
+
+    pub fn cached_agent_email(&self, jacs_id: &str) -> Option<String> {
+        self.cached_agent_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(jacs_id)
+            .and_then(|cached| cached.agent_email.clone())
+    }
 }
 
 fn absolutize_path(path: &Path) -> Result<PathBuf, String> {
@@ -172,17 +207,30 @@ fn absolutize_path(path: &Path) -> Result<PathBuf, String> {
     }
 }
 
+fn normalize_base_url(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use haiai::HaiClient;
 
     fn build_context(default_config_path: Option<&str>) -> HaiServerContext {
-        HaiServerContext::from_process_env(
-            "anonymous-agent".to_string(),
-            default_config_path.map(ToString::to_string),
-            EmbeddedJacsProvider::testing("agent-123"),
-        )
+        build_context_with_base_url("https://hai.ai", default_config_path)
+    }
+
+    fn build_context_with_base_url(
+        base_url: &str,
+        default_config_path: Option<&str>,
+    ) -> HaiServerContext {
+        HaiServerContext {
+            base_url: normalize_base_url(base_url),
+            fallback_jacs_id: "anonymous-agent".to_string(),
+            default_config_path: default_config_path.map(PathBuf::from),
+            embedded_provider: EmbeddedJacsProvider::testing("agent-123"),
+            cached_agent_state: StdMutex::new(BTreeMap::new()),
+        }
     }
 
     fn apply_identity_overrides(
@@ -241,5 +289,32 @@ mod tests {
         assert!(context
             .embedded_provider(Some("/tmp/default-jacs.config.json"))
             .is_ok());
+    }
+
+    #[test]
+    fn client_with_provider_rejects_different_base_url_override() {
+        let context = build_context_with_base_url("https://hai.example", None);
+        let error = match context.client_with_provider(
+            NoopJacsProvider::new("agent-123"),
+            Some("https://attacker.example"),
+        ) {
+            Ok(_) => panic!("different HAI origin must be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(error.contains("HAI_URL"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn client_with_provider_allows_same_origin_override_after_normalization() {
+        let context = build_context_with_base_url("https://hai.example/", None);
+        let client = context
+            .client_with_provider(
+                NoopJacsProvider::new("agent-123"),
+                Some("https://hai.example"),
+            )
+            .expect("same HAI origin should be accepted");
+
+        assert_eq!(client.base_url(), "https://hai.example");
     }
 }

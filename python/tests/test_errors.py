@@ -1,10 +1,10 @@
-"""Tests for jacs.hai.errors module."""
+"""Tests for haiai.errors module."""
 
 from __future__ import annotations
 
 import pytest
 
-from jacs.hai.errors import (
+from haiai.errors import (
     AuthenticationError,
     BenchmarkError,
     HaiApiError,

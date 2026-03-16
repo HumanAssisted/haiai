@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from jacs.hai.async_client import AsyncHaiClient
-from jacs.hai.errors import HaiError
+from haiai.async_client import AsyncHaiClient
+from haiai.errors import HaiError
 
 
 BASE_URL = "https://test.hai.ai"

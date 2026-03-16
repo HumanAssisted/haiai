@@ -31,6 +31,9 @@ pub enum HaiError {
     #[error("verify link hosted mode requires jacsDocumentId, document_id, or id")]
     MissingHostedDocumentId,
 
+    #[error("validation error on '{field}': {message}")]
+    Validation { field: String, message: String },
+
     #[error("{0}")]
     Message(String),
 }

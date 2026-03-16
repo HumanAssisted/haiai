@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from jacs.hai.client import HaiClient
+from haiai.client import HaiClient
 
 
 def _load_contract() -> dict[str, Any]:

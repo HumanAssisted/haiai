@@ -1,3 +1,8 @@
+jacs.config.json
+!fixtures/jacs-agent/jacs.config.json
+jacs_data
+private
+var
 # Python
 __pycache__/
 *.py[cod]
@@ -38,6 +43,7 @@ go/haiai
 vendor/
 
 # Rust
+rust/.cargo/
 rust/target/
 rust/haiai/target/
 rust/haiai/data/

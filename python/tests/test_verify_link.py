@@ -1,4 +1,4 @@
-"""Tests for generate_verify_link() in jacs.hai.client."""
+"""Tests for generate_verify_link() in haiai.client."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import base64
 
 import pytest
 
-from jacs.hai.client import (
+from haiai.client import (
     MAX_VERIFY_DOCUMENT_BYTES,
     MAX_VERIFY_URL_LEN,
     generate_verify_link,

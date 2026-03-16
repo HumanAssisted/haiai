@@ -13,7 +13,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from jacs.hai.models import EmailMessage, EmailStatus, KeyRegistryResponse, EmailVerificationResult
+from haiai.models import EmailMessage, EmailStatus, KeyRegistryResponse, EmailVerificationResult
 
 # ---------------------------------------------------------------------------
 # Fixture directory -- two levels up from tests/, then into contract/
@@ -235,7 +235,7 @@ class TestDeserializeKeyLookupVersionedResponse:
     """
 
     def test_deserialize_key_lookup_fixture(self) -> None:
-        from jacs.hai.models import PublicKeyInfo
+        from haiai.models import PublicKeyInfo
 
         data = _load("key_lookup_versioned_response.json")
         resp = data["response"]

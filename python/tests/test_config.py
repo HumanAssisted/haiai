@@ -1,4 +1,4 @@
-"""Tests for jacs.hai.config module.
+"""Tests for haiai.config module.
 
 config.load() now initializes a JACS binding-core JacsAgent.
 Tests that require real crypto operations are skipped when bindings
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from jacs.hai.config import (
+from haiai.config import (
     get_config,
     get_agent,
     get_private_key,

@@ -140,7 +140,7 @@ def loaded_config(
     Patches config.load() to use a mock agent since we may not have
     real JACS bindings in the test environment.
     """
-    from jacs.hai import config as config_mod
+    from haiai import config as config_mod
 
     # Load config metadata (name, version, key_dir, jacs_id)
     import json

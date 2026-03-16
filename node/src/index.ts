@@ -1,6 +1,18 @@
 // Client
 export { HaiClient } from './client.js';
 
+// Agent (high-level wrapper with agent.email.* namespace)
+export { Agent, EmailNamespace } from './agent.js';
+export type { AgentOptions, SendOptions } from './agent.js';
+
+// MIME construction
+export { buildRfc5322Email } from './mime.js';
+export type { MimeSendEmailOptions, MimeEmailAttachment } from './mime.js';
+
+// Content hash computation (cross-SDK conformance)
+export { computeContentHash } from './hash.js';
+export type { ContentHashAttachment } from './hash.js';
+
 // Signing (all crypto delegated to JACS core)
 export {
   unwrapSignedEvent,
@@ -100,7 +112,9 @@ export type {
   HelloWorldResult,
   RegistrationResult,
   FreeChaoticResult,
+  ProRunResult,
   DnsCertifiedResult,
+  EnterpriseRunResult,
   FullyCertifiedResult,
   BenchmarkResult,
   JobResponseResult,
@@ -114,6 +128,7 @@ export type {
   AgentCapability,
   ConnectOptions,
   OnBenchmarkJobOptions,
+  ProRunOptions,
   DnsCertifiedRunOptions,
   FreeChaoticRunOptions,
   EmailAttachment,
@@ -123,6 +138,11 @@ export type {
   ListMessagesOptions,
   SearchOptions,
   EmailStatus,
+  EmailVolumeInfo,
+  EmailDeliveryInfo,
+  EmailReputationInfo,
+  Contact,
+  ForwardOptions,
   KeyRegistryResponse,
   EmailVerificationResultV2,
   FieldStatus,

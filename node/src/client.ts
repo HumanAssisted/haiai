@@ -8,6 +8,7 @@ import type {
   RotateKeysOptions,
   RotationResult,
   FreeChaoticResult,
+  ProRunResult,
   DnsCertifiedResult,
   FullyCertifiedResult,
   JobResponseResult,
@@ -21,6 +22,7 @@ import type {
   ConnectionMode,
   ConnectOptions,
   OnBenchmarkJobOptions,
+  ProRunOptions,
   DnsCertifiedRunOptions,
   FreeChaoticRunOptions,
   JobResponse,
@@ -30,6 +32,8 @@ import type {
   ListMessagesOptions,
   SearchOptions,
   EmailStatus,
+  Contact,
+  ForwardOptions,
   PublicKeyInfo,
   VerificationResult,
   DocumentVerificationResult,
@@ -236,11 +240,8 @@ export class HaiClient {
    * Format: `JACS {jacsId}:{timestamp}:{signature_base64}`
    */
   private buildAuthHeaders(): Record<string, string> {
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const message = `${this.jacsId}:${timestamp}`;
-    const signature = this.agent.signStringSync(message);
     return {
-      'Authorization': `JACS ${this.jacsId}:${timestamp}:${signature}`,
+      'Authorization': this.buildAuthHeader(),
       'Content-Type': 'application/json',
     };
   }
@@ -252,6 +253,11 @@ export class HaiClient {
 
   /** Build the JACS Authorization header value string. */
   buildAuthHeader(): string {
+    // Prefer JACS binding delegation
+    if ('buildAuthHeaderSync' in this.agent && typeof (this.agent as unknown as Record<string, unknown>).buildAuthHeaderSync === 'function') {
+      return (this.agent as unknown as Record<string, unknown> & { buildAuthHeaderSync: () => string }).buildAuthHeaderSync();
+    }
+    // Fallback: local construction
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const message = `${this.jacsId}:${timestamp}`;
     const signature = this.agent.signStringSync(message);
@@ -750,21 +756,21 @@ export class HaiClient {
   }
 
   // ---------------------------------------------------------------------------
-  // dnsCertifiedRun()
+  // proRun()
   // ---------------------------------------------------------------------------
 
   /**
-   * Run a $5 DNS-certified benchmark.
+   * Run a pro tier benchmark ($20/month).
    *
    * Flow: create Stripe checkout -> poll for payment -> run benchmark.
    */
-  async dnsCertifiedRun(options?: DnsCertifiedRunOptions): Promise<DnsCertifiedResult> {
+  async proRun(options?: ProRunOptions): Promise<ProRunResult> {
     const pollIntervalMs = options?.pollIntervalMs ?? 2000;
     const pollTimeoutMs = options?.pollTimeoutMs ?? 300000;
 
     // Step 1: Create Stripe Checkout session
     const purchaseUrl = this.makeUrl('/api/benchmark/purchase');
-    const purchasePayload = { tier: 'dns_certified', agent_id: this.jacsId };
+    const purchasePayload = { tier: 'pro', agent_id: this.jacsId };
 
     const purchaseResp = await this.fetchWithRetry(purchaseUrl, {
       method: 'POST',
@@ -821,8 +827,8 @@ export class HaiClient {
     // Step 4: Run the benchmark
     const runUrl = this.makeUrl('/api/benchmark/run');
     const runPayload = {
-      name: `DNS Certified Run - ${this.jacsId.slice(0, 8)}`,
-      tier: 'dns_certified',
+      name: `Pro Run - ${this.jacsId.slice(0, 8)}`,
+      tier: 'pro',
       payment_id: paymentId,
       transport: options?.transport ?? 'sse',
     };
@@ -845,21 +851,31 @@ export class HaiClient {
     };
   }
 
+  /** @deprecated Use proRun instead. The tier was renamed from dns_certified to pro. */
+  async dnsCertifiedRun(options?: DnsCertifiedRunOptions): Promise<DnsCertifiedResult> {
+    return this.proRun(options);
+  }
+
   // ---------------------------------------------------------------------------
-  // certifiedRun()
+  // enterpriseRun()
   // ---------------------------------------------------------------------------
 
   /**
-   * Run a fully_certified tier benchmark.
+   * Run an enterprise tier benchmark.
    *
-   * The fully_certified tier ($499/month) is coming soon.
+   * The enterprise tier is coming soon.
    * Contact support@hai.ai for early access.
    */
-  async certifiedRun(_options?: Record<string, unknown>): Promise<never> {
+  async enterpriseRun(_options?: Record<string, unknown>): Promise<never> {
     throw new Error(
-      'The fully_certified tier ($499/month) is coming soon. ' +
+      'The enterprise tier is coming soon. ' +
       'Contact support@hai.ai for early access.'
     );
+  }
+
+  /** @deprecated Use enterpriseRun instead. The tier was renamed from fully_certified to enterprise. */
+  async certifiedRun(_options?: Record<string, unknown>): Promise<never> {
+    return this.enterpriseRun(_options);
   }
 
   // ---------------------------------------------------------------------------
@@ -1301,7 +1317,7 @@ export class HaiClient {
         console.log(`  Name:  _jacs.${options.domain}`);
         console.log(`  Type:  TXT`);
         console.log(`  Value: sha256:${pubKeyHash}`);
-        console.log(`DNS verification enables the dns_certified tier.\n`);
+        console.log(`DNS verification enables the pro tier.\n`);
       } else {
         console.log();
       }
@@ -1614,6 +1630,9 @@ export class HaiClient {
       createdAt: (m.created_at as string) || '',
       readAt: (m.read_at as string | null) ?? null,
       jacsVerified: (m.jacs_verified as boolean) ?? false,
+      ccAddresses: (m.cc_addresses as string[]) || [],
+      labels: (m.labels as string[]) || [],
+      folder: (m.folder as string) || 'inbox',
     };
   }
 
@@ -1703,7 +1722,7 @@ export class HaiClient {
    * Run a benchmark with specified name and tier.
    *
    * @param name - Benchmark run name
-   * @param tier - Benchmark tier ("free", "dns_certified", "fully_certified"). Default: "free"
+   * @param tier - Benchmark tier ("free", "pro", "enterprise"). Default: "free"
    * @returns Benchmark result with scores
    */
   async benchmark(name: string = 'mediation_basic', tier: string = 'free'): Promise<Record<string, unknown>> {
@@ -1744,10 +1763,7 @@ export class HaiClient {
 
     let response: Response;
     try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers: this.buildAuthHeaders(),
-        body: JSON.stringify({
+      const payload: Record<string, unknown> = {
           to: options.to,
           subject: options.subject,
           body: options.body,
@@ -1757,7 +1773,15 @@ export class HaiClient {
             content_type: a.contentType,
             data_base64: a.data.toString('base64'),
           })),
-        }),
+        };
+      if (options.cc?.length) payload.cc = options.cc;
+      if (options.bcc?.length) payload.bcc = options.bcc;
+      if (options.labels?.length) payload.labels = options.labels;
+
+      response = await fetch(url, {
+        method: 'POST',
+        headers: this.buildAuthHeaders(),
+        body: JSON.stringify(payload),
         signal: controller.signal,
       });
     } catch (e) {
@@ -1833,6 +1857,24 @@ export class HaiClient {
   }
 
   /**
+   * Send an agent-signed email.
+   *
+   * @deprecated sendSignedEmail currently delegates to sendEmail. The previous
+   * implementation called /api/v1/email/sign (HAI authority key) then POSTed
+   * to send-signed, which rejects because the signer ID does not match the
+   * authenticated agent. True agent-key local signing will be available when
+   * the Rust SDK core (DevEx TASK_017) ships. Use sendEmail directly.
+   *
+   * @param options - Email options (to, subject, body, attachments, etc.)
+   * @returns SendEmailResult with messageId and status.
+   */
+  async sendSignedEmail(options: SendEmailOptions): Promise<SendEmailResult> {
+    // Deprecated: delegates to sendEmail until local agent-key signing
+    // is available (DevEx TASK_017). Use sendEmail directly.
+    return this.sendEmail(options);
+  }
+
+  /**
    * Verify a JACS-signed email via the HAI API.
    *
    * The server extracts the `jacs-signature.json` attachment, validates
@@ -1882,6 +1924,8 @@ export class HaiClient {
         forwarded: (ce.forwarded as boolean) ?? false,
       })),
       error: data.error as string | null | undefined,
+      agentStatus: data.agent_status as string | null | undefined,
+      benchmarksCompleted: (data.benchmarks_completed as string[]) ?? [],
     };
   }
 
@@ -1896,6 +1940,9 @@ export class HaiClient {
     if (options?.limit != null) params.set('limit', String(options.limit));
     if (options?.offset != null) params.set('offset', String(options.offset));
     if (options?.direction) params.set('direction', options.direction);
+    if (options?.isRead != null) params.set('is_read', String(options.isRead));
+    if (options?.folder) params.set('folder', options.folder);
+    if (options?.label) params.set('label', options.label);
 
     const qs = params.toString();
     const safeAgentId = this.encodePathSegment(this.haiAgentId);
@@ -1940,6 +1987,10 @@ export class HaiClient {
     });
 
     const data = await response.json() as Record<string, unknown>;
+    const volumeRaw = data.volume as Record<string, unknown> | undefined;
+    const deliveryRaw = data.delivery as Record<string, unknown> | undefined;
+    const reputationRaw = data.reputation as Record<string, unknown> | undefined;
+
     return {
       email: (data.email as string) || '',
       status: (data.status as string) || '',
@@ -1953,6 +2004,22 @@ export class HaiClient {
       externalEnabled: (data.external_enabled as boolean) || false,
       externalSendsToday: (data.external_sends_today as number) || 0,
       lastTierChange: (data.last_tier_change as string) || null,
+      volume: volumeRaw ? {
+        sentTotal: (volumeRaw.sent_total as number) || 0,
+        receivedTotal: (volumeRaw.received_total as number) || 0,
+        sent24h: (volumeRaw.sent_24h as number) || 0,
+      } : null,
+      delivery: deliveryRaw ? {
+        bounceCount: (deliveryRaw.bounce_count as number) || 0,
+        spamReportCount: (deliveryRaw.spam_report_count as number) || 0,
+        deliveryRate: (deliveryRaw.delivery_rate as number) || 0,
+      } : null,
+      reputation: reputationRaw ? {
+        score: (reputationRaw.score as number) || 0,
+        tier: (reputationRaw.tier as string) || '',
+        emailScore: (reputationRaw.email_score as number) || 0,
+        haiScore: reputationRaw.hai_score != null ? (reputationRaw.hai_score as number) : null,
+      } : null,
     };
   }
 
@@ -2019,6 +2086,10 @@ export class HaiClient {
     if (options.direction) params.set('direction', options.direction);
     if (options.fromAddress) params.set('from_address', options.fromAddress);
     if (options.toAddress) params.set('to_address', options.toAddress);
+    if (options.isRead != null) params.set('is_read', String(options.isRead));
+    if (options.jacsVerified != null) params.set('jacs_verified', String(options.jacsVerified));
+    if (options.folder) params.set('folder', options.folder);
+    if (options.label) params.set('label', options.label);
 
     const safeAgentId = this.encodePathSegment(this.haiAgentId);
     const url = this.makeUrl(`/api/agents/${safeAgentId}/email/search?${params.toString()}`);
@@ -2069,6 +2140,89 @@ export class HaiClient {
       body,
       inReplyTo: original.messageId ?? messageId,
     });
+  }
+
+  /**
+   * Forward an email message to another recipient.
+   *
+   * @param options - Forward options (messageId, to, optional comment)
+   * @returns Send result with message ID and status
+   */
+  async forward(options: ForwardOptions): Promise<SendEmailResult> {
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/forward`);
+
+    const payload: Record<string, unknown> = {
+      message_id: options.messageId,
+      to: options.to,
+    };
+    if (options.comment) payload.comment = options.comment;
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: this.buildAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    return {
+      messageId: (data.message_id as string) || '',
+      status: (data.status as string) || '',
+    };
+  }
+
+  /**
+   * Archive an email message.
+   *
+   * @param messageId - The message ID to archive
+   */
+  async archive(messageId: string): Promise<void> {
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const safeMessageId = this.encodePathSegment(messageId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/messages/${safeMessageId}/archive`);
+    await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: this.buildAuthHeaders(),
+    });
+  }
+
+  /**
+   * Unarchive (restore) an email message.
+   *
+   * @param messageId - The message ID to unarchive
+   */
+  async unarchive(messageId: string): Promise<void> {
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const safeMessageId = this.encodePathSegment(messageId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/messages/${safeMessageId}/unarchive`);
+    await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: this.buildAuthHeaders(),
+    });
+  }
+
+  /**
+   * List contacts derived from email message history.
+   *
+   * @returns Array of Contact objects
+   */
+  async getContacts(): Promise<Contact[]> {
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/contacts`);
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: this.buildAuthHeaders(),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    const items = Array.isArray(data) ? data : (data.contacts as Array<Record<string, unknown>>) || [];
+    return items.map((c: Record<string, unknown>) => ({
+      email: (c.email as string) || '',
+      displayName: (c.display_name as string) || undefined,
+      lastContact: (c.last_contact as string) || '',
+      jacsVerified: (c.jacs_verified as boolean) ?? false,
+      reputationTier: (c.reputation_tier as string) || undefined,
+    }));
   }
 
   // ---------------------------------------------------------------------------

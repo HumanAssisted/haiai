@@ -51,10 +51,26 @@ export function clearServerKeysCache(): void {
 }
 
 /**
- * Produce canonical JSON for signing: sorted keys, compact separators.
- * Matches the Rust `serde_json::to_string()` with BTreeMap behavior.
+ * Produce canonical JSON per RFC 8785 (JCS).
+ *
+ * Delegates to JACS binding-core `canonicalizeJsonSync` when an agent is
+ * provided. Falls back to local sorted-key JSON.stringify for environments
+ * where the JACS native module is not loaded.
  */
-export function canonicalJson(obj: unknown): string {
+export function canonicalJson(obj: unknown, agent?: JacsAgent): string {
+  if (agent && 'canonicalizeJsonSync' in agent && typeof (agent as unknown as Record<string, unknown>).canonicalizeJsonSync === 'function') {
+    try {
+      const jsonStr = canonicalJsonLocal(obj);
+      return (agent as unknown as Record<string, unknown> & { canonicalizeJsonSync: (s: string) => string }).canonicalizeJsonSync(jsonStr);
+    } catch {
+      // Fall through to local implementation
+    }
+  }
+  return canonicalJsonLocal(obj);
+}
+
+/** Local sorted-key JSON canonicalization (fallback). */
+function canonicalJsonLocal(obj: unknown): string {
   return JSON.stringify(obj, (_key, value: unknown) => {
     if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
       const sorted: Record<string, unknown> = {};
@@ -71,6 +87,9 @@ export function canonicalJson(obj: unknown): string {
  * Unwrap a JACS-signed event, verifying the signature via JACS if server keys
  * are provided.
  *
+ * Delegates to JACS binding-core `unwrapSignedEventSync` when the agent
+ * supports it. Falls back to local unwrap + verification otherwise.
+ *
  * Supports both the canonical format (version/document_type/data/metadata/jacsSignature)
  * and the legacy format (payload/metadata/signature). If the event is not a
  * JacsDocument, it is returned as-is.
@@ -82,6 +101,26 @@ export function unwrapSignedEvent(
   serverPublicKeys: Record<string, string>,
   agent?: JacsAgent,
 ): unknown {
+  // Try JACS binding-core delegation first
+  if (agent && 'unwrapSignedEventSync' in agent && typeof (agent as unknown as Record<string, unknown>).unwrapSignedEventSync === 'function') {
+    try {
+      const eventJson = JSON.stringify(eventData);
+      const serverKeysJson = JSON.stringify({
+        keys: Object.entries(serverPublicKeys).map(([keyId, publicKey]) => ({
+          key_id: keyId,
+          public_key: publicKey,
+        })),
+      });
+      const resultJson = (agent as unknown as Record<string, unknown> & { unwrapSignedEventSync: (e: string, k: string) => string }).unwrapSignedEventSync(eventJson, serverKeysJson);
+      const result = JSON.parse(resultJson) as { data: unknown; verified: boolean };
+      return result.data ?? eventData;
+    } catch {
+      // Fall through to local implementation
+    }
+  }
+
+  // Fallback: local unwrap with JACS verify for signature checks
+
   // Canonical JacsDocument format: {version, document_type, data, metadata, jacsSignature}
   if (eventData.jacsSignature && eventData.metadata && eventData.data !== undefined) {
     const doc = eventData as unknown as JacsDocument;
@@ -89,27 +128,18 @@ export function unwrapSignedEvent(
     const publicKeyPem = serverPublicKeys[agentID];
 
     if (publicKeyPem) {
-      const signedContent = canonicalJson(doc.data);
+      const signedContent = canonicalJson(doc.data, agent);
       let valid = false;
       if (agent) {
-        try {
-          valid = agent.verifyStringSync(
-            signedContent,
-            doc.jacsSignature.signature,
-            Buffer.from(publicKeyPem, 'utf-8'),
-            'pem',
-          );
-        } catch {
-          valid = false;
-        }
+        valid = agent.verifyStringSync(
+          signedContent,
+          doc.jacsSignature.signature,
+          Buffer.from(publicKeyPem, 'utf-8'),
+          'pem',
+        );
       } else {
-        // Attempt standalone verification via JACS
-        try {
-          const standaloneResult = verifyDocumentStandalone(JSON.stringify(eventData));
-          valid = standaloneResult.valid;
-        } catch {
-          valid = false;
-        }
+        const standaloneResult = verifyDocumentStandalone(JSON.stringify(eventData));
+        valid = standaloneResult.valid;
       }
       if (!valid) {
         throw new Error(`JACS signature verification failed for agentID="${agentID}"`);
@@ -130,19 +160,15 @@ export function unwrapSignedEvent(
       const signedContent = canonicalJson({
         metadata: eventData.metadata,
         payload: eventData.payload,
-      });
+      }, agent);
       let valid = false;
       if (agent) {
-        try {
-          valid = agent.verifyStringSync(
-            signedContent,
-            (sig.signature as string) || '',
-            Buffer.from(publicKeyPem, 'utf-8'),
-            'pem',
-          );
-        } catch {
-          valid = false;
-        }
+        valid = agent.verifyStringSync(
+          signedContent,
+          (sig.signature as string) || '',
+          Buffer.from(publicKeyPem, 'utf-8'),
+          'pem',
+        );
       }
       if (!valid) {
         throw new Error(`JACS signature verification failed for key_id="${keyId}"`);
@@ -159,28 +185,28 @@ export function unwrapSignedEvent(
 /**
  * Sign a job response as a JACS document via JACS core.
  *
- * Creates a JacsDocument matching the Python SDK format:
- *   {version, document_type, data, metadata, jacsSignature}
- *
- * The signature is computed over the canonical JSON of the job response
- * payload (matching Python which signs `canonicalize_json(job_response_payload)`).
+ * Delegates envelope construction to JACS binding-core when the agent
+ * exposes `signResponseSync`. Falls back to local construction for agents
+ * that only provide `signStringSync` (e.g. test mocks).
  */
 export function signResponse(
   jobResponse: unknown,
   agent: JacsAgent,
   jacsId: string,
 ): { signed_document: string; agent_jacs_id: string } {
+  // Prefer JACS binding delegation (JACS canonicalizes internally via RFC 8785)
+  if ('signResponseSync' in agent && typeof (agent as unknown as Record<string, unknown>).signResponseSync === 'function') {
+    const rawJson = JSON.stringify(jobResponse);
+    const resultJson = (agent as unknown as Record<string, unknown> & { signResponseSync: (p: string) => string }).signResponseSync(rawJson);
+    return { signed_document: resultJson, agent_jacs_id: jacsId };
+  }
+
+  // Fallback for agents without signResponseSync
+  const canonicalPayload = canonicalJson(jobResponse, agent);
   const now = new Date().toISOString();
   const documentId = randomUUID();
-
-  // Canonical JSON of the payload for signing and hashing
-  const canonicalPayload = canonicalJson(jobResponse);
   const hash = hashString(canonicalPayload);
-
-  // Store data in canonical (sorted-key) form for cross-language compat
   const sortedData: unknown = JSON.parse(canonicalPayload);
-
-  // Sign the canonical payload data via JACS
   const signature = agent.signStringSync(canonicalPayload);
 
   const jacsDoc: JacsDocument = {

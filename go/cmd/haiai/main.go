@@ -241,7 +241,7 @@ func cmdHello(args []string) {
 
 func cmdBenchmark(args []string) {
 	fs := flag.NewFlagSet("benchmark", flag.ExitOnError)
-	tier := fs.String("tier", "free", "Benchmark tier (free, dns_certified, fully_certified)")
+	tier := fs.String("tier", "free", "Benchmark tier (free, pro, enterprise)")
 	fs.Parse(args)
 
 	cl := newClient()

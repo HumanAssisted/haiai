@@ -29,9 +29,29 @@ Use this guide whenever HAIAI behavior changes so each language implementation c
 1. HAI endpoint contracts and request/response shaping
 2. JACS auth header usage (`Authorization: JACS ...`) and when auth is required
 3. transport behavior for HAI event APIs (SSE/WS)
-4. benchmark orchestration (free/dns_certified/certified tier flows)
+4. benchmark orchestration (free/pro/enterprise tier flows)
 5. username, email, key-discovery, and HAI verification endpoints
 6. verify-link generation rules for `hai.ai` verifier URLs
+
+## JACS Protocol Delegation
+
+HAIAI SDKs delegate protocol functions to JACS bindings via `jacs::protocol` (Rust)
+or the equivalent binding API in each language. Each SDK follows this pattern:
+
+1. **Try JACS binding** — call the JACS method directly (e.g., `agent.sign_response()`,
+   `agent.build_auth_header()`, `agent.canonicalize_json()`).
+2. **Fallback to local** — if the JACS binding doesn't expose the method (test mocks,
+   older JACS versions), use a local implementation.
+
+Delegated protocol functions:
+
+| Function | Rust | Python | Node | Go |
+|---|---|---|---|---|
+| `canonicalize_json` | `jacs::protocol::canonicalize_json` | `agent.canonicalize_json()` | `agent.canonicalizeJsonSync()` | `backend.CanonicalizeJSON()` |
+| `build_auth_header` | `jacs::protocol::build_auth_header` | `agent.build_auth_header()` | `agent.buildAuthHeaderSync()` | `backend.BuildAuthHeader()` |
+| `sign_response` | `provider.sign_response()` | `agent.sign_response()` | `agent.signResponseSync()` | `backend.SignResponse()` |
+| `unwrap_signed_event` | `jacs::protocol::unwrap_signed_event` | `agent.unwrap_signed_event()` | `agent.unwrapSignedEventSync()` | `backend.UnwrapSignedEvent()` |
+| `generate_verify_link` | `jacs::protocol::generate_verify_link` | `agent.generate_verify_link()` | `agent.generateVerifyLinkSync()` | `backend.GenerateVerifyLink()` |
 
 ## Cross-Language Invariants
 
@@ -44,7 +64,7 @@ When updating Rust integrations, use these canonical upstream repos as reference
 1. `~/personal/JACS/jacs`
 2. `~/personal/JACS/jacs-mcp`
 
-Target canonical version pin for both integrations: `0.8.0`.
+Target canonical version pin for both integrations: `0.9.4`.
 
 ### Authentication header format
 
@@ -140,7 +160,8 @@ Private-key candidate order:
 The Rust workspace lives under `rust/`:
 
 1. `rust/haiai`: publishable library crate
-2. `rust/hai-mcp`: MCP server binary crate
+2. `rust/haiai-cli`: CLI binary crate (`haiai` binary with built-in MCP server)
+3. `rust/hai-mcp`: MCP server library crate
 
 Rust-specific boundary points:
 
@@ -173,6 +194,8 @@ For each language SDK:
 
 ## Open Integration Items
 
-1. Keep `rust/haiai/src/jacs_local.rs` aligned with canonical `jacs` updates.
+1. Keep `rust/haiai/src/jacs.rs` `JacsProvider` trait aligned with canonical `jacs` updates.
 2. Keep `rust/hai-mcp` embedded `jacs_*` behavior aligned with canonical `jacs-mcp` tool changes.
 3. Expand shared fixtures for additional HAI endpoints as contracts stabilize.
+4. `serde_json_canonicalizer` is optional in `rust/haiai` — only needed when `jacs-crate` feature is disabled.
+5. Verify `jacs` JACS-side: `unwrap_signed_event` key type (`Vec<u8>` vs PEM `String`) and `get_lookup_id()` vs `get_id()` return format parity.

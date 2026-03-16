@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://hai.ai/schemas/HaiConfig.json",
+  "$id": "HaiConfig.json",
   "title": "HaiConfig",
   "description": "Schema for HAI SDK client configuration",
   "type": "object",

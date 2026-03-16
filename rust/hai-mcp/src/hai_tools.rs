@@ -1,6 +1,6 @@
 use haiai::{
-    generate_verify_link, generate_verify_link_hosted, CreateAgentOptions, HaiClient, JacsProvider,
-    ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions, SearchOptions, SendEmailOptions,
+    generate_verify_link, generate_verify_link_hosted, HaiClient, JacsProvider,
+    ListMessagesOptions, RegisterAgentOptions, SearchOptions, SendEmailOptions,
 };
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 use rmcp::ErrorData as McpError;
@@ -28,7 +28,6 @@ pub fn has_tool(name: &str) -> bool {
             | "hai_agent_status"
             | "hai_verify_status"
             | "hai_claim_username"
-            | "hai_create_agent"
             | "hai_register_agent"
             | "hai_generate_verify_link"
             | "hai_send_email"
@@ -41,6 +40,10 @@ pub fn has_tool(name: &str) -> bool {
             | "hai_get_unread_count"
             | "hai_get_email_status"
             | "hai_reply_email"
+            | "hai_forward_email"
+            | "hai_archive_message"
+            | "hai_unarchive_message"
+            | "hai_list_contacts"
     )
 }
 
@@ -64,7 +67,6 @@ pub async fn dispatch(
         "hai_agent_status" => call_verify_status(context, &args).await,
         "hai_verify_status" => call_verify_status(context, &args).await,
         "hai_claim_username" => call_claim_username(context, &args).await,
-        "hai_create_agent" => call_create_agent(context, &args).await,
         "hai_register_agent" => call_register_agent(context, &args).await,
         "hai_generate_verify_link" => call_generate_verify_link(&args).await,
         "hai_send_email" => call_send_email(context, &args).await,
@@ -77,6 +79,10 @@ pub async fn dispatch(
         "hai_get_unread_count" => call_get_unread_count(context, &args).await,
         "hai_get_email_status" => call_get_email_status(context, &args).await,
         "hai_reply_email" => call_reply_email(context, &args).await,
+        "hai_forward_email" => call_forward_email(context, &args).await,
+        "hai_archive_message" => call_archive_message(context, &args).await,
+        "hai_unarchive_message" => call_unarchive_message(context, &args).await,
+        "hai_list_contacts" => call_list_contacts(context, &args).await,
         _ => Err(ToolError::InvalidParams(format!(
             "unknown HAI tool: {name}"
         ))),
@@ -97,8 +103,7 @@ fn definition_values() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "username": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "username": { "type": "string" }
                 },
                 "required": ["username"]
             }
@@ -110,8 +115,7 @@ fn definition_values() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "include_test": { "type": "boolean" },
-                    "config_path": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "config_path": { "type": "string" }
                 }
             }
         }),
@@ -121,8 +125,7 @@ fn definition_values() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "config_path": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "config_path": { "type": "string" }
                 }
             }
         }),
@@ -133,8 +136,7 @@ fn definition_values() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "agent_id": { "type": "string" },
-                    "config_path": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "config_path": { "type": "string" }
                 }
             }
         }),
@@ -146,33 +148,9 @@ fn definition_values() -> Vec<Value> {
                 "properties": {
                     "agent_id": { "type": "string" },
                     "username": { "type": "string" },
-                    "config_path": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "config_path": { "type": "string" }
                 },
                 "required": ["agent_id", "username"]
-            }
-        }),
-        json!({
-            "name": "hai_create_agent",
-            "description": "Create a new JACS agent locally and optionally register with HAI",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string" },
-                    "password": { "type": "string" },
-                    "algorithm": { "type": "string" },
-                    "data_directory": { "type": "string" },
-                    "key_directory": { "type": "string" },
-                    "config_path": { "type": "string" },
-                    "agent_type": { "type": "string" },
-                    "description": { "type": "string" },
-                    "domain": { "type": "string" },
-                    "default_storage": { "type": "string" },
-                    "register_with_hai": { "type": "boolean" },
-                    "owner_email": { "type": "string" },
-                    "hai_url": { "type": "string" }
-                },
-                "required": ["name", "password"]
             }
         }),
         json!({
@@ -184,8 +162,7 @@ fn definition_values() -> Vec<Value> {
                     "config_path": { "type": "string" },
                     "owner_email": { "type": "string" },
                     "domain": { "type": "string" },
-                    "description": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "description": { "type": "string" }
                 }
             }
         }),
@@ -211,11 +188,12 @@ fn definition_values() -> Vec<Value> {
                     "to": { "type": "string", "description": "Recipient email address" },
                     "subject": { "type": "string", "description": "Email subject line" },
                     "body": { "type": "string", "description": "Plain text email body" },
+                    "cc": { "type": "array", "items": { "type": "string" }, "description": "CC recipients" },
+                    "bcc": { "type": "array", "items": { "type": "string" }, "description": "BCC recipients" },
+                    "labels": { "type": "array", "items": { "type": "string" }, "description": "Labels/tags for the message" },
                     "in_reply_to": { "type": "string", "description": "Message-ID to reply to (for threading)" },
                     "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
-                    "email": { "type": "string", "description": "Optional claimed @hai.ai sender address for stateless MCP sessions" },
-                    "config_path": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "config_path": { "type": "string" }
                 },
                 "required": ["to", "subject", "body"]
             }
@@ -229,9 +207,12 @@ fn definition_values() -> Vec<Value> {
                     "limit": { "type": "integer", "description": "Max messages to return (default 20)" },
                     "offset": { "type": "integer", "description": "Pagination offset" },
                     "direction": { "type": "string", "description": "Filter: 'inbound' or 'outbound'" },
+                    "is_read": { "type": "boolean", "description": "Filter by read status" },
+                    "folder": { "type": "string", "description": "Filter by folder (e.g. 'inbox', 'archive')" },
+                    "label": { "type": "string", "description": "Filter by label/tag" },
+                    "has_attachments": { "type": "boolean", "description": "Filter by attachment presence" },
                     "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
-                    "config_path": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "config_path": { "type": "string" }
                 }
             }
         }),
@@ -243,8 +224,7 @@ fn definition_values() -> Vec<Value> {
                 "properties": {
                     "message_id": { "type": "string", "description": "Message UUID" },
                     "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
-                    "config_path": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "config_path": { "type": "string" }
                 },
                 "required": ["message_id"]
             }
@@ -257,8 +237,7 @@ fn definition_values() -> Vec<Value> {
                 "properties": {
                     "message_id": { "type": "string", "description": "Message UUID" },
                     "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
-                    "config_path": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "config_path": { "type": "string" }
                 },
                 "required": ["message_id"]
             }
@@ -271,8 +250,7 @@ fn definition_values() -> Vec<Value> {
                 "properties": {
                     "message_id": { "type": "string", "description": "Message UUID" },
                     "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
-                    "config_path": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "config_path": { "type": "string" }
                 },
                 "required": ["message_id"]
             }
@@ -285,8 +263,7 @@ fn definition_values() -> Vec<Value> {
                 "properties": {
                     "message_id": { "type": "string", "description": "Message UUID" },
                     "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
-                    "config_path": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "config_path": { "type": "string" }
                 },
                 "required": ["message_id"]
             }
@@ -303,11 +280,15 @@ fn definition_values() -> Vec<Value> {
                     "to_address": { "type": "string", "description": "Filter by recipient address" },
                     "since": { "type": "string", "description": "Filter: messages after this ISO date" },
                     "until": { "type": "string", "description": "Filter: messages before this ISO date" },
+                    "is_read": { "type": "boolean", "description": "Filter by read status" },
+                    "jacs_verified": { "type": "boolean", "description": "Filter by JACS verification status" },
+                    "folder": { "type": "string", "description": "Filter by folder (e.g. 'inbox', 'archive')" },
+                    "label": { "type": "string", "description": "Filter by label/tag" },
+                    "has_attachments": { "type": "boolean", "description": "Filter by attachment presence" },
                     "limit": { "type": "integer", "description": "Max results (default 20)" },
                     "offset": { "type": "integer", "description": "Pagination offset" },
                     "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
-                    "config_path": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "config_path": { "type": "string" }
                 }
             }
         }),
@@ -318,8 +299,7 @@ fn definition_values() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
-                    "config_path": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "config_path": { "type": "string" }
                 }
             }
         }),
@@ -330,8 +310,7 @@ fn definition_values() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
-                    "config_path": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "config_path": { "type": "string" }
                 }
             }
         }),
@@ -345,11 +324,61 @@ fn definition_values() -> Vec<Value> {
                     "body": { "type": "string", "description": "Reply body text" },
                     "subject_override": { "type": "string", "description": "Override the Re: subject line" },
                     "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
-                    "email": { "type": "string", "description": "Optional claimed @hai.ai sender address for stateless MCP sessions" },
-                    "config_path": { "type": "string" },
-                    "hai_url": { "type": "string" }
+                    "config_path": { "type": "string" }
                 },
                 "required": ["message_id", "body"]
+            }
+        }),
+        json!({
+            "name": "hai_forward_email",
+            "description": "Forward an email message to another recipient",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "message_id": { "type": "string", "description": "ID of the message to forward" },
+                    "to": { "type": "string", "description": "Recipient email address" },
+                    "comment": { "type": "string", "description": "Optional comment to include above the forwarded message" },
+                    "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["message_id", "to"]
+            }
+        }),
+        json!({
+            "name": "hai_archive_message",
+            "description": "Archive an email message (move to archive folder)",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "message_id": { "type": "string", "description": "Message UUID to archive" },
+                    "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["message_id"]
+            }
+        }),
+        json!({
+            "name": "hai_unarchive_message",
+            "description": "Unarchive an email message (move back to inbox)",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "message_id": { "type": "string", "description": "Message UUID to unarchive" },
+                    "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["message_id"]
+            }
+        }),
+        json!({
+            "name": "hai_list_contacts",
+            "description": "List email contacts derived from message history, enriched with HAI metadata",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
+                    "config_path": { "type": "string" }
+                }
             }
         }),
     ]
@@ -442,70 +471,6 @@ async fn call_claim_username(context: &HaiServerContext, args: &Value) -> ToolRe
     ))
 }
 
-async fn call_create_agent(context: &HaiServerContext, args: &Value) -> ToolResult {
-    let options = CreateAgentOptions {
-        name: required_string(args, "name")?.to_string(),
-        password: required_string(args, "password")?.to_string(),
-        algorithm: optional_string(args, "algorithm").map(ToString::to_string),
-        data_directory: optional_string(args, "data_directory").map(ToString::to_string),
-        key_directory: optional_string(args, "key_directory").map(ToString::to_string),
-        config_path: optional_string(args, "config_path").map(ToString::to_string),
-        agent_type: optional_string(args, "agent_type").map(ToString::to_string),
-        description: optional_string(args, "description").map(ToString::to_string),
-        domain: optional_string(args, "domain").map(ToString::to_string),
-        default_storage: optional_string(args, "default_storage").map(ToString::to_string),
-    };
-
-    let created = LocalJacsProvider::create_agent_with_options(&options).map_err(tool_message)?;
-
-    let register_with_hai = args
-        .get("register_with_hai")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-
-    let registration = if register_with_hai {
-        let config_path = (!created.config_path.is_empty()).then_some(created.config_path.as_str());
-        let provider = context.local_provider(config_path).map_err(tool_message)?;
-        let created_jacs_id = provider.jacs_id().to_string();
-        let agent_json = provider.export_agent_json().map_err(tool_message)?;
-        let public_key_pem = provider.public_key_pem().map_err(tool_message)?;
-
-        let client = context
-            .client_with_provider(provider, optional_string(args, "hai_url"))
-            .map_err(tool_message)?;
-        let register_result = client
-            .register(&RegisterAgentOptions {
-                agent_json,
-                public_key_pem: Some(public_key_pem),
-                owner_email: optional_string(args, "owner_email").map(ToString::to_string),
-                domain: optional_string(args, "domain").map(ToString::to_string),
-                description: optional_string(args, "description").map(ToString::to_string),
-            })
-            .await
-            .map_err(tool_message)?;
-        context.remember_hai_agent_id(&created_jacs_id, &register_result.agent_id);
-
-        Some(register_result)
-    } else {
-        None
-    };
-
-    Ok(success_tool_result(
-        if registration.is_some() {
-            format!(
-                "created agent_id={} and registered with HAI",
-                created.agent_id
-            )
-        } else {
-            format!("created agent_id={}", created.agent_id)
-        },
-        json!({
-            "created_agent": created,
-            "registration": registration
-        }),
-    ))
-}
-
 async fn call_register_agent(context: &HaiServerContext, args: &Value) -> ToolResult {
     let config_path = optional_string(args, "config_path");
     let provider = context
@@ -562,18 +527,32 @@ fn apply_email_identity_overrides(
     context: &HaiServerContext,
     client: &mut HaiClient<impl JacsProvider>,
     args: &Value,
-) {
+) -> Result<(), ToolError> {
     let jacs_id = client.jacs_id().to_string();
 
     if let Some(agent_id) = optional_string(args, "agent_id").filter(|value| !value.is_empty()) {
-        client.set_hai_agent_id(agent_id.to_string());
-        context.remember_hai_agent_id(&jacs_id, agent_id);
+        if let Some(cached_agent_id) = context.cached_hai_agent_id(&jacs_id) {
+            if cached_agent_id != agent_id {
+                return Err(ToolError::InvalidParams(
+                    "agent_id does not match the cached HAI identity for this JACS agent"
+                        .to_string(),
+                ));
+            }
+        } else {
+            client.set_hai_agent_id(agent_id.to_string());
+        }
     }
 
     if let Some(email) = optional_string(args, "email").filter(|value| !value.is_empty()) {
-        client.set_agent_email(email.to_string());
-        context.remember_agent_email(&jacs_id, email);
+        if context.cached_agent_email(&jacs_id).as_deref() != Some(email) {
+            return Err(ToolError::InvalidParams(
+                "email overrides are not supported; derive the address from HAI status or username claim"
+                    .to_string(),
+            ));
+        }
     }
+
+    Ok(())
 }
 
 async fn prepare_email_client(
@@ -586,7 +565,7 @@ async fn prepare_email_client(
             optional_string(args, "hai_url"),
         )
         .map_err(tool_message)?;
-    apply_email_identity_overrides(context, &mut client, args);
+    apply_email_identity_overrides(context, &mut client, args)?;
 
     if client.agent_email().is_none() {
         if let Ok(status) = client.get_email_status().await {
@@ -607,8 +586,11 @@ async fn call_send_email(context: &HaiServerContext, args: &Value) -> ToolResult
             to: required_string(args, "to")?.to_string(),
             subject: required_string(args, "subject")?.to_string(),
             body: required_string(args, "body")?.to_string(),
+            cc: optional_string_array(args, "cc"),
+            bcc: optional_string_array(args, "bcc"),
             in_reply_to: optional_string(args, "in_reply_to").map(ToString::to_string),
             attachments: vec![],
+            labels: optional_string_array(args, "labels"),
         })
         .await
         .map_err(tool_message)?;
@@ -629,6 +611,10 @@ async fn call_list_messages(context: &HaiServerContext, args: &Value) -> ToolRes
             limit: optional_u32(args, "limit"),
             offset: optional_u32(args, "offset"),
             direction: optional_string(args, "direction").map(ToString::to_string),
+            is_read: optional_bool(args, "is_read"),
+            folder: optional_string(args, "folder").map(ToString::to_string),
+            label: optional_string(args, "label").map(ToString::to_string),
+            has_attachments: optional_bool(args, "has_attachments"),
         })
         .await
         .map_err(tool_message)?;
@@ -700,6 +686,11 @@ async fn call_search_messages(context: &HaiServerContext, args: &Value) -> ToolR
             to_address: optional_string(args, "to_address").map(ToString::to_string),
             since: optional_string(args, "since").map(ToString::to_string),
             until: optional_string(args, "until").map(ToString::to_string),
+            is_read: optional_bool(args, "is_read"),
+            jacs_verified: optional_bool(args, "jacs_verified"),
+            folder: optional_string(args, "folder").map(ToString::to_string),
+            label: optional_string(args, "label").map(ToString::to_string),
+            has_attachments: optional_bool(args, "has_attachments"),
             limit: optional_u32(args, "limit"),
             offset: optional_u32(args, "offset"),
         })
@@ -756,6 +747,58 @@ async fn call_reply_email(context: &HaiServerContext, args: &Value) -> ToolResul
     ))
 }
 
+async fn call_forward_email(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let message_id = required_string(args, "message_id")?;
+    let to = required_string(args, "to")?;
+    let comment = optional_string(args, "comment");
+    let client = prepare_email_client(context, args).await?;
+    let result = client
+        .forward(message_id, to, comment)
+        .await
+        .map_err(tool_message)?;
+
+    Ok(success_tool_result(
+        format!(
+            "forwarded message_id={} to={} status={}",
+            result.message_id, to, result.status
+        ),
+        json!({ "forward": result }),
+    ))
+}
+
+async fn call_archive_message(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let message_id = required_string(args, "message_id")?;
+    let client = prepare_email_client(context, args).await?;
+    client.archive(message_id).await.map_err(tool_message)?;
+
+    Ok(success_tool_result(
+        format!("archived message_id={message_id}"),
+        json!({ "message_id": message_id, "archived": true }),
+    ))
+}
+
+async fn call_unarchive_message(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let message_id = required_string(args, "message_id")?;
+    let client = prepare_email_client(context, args).await?;
+    client.unarchive(message_id).await.map_err(tool_message)?;
+
+    Ok(success_tool_result(
+        format!("unarchived message_id={message_id}"),
+        json!({ "message_id": message_id, "archived": false }),
+    ))
+}
+
+async fn call_list_contacts(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let client = prepare_email_client(context, args).await?;
+    let result = client.contacts().await.map_err(tool_message)?;
+
+    let count = result.len();
+    Ok(success_tool_result(
+        format!("found {count} contacts"),
+        json!({ "contacts": result }),
+    ))
+}
+
 fn success_tool_result(text: String, structured: Value) -> CallToolResult {
     CallToolResult {
         content: vec![Content::text(text)],
@@ -790,9 +833,28 @@ fn optional_u32(args: &Value, key: &str) -> Option<u32> {
         .map(|value| value as u32)
 }
 
+fn optional_bool(args: &Value, key: &str) -> Option<bool> {
+    args.get(key).and_then(Value::as_bool)
+}
+
+fn optional_string_array(args: &Value, key: &str) -> Vec<String> {
+    args.get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::embedded_provider::EmbeddedJacsProvider;
+    use haiai::NoopJacsProvider;
     use serde::Deserialize;
     use serde_json::Value;
     use std::collections::BTreeMap;
@@ -816,6 +878,14 @@ mod tests {
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/mcp_tool_contract.json");
         let raw = fs::read_to_string(path).expect("read mcp tool contract fixture");
         serde_json::from_str(&raw).expect("decode mcp tool contract fixture")
+    }
+
+    fn build_context() -> HaiServerContext {
+        HaiServerContext::from_process_env(
+            "anonymous-agent".to_string(),
+            None,
+            EmbeddedJacsProvider::testing("agent-123"),
+        )
     }
 
     #[test]
@@ -889,6 +959,74 @@ mod tests {
         assert!(
             matches!(err, ToolError::InvalidParams(message) if message == "message_id is required")
         );
+    }
+
+    #[test]
+    fn hai_tool_definitions_do_not_expose_create_agent_or_runtime_hai_url_override() {
+        for tool in definition_values() {
+            let name = tool["name"].as_str().expect("tool name");
+            assert_ne!(name, "hai_create_agent");
+
+            let properties = tool["inputSchema"]["properties"]
+                .as_object()
+                .expect("tool properties");
+            assert!(
+                !properties.contains_key("hai_url"),
+                "tool {name} should not expose runtime hai_url overrides"
+            );
+        }
+    }
+
+    #[test]
+    fn email_agent_id_override_does_not_persist_in_cached_state() {
+        let context = build_context();
+        let mut client = context
+            .client_with_provider(NoopJacsProvider::new("agent-123"), None)
+            .expect("client");
+
+        apply_email_identity_overrides(
+            &context,
+            &mut client,
+            &json!({
+                "agent_id": "transient-agent"
+            }),
+        )
+        .expect("transient override should be accepted");
+        assert_eq!(client.hai_agent_id(), "transient-agent");
+
+        let mut restored = context
+            .client_with_provider(NoopJacsProvider::new("agent-123"), None)
+            .expect("restored client");
+        context.apply_cached_agent_state("agent-123", &mut restored);
+
+        assert_eq!(restored.hai_agent_id(), "agent-123");
+        assert_eq!(restored.agent_email(), None);
+    }
+
+    #[test]
+    fn email_agent_id_override_cannot_replace_cached_server_identity() {
+        let context = build_context();
+        context.remember_hai_agent_id("agent-123", "server-agent");
+
+        let mut client = context
+            .client_with_provider(NoopJacsProvider::new("agent-123"), None)
+            .expect("client");
+        context.apply_cached_agent_state("agent-123", &mut client);
+
+        let error = apply_email_identity_overrides(
+            &context,
+            &mut client,
+            &json!({
+                "agent_id": "attacker-agent"
+            }),
+        )
+        .expect_err("conflicting override must be rejected");
+
+        assert!(
+            matches!(error, ToolError::InvalidParams(ref message) if message.contains("agent_id")),
+            "unexpected error: {error:?}"
+        );
+        assert_eq!(client.hai_agent_id(), "server-agent");
     }
 
     #[tokio::test]

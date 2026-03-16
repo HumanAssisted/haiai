@@ -16,12 +16,12 @@ use crate::error::{HaiError, Result};
 use crate::jacs::JacsProvider;
 use crate::types::{
     AgentKeyHistory, AgentVerificationResult, CheckUsernameResult, ClaimUsernameResult,
-    DeleteUsernameResult, DnsCertifiedResult, DnsCertifiedRunOptions, DocumentVerificationResult,
+    Contact, DeleteUsernameResult, DnsCertifiedResult, DnsCertifiedRunOptions, ProRunResult, ProRunOptions, DocumentVerificationResult,
     EmailMessage, EmailStatus, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult,
     ListMessagesOptions, PublicKeyInfo, RegisterAgentOptions, RegistrationResult,
     RotateKeysOptions, RotationResult, SearchOptions, SendEmailOptions, SendEmailResult,
-    TranscriptMessage, TransportType, UpdateUsernameResult, VerifyAgentDocumentRequest,
-    VerifyAgentResult,
+    TranscriptMessage, TransportType, UpdateAgentResult, UpdateUsernameResult,
+    VerifyAgentDocumentRequest, VerifyAgentResult,
 };
 
 const DEFAULT_BASE_URL: &str = "https://hai.ai";
@@ -333,6 +333,47 @@ impl<P: JacsProvider> HaiClient<P> {
         Ok(result)
     }
 
+    /// Export the current agent document as JSON.
+    pub fn export_agent_json(&self) -> Result<String> {
+        self.jacs.export_agent_json()
+    }
+
+    /// Update agent metadata and re-sign with the existing key.
+    ///
+    /// Delegates the local update to [`JacsProvider::update_agent()`], then
+    /// re-registers the updated agent document with HAI so the platform has
+    /// the latest version. HAI registration failure is non-fatal.
+    pub async fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
+        let mut result = self.jacs.update_agent(new_agent_data)?;
+
+        // Re-register with HAI using current key (same key, just new doc version)
+        let url = self.url("/api/v1/agents/register");
+        let mut payload = serde_json::Map::new();
+        payload.insert(
+            "agent_json".to_string(),
+            Value::String(result.signed_agent_json.clone()),
+        );
+
+        match self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .header("Content-Type", "application/json")
+            .json(&Value::Object(payload))
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => {
+                result.registered_with_hai = true;
+            }
+            _ => {
+                // HAI registration failure is non-fatal
+            }
+        }
+
+        Ok(result)
+    }
+
     pub async fn submit_response(
         &self,
         job_id: &str,
@@ -471,6 +512,15 @@ impl<P: JacsProvider> HaiClient<P> {
             "subject": options.subject,
             "body": options.body,
         });
+        if !options.cc.is_empty() {
+            payload["cc"] = json!(options.cc);
+        }
+        if !options.bcc.is_empty() {
+            payload["bcc"] = json!(options.bcc);
+        }
+        if !options.labels.is_empty() {
+            payload["labels"] = json!(options.labels);
+        }
         if let Some(ref in_reply_to) = options.in_reply_to {
             payload["in_reply_to"] = Value::String(in_reply_to.clone());
         }
@@ -508,6 +558,54 @@ impl<P: JacsProvider> HaiClient<P> {
         })
     }
 
+    /// Send an agent-signed email.
+    ///
+    /// Builds an RFC 5322 MIME email from the given options, signs it locally
+    /// with the agent's own JACS key (via `JacsProvider::sign_email_locally`),
+    /// and POSTs the signed bytes to the server for countersigning and delivery.
+    ///
+    /// The server validates that the JACS signature matches the authenticated
+    /// agent, countersigns with the HAI authority key (creating a forwarding
+    /// chain), and delivers via JMAP.
+    ///
+    /// # Errors
+    ///
+    /// Returns `HaiError` if:
+    /// - `agent_email` is not set (call `claim_username` first)
+    /// - The provider does not support local signing (use `LocalJacsProvider`)
+    /// - MIME construction or JACS signing fails
+    /// - The server rejects the signed email
+    pub async fn send_signed_email(&self, options: &SendEmailOptions) -> Result<SendEmailResult> {
+        let from = self.agent_email.as_deref().ok_or_else(|| {
+            HaiError::Message("agent email not set — call claim_username first".into())
+        })?;
+
+        // Step 1: Build RFC 5322 MIME locally
+        let raw_mime = crate::mime::build_rfc5322_email(options, from)?;
+
+        // Step 2: Sign with the agent's own JACS key
+        let signed = self.jacs.sign_email_locally(&raw_mime)?;
+
+        // Step 3: POST to the send-signed endpoint
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
+        let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/send-signed"));
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .header("Content-Type", "message/rfc822")
+            .body(signed)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        Ok(SendEmailResult {
+            message_id: value_string(&data, &["message_id"]),
+            status: value_string(&data, &["status"]),
+        })
+    }
+
     pub async fn list_messages(&self, options: &ListMessagesOptions) -> Result<Vec<EmailMessage>> {
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/messages"));
@@ -526,6 +624,18 @@ impl<P: JacsProvider> HaiClient<P> {
         if let Some(direction) = options.direction.as_deref() {
             request = request.query(&[("direction", direction)]);
         }
+        if let Some(is_read) = options.is_read {
+            request = request.query(&[("is_read", &is_read.to_string())]);
+        }
+        if let Some(folder) = options.folder.as_deref() {
+            request = request.query(&[("folder", folder)]);
+        }
+        if let Some(label) = options.label.as_deref() {
+            request = request.query(&[("label", label)]);
+        }
+        if let Some(has_attachments) = options.has_attachments {
+            request = request.query(&[("has_attachments", &has_attachments.to_string())]);
+        }
 
         let response = request.send().await?;
         let data = response_json(response).await?;
@@ -535,6 +645,49 @@ impl<P: JacsProvider> HaiClient<P> {
             .cloned()
             .unwrap_or_else(|| Value::Array(Vec::new()));
         Ok(serde_json::from_value(messages)?)
+    }
+
+    /// Update labels on a message. Adds and removes labels atomically.
+    pub async fn update_labels(
+        &self,
+        message_id: &str,
+        add: &[&str],
+        remove: &[&str],
+    ) -> Result<Vec<String>> {
+        let _ = self.agent_email.as_deref().ok_or_else(|| {
+            HaiError::Message("agent email not set — call claim_username first".into())
+        })?;
+        let agent_id = self.hai_agent_id();
+        let safe_agent_id = encode_path_segment(agent_id);
+        let safe_message_id = encode_path_segment(message_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_agent_id}/email/messages/{safe_message_id}/labels"
+        ));
+
+        let body = json!({
+            "add": add,
+            "remove": remove,
+        });
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .json(&body)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        let labels = data
+            .get("labels")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(labels)
     }
 
     pub async fn mark_read(&self, message_id: &str) -> Result<()> {
@@ -630,6 +783,46 @@ impl<P: JacsProvider> HaiClient<P> {
         }
     }
 
+    pub async fn archive(&self, message_id: &str) -> Result<()> {
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
+        let safe_message_id = encode_path_segment(message_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/archive"
+        ));
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .send()
+            .await?;
+
+        match response.status() {
+            StatusCode::OK | StatusCode::CREATED | StatusCode::NO_CONTENT => Ok(()),
+            _ => Err(response_error(response).await),
+        }
+    }
+
+    pub async fn unarchive(&self, message_id: &str) -> Result<()> {
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
+        let safe_message_id = encode_path_segment(message_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/unarchive"
+        ));
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .send()
+            .await?;
+
+        match response.status() {
+            StatusCode::OK | StatusCode::CREATED | StatusCode::NO_CONTENT => Ok(()),
+            _ => Err(response_error(response).await),
+        }
+    }
+
     pub async fn search_messages(&self, options: &SearchOptions) -> Result<Vec<EmailMessage>> {
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/search"));
@@ -663,6 +856,21 @@ impl<P: JacsProvider> HaiClient<P> {
         if let Some(offset) = options.offset {
             request = request.query(&[("offset", &offset.to_string())]);
         }
+        if let Some(is_read) = options.is_read {
+            request = request.query(&[("is_read", &is_read.to_string())]);
+        }
+        if let Some(ref jacs_verified) = options.jacs_verified {
+            request = request.query(&[("jacs_verified", &jacs_verified.to_string())]);
+        }
+        if let Some(ref folder) = options.folder {
+            request = request.query(&[("folder", folder.as_str())]);
+        }
+        if let Some(ref label) = options.label {
+            request = request.query(&[("label", label.as_str())]);
+        }
+        if let Some(has_attachments) = options.has_attachments {
+            request = request.query(&[("has_attachments", &has_attachments.to_string())]);
+        }
 
         let response = request.send().await?;
         let data = response_json(response).await?;
@@ -694,34 +902,125 @@ impl<P: JacsProvider> HaiClient<P> {
         Ok(count)
     }
 
+    /// Reply to a message.
+    ///
+    /// - `reply_type`: "sender" (default), "all", or "custom"
+    /// - `recipients`: required when reply_type is "custom"
     pub async fn reply(
         &self,
         message_id: &str,
         body: &str,
         subject_override: Option<&str>,
     ) -> Result<SendEmailResult> {
-        let original = self.get_message(message_id).await?;
+        self.reply_with_options(message_id, body, subject_override, None, &[]).await
+    }
 
-        let subject = match subject_override {
-            Some(s) => s.to_string(),
-            None => {
-                if original.subject.starts_with("Re: ") {
-                    original.subject.clone()
-                } else {
-                    format!("Re: {}", original.subject)
-                }
-            }
-        };
+    /// Reply with reply_type and optional recipients.
+    ///
+    /// - `reply_type`: "sender" (default), "all", or "custom"
+    /// - `recipients`: required when reply_type is "custom"
+    pub async fn reply_with_options(
+        &self,
+        message_id: &str,
+        body: &str,
+        subject_override: Option<&str>,
+        reply_type: Option<&str>,
+        recipients: &[String],
+    ) -> Result<SendEmailResult> {
+        let _ = self.agent_email.as_deref().ok_or_else(|| {
+            HaiError::Message("agent email not set — call claim_username first".into())
+        })?;
+        let agent_id = self.hai_agent_id();
+        let safe_agent_id = encode_path_segment(agent_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_agent_id}/email/reply"
+        ));
 
-        let options = SendEmailOptions {
-            to: original.from_address,
-            subject,
-            body: body.to_string(),
-            in_reply_to: original.message_id.clone().or(Some(original.id)),
-            attachments: Vec::new(),
-        };
+        let mut payload = serde_json::json!({
+            "message_id": message_id,
+            "body": body,
+        });
 
-        self.send_email(&options).await
+        if let Some(rt) = reply_type {
+            payload["reply_type"] = serde_json::Value::String(rt.to_string());
+        }
+        if !recipients.is_empty() {
+            payload["recipients_override"] = serde_json::json!(recipients);
+        }
+        if let Some(s) = subject_override {
+            payload["subject_override"] = serde_json::Value::String(s.to_string());
+        }
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .json(&payload)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        Ok(serde_json::from_value(data)?)
+    }
+
+    /// Forward a message to another agent with an optional comment.
+    pub async fn forward(
+        &self,
+        message_id: &str,
+        to: &str,
+        comment: Option<&str>,
+    ) -> Result<SendEmailResult> {
+        let _ = self.agent_email.as_deref().ok_or_else(|| {
+            HaiError::Message("agent email not set — call claim_username first".into())
+        })?;
+        let agent_id = self.hai_agent_id();
+        let safe_agent_id = encode_path_segment(agent_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_agent_id}/email/forward"
+        ));
+
+        let mut payload = serde_json::json!({
+            "message_id": message_id,
+            "to": to,
+        });
+
+        if let Some(c) = comment {
+            payload["comment"] = serde_json::Value::String(c.to_string());
+        }
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .json(&payload)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        Ok(serde_json::from_value(data)?)
+    }
+
+    /// Convenience alias for contacts endpoint.
+    pub async fn contacts(&self) -> Result<Vec<Contact>> {
+        let _ = self.agent_email.as_deref().ok_or_else(|| {
+            HaiError::Message("agent email not set — call claim_username first".into())
+        })?;
+        let agent_id = self.hai_agent_id();
+        let safe_agent_id = encode_path_segment(agent_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_agent_id}/email/contacts"
+        ));
+
+        let response = self
+            .http
+            .get(url)
+            .header("Authorization", self.build_auth_header()?)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        let contacts_val = data.get("contacts").cloned().unwrap_or(data.clone());
+        Ok(serde_json::from_value(contacts_val)?)
     }
 
     pub async fn fetch_remote_key(&self, jacs_id: &str, version: &str) -> Result<PublicKeyInfo> {
@@ -871,10 +1170,10 @@ impl<P: JacsProvider> HaiClient<P> {
         })
     }
 
-    pub async fn dns_certified_run(
+    pub async fn pro_run(
         &self,
-        options: &DnsCertifiedRunOptions,
-    ) -> Result<DnsCertifiedResult> {
+        options: &ProRunOptions,
+    ) -> Result<ProRunResult> {
         let purchase_url = self.url("/api/benchmark/purchase");
         let purchase_response = self
             .http
@@ -882,7 +1181,7 @@ impl<P: JacsProvider> HaiClient<P> {
             .header("Authorization", self.build_auth_header()?)
             .header("Content-Type", "application/json")
             .json(&json!({
-                "tier": "dns_certified",
+                "tier": "pro",
                 "agent_id": self.jacs.jacs_id(),
             }))
             .send()
@@ -891,13 +1190,13 @@ impl<P: JacsProvider> HaiClient<P> {
         let checkout_url = value_string(&purchase_data, &["checkout_url"]);
         if checkout_url.is_empty() {
             return Err(HaiError::Message(
-                "dns_certified purchase did not return checkout_url".to_string(),
+                "pro purchase did not return checkout_url".to_string(),
             ));
         }
         let payment_id = value_string(&purchase_data, &["payment_id"]);
         if payment_id.is_empty() {
             return Err(HaiError::Message(
-                "dns_certified purchase did not return payment_id".to_string(),
+                "pro purchase did not return payment_id".to_string(),
             ));
         }
 
@@ -942,8 +1241,8 @@ impl<P: JacsProvider> HaiClient<P> {
             .header("Authorization", self.build_auth_header()?)
             .header("Content-Type", "application/json")
             .json(&json!({
-                "name": format!("DNS Certified Run - {short_id}"),
-                "tier": "dns_certified",
+                "name": format!("Pro Run - {short_id}"),
+                "tier": "pro",
                 "payment_id": payment_id,
                 "transport": options.transport.as_str(),
             }))
@@ -951,7 +1250,7 @@ impl<P: JacsProvider> HaiClient<P> {
             .await?;
 
         let data = response_json(run_response).await?;
-        Ok(DnsCertifiedResult {
+        Ok(ProRunResult {
             success: true,
             run_id: value_string(&data, &["run_id", "runId"]),
             score: data.get("score").and_then(Value::as_f64).unwrap_or(0.0),
@@ -961,10 +1260,25 @@ impl<P: JacsProvider> HaiClient<P> {
         })
     }
 
-    pub async fn certified_run(&self) -> Result<()> {
+    /// Deprecated: Use `pro_run` instead. The tier was renamed from dns_certified to pro.
+    #[deprecated(note = "Use pro_run instead. The tier was renamed from dns_certified to pro.")]
+    pub async fn dns_certified_run(
+        &self,
+        options: &DnsCertifiedRunOptions,
+    ) -> Result<DnsCertifiedResult> {
+        self.pro_run(options).await
+    }
+
+    pub async fn enterprise_run(&self) -> Result<()> {
         Err(HaiError::Message(
-            "the fully_certified tier ($499/month) is coming soon; contact support@hai.ai for early access".to_string(),
+            "the enterprise tier is coming soon; contact support@hai.ai for early access".to_string(),
         ))
+    }
+
+    /// Deprecated: Use `enterprise_run` instead. The tier was renamed from fully_certified to enterprise.
+    #[deprecated(note = "Use enterprise_run instead. The tier was renamed from fully_certified to enterprise.")]
+    pub async fn certified_run(&self) -> Result<()> {
+        self.enterprise_run().await
     }
 
     pub async fn connect_sse(&self) -> Result<SseConnection> {

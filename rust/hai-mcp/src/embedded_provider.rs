@@ -3,23 +3,21 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::{anyhow, Context as _};
+use haiai::key_format::normalize_public_key_pem;
 use haiai::{HaiError, JacsProvider, Result as HaiResult, SignedPayload};
 use jacs::agent::boilerplate::BoilerPlate;
 use jacs::agent::Agent;
 use jacs::crypt::KeyManager;
 use jacs_binding_core::AgentWrapper;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
-use time::OffsetDateTime;
-use uuid::Uuid;
 
-const DEFAULT_PUBLIC_KEY_DIRECTORY: &str = "./jacs_keys";
-const DEFAULT_PUBLIC_KEY_FILENAME: &str = "jacs.public.pem";
 const MISSING_JACS_CONFIG_MESSAGE: &str = "JACS_CONFIG environment variable is not set.\n\
 \n\
 To use hai-mcp, you need to:\n\
 1. Create a jacs.config.json file with your agent configuration\n\
-2. Set JACS_CONFIG=/path/to/jacs.config.json";
+2. Set JACS_CONFIG=/path/to/jacs.config.json\n\
+\n\
+Alternatively, run from a directory that contains jacs.config.json (current directory is checked).";
 
 pub struct LoadedSharedAgent {
     inner: Arc<StdMutex<Agent>>,
@@ -27,9 +25,26 @@ pub struct LoadedSharedAgent {
 }
 
 impl LoadedSharedAgent {
+    /// Load agent from config. Resolution order:
+    /// 1. JACS_CONFIG env var
+    /// 2. JACS_CONFIG_PATH env var
+    /// 3. ./jacs.config.json in the current directory
     pub fn load_from_config_env() -> anyhow::Result<Self> {
-        let cfg_path =
-            std::env::var("JACS_CONFIG").map_err(|_| anyhow!(MISSING_JACS_CONFIG_MESSAGE))?;
+        let default_path = PathBuf::from("./jacs.config.json");
+        let cfg_path = std::env::var("JACS_CONFIG")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var("JACS_CONFIG_PATH")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .map(PathBuf::from)
+            })
+            .unwrap_or_else(|| default_path.clone());
+        if cfg_path == default_path && !cfg_path.exists() {
+            return Err(anyhow!(MISSING_JACS_CONFIG_MESSAGE));
+        }
         Self::load_from_config_path(cfg_path)
     }
 
@@ -90,8 +105,8 @@ pub struct EmbeddedJacsProvider {
 }
 
 impl EmbeddedJacsProvider {
-    pub fn new(inner: Arc<StdMutex<Agent>>, config_path: PathBuf) -> HaiResult<Self> {
-        let (jacs_id, algorithm) = {
+    pub fn new(inner: Arc<StdMutex<Agent>>, _config_path: PathBuf) -> HaiResult<Self> {
+        let (jacs_id, algorithm, public_key_pem) = {
             let agent = inner.lock().map_err(|error| {
                 HaiError::Provider(format!("failed to lock JACS agent: {error}"))
             })?;
@@ -103,10 +118,11 @@ impl EmbeddedJacsProvider {
                     "Cannot resolve signing algorithm from embedded JACS agent.".to_string(),
                 )
             })?;
-            (jacs_id, algorithm)
+            let public_key = agent.get_public_key().map_err(|error| {
+                HaiError::Provider(format!("failed to read embedded public key bytes: {error}"))
+            })?;
+            (jacs_id, algorithm, normalize_public_key_pem(&public_key))
         };
-
-        let public_key_pem = load_public_key_pem(&config_path)?;
 
         Ok(Self {
             inner,
@@ -166,7 +182,7 @@ impl JacsProvider for EmbeddedJacsProvider {
             .inner
             .lock()
             .map_err(|error| HaiError::Provider(format!("failed to lock JACS agent: {error}")))?;
-        jacs::agent::Agent::sign_bytes(&mut *agent, data).map_err(|error| {
+        jacs::agent::Agent::sign_bytes(&mut agent, data).map_err(|error| {
             HaiError::Provider(format!("embedded JACS sign_bytes failed: {error}"))
         })
     }
@@ -180,7 +196,7 @@ impl JacsProvider for EmbeddedJacsProvider {
     }
 
     fn canonical_json(&self, value: &Value) -> HaiResult<String> {
-        Ok(haiai::jacs::canonicalize_json_rfc8785(value))
+        Ok(jacs::protocol::canonicalize_json(value))
     }
 
     fn verify_a2a_artifact(&self, wrapped_json: &str) -> HaiResult<String> {
@@ -201,39 +217,16 @@ impl JacsProvider for EmbeddedJacsProvider {
     }
 
     fn sign_response(&self, payload: &Value) -> HaiResult<SignedPayload> {
-        let canonical_payload = self.canonical_json(payload)?;
-        let sorted_data: Value = serde_json::from_str(&canonical_payload)?;
+        let mut agent = self
+            .inner
+            .lock()
+            .map_err(|error| HaiError::Provider(format!("failed to lock JACS agent: {error}")))?;
 
-        let hash = {
-            let mut hasher = Sha256::new();
-            hasher.update(canonical_payload.as_bytes());
-            format!("{:x}", hasher.finalize())
-        };
-
-        let now = OffsetDateTime::now_utc()
-            .format(&time::format_description::well_known::Rfc3339)
-            .map_err(|error| HaiError::Provider(format!("failed to format timestamp: {error}")))?;
-        let signature = self.sign_string(&canonical_payload)?;
-
-        let document = serde_json::json!({
-            "version": "1.0.0",
-            "document_type": "job_response",
-            "data": sorted_data,
-            "metadata": {
-                "issuer": self.jacs_id,
-                "document_id": Uuid::new_v4().to_string(),
-                "created_at": now,
-                "hash": hash,
-            },
-            "jacsSignature": {
-                "agentID": self.jacs_id,
-                "date": now,
-                "signature": signature,
-            },
-        });
+        let envelope = jacs::protocol::sign_response(&mut agent, payload)
+            .map_err(|error| HaiError::Provider(format!("JACS sign_response failed: {error}")))?;
 
         Ok(SignedPayload {
-            signed_document: serde_json::to_string(&document)?,
+            signed_document: serde_json::to_string(&envelope)?,
             agent_jacs_id: self.jacs_id.clone(),
         })
     }
@@ -274,53 +267,6 @@ fn resolve_relative_config_paths(config_json: &str, config_path: &Path) -> anyho
     serde_json::to_string(&value).context("Failed to serialize resolved config")
 }
 
-fn load_public_key_pem(config_path: &Path) -> HaiResult<String> {
-    let config_json = fs::read_to_string(config_path).map_err(|error| {
-        HaiError::Provider(format!(
-            "failed to read embedded JACS config '{}': {error}",
-            config_path.display()
-        ))
-    })?;
-    let value: Value = serde_json::from_str(&config_json).map_err(|error| {
-        HaiError::Provider(format!(
-            "embedded JACS config '{}' is not valid JSON: {error}",
-            config_path.display()
-        ))
-    })?;
-
-    let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
-    let key_dir = value
-        .get("jacs_key_directory")
-        .and_then(Value::as_str)
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_PUBLIC_KEY_DIRECTORY));
-    let key_file = value
-        .get("jacs_agent_public_key_filename")
-        .and_then(Value::as_str)
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_PUBLIC_KEY_FILENAME));
-
-    let key_dir = if key_dir.is_absolute() {
-        key_dir
-    } else {
-        config_dir.join(key_dir)
-    };
-    let key_path = if key_file.is_absolute() {
-        key_file
-    } else {
-        key_dir.join(key_file)
-    };
-
-    fs::read_to_string(&key_path).map_err(|error| {
-        HaiError::Provider(format!(
-            "failed to read embedded public key PEM '{}': {error}",
-            key_path.display()
-        ))
-    })
-}
-
 trait Pipe: Sized {
     fn pipe<T>(self, func: impl FnOnce(Self) -> T) -> T {
         func(self)
@@ -335,13 +281,17 @@ mod tests {
     use haiai::LocalJacsProvider;
     use tempfile::TempDir;
 
+    fn jacs_fixture_config_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/jacs-agent/jacs.config.json")
+            .canonicalize()
+            .expect("fixtures/jacs-agent/jacs.config.json must exist in repo")
+    }
+
     fn write_temp_fixture_config() -> (TempDir, PathBuf) {
         std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "secretpassord");
 
-        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../JACS/jacs/jacs.config.json")
-            .canonicalize()
-            .expect("canonical fixture config");
+        let source = jacs_fixture_config_path();
         let source_dir = source.parent().expect("fixture config dir");
         let mut value: Value =
             serde_json::from_str(&fs::read_to_string(&source).expect("read fixture config"))

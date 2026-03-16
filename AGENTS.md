@@ -2,52 +2,57 @@
 
 ## Purpose
 
-The HAIAI SDK is the HAI platform integration layer around `jacs`.
-
-It exists to help agents use JACS identity/provenance on HAI APIs to:
-
-1. register with HAI
-2. interact with other agents through HAI-mediated API workflows
-3. receive benchmark jobs and submit responses
-4. send and receive agent email
+HAIAI SDK — HAI platform integration layer around `jacs`. Helps agents use JACS identity/provenance to register with HAI, receive benchmark jobs, interact with other agents, and send/receive agent email.
 
 ## Ownership Boundary
 
-### `jacs` owns
+**`jacs` owns:** key generation, key encryption/decryption, canonicalization, document signing/verification, cryptographic primitives.
 
-1. key generation and key encryption/decryption
-2. canonicalization for signatures
-3. document signing and signature verification
-4. low-level cryptographic primitives and trust-store mechanics
+**`haiai` owns:** HAI endpoint contracts, JACS-authenticated API calls (`Authorization: JACS ...`), registration/verification workflows, SSE/WS transport, email APIs, integration wrappers delegating to JACS adapters.
 
-### `haiai` owns
+## Layout
 
-1. HAI endpoint contracts and request/response shaping
-2. JACS-authenticated HAI API calls (`Authorization: JACS ...`)
-3. registration and verification workflows (`/api/v1/agents/*`)
-4. mediated runtime interaction with HAI (SSE/WS transport + job orchestration)
-5. HAI agent messaging/email APIs
-6. HAI integration wrappers that delegate to canonical JACS adapters
+```
+python/src/haiai/        # Python SDK
+python/src/jacs/hai/     # Python JACS integration layer (two source roots in wheel)
+node/src/                # Node SDK (TypeScript, dual ESM/CJS)
+go/                      # Go SDK
+rust/haiai/              # Rust library crate
+rust/hai-mcp/            # Rust MCP server binary
+rust/haiai-cli/          # Rust CLI binary
+fixtures/                # Shared cross-language test fixtures
+schemas/                 # JSON schemas for HAI events
+scripts/ci/              # CI enforcement (crypto policy denylist)
+```
 
-## Design Rules
+## Trait Architecture (JACS 0.9.4)
 
-1. Keep `haiai` as a thin wrapper around `jacs` for crypto and provenance logic.
-2. Do not duplicate or expand local crypto implementations in `haiai`.
-3. Prefer DRY delegation to `jacs` modules for framework integrations.
-4. Keep behavior aligned across Node/Python/Go/Rust SDKs.
-5. Treat HAI API behavior as the contract surface; add parity tests for all languages.
+The Rust SDK exposes JACS capabilities through 8 layered extension traits defined in `rust/haiai/src/jacs.rs`, implemented in `rust/haiai/src/jacs_local.rs`:
 
-## Practical Mental Model
+- **Layer 0** `JacsProvider` -- Core signing, identity, canonical JSON
+- **Layer 1** `JacsAgentLifecycle` -- Key rotation, migration, diagnostics, quickstart
+- **Layer 2** `JacsDocumentProvider` -- Document CRUD, versioning, search
+- **Layer 3** `JacsBatchProvider` -- Batch sign/verify
+- **Layer 4** `JacsVerificationProvider` -- Document verification, DNS trust, auth headers
+- **Layer 5** `JacsEmailProvider` -- Email signing/verification, attachments
+- **Layer 6** `JacsAgreementProvider` -- Multi-party agreements (feature: `agreements`)
+- **Layer 7** `JacsAttestationProvider` -- Attestation claims (feature: `attestation`)
 
-1. Build/load agent identity with `jacs`.
-2. Use `haiai` to register that identity with HAI.
-3. Use `haiai` transport (`sse`/`ws`) to receive mediated work from HAI.
-4. Sign/verify payloads with JACS-backed helpers.
-5. Use `haiai` email and agent APIs for operational interaction on HAI.
+Storage backend selection: `rust/haiai/src/config.rs` (`resolve_storage_backend()`). Labels: `fs`, `rusqlite`, `sqlite` (alias).
 
-## Reference Docs
+Full parity map: `docs/haisdk/PARITY_MAP.md` (53 exposed, 18 excluded, 71 total).
 
-1. `README.md`
-2. `docs/HAIAI_LANGUAGE_SYNC_GUIDE.md`
-3. `docs/adr/0001-crypto-delegation-to-jacs.md`
-4. `docs/A2A_INTEGRATION_ROADMAP.md`
+## Rules
+
+1. **No local crypto in haiai.** Delegate to `jacs`. CI enforces via `scripts/ci/check_no_local_crypto.sh`.
+2. **Cross-language parity.** Changes must apply to all 4 SDKs. Tests read shared fixtures from `fixtures/`.
+3. **All 6 packages share one version.** `make check-versions` to verify.
+4. **Releases are tag-triggered.** `rust/v*` → crates.io, `python/v*` → PyPI, `node/v*` → npm. Use `make release-*`.
+
+## Gotchas
+
+- **JACS filenames use `:`** (`{id}:{version}.json`) — illegal on Windows. Rust CI uses sparse checkout for Windows builds.
+- **CLI and MCP server are Rust-only.** `cli.ts`, `mcp-server.ts`, `cli.py`, and `mcp_server.py` have been deleted. The `haiai` CLI binary and `haiai mcp` subcommand are the canonical implementations.
+- **Python test deps.** Use `pip install -e ".[dev,mcp]"` not just `.[dev]`.
+- **Path segments must be URL-escaped** in all API paths.
+- **Auth header:** `JACS {jacsId}:{timestamp}:{signature_base64}`.

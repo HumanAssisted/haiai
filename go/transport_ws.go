@@ -114,7 +114,11 @@ func (c *Client) ConnectWS(ctx context.Context) (*WSConnection, error) {
 	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
 
 	// Build auth headers via CryptoBackend
-	authHeader := c.buildAuthHeader()
+	authHeader, err := c.buildAuthHeader()
+	if err != nil {
+		cancel()
+		return nil, wrapError(ErrTransport, err, "failed to authenticate WebSocket request")
+	}
 	requestHeader := http.Header{}
 	requestHeader.Set("Authorization", authHeader)
 

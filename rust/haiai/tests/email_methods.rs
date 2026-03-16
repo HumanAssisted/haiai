@@ -47,8 +47,11 @@ async fn send_email_sends_content_fields() {
             to: "bob@hai.ai".to_string(),
             subject: "Hello".to_string(),
             body: "World".to_string(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
             in_reply_to: None,
             attachments: Vec::new(),
+            labels: Vec::new(),
         })
         .await
         .expect("send_email");
@@ -79,8 +82,11 @@ async fn send_email_signature_uses_correct_hash_format() {
             to: "bob@hai.ai".to_string(),
             subject: "Test Subject".to_string(),
             body: "Test Body".to_string(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
             in_reply_to: None,
             attachments: Vec::new(),
+            labels: Vec::new(),
         })
         .await
         .expect("send_email");
@@ -119,12 +125,52 @@ async fn send_email_includes_in_reply_to_when_set() {
             to: "bob@hai.ai".to_string(),
             subject: "Re: Original".to_string(),
             body: "Reply body".to_string(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
             in_reply_to: Some("orig-msg-id".to_string()),
             attachments: Vec::new(),
+            labels: Vec::new(),
         })
         .await
         .expect("send_email with in_reply_to");
 
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn send_email_includes_labels_when_set() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/api/agents/test-agent-001/email/send")
+                .body_includes("\"labels\"")
+                .body_includes("urgent")
+                .body_includes("project-x");
+            then.status(200).json_body(json!({
+                "message_id": "msg-labels-001",
+                "status": "queued"
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let result = client
+        .send_email(&SendEmailOptions {
+            to: "bob@hai.ai".to_string(),
+            subject: "Labeled".to_string(),
+            body: "Message with labels".to_string(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
+            in_reply_to: None,
+            attachments: Vec::new(),
+            labels: vec!["urgent".to_string(), "project-x".to_string()],
+        })
+        .await
+        .expect("send_email with labels");
+
+    assert_eq!(result.message_id, "msg-labels-001");
     mock.assert_async().await;
 }
 
@@ -367,31 +413,15 @@ async fn get_unread_count_handles_raw_number() {
 }
 
 #[tokio::test]
-async fn reply_fetches_original_and_sends_with_re_prefix() {
+async fn reply_posts_to_reply_endpoint() {
     let server = MockServer::start_async().await;
 
-    let get_mock = server
-        .mock_async(|when, then| {
-            when.method(GET)
-                .path("/api/agents/test-agent-001/email/messages/orig-msg");
-            then.status(200).json_body(json!({
-                "id": "orig-msg",
-                "from_address": "alice@hai.ai",
-                "to_address": "test-agent-001@hai.ai",
-                "subject": "Original Subject",
-                "body_text": "Original body",
-                "created_at": "2026-02-24T10:00:00Z"
-            }));
-        })
-        .await;
-
-    let send_mock = server
+    let mock = server
         .mock_async(|when, then| {
             when.method(POST)
-                .path("/api/agents/test-agent-001/email/send")
-                .body_includes("alice@hai.ai")
-                .body_includes("Re: Original Subject")
-                .body_includes("orig-msg");
+                .path("/api/agents/test-agent-001/email/reply")
+                .body_includes("\"message_id\":\"orig-msg\"")
+                .body_includes("My reply");
             then.status(200).json_body(json!({
                 "message_id": "reply-msg",
                 "status": "queued"
@@ -406,74 +436,17 @@ async fn reply_fetches_original_and_sends_with_re_prefix() {
         .expect("reply");
 
     assert_eq!(result.message_id, "reply-msg");
-    get_mock.assert_async().await;
-    send_mock.assert_async().await;
-}
-
-#[tokio::test]
-async fn reply_does_not_double_re_prefix() {
-    let server = MockServer::start_async().await;
-
-    server
-        .mock_async(|when, then| {
-            when.method(GET)
-                .path("/api/agents/test-agent-001/email/messages/re-msg");
-            then.status(200).json_body(json!({
-                "id": "re-msg",
-                "from_address": "alice@hai.ai",
-                "to_address": "test-agent-001@hai.ai",
-                "subject": "Re: Already replied",
-                "body_text": "Body",
-                "created_at": "2026-02-24T10:00:00Z"
-            }));
-        })
-        .await;
-
-    let send_mock = server
-        .mock_async(|when, then| {
-            when.method(POST)
-                .path("/api/agents/test-agent-001/email/send")
-                .body_includes("Re: Already replied");
-            then.status(200).json_body(json!({
-                "message_id": "reply-2",
-                "status": "queued"
-            }));
-        })
-        .await;
-
-    let client = make_client(&server.base_url());
-    let result = client
-        .reply("re-msg", "Follow up", None)
-        .await
-        .expect("reply");
-
-    assert_eq!(result.message_id, "reply-2");
-    send_mock.assert_async().await;
+    mock.assert_async().await;
 }
 
 #[tokio::test]
 async fn reply_with_subject_override() {
     let server = MockServer::start_async().await;
 
-    server
-        .mock_async(|when, then| {
-            when.method(GET)
-                .path("/api/agents/test-agent-001/email/messages/override-msg");
-            then.status(200).json_body(json!({
-                "id": "override-msg",
-                "from_address": "alice@hai.ai",
-                "to_address": "test-agent-001@hai.ai",
-                "subject": "Original",
-                "body_text": "Body",
-                "created_at": "2026-02-24T10:00:00Z"
-            }));
-        })
-        .await;
-
-    let send_mock = server
+    let mock = server
         .mock_async(|when, then| {
             when.method(POST)
-                .path("/api/agents/test-agent-001/email/send")
+                .path("/api/agents/test-agent-001/email/reply")
                 .body_includes("Custom Subject");
             then.status(200).json_body(json!({
                 "message_id": "reply-3",
@@ -489,5 +462,379 @@ async fn reply_with_subject_override() {
         .expect("reply with override");
 
     assert_eq!(result.message_id, "reply-3");
-    send_mock.assert_async().await;
+    mock.assert_async().await;
+}
+
+// --- Task 008: Reply with reply_type ---
+
+#[tokio::test]
+async fn reply_with_reply_type_all_posts_to_reply_endpoint() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/api/agents/test-agent-001/email/reply")
+                .body_includes("\"reply_type\":\"all\"")
+                .body_includes("\"message_id\"");
+            then.status(200).json_body(json!({
+                "message_id": "reply-all-msg",
+                "status": "queued"
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let result = client
+        .reply_with_options("orig-msg-uuid", "Reply to all", None, Some("all"), &[])
+        .await
+        .expect("reply_with_options all");
+
+    assert_eq!(result.message_id, "reply-all-msg");
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn reply_with_custom_recipients_posts_to_reply_endpoint() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/api/agents/test-agent-001/email/reply")
+                .body_includes("\"reply_type\":\"custom\"")
+                .body_includes("agent-a@hai.ai");
+            then.status(200).json_body(json!({
+                "message_id": "reply-custom-msg",
+                "status": "queued"
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let recipients = vec!["agent-a@hai.ai".to_string(), "agent-b@hai.ai".to_string()];
+    let result = client
+        .reply_with_options("orig-msg-uuid", "Custom reply", None, Some("custom"), &recipients)
+        .await
+        .expect("reply_with_options custom");
+
+    assert_eq!(result.message_id, "reply-custom-msg");
+    mock.assert_async().await;
+}
+
+// --- Task 009: Forward ---
+
+#[tokio::test]
+async fn forward_posts_to_forward_endpoint() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/api/agents/test-agent-001/email/forward")
+                .body_includes("\"to\":\"agent-c@hai.ai\"")
+                .body_includes("\"message_id\"");
+            then.status(200).json_body(json!({
+                "message_id": "fwd-msg",
+                "status": "queued"
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let result = client
+        .forward("orig-msg-uuid", "agent-c@hai.ai", Some("FYI"))
+        .await
+        .expect("forward");
+
+    assert_eq!(result.message_id, "fwd-msg");
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn forward_without_comment() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/api/agents/test-agent-001/email/forward");
+            then.status(200).json_body(json!({
+                "message_id": "fwd-msg-2",
+                "status": "queued"
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let result = client
+        .forward("orig-msg-uuid", "agent-d@hai.ai", None)
+        .await
+        .expect("forward no comment");
+
+    assert_eq!(result.message_id, "fwd-msg-2");
+    mock.assert_async().await;
+}
+
+// --- Task 011: Search with new filters ---
+
+#[tokio::test]
+async fn search_with_is_read_filter() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/api/agents/test-agent-001/email/search")
+                .query_param("is_read", "false");
+            then.status(200).json_body(json!({
+                "messages": [{
+                    "id": "msg-500",
+                    "from_address": "alice@hai.ai",
+                    "to_address": "test-agent-001@hai.ai",
+                    "subject": "Unread message",
+                    "body_text": "You haven't read this",
+                    "created_at": "2026-03-13T10:00:00Z"
+                }],
+                "total": 1,
+                "unread": 1
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let results = client
+        .search_messages(&SearchOptions {
+            is_read: Some(false),
+            ..Default::default()
+        })
+        .await
+        .expect("search is_read=false");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, "msg-500");
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn search_with_folder_filter() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/api/agents/test-agent-001/email/search")
+                .query_param("folder", "archive");
+            then.status(200).json_body(json!({
+                "messages": [{
+                    "id": "msg-501",
+                    "from_address": "bob@hai.ai",
+                    "to_address": "test-agent-001@hai.ai",
+                    "subject": "Archived",
+                    "body_text": "Old message",
+                    "created_at": "2026-01-01T10:00:00Z"
+                }],
+                "total": 1,
+                "unread": 0
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let results = client
+        .search_messages(&SearchOptions {
+            folder: Some("archive".to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("search folder=archive");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, "msg-501");
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn search_with_jacs_verified_filter() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/api/agents/test-agent-001/email/search")
+                .query_param("jacs_verified", "true");
+            then.status(200).json_body(json!({
+                "messages": [{
+                    "id": "msg-502",
+                    "from_address": "verified@hai.ai",
+                    "to_address": "test-agent-001@hai.ai",
+                    "subject": "Verified sender",
+                    "body_text": "Signed content",
+                    "created_at": "2026-03-13T11:00:00Z"
+                }],
+                "total": 1,
+                "unread": 0
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let results = client
+        .search_messages(&SearchOptions {
+            jacs_verified: Some(true),
+            ..Default::default()
+        })
+        .await
+        .expect("search jacs_verified=true");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, "msg-502");
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn search_with_label_filter() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/api/agents/test-agent-001/email/search")
+                .query_param("label", "important");
+            then.status(200).json_body(json!({
+                "messages": [{
+                    "id": "msg-503",
+                    "from_address": "carol@hai.ai",
+                    "to_address": "test-agent-001@hai.ai",
+                    "subject": "Important stuff",
+                    "body_text": "Labeled message",
+                    "created_at": "2026-03-13T12:00:00Z"
+                }],
+                "total": 1,
+                "unread": 0
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let results = client
+        .search_messages(&SearchOptions {
+            label: Some("important".to_string()),
+            ..Default::default()
+        })
+        .await
+        .expect("search label=important");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, "msg-503");
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn search_with_combined_filters() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/api/agents/test-agent-001/email/search")
+                .query_param("q", "urgent")
+                .query_param("folder", "inbox")
+                .query_param("is_read", "false")
+                .query_param("jacs_verified", "true");
+            then.status(200).json_body(json!({
+                "messages": [{
+                    "id": "msg-504",
+                    "from_address": "dave@hai.ai",
+                    "to_address": "test-agent-001@hai.ai",
+                    "subject": "Urgent & verified",
+                    "body_text": "Please respond",
+                    "created_at": "2026-03-13T13:00:00Z"
+                }],
+                "total": 1,
+                "unread": 1
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let results = client
+        .search_messages(&SearchOptions {
+            q: Some("urgent".to_string()),
+            folder: Some("inbox".to_string()),
+            is_read: Some(false),
+            jacs_verified: Some(true),
+            ..Default::default()
+        })
+        .await
+        .expect("search combined filters");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, "msg-504");
+    mock.assert_async().await;
+}
+
+// --- Task 012: Contacts ---
+
+#[tokio::test]
+async fn contacts_returns_contacts_from_wrapped_response() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/api/agents/test-agent-001/email/contacts")
+                .header_exists("authorization");
+            then.status(200).json_body(json!({
+                "contacts": [
+                    {
+                        "email": "alice@hai.ai",
+                        "display_name": "Alice Agent",
+                        "last_contact": "2026-03-13T10:00:00+00:00",
+                        "jacs_verified": true,
+                        "reputation_tier": "established"
+                    },
+                    {
+                        "email": "external@example.com",
+                        "last_contact": "2026-03-12T08:00:00+00:00",
+                        "jacs_verified": false
+                    }
+                ]
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let contacts = client.contacts().await.expect("contacts");
+
+    assert_eq!(contacts.len(), 2);
+    assert_eq!(contacts[0].email, "alice@hai.ai");
+    assert_eq!(contacts[0].display_name.as_deref(), Some("Alice Agent"));
+    assert!(contacts[0].jacs_verified);
+    assert_eq!(contacts[0].reputation_tier.as_deref(), Some("established"));
+    assert_eq!(contacts[1].email, "external@example.com");
+    assert!(!contacts[1].jacs_verified);
+    assert!(contacts[1].reputation_tier.is_none());
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn contacts_returns_empty_for_no_correspondents() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/api/agents/test-agent-001/email/contacts");
+            then.status(200).json_body(json!({
+                "contacts": []
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let contacts = client.contacts().await.expect("empty contacts");
+
+    assert!(contacts.is_empty());
+    mock.assert_async().await;
 }

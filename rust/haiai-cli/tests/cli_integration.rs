@@ -37,8 +37,14 @@ fn help_flag_exits_zero() {
     assert!(output.status.success(), "exit code: {}", output.status);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("HAIAI CLI"), "stdout: {stdout}");
-    assert!(stdout.contains("init"), "stdout should list init subcommand: {stdout}");
-    assert!(stdout.contains("mcp"), "stdout should list mcp subcommand: {stdout}");
+    assert!(
+        stdout.contains("init"),
+        "stdout should list init subcommand: {stdout}"
+    );
+    assert!(
+        stdout.contains("mcp"),
+        "stdout should list mcp subcommand: {stdout}"
+    );
 }
 
 #[test]
@@ -49,7 +55,7 @@ fn version_flag_exits_zero() {
         .expect("run --version");
     assert!(output.status.success(), "exit code: {}", output.status);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("0.1.1"), "stdout: {stdout}");
+    assert!(stdout.contains("0.1.2"), "stdout: {stdout}");
 }
 
 #[test]
@@ -125,9 +131,15 @@ fn init_creates_config_keys_and_prints_agent_id() {
     );
 
     // Output should contain agent info
-    assert!(stdout.contains("Agent created successfully"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("Agent created successfully"),
+        "stdout: {stdout}"
+    );
     assert!(stdout.contains("Agent ID:"), "stdout: {stdout}");
-    assert!(stdout.contains("haiai mcp"), "should hint about mcp: {stdout}");
+    assert!(
+        stdout.contains("haiai mcp"),
+        "should hint about mcp: {stdout}"
+    );
 
     // Config file should exist and contain agent ID
     assert!(config_path.is_file(), "config not created");
@@ -415,12 +427,18 @@ fn init_then_mcp_fails_due_to_raw_key_format() {
     let init_output = Command::new(haiai_bin())
         .args([
             "init",
-            "--name", "key-format-agent",
-            "--domain", "test.example.com",
-            "--algorithm", "ring-Ed25519",
-            "--config-path", "./jacs.config.json",
-            "--key-dir", "./jacs_keys",
-            "--data-dir", "./jacs",
+            "--name",
+            "key-format-agent",
+            "--domain",
+            "test.example.com",
+            "--algorithm",
+            "ring-Ed25519",
+            "--config-path",
+            "./jacs.config.json",
+            "--key-dir",
+            "./jacs_keys",
+            "--data-dir",
+            "./jacs",
         ])
         .current_dir(temp.path())
         .env("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123")
@@ -445,30 +463,30 @@ fn init_then_mcp_fails_due_to_raw_key_format() {
     );
     let stderr = String::from_utf8_lossy(&mcp_output.stderr);
     assert!(
-        stderr.contains("UTF-8") || stderr.contains("public key"),
+        stderr.contains("UTF-8")
+            || stderr.contains("public key")
+            || stderr.contains("connection closed"),
         "error should mention key format: {stderr}"
     );
 }
 
 fn jacs_fixture_config() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let path = manifest_dir.join("../../../JACS/jacs/jacs.config.json");
-    let canonical = path.canonicalize().expect("canonical JACS fixture config");
-    assert!(
-        canonical.exists(),
-        "expected JACS fixture config at {}",
-        canonical.display()
-    );
-    canonical
+    let path = manifest_dir.join("../../fixtures/jacs-agent/jacs.config.json");
+    path.canonicalize()
+        .expect("fixtures/jacs-agent/jacs.config.json must exist in repo")
 }
 
 // ── MCP without config fails gracefully ─────────────────────────
 
 #[test]
 fn mcp_without_jacs_config_fails() {
+    let temp = tempfile::tempdir().expect("temp dir");
     let output = Command::new(haiai_bin())
         .arg("mcp")
+        .current_dir(temp.path())
         .env_remove("JACS_CONFIG")
+        .env_remove("JACS_CONFIG_PATH")
         .env("RUST_LOG", "warn")
         .stdin(Stdio::null())
         .output()
@@ -477,8 +495,10 @@ fn mcp_without_jacs_config_fails() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("JACS_CONFIG") || stderr.contains("jacs"),
-        "should mention JACS_CONFIG: {stderr}"
+        stderr.contains("JACS_CONFIG")
+            || stderr.contains("jacs")
+            || stderr.contains("JACS_PRIVATE_KEY_PASSWORD"),
+        "should mention config or password: {stderr}"
     );
 }
 

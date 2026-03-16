@@ -93,6 +93,26 @@ func (b *jacsBackend) Algorithm() string {
 	return "JACS"
 }
 
+func (b *jacsBackend) CanonicalizeJSON(jsonStr string) (string, error) {
+	return "", fmt.Errorf("jacs backend: CanonicalizeJSON requires a loaded agent; use Client.crypto instead")
+}
+
+func (b *jacsBackend) SignResponse(payloadJSON string) (string, error) {
+	return "", fmt.Errorf("jacs backend: SignResponse requires a loaded agent; use Client.crypto instead")
+}
+
+func (b *jacsBackend) EncodeVerifyPayload(document string) (string, error) {
+	return "", fmt.Errorf("jacs backend: EncodeVerifyPayload requires a loaded agent; use Client.crypto instead")
+}
+
+func (b *jacsBackend) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
+	return "", fmt.Errorf("jacs backend: UnwrapSignedEvent requires a loaded agent; use Client.crypto instead")
+}
+
+func (b *jacsBackend) BuildAuthHeader() (string, error) {
+	return "", fmt.Errorf("jacs backend: BuildAuthHeader requires a loaded agent; use Client.crypto instead")
+}
+
 func (b *jacsBackend) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
 	return "", fmt.Errorf("jacs backend: SignA2AArtifact requires a loaded agent; use Client.crypto instead")
 }
@@ -176,6 +196,41 @@ func (b *clientJacsBackend) Algorithm() string {
 	return "JACS"
 }
 
+func (b *clientJacsBackend) CanonicalizeJSON(jsonStr string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.CanonicalizeJson(jsonStr)
+}
+
+func (b *clientJacsBackend) SignResponse(payloadJSON string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.SignResponse(payloadJSON)
+}
+
+func (b *clientJacsBackend) EncodeVerifyPayload(document string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.EncodeVerifyPayload(document)
+}
+
+func (b *clientJacsBackend) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.UnwrapSignedEvent(eventJSON, serverKeysJSON)
+}
+
+func (b *clientJacsBackend) BuildAuthHeader() (string, error) {
+	if b.agent == nil {
+		return "", fmt.Errorf("jacs backend: agent not loaded")
+	}
+	return b.agent.BuildAuthHeader()
+}
+
 func (b *clientJacsBackend) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
 	if b.agent == nil {
 		return "", fmt.Errorf("jacs backend: agent not loaded")
@@ -247,9 +302,9 @@ func newClientCryptoBackend(privateKey ed25519.PrivateKey, jacsID string) Crypto
 // It signs with local Ed25519 as a last resort and emits a one-time deprecation
 // warning on first use.
 type clientEd25519FallbackInJacs struct {
-	privateKey  ed25519.PrivateKey
-	jacsID      string
-	warnOnce    sync.Once
+	privateKey ed25519.PrivateKey
+	jacsID     string
+	warnOnce   sync.Once
 }
 
 // logFallbackWarning emits a one-time warning that the JACS agent could not be
@@ -303,6 +358,34 @@ func (b *clientEd25519FallbackInJacs) GenerateKeyPair() ([]byte, []byte, error) 
 
 func (b *clientEd25519FallbackInJacs) Algorithm() string {
 	return "Ed25519"
+}
+
+func (b *clientEd25519FallbackInJacs) CanonicalizeJSON(jsonStr string) (string, error) {
+	return canonicalizeJSONLocal(jsonStr)
+}
+
+func (b *clientEd25519FallbackInJacs) SignResponse(payloadJSON string) (string, error) {
+	signed, err := signResponseLocally(b.privateKey, b.jacsID, payloadJSON)
+	if err != nil {
+		return "", fmt.Errorf("jacs fallback: %w", err)
+	}
+	return signed, nil
+}
+
+func (b *clientEd25519FallbackInJacs) EncodeVerifyPayload(document string) (string, error) {
+	return base64.RawURLEncoding.EncodeToString([]byte(document)), nil
+}
+
+func (b *clientEd25519FallbackInJacs) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
+	return "", fmt.Errorf("jacs fallback: UnwrapSignedEvent requires loaded JACS agent")
+}
+
+func (b *clientEd25519FallbackInJacs) BuildAuthHeader() (string, error) {
+	if b.privateKey == nil {
+		return "", fmt.Errorf("jacs fallback: private key not loaded")
+	}
+	b.logFallbackWarning()
+	return BuildAuthHeader(b.jacsID, b.privateKey), nil
 }
 
 func (b *clientEd25519FallbackInJacs) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {

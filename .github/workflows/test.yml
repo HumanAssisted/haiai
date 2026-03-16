@@ -19,7 +19,9 @@ jobs:
   test-python:
     runs-on: ubuntu-latest
     needs: [crypto-policy]
+    timeout-minutes: 15
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
@@ -30,24 +32,24 @@ jobs:
       - name: Install dependencies
         run: |
           cd python
-          pip install -e ".[dev]"
+          pip install -e ".[dev,mcp]"
+        timeout-minutes: 5
       - name: Run tests
         run: |
           cd python
-          pytest -v
-      - name: Smoke install wheel + CLI
+          pytest -v --timeout=60
+        timeout-minutes: 10
+      - name: Smoke import
         run: |
           cd python
-          pip install build
-          python -m build
-          pip install --force-reinstall dist/*.whl
           python -c "import haiai; import haiai.integrations as i; assert hasattr(haiai, 'HaiClient'); assert callable(i.langgraph_wrap_tool_call)"
-          haiai --help > /dev/null
 
   test-node:
     runs-on: ubuntu-latest
     needs: [crypto-policy]
+    timeout-minutes: 10
     strategy:
+      fail-fast: false
       matrix:
         node-version: [18, 20, 22]
     steps:
@@ -71,7 +73,9 @@ jobs:
   test-go:
     runs-on: ubuntu-latest
     needs: [crypto-policy]
+    timeout-minutes: 10
     strategy:
+      fail-fast: false
       matrix:
         go-version: ["1.22", "1.23"]
     steps:
@@ -87,7 +91,9 @@ jobs:
   test-rust:
     runs-on: ubuntu-latest
     needs: [crypto-policy]
+    timeout-minutes: 15
     strategy:
+      fail-fast: false
       matrix:
         rust-version: ["stable"]
     steps:

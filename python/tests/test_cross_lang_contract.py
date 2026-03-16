@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from jacs.hai.client import HaiClient
-from jacs.hai.signing import canonicalize_json
+from haiai.client import HaiClient
+from haiai.signing import canonicalize_json
 
 
 def _load_fixture() -> dict[str, object]:
@@ -34,9 +34,9 @@ def test_cross_lang_auth_header_contract(monkeypatch: pytest.MonkeyPatch) -> Non
             seen["message"] = message
             return example["stub_signature_base64"]
 
-    monkeypatch.setattr("jacs.hai.config.get_config", lambda: _Config())
-    monkeypatch.setattr("jacs.hai.config.get_agent", lambda: _Agent())
-    monkeypatch.setattr("jacs.hai.client.time.time", lambda: example["timestamp"])
+    monkeypatch.setattr("haiai.config.get_config", lambda: _Config())
+    monkeypatch.setattr("haiai.config.get_agent", lambda: _Agent())
+    monkeypatch.setattr("haiai.client.time.time", lambda: example["timestamp"])
 
     header = HaiClient()._build_jacs_auth_header()
 

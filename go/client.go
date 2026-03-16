@@ -199,7 +199,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 		return wrapError(ErrConnection, err, "failed to create request")
 	}
 
-	c.setAuthHeaders(req)
+	if err := c.setAuthHeaders(req); err != nil {
+		return err
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -578,14 +580,16 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 			if reqErr == nil {
 				// Build 4-part auth header signed by OLD key via CryptoBackend
 				oldKeyBackend := newClientCryptoBackend(oldPrivateKey, c.jacsID)
-				authHeader := build4PartAuthHeaderWithBackend(c.jacsID, oldVersion, oldKeyBackend, oldPrivateKey)
-				req.Header.Set("Authorization", authHeader)
-				req.Header.Set("Content-Type", "application/json")
-				resp, doErr := c.httpClient.Do(req)
-				if doErr == nil {
-					defer resp.Body.Close()
-					if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-						registeredWithHai = true
+				authHeader, authErr := build4PartAuthHeaderWithBackend(c.jacsID, oldVersion, oldKeyBackend)
+				if authErr == nil {
+					req.Header.Set("Authorization", authHeader)
+					req.Header.Set("Content-Type", "application/json")
+					resp, doErr := c.httpClient.Do(req)
+					if doErr == nil {
+						defer resp.Body.Close()
+						if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+							registeredWithHai = true
+						}
 					}
 				}
 			}
@@ -651,7 +655,9 @@ func (c *Client) Status(ctx context.Context) (*StatusResult, error) {
 	if err != nil {
 		return nil, wrapError(ErrConnection, err, "failed to create request")
 	}
-	c.setAuthHeaders(req)
+	if err := c.setAuthHeaders(req); err != nil {
+		return nil, err
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -704,13 +710,15 @@ func (c *Client) Benchmark(ctx context.Context, tier string) (*BenchmarkResult, 
 // generateBenchmarkName creates a descriptive benchmark run name.
 func generateBenchmarkName(tier, jacsID string) string {
 	displayNames := map[string]string{
-		"free":            "Free",
-		"dns_certified":   "DNS Certified",
-		"fully_certified": "Fully Certified",
+		"free":       "Free",
+		"pro":        "Pro",
+		"enterprise": "Enterprise",
 		// Legacy names (backward compat during transition)
-		"free_chaotic": "Free",
-		"baseline":     "DNS Certified",
-		"certified":    "Fully Certified",
+		"dns_certified":   "Pro",
+		"fully_certified": "Enterprise",
+		"free_chaotic":    "Free",
+		"baseline":        "Pro",
+		"certified":       "Enterprise",
 	}
 
 	display, ok := displayNames[tier]
@@ -734,10 +742,10 @@ func (c *Client) FreeRun(ctx context.Context) (*BenchmarkResult, error) {
 	return c.Benchmark(ctx, "free")
 }
 
-// DnsCertifiedRun runs the dns_certified benchmark tier with Stripe checkout.
+// ProRun runs the pro benchmark tier with Stripe checkout.
 // It creates a subscription session, opens the user's browser, polls for
 // payment confirmation, then runs the benchmark.
-func (c *Client) DnsCertifiedRun(ctx context.Context) (*BenchmarkResult, error) {
+func (c *Client) ProRun(ctx context.Context) (*BenchmarkResult, error) {
 	// 1. Create subscription session.
 	var sub struct {
 		CheckoutURL string `json:"checkout_url"`
@@ -745,7 +753,7 @@ func (c *Client) DnsCertifiedRun(ctx context.Context) (*BenchmarkResult, error) 
 		AlreadyPaid bool   `json:"already_paid"`
 	}
 	err := c.doRequest(ctx, http.MethodPost, "/api/benchmark/subscribe", map[string]string{
-		"tier": "dns_certified",
+		"tier": "pro",
 	}, &sub)
 	if err != nil {
 		return nil, err
@@ -780,18 +788,30 @@ func (c *Client) DnsCertifiedRun(ctx context.Context) (*BenchmarkResult, error) 
 	}
 
 runBenchmark:
-	return c.Benchmark(ctx, "dns_certified")
+	return c.Benchmark(ctx, "pro")
 }
 
-// CertifiedRun runs a fully_certified tier benchmark.
+// DnsCertifiedRun is a deprecated alias for ProRun.
+// Deprecated: Use ProRun instead. The tier was renamed from dns_certified to pro.
+func (c *Client) DnsCertifiedRun(ctx context.Context) (*BenchmarkResult, error) {
+	return c.ProRun(ctx)
+}
+
+// EnterpriseRun runs an enterprise tier benchmark.
 //
-// The fully_certified tier ($499/month) is coming soon.
+// The enterprise tier is coming soon.
 // Contact support@hai.ai for early access.
-func (c *Client) CertifiedRun(ctx context.Context) (*BenchmarkResult, error) {
+func (c *Client) EnterpriseRun(ctx context.Context) (*BenchmarkResult, error) {
 	return nil, fmt.Errorf(
-		"the fully_certified tier ($499/month) is coming soon; " +
+		"the enterprise tier is coming soon; " +
 			"contact support@hai.ai for early access",
 	)
+}
+
+// CertifiedRun is a deprecated alias for EnterpriseRun.
+// Deprecated: Use EnterpriseRun instead. The tier was renamed from fully_certified to enterprise.
+func (c *Client) CertifiedRun(ctx context.Context) (*BenchmarkResult, error) {
+	return c.EnterpriseRun(ctx)
 }
 
 // SubmitResponse submits a moderation response for a benchmark job, wrapped
@@ -811,31 +831,29 @@ func (c *Client) SubmitResponse(ctx context.Context, jobID string, response Mode
 }
 
 // signResponse wraps a response payload in a JACS document envelope and signs it.
+//
+// Delegates to CryptoBackend.SignResponse and fails closed if the backend
+// cannot produce a signed envelope.
 func (c *Client) signResponse(response interface{}) (map[string]interface{}, error) {
-	now := time.Now().UTC().Format(time.RFC3339)
-
-	doc := map[string]interface{}{
-		"jacsId":      c.jacsID,
-		"jacsVersion": "1.0.0",
-		"jacsSignature": map[string]interface{}{
-			"agentID": c.jacsID,
-			"date":    now,
-		},
-		"response": response,
+	if c.crypto == nil {
+		return nil, newError(ErrSigningFailed, "crypto backend is not initialized")
 	}
 
-	canonical, err := json.Marshal(doc)
+	payloadBytes, err := json.Marshal(response)
 	if err != nil {
 		return nil, wrapError(ErrSigningFailed, err, "failed to marshal response for signing")
 	}
 
-	sig, signErr := c.crypto.SignBytes(canonical)
+	signedJSON, signErr := c.crypto.SignResponse(string(payloadBytes))
 	if signErr != nil {
 		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign response")
 	}
-	doc["jacsSignature"].(map[string]interface{})["signature"] = base64.StdEncoding.EncodeToString(sig)
 
-	return doc, nil
+	var result map[string]interface{}
+	if parseErr := json.Unmarshal([]byte(signedJSON), &result); parseErr != nil {
+		return nil, wrapError(ErrSigningFailed, parseErr, "failed to parse signed response")
+	}
+	return result, nil
 }
 
 // GetAgentAttestation gets the agent's attestation from HAI.
@@ -1022,7 +1040,9 @@ func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions
 	if err != nil {
 		return nil, wrapError(ErrConnection, err, "failed to create request")
 	}
-	c.setAuthHeaders(req)
+	if err := c.setAuthHeaders(req); err != nil {
+		return nil, err
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -1073,7 +1093,9 @@ func (c *Client) SignEmail(ctx context.Context, rawEmail []byte) ([]byte, error)
 	if err != nil {
 		return nil, wrapError(ErrConnection, err, "failed to create sign email request")
 	}
-	c.setAuthHeaders(req)
+	if err := c.setAuthHeaders(req); err != nil {
+		return nil, err
+	}
 	req.Header.Set("Content-Type", "message/rfc822")
 
 	resp, err := c.httpClient.Do(req)
@@ -1090,6 +1112,20 @@ func (c *Client) SignEmail(ctx context.Context, rawEmail []byte) ([]byte, error)
 	return io.ReadAll(resp.Body)
 }
 
+// SendSignedEmail builds an RFC 5322 MIME email and sends it.
+//
+// Deprecated: SendSignedEmail currently delegates to SendEmailWithOptions.
+// The previous implementation called /api/v1/email/sign (HAI authority key)
+// then POSTed to send-signed, which rejects because the signer ID does not
+// match the authenticated agent. True agent-key local signing will be
+// available when the Rust SDK core (DevEx TASK_017) ships.
+// Use SendEmail or SendEmailWithOptions directly.
+func (c *Client) SendSignedEmail(ctx context.Context, opts SendEmailOptions) (*SendEmailResult, error) {
+	// Deprecated: delegates to SendEmailWithOptions until local agent-key
+	// signing is available (DevEx TASK_017).
+	return c.SendEmailWithOptions(ctx, opts)
+}
+
 // VerifyEmail sends a raw RFC 5322 email to the HAI server for JACS signature verification.
 // The server verifies the JACS attachment signature and returns a detailed result including
 // per-field verification status and the chain of custody.
@@ -1100,7 +1136,9 @@ func (c *Client) VerifyEmail(ctx context.Context, rawEmail []byte) (*EmailVerifi
 	if err != nil {
 		return nil, wrapError(ErrConnection, err, "failed to create verify email request")
 	}
-	c.setAuthHeaders(req)
+	if err := c.setAuthHeaders(req); err != nil {
+		return nil, err
+	}
 	req.Header.Set("Content-Type", "message/rfc822")
 
 	resp, err := c.httpClient.Do(req)
@@ -1128,6 +1166,18 @@ func (c *Client) ListMessages(ctx context.Context, opts ListMessagesOptions) ([]
 	query.Set("offset", fmt.Sprintf("%d", opts.Offset))
 	if opts.Direction != "" {
 		query.Set("direction", opts.Direction)
+	}
+	if opts.IsRead != nil {
+		query.Set("is_read", fmt.Sprintf("%t", *opts.IsRead))
+	}
+	if opts.Folder != "" {
+		query.Set("folder", opts.Folder)
+	}
+	if opts.Label != "" {
+		query.Set("label", opts.Label)
+	}
+	if opts.HasAttachments != nil {
+		query.Set("has_attachments", fmt.Sprintf("%t", *opts.HasAttachments))
 	}
 	path := fmt.Sprintf("/api/agents/%s/email/messages?%s", neturl.PathEscape(c.HaiAgentID()), query.Encode())
 	var wrapper ListMessagesResponse
@@ -1212,6 +1262,21 @@ func (c *Client) SearchMessages(ctx context.Context, opts SearchOptions) ([]Emai
 	if opts.Offset > 0 {
 		query.Set("offset", fmt.Sprintf("%d", opts.Offset))
 	}
+	if opts.IsRead != nil {
+		query.Set("is_read", fmt.Sprintf("%t", *opts.IsRead))
+	}
+	if opts.JacsVerified != nil {
+		query.Set("jacs_verified", fmt.Sprintf("%t", *opts.JacsVerified))
+	}
+	if opts.Folder != "" {
+		query.Set("folder", opts.Folder)
+	}
+	if opts.Label != "" {
+		query.Set("label", opts.Label)
+	}
+	if opts.HasAttachments != nil {
+		query.Set("has_attachments", fmt.Sprintf("%t", *opts.HasAttachments))
+	}
 	path := fmt.Sprintf("/api/agents/%s/email/search?%s", neturl.PathEscape(c.HaiAgentID()), query.Encode())
 	var wrapper ListMessagesResponse
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &wrapper); err != nil {
@@ -1259,6 +1324,81 @@ func (c *Client) Reply(ctx context.Context, messageID, body, subjectOverride str
 		Body:      body,
 		InReplyTo: inReplyTo,
 	})
+}
+
+// Forward forwards a message to another recipient.
+func (c *Client) Forward(ctx context.Context, opts ForwardOptions) (*SendEmailResult, error) {
+	path := fmt.Sprintf("/api/agents/%s/email/forward", neturl.PathEscape(c.HaiAgentID()))
+	var result SendEmailResult
+	if err := c.doRequest(ctx, http.MethodPost, path, opts, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// Archive moves a message to the archive folder.
+func (c *Client) Archive(ctx context.Context, messageID string) error {
+	path := fmt.Sprintf(
+		"/api/agents/%s/email/messages/%s/archive",
+		neturl.PathEscape(c.HaiAgentID()),
+		neturl.PathEscape(messageID),
+	)
+	return c.doRequest(ctx, http.MethodPost, path, nil, nil)
+}
+
+// Unarchive restores a message from the archive back to the inbox.
+func (c *Client) Unarchive(ctx context.Context, messageID string) error {
+	path := fmt.Sprintf(
+		"/api/agents/%s/email/messages/%s/unarchive",
+		neturl.PathEscape(c.HaiAgentID()),
+		neturl.PathEscape(messageID),
+	)
+	return c.doRequest(ctx, http.MethodPost, path, nil, nil)
+}
+
+// GetContacts retrieves the agent's contacts derived from email history.
+// Handles both wrapped {"contacts": [...]} and bare array [...] responses.
+func (c *Client) GetContacts(ctx context.Context) ([]Contact, error) {
+	path := fmt.Sprintf("/api/agents/%s/email/contacts", neturl.PathEscape(c.HaiAgentID()))
+
+	url := c.endpoint + path
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "failed to create request")
+	}
+	if err := c.setAuthHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, wrapError(ErrConnection, err, "request failed")
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, classifyHTTPError(resp.StatusCode, respBody)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to read response body")
+	}
+
+	// Try wrapped format first: {"contacts": [...]}
+	var wrapper ContactsResponse
+	if err := json.Unmarshal(body, &wrapper); err == nil && wrapper.Contacts != nil {
+		return wrapper.Contacts, nil
+	}
+
+	// Fall back to bare array: [...]
+	var contacts []Contact
+	if err := json.Unmarshal(body, &contacts); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode contacts response")
+	}
+	return contacts, nil
 }
 
 // RegisterNewAgent generates a new Ed25519 keypair, creates a flat JACS agent
@@ -1399,7 +1539,7 @@ func (c *Client) RegisterNewAgent(ctx context.Context, agentName string, opts *R
 			fmt.Printf("  Name:  _jacs.%s\n", opts.Domain)
 			fmt.Println("  Type:  TXT")
 			fmt.Printf("  Value: sha256:%x\n", hash)
-			fmt.Println("DNS verification enables the dns_certified tier.")
+			fmt.Println("DNS verification enables the pro tier.")
 		}
 		fmt.Println()
 	}

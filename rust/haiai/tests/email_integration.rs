@@ -11,8 +11,8 @@
 #![cfg(feature = "jacs-crate")]
 
 use haiai::{
-    CreateAgentOptions, HaiClient, HaiClientOptions, ListMessagesOptions, LocalJacsProvider,
-    RegisterAgentOptions, SearchOptions, SendEmailOptions,
+    CreateAgentOptions, HaiClient, HaiClientOptions, JacsProvider, ListMessagesOptions,
+    LocalJacsProvider, RegisterAgentOptions, SearchOptions, SendEmailOptions,
 };
 use std::env;
 
@@ -125,8 +125,11 @@ async fn email_integration_lifecycle() {
             to: format!("{}@hai.ai", agent_name),
             subject: subject.clone(),
             body: body.to_string(),
+            cc: Vec::new(),
+            bcc: Vec::new(),
             in_reply_to: None,
             attachments: Vec::new(),
+            labels: Vec::new(),
         })
         .await
         .expect("send_email");
@@ -142,8 +145,7 @@ async fn email_integration_lifecycle() {
     let messages = client
         .list_messages(&ListMessagesOptions {
             limit: Some(10),
-            offset: None,
-            direction: None,
+            ..Default::default()
         })
         .await
         .expect("list_messages");
@@ -170,13 +172,7 @@ async fn email_integration_lifecycle() {
     let search_results = client
         .search_messages(&SearchOptions {
             q: Some(subject.clone()),
-            direction: None,
-            from_address: None,
-            to_address: None,
-            since: None,
-            until: None,
-            limit: None,
-            offset: None,
+            ..Default::default()
         })
         .await
         .expect("search_messages");

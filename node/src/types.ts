@@ -58,7 +58,7 @@ export type ConnectionMode = 'sse' | 'ws';
 // =============================================================================
 
 /** Benchmark tier identifiers. */
-export type BenchmarkTier = 'free' | 'dns_certified' | 'fully_certified';
+export type BenchmarkTier = 'free' | 'pro' | 'enterprise';
 
 /** A benchmark job received from HAI via SSE or WebSocket. */
 export interface BenchmarkJob {
@@ -78,7 +78,7 @@ export interface BenchmarkJobConfig {
   name?: string;
   /** Transport protocol for the benchmark. */
   transport?: ConnectionMode;
-  /** Stripe payment ID (required for dns_certified). */
+  /** Stripe payment ID (required for pro tier). */
   paymentId?: string;
 }
 
@@ -174,8 +174,8 @@ export interface FreeChaoticResult {
   rawResponse: Record<string, unknown>;
 }
 
-/** Result of a $5 DNS-certified benchmark run. Single score, no breakdown. */
-export interface DnsCertifiedResult {
+/** Result of a pro tier benchmark run. Single score, no breakdown. */
+export interface ProRunResult {
   /** Whether the run completed. */
   success: boolean;
   /** Unique ID for this benchmark run. */
@@ -190,8 +190,8 @@ export interface DnsCertifiedResult {
   rawResponse: Record<string, unknown>;
 }
 
-/** Result of a $499 fully-certified benchmark run. */
-export interface FullyCertifiedResult {
+/** Result of an enterprise tier benchmark run. */
+export interface EnterpriseRunResult {
   /** Whether the run completed. */
   success: boolean;
   /** Unique ID for this benchmark run. */
@@ -209,7 +209,12 @@ export interface FullyCertifiedResult {
 }
 
 /** Generic benchmark result (union of all tiers). */
-export type BenchmarkResult = FreeChaoticResult | DnsCertifiedResult | FullyCertifiedResult;
+export type BenchmarkResult = FreeChaoticResult | ProRunResult | EnterpriseRunResult;
+
+/** @deprecated Use ProRunResult instead. */
+export type DnsCertifiedResult = ProRunResult;
+/** @deprecated Use EnterpriseRunResult instead. */
+export type FullyCertifiedResult = EnterpriseRunResult;
 
 /** Result of submitting a benchmark job response. */
 export interface JobResponseResult {
@@ -331,8 +336,8 @@ export interface OnBenchmarkJobOptions {
   transport?: ConnectionMode;
 }
 
-/** Options for DNS-certified benchmark run. */
-export interface DnsCertifiedRunOptions {
+/** Options for pro tier benchmark run. */
+export interface ProRunOptions {
   /** Transport protocol. */
   transport?: ConnectionMode;
   /** Milliseconds between payment status checks. Default: 2000. */
@@ -342,6 +347,9 @@ export interface DnsCertifiedRunOptions {
   /** Callback with checkout URL (e.g., to open in browser). */
   onCheckoutUrl?: (url: string) => void;
 }
+
+/** @deprecated Use ProRunOptions instead. */
+export type DnsCertifiedRunOptions = ProRunOptions;
 
 /** Options for free chaotic run. */
 export interface FreeChaoticRunOptions {
@@ -377,6 +385,12 @@ export interface SendEmailOptions {
   inReplyTo?: string;
   /** File attachments to include with the email. */
   attachments?: EmailAttachment[];
+  /** CC recipient addresses. */
+  cc?: string[];
+  /** BCC recipient addresses. */
+  bcc?: string[];
+  /** Labels/tags for the message. */
+  labels?: string[];
 }
 
 /** Result of sending an email. */
@@ -415,6 +429,12 @@ export interface EmailMessage {
   readAt: string | null;
   /** Whether the JACS signature on this message was verified. */
   jacsVerified: boolean;
+  /** CC recipient addresses. */
+  ccAddresses: string[];
+  /** Labels/tags on the message. */
+  labels: string[];
+  /** Folder the message is in (e.g., "inbox", "archive"). */
+  folder: string;
 }
 
 /** Options for listing email messages. */
@@ -425,6 +445,12 @@ export interface ListMessagesOptions {
   offset?: number;
   /** Filter by direction: "inbound" or "outbound". */
   direction?: 'inbound' | 'outbound';
+  /** Filter by read status (true/false/undefined for all). */
+  isRead?: boolean;
+  /** Filter by folder (e.g., "inbox", "archive"). */
+  folder?: string;
+  /** Filter by label/tag. */
+  label?: string;
 }
 
 /** Options for searching email messages. */
@@ -441,6 +467,70 @@ export interface SearchOptions {
   fromAddress?: string;
   /** Filter by recipient address. */
   toAddress?: string;
+  /** Filter by read status. */
+  isRead?: boolean;
+  /** Filter by JACS verification status. */
+  jacsVerified?: boolean;
+  /** Filter by folder (e.g., "inbox", "archive"). */
+  folder?: string;
+  /** Filter by label/tag. */
+  label?: string;
+}
+
+/** A contact derived from email message history. */
+export interface Contact {
+  /** Contact email address. */
+  email: string;
+  /** Display name, if known. */
+  displayName?: string;
+  /** ISO 8601 timestamp of last contact. */
+  lastContact: string;
+  /** Whether this contact's agent is JACS-verified. */
+  jacsVerified: boolean;
+  /** Reputation tier of this contact. */
+  reputationTier?: string;
+}
+
+/** Options for forwarding an email. */
+export interface ForwardOptions {
+  /** ID of the message to forward. */
+  messageId: string;
+  /** Recipient to forward to. */
+  to: string;
+  /** Optional comment prepended to the forwarded body. */
+  comment?: string;
+}
+
+/** Volume statistics from the email status response. */
+export interface EmailVolumeInfo {
+  /** Total messages sent all time. */
+  sentTotal: number;
+  /** Total messages received all time. */
+  receivedTotal: number;
+  /** Messages sent in the last 24 hours. */
+  sent24h: number;
+}
+
+/** Delivery metrics from the email status response. */
+export interface EmailDeliveryInfo {
+  /** Number of bounced messages. */
+  bounceCount: number;
+  /** Number of spam reports received. */
+  spamReportCount: number;
+  /** Delivery success rate (0.0 to 1.0). */
+  deliveryRate: number;
+}
+
+/** Reputation scoring from the email status response. */
+export interface EmailReputationInfo {
+  /** Overall reputation score. */
+  score: number;
+  /** Reputation tier string. */
+  tier: string;
+  /** Email-specific reputation score. */
+  emailScore: number;
+  /** HAI platform reputation score, or null if not yet computed. */
+  haiScore: number | null;
 }
 
 /** Email rate limit and status info. */
@@ -469,6 +559,12 @@ export interface EmailStatus {
   externalSendsToday: number;
   /** ISO 8601 timestamp of last tier change, or null. */
   lastTierChange: string | null;
+  /** Volume statistics (from consolidated status). */
+  volume?: EmailVolumeInfo | null;
+  /** Delivery metrics (from consolidated status). */
+  delivery?: EmailDeliveryInfo | null;
+  /** Reputation scoring (from consolidated status). */
+  reputation?: EmailReputationInfo | null;
 }
 
 /** Response from the public key registry endpoint. */
@@ -536,6 +632,10 @@ export interface EmailVerificationResultV2 {
   chain: ChainEntry[];
   /** Error message if verification failed, or null. */
   error?: string | null;
+  /** Agent status from registry: "active", "suspended", or "revoked". */
+  agentStatus?: string | null;
+  /** Benchmark tiers the agent has completed. */
+  benchmarksCompleted?: string[];
 }
 
 // =============================================================================

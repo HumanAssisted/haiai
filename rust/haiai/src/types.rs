@@ -94,6 +94,35 @@ pub struct RotationResult {
     pub signed_agent_json: String,
 }
 
+/// Result of an agent document update (metadata re-sign with existing key).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateAgentResult {
+    /// Agent's stable JACS ID (unchanged).
+    pub jacs_id: String,
+    /// Version before the update.
+    pub old_version: String,
+    /// New version assigned during the update.
+    pub new_version: String,
+    /// Complete self-signed agent JSON string.
+    pub signed_agent_json: String,
+    /// Whether re-registration with HAI succeeded.
+    #[serde(default)]
+    pub registered_with_hai: bool,
+}
+
+/// Result of a legacy agent migration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MigrateAgentResult {
+    /// Agent's stable JACS ID (unchanged).
+    pub jacs_id: String,
+    /// Version before migration.
+    pub old_version: String,
+    /// New version assigned during migration.
+    pub new_version: String,
+    /// Fields that were patched in the raw JSON before loading (e.g. `["iat", "jti"]`).
+    pub patched_fields: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckUsernameResult {
     #[serde(default)]
@@ -254,6 +283,12 @@ pub struct EmailVerificationResultV2 {
     pub chain: Vec<ChainEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Agent status from registry: "active", "suspended", or "revoked".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_status: Option<String>,
+    /// Benchmark tiers the agent has completed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub benchmarks_completed: Vec<String>,
 }
 
 impl EmailVerificationResultV2 {
@@ -267,6 +302,8 @@ impl EmailVerificationResultV2 {
             field_results: Vec::new(),
             chain: Vec::new(),
             error: Some(error.to_string()),
+            agent_status: None,
+            benchmarks_completed: Vec::new(),
         }
     }
 }
@@ -318,10 +355,19 @@ pub struct SendEmailOptions {
     pub to: String,
     pub subject: String,
     pub body: String,
+    /// CC recipients
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cc: Vec<String>,
+    /// BCC recipients (not visible to other recipients)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bcc: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub in_reply_to: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<EmailAttachment>,
+    /// Labels/tags to apply to the sent message
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -340,6 +386,18 @@ pub struct ListMessagesOptions {
     pub offset: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub direction: Option<String>,
+    /// Filter by read status: true=read only, false=unread only, None=all
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_read: Option<bool>,
+    /// Filter by folder: "inbox", "sent", "archive", "trash"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    /// Filter by label
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Filter by attachment presence
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_attachments: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -370,6 +428,21 @@ pub struct EmailMessage {
     pub read_at: Option<String>,
     #[serde(default)]
     pub jacs_verified: Option<bool>,
+    /// CC recipients on this message
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cc_addresses: Vec<String>,
+    /// Labels/tags applied to this message
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
+    /// Clean body text with quoted reply text removed (derived at response time)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_text_clean: Option<String>,
+    /// Quoted reply text extracted from the body (derived at response time)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quoted_text: Option<String>,
+    /// Thread context: other messages in the same conversation (populated on get_message)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<Vec<EmailMessage>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -386,6 +459,21 @@ pub struct SearchOptions {
     pub since: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub until: Option<String>,
+    /// Filter by read status
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_read: Option<bool>,
+    /// Filter by JACS verification status
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jacs_verified: Option<bool>,
+    /// Filter by folder (inbox, sent, archive, trash)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    /// Filter by label
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Filter by attachment presence
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_attachments: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -418,6 +506,65 @@ pub struct EmailStatus {
     pub external_sends_today: i32,
     #[serde(default)]
     pub last_tier_change: Option<String>,
+    /// Volume statistics (from consolidated status)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume: Option<EmailVolumeInfo>,
+    /// Delivery metrics (from consolidated status)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<EmailDeliveryInfo>,
+    /// Reputation scoring (from consolidated status)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reputation: Option<EmailReputationInfo>,
+}
+
+/// Volume statistics from the email status response.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EmailVolumeInfo {
+    #[serde(default)]
+    pub sent_total: i64,
+    #[serde(default)]
+    pub received_total: i64,
+    #[serde(default)]
+    pub sent_24h: i64,
+}
+
+/// Delivery metrics from the email status response.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EmailDeliveryInfo {
+    #[serde(default)]
+    pub bounce_count: i32,
+    #[serde(default)]
+    pub spam_report_count: i32,
+    #[serde(default)]
+    pub delivery_rate: f64,
+}
+
+/// Reputation scoring from the email status response.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EmailReputationInfo {
+    #[serde(default)]
+    pub score: f64,
+    #[serde(default)]
+    pub tier: String,
+    #[serde(default)]
+    pub email_score: f64,
+    #[serde(default)]
+    pub hai_score: Option<f64>,
+}
+
+/// A contact (correspondent) from the email contacts endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Contact {
+    #[serde(default)]
+    pub email: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub last_contact: String,
+    #[serde(default)]
+    pub jacs_verified: bool,
+    #[serde(default)]
+    pub reputation_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -434,6 +581,12 @@ pub struct KeyRegistryResponse {
     pub reputation_tier: String,
     #[serde(default)]
     pub registered_at: String,
+    /// Agent status: "active", "suspended", or "revoked".
+    #[serde(default)]
+    pub agent_status: Option<String>,
+    /// Benchmark tiers the agent has completed (e.g., ["free", "pro"]).
+    #[serde(default)]
+    pub benchmarks_completed: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -513,13 +666,13 @@ impl TransportType {
 }
 
 #[derive(Debug, Clone)]
-pub struct DnsCertifiedRunOptions {
+pub struct ProRunOptions {
     pub transport: TransportType,
     pub poll_interval: Duration,
     pub poll_timeout: Duration,
 }
 
-impl Default for DnsCertifiedRunOptions {
+impl Default for ProRunOptions {
     fn default() -> Self {
         Self {
             transport: TransportType::Sse,
@@ -528,6 +681,9 @@ impl Default for DnsCertifiedRunOptions {
         }
     }
 }
+
+/// Deprecated: Use `ProRunOptions` instead.
+pub type DnsCertifiedRunOptions = ProRunOptions;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TranscriptMessage {
@@ -556,7 +712,7 @@ pub struct FreeChaoticResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct DnsCertifiedResult {
+pub struct ProRunResult {
     #[serde(default)]
     pub success: bool,
     #[serde(default)]
@@ -569,6 +725,83 @@ pub struct DnsCertifiedResult {
     pub payment_id: String,
     #[serde(default)]
     pub raw_response: Value,
+}
+
+/// Deprecated: Use `ProRunResult` instead.
+pub type DnsCertifiedResult = ProRunResult;
+
+// =============================================================================
+// Document & Search Types (SDK boundary)
+// =============================================================================
+
+/// A signed document returned by document operations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedDocument {
+    /// The document key (`id:version`).
+    pub key: String,
+    /// The signed document JSON.
+    pub json: String,
+}
+
+/// Results from a search operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocSearchResults {
+    /// The matched documents, ordered by relevance.
+    pub results: Vec<DocSearchHit>,
+    /// Total number of matching documents (for pagination).
+    pub total_count: usize,
+    /// Which search method the backend used.
+    pub method: String,
+}
+
+/// A single search result with relevance metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocSearchHit {
+    /// The document key (`id:version`).
+    pub key: String,
+    /// The signed document JSON.
+    pub json: String,
+    /// Relevance score (0.0 - 1.0).
+    pub score: f64,
+    /// Which field(s) matched, if applicable.
+    pub matched_fields: Vec<String>,
+}
+
+/// Capabilities of the configured storage backend.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StorageCapabilities {
+    /// Whether fulltext search is supported.
+    pub fulltext: bool,
+    /// Whether vector similarity search is supported.
+    pub vector: bool,
+    /// Whether field-level queries are supported.
+    pub query_by_field: bool,
+    /// Whether type-based queries are supported.
+    pub query_by_type: bool,
+    /// Whether pagination is supported.
+    pub pagination: bool,
+    /// Whether soft-delete (tombstone) is used instead of hard delete.
+    pub tombstone: bool,
+}
+
+/// Result of a document verification operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocVerificationResult {
+    /// The document key (if available).
+    pub key: String,
+    /// Whether the document is valid.
+    pub valid: bool,
+    /// Error message if verification failed.
+    pub error: Option<String>,
+    /// ID of the agent that signed the document.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signer_id: Option<String>,
+    /// ISO 8601 timestamp of when the document was signed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+    /// Name of the signer (if available).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signer_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
