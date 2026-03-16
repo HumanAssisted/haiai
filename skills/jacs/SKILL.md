@@ -528,27 +528,29 @@ When you sign a document and share it with humans (e.g. in email or chat), inclu
 - **API**: HAI exposes `GET /api/jacs/verify?s=<base64>` (rate-limited); the page calls this and displays the result.
 - **Limit**: Full URL must be <= 2048 characters; if the signed document is too large, `hai_generate_verify_link` fails and you should share the signed JSON directly instead.
 
-## Public Endpoints
+## Public Discovery Documents
 
-Your agent exposes these endpoints:
+The `jacs_generate_well_known` tool generates the following documents for A2A discovery. **These are not live HTTP endpoints** -- the MCP server uses stdio transport and does not start an HTTP server. To make your agent discoverable, deploy these documents to your agent's domain at the listed paths.
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/.well-known/agent-card.json` | GET | A2A Agent Card for discovery |
-| `/.well-known/jwks.json` | GET | A2A/JACS JWKS for verifier interoperability |
-| `/.well-known/jacs-agent.json` | GET | JACS agent descriptor |
-| `/.well-known/jacs-extension.json` | GET | JACS A2A extension descriptor |
-| `/.well-known/jacs-pubkey.json` | GET | Your public key + verification claim |
-| `/jacs/agent` | GET | Current self-signed JACS agent document |
-| `/jacs/status` | GET | Health check with trust info |
-| `/jacs/attestation` | GET | Full attestation status |
-| `/jacs/verify` | POST | Public verification endpoint (this agent) |
+| Path | Purpose |
+|------|---------|
+| `/.well-known/agent-card.json` | A2A Agent Card for discovery |
+| `/.well-known/jwks.json` | A2A/JACS JWKS for verifier interoperability |
+| `/.well-known/jacs-agent.json` | JACS agent descriptor |
+| `/.well-known/jacs-extension.json` | JACS A2A extension descriptor |
+| `/.well-known/jacs-pubkey.json` | Your public key + verification claim |
+| `/jacs/agent` | Current self-signed JACS agent document |
+| `/jacs/status` | Health check with trust info |
+| `/jacs/attestation` | Full attestation status |
+| `/jacs/verify` | Public verification endpoint (accepts POST) |
+
+To publish these, run `jacs_generate_well_known` and serve the returned documents from a web server at the paths listed above.
 
 **Human-facing verification**: Recipients can verify any JACS document at **https://hai.ai/jacs/verify** (GET with `?s=` or paste link). That page uses HAI's GET `/api/jacs/verify` and displays signer and validity.
 
 Other agents discover you via DNS TXT record at `_v1.agent.jacs.{your-domain}`
 
-**IMPORTANT: No signing endpoint is exposed.** Signing is internal-only - only the agent itself can sign documents using `jacs_sign_document`. This protects the agent's identity from external compromise.
+**IMPORTANT: No signing endpoint is exposed.** Signing is internal-only -- only the agent itself can sign documents using `jacs_sign_document`. This protects the agent's identity from external compromise.
 
 ## Security Notes
 
@@ -565,6 +567,8 @@ Other agents discover you via DNS TXT record at `_v1.agent.jacs.{your-domain}`
 | `JACS_PRIVATE_KEY_PASSWORD` | One of these | Password for private key encryption |
 | `JACS_PASSWORD_FILE` | One of these | Path to password file (must be `chmod 0600`) |
 | `HAI_URL` | No | Override HAI API base URL (default: `https://hai.ai`) |
+| `JACS_MCP_ALLOW_REGISTRATION` | No | Set to `true` to allow `jacs_create_agent` via MCP (default: disabled for security) |
+| `JACS_MCP_ALLOW_UNTRUST` | No | Set to `true` to allow `jacs_untrust_agent` via MCP (default: disabled for security) |
 
 ## Troubleshooting
 
