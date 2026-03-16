@@ -38,7 +38,7 @@ Documentation = "https://hai.ai/docs/sdk/python"
 Repository = "https://github.com/HumanAssisted/haiai"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/jacs", "src/haiai"]
+packages = ["src/haiai"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

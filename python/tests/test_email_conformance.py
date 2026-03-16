@@ -13,9 +13,9 @@ from unittest.mock import patch
 
 import pytest
 
-from jacs.hai.client import HaiClient
-from jacs.hai.errors import EmailNotActive, RateLimited, RecipientNotFound
-from jacs.hai.models import (
+from haiai.client import HaiClient
+from haiai.errors import EmailNotActive, RateLimited, RecipientNotFound
+from haiai.models import (
     ChainEntry,
     EmailVerificationResultV2,
     FieldResult,
@@ -80,7 +80,7 @@ class TestContentHashGoldenVectors:
     """All golden vectors must produce the expected content hash."""
 
     def test_golden_vectors(self) -> None:
-        from jacs.hai.hash import compute_content_hash
+        from haiai.hash import compute_content_hash
 
         vectors = CONFORMANCE["content_hash_golden"]["vectors"]
         for vector in vectors:
@@ -105,7 +105,7 @@ class TestMimeRoundTripConformance:
     """MIME round-trip: all SDKs must produce same content hash from same input."""
 
     def test_round_trip_content_hash(self) -> None:
-        from jacs.hai.hash import compute_content_hash
+        from haiai.hash import compute_content_hash
 
         rt = CONFORMANCE["mime_round_trip"]
         inp = rt["input"]

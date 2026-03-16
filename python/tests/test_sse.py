@@ -1,8 +1,8 @@
-"""Tests for jacs.hai._sse module."""
+"""Tests for haiai._sse module."""
 
 from __future__ import annotations
 
-from jacs.hai._sse import flatten_benchmark_job, parse_sse_lines
+from haiai._sse import flatten_benchmark_job, parse_sse_lines
 
 
 class TestParseSSELines:

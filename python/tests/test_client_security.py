@@ -15,7 +15,7 @@ from typing import Any
 import httpx
 import pytest
 
-from jacs.hai.client import HaiClient, register_new_agent
+from haiai.client import HaiClient, register_new_agent
 
 
 class _FakeResponse:
@@ -41,7 +41,7 @@ def test_verify_hai_message_supports_key_id_lookup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test that verify_hai_message can look up keys by ID from the server."""
-    from jacs.hai import signing as signing_mod
+    from haiai import signing as signing_mod
 
     message = '{"hello":"world"}'
     # Sign the message using the test agent
@@ -162,7 +162,7 @@ def test_register_new_agent_writes_private_key_with_0600(
             quiet=True,
         )
     finally:
-        from jacs.hai.config import reset
+        from haiai.config import reset
         reset()
 
     private_key_path = key_dir / "agent_private_key.pem"
@@ -207,7 +207,7 @@ def test_register_new_agent_defaults_to_secure_key_dir(
             quiet=True,
         )
     finally:
-        from jacs.hai.config import reset
+        from haiai.config import reset
         reset()
 
     expected_key_dir = (tmp_path / ".jacs" / "keys").resolve()

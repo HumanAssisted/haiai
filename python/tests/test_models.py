@@ -1,8 +1,8 @@
-"""Tests for jacs.hai.models module."""
+"""Tests for haiai.models module."""
 
 from __future__ import annotations
 
-from jacs.hai.models import (
+from haiai.models import (
     AgentConfig,
     AgentVerificationResult,
     BaselineRunResult,

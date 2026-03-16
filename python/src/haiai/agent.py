@@ -1,7 +1,7 @@
 """High-level Agent API for HAI email operations.
 
 Provides an ``Agent`` class with an ``agent.email`` namespace that wraps
-the existing :class:`~jacs.hai.client.HaiClient` for email operations.
+the existing :class:`~haiai.client.HaiClient` for email operations.
 All emails are sent signed with the agent's JACS key. There is no
 unsigned send path.
 
@@ -23,16 +23,16 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-from jacs.hai.client import HaiClient
-from jacs.hai.errors import HaiError, RateLimited
-from jacs.hai.models import (
+from haiai.client import HaiClient
+from haiai.errors import HaiError, RateLimited
+from haiai.models import (
     EmailMessage,
     EmailStatus,
     SendEmailResult,
 )
 
 if TYPE_CHECKING:
-    from jacs.hai.models import Contact
+    from haiai.models import Contact
 
 
 class Agent:
@@ -85,7 +85,7 @@ class Agent:
 class EmailNamespace:
     """Email operations namespace.
 
-    All methods delegate to :class:`~jacs.hai.client.HaiClient` email
+    All methods delegate to :class:`~haiai.client.HaiClient` email
     methods. The :meth:`send` method always signs with the agent's JACS
     key via ``send_signed_email``. There is no unsigned send path.
     """

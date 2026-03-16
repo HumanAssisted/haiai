@@ -14,8 +14,8 @@ import time
 
 import pytest
 
-from jacs.hai.client import HaiClient, register_new_agent
-from jacs.hai.errors import HaiApiError
+from haiai.client import HaiClient, register_new_agent
+from haiai.errors import HaiApiError
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("HAI_LIVE_TEST") != "1",

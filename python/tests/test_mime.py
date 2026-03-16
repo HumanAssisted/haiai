@@ -2,7 +2,7 @@
 
 from email.parser import BytesParser
 
-from jacs.hai.mime import build_rfc5322_email
+from haiai.mime import build_rfc5322_email
 
 
 def test_build_simple_text_email():

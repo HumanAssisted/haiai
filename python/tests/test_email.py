@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
-from jacs.hai.client import HaiClient
-from jacs.hai.errors import (
+from haiai.client import HaiClient
+from haiai.errors import (
     BodyTooLarge,
     EmailNotActive,
     HaiApiError,
@@ -21,7 +21,7 @@ from jacs.hai.errors import (
     RecipientNotFound,
     SubjectTooLong,
 )
-from jacs.hai.models import (
+from haiai.models import (
     Contact,
     EmailDeliveryInfo,
     EmailMessage,
@@ -855,7 +855,7 @@ class TestHaiErrorFromResponseErrorCode:
 
     def test_from_response_captures_error_code(self) -> None:
         """error_code from JSON body must be stored on the exception."""
-        from jacs.hai.errors import HaiError
+        from haiai.errors import HaiError
 
         fake_resp = _FakeResponse(
             403,
@@ -869,7 +869,7 @@ class TestHaiErrorFromResponseErrorCode:
 
     def test_from_response_defaults_error_code_to_empty(self) -> None:
         """When error_code is absent, it defaults to empty string."""
-        from jacs.hai.errors import HaiError
+        from haiai.errors import HaiError
 
         fake_resp = _FakeResponse(500, payload={"error": "internal"})
 
@@ -1646,7 +1646,7 @@ class TestEmailStatusNestedFields:
 
     def test_email_status_nested_fields_from_dict(self) -> None:
         """Test parsing nested fields from a JSON-like dict (simulates API response)."""
-        from jacs.hai.client import HaiClient
+        from haiai.client import HaiClient
 
         data = {
             "email": "bot@hai.ai",
@@ -1695,7 +1695,7 @@ class TestEmailStatusNestedFields:
 
     def test_email_status_parse_without_nested_fields(self) -> None:
         """Test that parsing works when nested fields are absent."""
-        from jacs.hai.client import HaiClient
+        from haiai.client import HaiClient
 
         data = {
             "email": "bot@hai.ai",
@@ -1716,7 +1716,7 @@ class TestEmailStatusNestedFields:
 
     def test_reputation_hai_score_null(self) -> None:
         """Test that hai_score=null maps to None."""
-        from jacs.hai.client import HaiClient
+        from haiai.client import HaiClient
 
         data = {
             "email": "bot@hai.ai",

@@ -27,7 +27,7 @@ def _default_api_url() -> str:
 
 def _load_config_if_exists() -> None:
     """Attempt to load jacs.config.json from the default location."""
-    from jacs.hai.config import is_loaded, load
+    from haiai.config import is_loaded, load
 
     if is_loaded():
         return
@@ -40,7 +40,7 @@ def _load_config_if_exists() -> None:
 def _require_config() -> None:
     """Load config or exit with a helpful error."""
     _load_config_if_exists()
-    from jacs.hai.config import is_loaded
+    from haiai.config import is_loaded
 
     if not is_loaded():
         print(
@@ -53,7 +53,7 @@ def _require_config() -> None:
 
 def cmd_register(args: argparse.Namespace) -> None:
     """Register a new agent."""
-    from jacs.hai.client import register_new_agent
+    from haiai.client import register_new_agent
 
     result = register_new_agent(
         name=args.name,
@@ -77,7 +77,7 @@ def cmd_register(args: argparse.Namespace) -> None:
 def cmd_hello(args: argparse.Namespace) -> None:
     """Run hello world handshake."""
     _require_config()
-    from jacs.hai.client import hello_world
+    from haiai.client import hello_world
 
     result = hello_world(args.api_url, include_test=args.include_test)
     print(f"Hello from HAI!")
@@ -91,7 +91,7 @@ def cmd_hello(args: argparse.Namespace) -> None:
 def cmd_benchmark(args: argparse.Namespace) -> None:
     """Run a benchmark."""
     _require_config()
-    from jacs.hai.client import HaiClient
+    from haiai.client import HaiClient
 
     client = HaiClient()
     result = client.benchmark(args.api_url, tier=args.tier, name=args.name)
@@ -103,7 +103,7 @@ def cmd_benchmark(args: argparse.Namespace) -> None:
 def cmd_status(args: argparse.Namespace) -> None:
     """Check agent registration status."""
     _require_config()
-    from jacs.hai.client import HaiClient
+    from haiai.client import HaiClient
 
     client = HaiClient()
     result = client.status(args.api_url)
@@ -117,7 +117,7 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 def cmd_check_username(args: argparse.Namespace) -> None:
     """Check username availability."""
-    from jacs.hai.client import HaiClient
+    from haiai.client import HaiClient
 
     client = HaiClient()
     result = client.check_username(args.api_url, args.username)
@@ -132,8 +132,8 @@ def cmd_check_username(args: argparse.Namespace) -> None:
 def cmd_claim_username(args: argparse.Namespace) -> None:
     """Claim a username."""
     _require_config()
-    from jacs.hai.client import HaiClient
-    from jacs.hai.config import get_config
+    from haiai.client import HaiClient
+    from haiai.config import get_config
 
     client = HaiClient()
     agent_id = args.agent_id or get_config().jacs_id
@@ -147,7 +147,7 @@ def cmd_claim_username(args: argparse.Namespace) -> None:
 def cmd_send_email(args: argparse.Namespace) -> None:
     """Send an email."""
     _require_config()
-    from jacs.hai.client import HaiClient
+    from haiai.client import HaiClient
 
     client = HaiClient()
     result = client.send_email(
@@ -159,7 +159,7 @@ def cmd_send_email(args: argparse.Namespace) -> None:
 def cmd_list_messages(args: argparse.Namespace) -> None:
     """List inbox messages."""
     _require_config()
-    from jacs.hai.client import HaiClient
+    from haiai.client import HaiClient
 
     client = HaiClient()
     messages = client.list_messages(
@@ -175,7 +175,7 @@ def cmd_list_messages(args: argparse.Namespace) -> None:
 
 def cmd_fetch_key(args: argparse.Namespace) -> None:
     """Fetch a remote agent's public key."""
-    from jacs.hai.client import HaiClient
+    from haiai.client import HaiClient
 
     client = HaiClient()
     info = client.fetch_remote_key(args.api_url, args.jacs_id, args.version)

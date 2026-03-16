@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-from jacs.hai.client import HaiClient
-from jacs.hai.models import PublicKeyInfo
+from haiai.client import HaiClient
+from haiai.models import PublicKeyInfo
 
 
 # ---------------------------------------------------------------------------

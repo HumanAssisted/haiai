@@ -1,4 +1,4 @@
-"""Tests for jacs.hai.signing module.
+"""Tests for haiai.signing module.
 
 All crypto operations delegate to JACS binding-core.
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from jacs.hai.signing import (
+from haiai.signing import (
     canonicalize_json,
     create_agent_document,
     invalidate_key_cache,

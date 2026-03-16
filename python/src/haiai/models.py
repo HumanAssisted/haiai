@@ -1,3 +1,543 @@
-"""Public `haiai.models` compatibility layer."""
+"""Data models for the HAI SDK."""
 
-from jacs.hai.models import *  # noqa: F401,F403
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Optional
+
+
+@dataclass
+class AgentConfig:
+    """JACS agent configuration loaded from jacs.config.json."""
+
+    name: str
+    version: str
+    key_dir: str
+    jacs_id: Optional[str] = None
+
+
+@dataclass
+class RotationResult:
+    """Result of a key rotation operation.
+
+    Returned by ``HaiClient.rotate_keys()`` after generating new keys,
+    archiving old keys, and producing a new self-signed agent document.
+    """
+
+    jacs_id: str
+    old_version: str
+    new_version: str
+    new_public_key_hash: str
+    registered_with_hai: bool
+    signed_agent_json: str
+
+
+@dataclass
+class HaiEvent:
+    """An event received from the HAI server over SSE or WebSocket.
+
+    Attributes:
+        event_type: Type of event (e.g., "benchmark_job", "heartbeat").
+        data: Event payload (parsed JSON dict or raw string).
+        id: Event ID if provided (for SSE resume).
+        retry: Retry interval in ms if provided.
+        raw: Raw event data string.
+    """
+
+    event_type: str
+    data: Any
+    id: Optional[str] = None
+    retry: Optional[int] = None
+    raw: str = ""
+
+
+@dataclass
+class RegistrationResult:
+    """Result of registering an agent via ``register_new_agent()``."""
+
+    agent_id: str
+    jacs_id: str
+
+
+@dataclass
+class HaiRegistrationResult:
+    """Result of registering an agent with HAI via ``HaiClient.register()``.
+
+    Attributes:
+        success: Whether registration was successful.
+        agent_id: The registered agent's ID.
+        hai_signature: HAI's signature on the registration.
+        registration_id: Unique ID for this registration.
+        registered_at: ISO 8601 timestamp of registration.
+        capabilities: Capabilities recognized by HAI.
+        raw_response: Full API response.
+    """
+
+    success: bool
+    agent_id: str
+    hai_signature: str = ""
+    registration_id: str = ""
+    registered_at: str = ""
+    capabilities: list[str] = field(default_factory=list)
+    raw_response: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class HaiRegistrationPreview:
+    """Preview of what would be sent during registration.
+
+    Attributes:
+        agent_id: The agent's JACS ID.
+        agent_name: Human-readable agent name.
+        payload_json: The full JSON that would be sent (pretty-printed).
+        endpoint: The API endpoint that would be called.
+        headers: Headers that would be sent (API key masked).
+    """
+
+    agent_id: str
+    agent_name: str
+    payload_json: str
+    endpoint: str
+    headers: dict[str, str]
+
+
+@dataclass
+class HaiStatusResult:
+    """Result of checking agent registration status.
+
+    Attributes:
+        registered: Whether the agent is registered with HAI.
+        agent_id: The agent's JACS ID (if registered).
+        registration_id: HAI registration ID (if registered).
+        registered_at: When the agent was registered.
+        hai_signatures: List of HAI signature IDs.
+        raw_response: Full API response.
+    """
+
+    registered: bool
+    agent_id: str = ""
+    registration_id: str = ""
+    registered_at: str = ""
+    hai_signatures: list[str] = field(default_factory=list)
+    raw_response: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class HelloWorldResult:
+    """Result of a hello world exchange with HAI.
+
+    Attributes:
+        success: Whether the hello world exchange succeeded.
+        timestamp: ISO 8601 timestamp from HAI's response.
+        client_ip: The caller's IP address as seen by HAI.
+        hai_public_key_fingerprint: HAI's public key fingerprint.
+        message: Human-readable acknowledgment message from HAI.
+        hai_signature_valid: Whether HAI's signature on the ACK was verified.
+        raw_response: Full response from the API.
+    """
+
+    success: bool
+    timestamp: str = ""
+    client_ip: str = ""
+    hai_public_key_fingerprint: str = ""
+    message: str = ""
+    hai_signature_valid: bool = False
+    hello_id: str = ""
+    test_scenario: Optional[str] = None
+    raw_response: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class TranscriptMessage:
+    """A single message in a benchmark transcript.
+
+    Attributes:
+        role: Speaker role ("party_a", "party_b", "mediator", "system").
+        content: Message text content.
+        timestamp: ISO 8601 timestamp of the message.
+        annotations: Structural annotations (e.g., "Dispute escalated").
+    """
+
+    role: str
+    content: str
+    timestamp: str = ""
+    annotations: list[str] = field(default_factory=list)
+
+
+@dataclass
+class FreeChaoticResult:
+    """Result of a free chaotic benchmark run.
+
+    Free tier: no score, no breakdown. Transcript + annotations only.
+    Rate limited to 3 runs per keypair per 24 hours.
+
+    Attributes:
+        success: Whether the run completed.
+        run_id: Unique ID for this benchmark run.
+        transcript: List of transcript messages.
+        upsell_message: CTA message for paid tiers.
+        raw_response: Full response from the API.
+    """
+
+    success: bool
+    run_id: str = ""
+    transcript: list[TranscriptMessage] = field(default_factory=list)
+    upsell_message: str = ""
+    raw_response: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class BaselineRunResult:
+    """Result of a $5 baseline benchmark run.
+
+    Baseline tier: single aggregate score (0-100), no category breakdown.
+
+    Attributes:
+        success: Whether the run completed.
+        run_id: Unique ID for this benchmark run.
+        score: Single aggregate score (0-100).
+        transcript: List of transcript messages.
+        payment_id: ID of the Stripe payment used.
+        raw_response: Full response from the API.
+    """
+
+    success: bool
+    run_id: str = ""
+    score: float = 0.0
+    transcript: list[TranscriptMessage] = field(default_factory=list)
+    payment_id: str = ""
+    raw_response: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class BenchmarkResult:
+    """Result of running a benchmark suite.
+
+    Attributes:
+        success: Whether the benchmark completed successfully.
+        suite: Name of the benchmark suite.
+        score: Overall benchmark score (0-100).
+        passed: Number of tests passed.
+        failed: Number of tests failed.
+        total: Total number of tests.
+        duration_ms: Total duration in milliseconds.
+        results: Detailed results per test.
+        raw_response: Full response from the API.
+    """
+
+    success: bool
+    suite: str
+    score: float = 0.0
+    passed: int = 0
+    failed: int = 0
+    total: int = 0
+    duration_ms: int = 0
+    results: list[dict[str, Any]] = field(default_factory=list)
+    raw_response: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class JobResponseResult:
+    """Result of submitting a benchmark job response.
+
+    Attributes:
+        success: Whether the response was accepted.
+        job_id: The job ID that was responded to.
+        message: Acknowledgment message from HAI.
+        raw_response: Full response from the API.
+    """
+
+    success: bool
+    job_id: str = ""
+    message: str = ""
+    raw_response: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AgentVerificationResult:
+    """Result of verifying an agent at all trust levels.
+
+    Verification Levels:
+        - Level 1 (basic): JACS self-signature valid (cryptographic proof).
+        - Level 2 (domain): DNS TXT record verification passed.
+        - Level 3 (attested): HAI has registered and signed the agent.
+
+    Attributes:
+        valid: Overall verification passed (meets min_level if specified).
+        level: Highest verification level achieved (0, 1, 2, or 3).
+        level_name: Human-readable level name.
+        agent_id: The verified agent's JACS ID.
+        jacs_valid: Level 1 -- JACS signature is cryptographically valid.
+        dns_valid: Level 2 -- DNS verification passed.
+        hai_attested: Level 3 -- Agent is registered with HAI signatures.
+        domain: Verified domain (if Level 2+).
+        hai_signatures: HAI signature algorithms (if Level 3).
+        errors: List of verification errors encountered.
+        raw_response: Full API response (if HAI verification performed).
+    """
+
+    valid: bool
+    level: int
+    level_name: str
+    agent_id: str
+    jacs_valid: bool = False
+    dns_valid: bool = False
+    hai_attested: bool = False
+    domain: str = ""
+    hai_signatures: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    raw_response: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class SendEmailResult:
+    """Result of sending an email from this agent's @hai.ai address."""
+
+    message_id: str
+    status: str
+
+
+@dataclass
+class EmailMessage:
+    """An email message in the agent's inbox or sent folder."""
+
+    id: str
+    from_address: str
+    to_address: str
+    subject: str
+    body_text: str
+    created_at: str
+    direction: str = ""
+    message_id: str = ""
+    in_reply_to: Optional[str] = None
+    is_read: bool = False
+    delivery_status: str = ""
+    read_at: Optional[str] = None
+    jacs_verified: Optional[bool] = None
+    cc_addresses: list[str] = field(default_factory=list)
+    labels: list[str] = field(default_factory=list)
+    folder: str = "inbox"
+    body_text_clean: Optional[str] = None
+    quoted_text: Optional[str] = None
+    thread: Optional[list[EmailMessage]] = None
+
+    @staticmethod
+    def from_dict(m: dict[str, Any]) -> EmailMessage:
+        """Parse an EmailMessage from an API response dict.
+
+        Handles body_text_clean, quoted_text, and recursive thread parsing.
+        Missing optional fields default to None.
+        """
+        thread_data = m.get("thread")
+        thread: list[EmailMessage] | None = None
+        if thread_data is not None:
+            thread = [EmailMessage.from_dict(t) for t in thread_data]
+
+        return EmailMessage(
+            id=m.get("id", ""),
+            from_address=m.get("from_address", m.get("from", "")),
+            to_address=m.get("to_address", m.get("to", "")),
+            subject=m.get("subject", ""),
+            body_text=m.get("body_text", ""),
+            created_at=m.get("created_at", ""),
+            direction=m.get("direction", ""),
+            message_id=m.get("message_id", ""),
+            in_reply_to=m.get("in_reply_to"),
+            is_read=m.get("is_read", False),
+            delivery_status=m.get("delivery_status", ""),
+            read_at=m.get("read_at"),
+            jacs_verified=m.get("jacs_verified"),
+            cc_addresses=m.get("cc_addresses", []),
+            labels=m.get("labels", []),
+            folder=m.get("folder", "inbox"),
+            body_text_clean=m.get("body_text_clean"),
+            quoted_text=m.get("quoted_text"),
+            thread=thread,
+        )
+
+
+@dataclass
+class Contact:
+    """A contact derived from email message history."""
+
+    email: str
+    display_name: Optional[str] = None
+    last_contact: str = ""
+    jacs_verified: bool = False
+    reputation_tier: Optional[str] = None
+
+
+@dataclass
+class EmailVolumeInfo:
+    """Volume statistics from the email status response."""
+
+    sent_total: int = 0
+    received_total: int = 0
+    sent_24h: int = 0
+
+
+@dataclass
+class EmailDeliveryInfo:
+    """Delivery metrics from the email status response."""
+
+    bounce_count: int = 0
+    spam_report_count: int = 0
+    delivery_rate: float = 0.0
+
+
+@dataclass
+class EmailReputationInfo:
+    """Reputation scoring from the email status response."""
+
+    score: float = 0.0
+    tier: str = ""
+    email_score: float = 0.0
+    hai_score: Optional[float] = None
+
+
+@dataclass
+class EmailStatus:
+    """Email rate-limit and reputation status for the current agent."""
+
+    email: str
+    status: str
+    tier: str
+    billing_tier: str
+    messages_sent_24h: int
+    daily_limit: int
+    daily_used: int
+    resets_at: str
+    messages_sent_total: int = 0
+    external_enabled: bool = False
+    external_sends_today: int = 0
+    last_tier_change: Optional[str] = None
+    volume: Optional[EmailVolumeInfo] = None
+    delivery: Optional[EmailDeliveryInfo] = None
+    reputation: Optional[EmailReputationInfo] = None
+
+
+@dataclass
+class KeyRegistryResponse:
+    """Public key registry lookup response for email signature verification."""
+
+    email: str
+    jacs_id: str
+    public_key: str
+    algorithm: str
+    reputation_tier: str
+    registered_at: str
+
+
+@dataclass
+class EmailVerificationResult:
+    """Result of verifying an email's JACS signature (legacy header-based).
+
+    .. deprecated::
+        Use :class:`EmailVerificationResultV2` for attachment-based verification.
+    """
+
+    valid: bool
+    jacs_id: str
+    reputation_tier: str
+    error: Optional[str] = None
+
+
+class FieldStatus(Enum):
+    """Status of a single field in JACS email content verification."""
+
+    PASS = "pass"
+    MODIFIED = "modified"
+    FAIL = "fail"
+    UNVERIFIABLE = "unverifiable"
+
+
+@dataclass
+class FieldResult:
+    """Result for a single field in content verification."""
+
+    field: str
+    status: FieldStatus
+    original_hash: Optional[str] = None
+    current_hash: Optional[str] = None
+    original_value: Optional[str] = None
+    current_value: Optional[str] = None
+
+
+@dataclass
+class ChainEntry:
+    """Entry in a JACS email forwarding chain."""
+
+    signer: str
+    jacs_id: str
+    valid: bool
+    forwarded: bool = False
+
+
+@dataclass
+class EmailVerificationResultV2:
+    """Result of verifying a JACS attachment-signed email.
+
+    This is the new verification result format that includes per-field
+    content verification and forwarding chain support.
+    """
+
+    valid: bool
+    jacs_id: str
+    algorithm: str
+    reputation_tier: str
+    dns_verified: Optional[bool] = None
+    field_results: list[FieldResult] = field(default_factory=list)
+    chain: list[ChainEntry] = field(default_factory=list)
+    error: Optional[str] = None
+    agent_status: Optional[str] = None
+    benchmarks_completed: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AttestationResult:
+    """Result of creating an attestation via HAI.
+
+    Attributes:
+        doc_id: The attestation document ID.
+        attestation: The signed attestation document.
+        hai_signature: HAI's co-signature on the attestation.
+        verification: Optional verification result (when retrieved).
+    """
+
+    doc_id: str
+    attestation: dict[str, Any] = field(default_factory=dict)
+    hai_signature: dict[str, Any] = field(default_factory=dict)
+    verification: Optional[dict[str, Any]] = None
+
+
+@dataclass
+class AttestationVerifyResult:
+    """Result of verifying an attestation via HAI.
+
+    Attributes:
+        crypto_valid: Whether the cryptographic signature is valid.
+        evidence_valid: Per-evidence verification results.
+        hai_signed: Whether HAI co-signed this attestation.
+        badge_level: The badge level for the agent.
+    """
+
+    crypto_valid: bool
+    evidence_valid: list[dict[str, Any]] = field(default_factory=list)
+    hai_signed: bool = False
+    badge_level: str = "none"
+
+
+@dataclass
+class PublicKeyInfo:
+    """Public key information from a remote agent lookup."""
+
+    jacs_id: str
+    version: str
+    public_key: str
+    algorithm: str
+    public_key_hash: str
+    status: str
+    dns_verified: bool
+    created_at: str
+    public_key_raw_b64: str = ""

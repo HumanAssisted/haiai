@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from jacs.hai import cli as hai_cli
+from haiai import cli as hai_cli
 
 
 def test_explicit_jacs_passthrough_invokes_jacs_binary(monkeypatch: pytest.MonkeyPatch) -> None:
