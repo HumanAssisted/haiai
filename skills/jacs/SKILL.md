@@ -13,14 +13,14 @@ description: Cryptographic document signing/verification plus HAI platform integ
 
 **With JACS you get:**
 
-- **Proof of origin** -- When you sign a document with `jacs_sign`, anyone can verify it was you. Your signature is bound to your identity and cannot be forged. Use this for every important message, decision, or promise you send.
+- **Proof of origin** -- When you sign a document with `jacs_sign_document`, anyone can verify it was you. Your signature is bound to your identity and cannot be forged. Use this for every important message, decision, or promise you send.
 - **Proof of integrity** -- If someone tampers with signed content, verification fails. Recipients know the data is exactly what you signed.
-- **Accountability** -- Commitments and agreements you create are signed and versioned. You can prove what you agreed to and when; you can dispute or revoke with a signed record. Other agents can do the same, so you can hold them accountable too.
-- **Discoverable trust** -- Publish your public key (DNS + optional HAI.ai registration). Other agents can fetch your key and verify your documents without pre-sharing secrets. You can verify their documents the same way with `jacs_verify_auto` and trust levels (basic, domain, attested).
+- **Accountability** -- Agreements you create are signed and versioned. You can prove what you agreed to and when. Other agents can do the same, so you can hold them accountable too.
+- **Discoverable trust** -- Publish your public key (DNS + optional HAI.ai registration). Other agents can fetch your key and verify your documents without pre-sharing secrets. You can verify their documents the same way with `jacs_verify_document` and trust levels (basic, domain, attested).
 - **Portable identity** -- Your keys and signed documents stay with your local JACS instance. You can sign here and send the same signed payload over any channel (WhatsApp, HTTP, MCP, etc.). The signature travels with the data; the recipient only needs your public key to verify.
 - **Signed email** -- Register with HAI.ai to get a `username@hai.ai` address. Send and receive cryptographically signed email directly from your agent. Every outbound message carries a JACS signature that recipients can verify.
 
-**When to use it:** Sign every outbound message, commitment, or artifact that another agent or human might need to trust. Verify every inbound signed document before acting on it. Use commitments for agreements and todos for work you want to track under your identity. Use agent state to sign memory, skills, and config so others can verify their provenance.
+**When to use it:** Sign every outbound message or artifact that another agent or human might need to trust. Verify every inbound signed document before acting on it. Use agreements for multi-party sign-off. Use agent state to sign memory, skills, and config so others can verify their provenance.
 
 Use these capabilities to sign, verify, and manage cryptographically secure documents. All signatures use post-quantum cryptography by default.
 
@@ -51,9 +51,13 @@ Follow these steps in order to go from zero to a fully functional agent with sig
 
 ### Step 1: Initialize Identity and Keys
 
-Use the `jacs_identity` tool to check if you're already initialized. If not, the tool will guide initialization.
+Use `jacs_export_agent` to check if you're already initialized. If not:
 
-For CLI usage:
+```
+jacs_create_agent
+```
+
+Or from CLI:
 ```bash
 haiai init
 ```
@@ -102,17 +106,7 @@ You should see the echo reply. Your agent is fully operational.
 
 ### Step 6 (Optional): Set Up DNS Verification
 
-For "domain" trust level, publish a DNS TXT record:
-
-```bash
-haiai dns-record yourdomain.com
-```
-
-Add the output as a TXT record at `_v1.agent.jacs.yourdomain.com`. Then:
-
-```bash
-haiai claim verified
-```
+For "domain" trust level, publish a DNS TXT record containing your agent's public key hash at `_v1.agent.jacs.yourdomain.com`. You can retrieve the hash from your agent document via `jacs_export_agent`. Once the DNS record is published, re-register or update your agent status through HAI to trigger verification.
 
 ### Summary: What You Need at Each Stage
 
@@ -133,12 +127,7 @@ Every registered agent with a claimed username gets a `username@hai.ai` address.
 hai_send_email with to="other@hai.ai", subject="Proposal", body="Here's the deal..."
 ```
 
-Supports file attachments via base64:
-
-```
-hai_send_email with to="partner@hai.ai", subject="Report", body="See attached",
-  attachments=[{filename: "report.pdf", contentType: "application/pdf", dataBase64: "..."}]
-```
+Note: File attachments are not yet supported via the MCP tool. The underlying API supports attachments, but the MCP layer does not currently expose them.
 
 ### Reading Email
 
@@ -172,10 +161,6 @@ hai_send_email with to="partner@hai.ai", subject="Report", body="See attached",
 
 Send a message to `echo@hai.ai` -- it auto-replies so you can verify your setup without needing another agent.
 
-### Setup Check
-
-Use `jacs_onboard_status` at any time to see where you are in the setup process and what to do next.
-
 ## Local Document Signing
 
 Sign any document or data with your JACS identity. The signature proves you authored it and that it hasn't been tampered with.
@@ -183,22 +168,18 @@ Sign any document or data with your JACS identity. The signature proves you auth
 ### Sign a Document
 
 ```
-jacs_sign with document={"task": "analyze data", "result": "completed", "confidence": 0.95}
+jacs_sign_document with content={"task": "analyze data", "result": "completed", "confidence": 0.95}
 ```
 
-Returns the signed document with embedded JACS signature. If the document is small enough (under ~1515 bytes), also returns a `verification_url`.
+Returns the signed document with embedded JACS signature, hash, and document ID.
 
 ### Verify a Document
 
 ```
-jacs_verify_auto with document={...signed document...}
+jacs_verify_document with document="{...signed document JSON...}"
 ```
 
-This auto-fetches the signer's public key, checks DNS records, and verifies HAI.ai registration. Use `minimumTrustLevel` to require a specific trust threshold:
-
-```
-jacs_verify_auto with document={...}, minimumTrustLevel="attested"
-```
+Checks both the content hash and cryptographic signature. Use this when you have a signed document and need to confirm its integrity and authenticity.
 
 ### Generate a Verification Link
 
@@ -220,48 +201,116 @@ JACS supports three trust levels for agent verification:
 | **Domain** | `verified` | DNS TXT hash match + DNSSEC | Organizational trust |
 | **Attested** | `verified-hai.ai` | HAI.ai registration | Platform-wide trust |
 
-## Document Types
-
-JACS supports several typed document formats, each with a schema:
-
-| Type | Schema | Purpose |
-|------|--------|---------|
-| **message** | `message.schema.json` | Signed messages and conversations |
-| **agentstate** | `agentstate.schema.json` | Agent memory, skills, plans, configs, hooks |
-| **commitment** | `commitment.schema.json` | Agreements and obligations between agents |
-| **todo** | `todo.schema.json` | Private work tracking (goals and tasks) |
-| **agent** | `agent.schema.json` | Agent identity documents |
-| **task** | `task.schema.json` | Task lifecycle tracking |
-
 ## Available Tools
 
 ### Core Signing & Verification
 
 | Tool | Purpose |
 |------|---------|
-| `jacs_sign` | Sign a document with your JACS identity (returns signed doc; when small enough, includes `verification_url` for sharing) |
-| `hai_generate_verify_link` | Get a shareable verification URL for a signed document so recipients can verify at https://hai.ai/jacs/verify |
-| `jacs_verify` | Verify a signed document's authenticity (self-signed) |
-| `jacs_verify_auto` | **Seamlessly verify any signed document** (auto-fetches keys, supports trust levels) |
-| `jacs_verify_with_key` | Verify a document using a specific public key |
+| `jacs_sign_document` | Sign arbitrary JSON content to create a cryptographically signed JACS document. Returns the signed envelope with hash and document ID |
+| `jacs_verify_document` | Verify a signed JACS document's content hash and cryptographic signature. Confirms integrity and authenticity |
+| `jacs_create_agent` | Create a new JACS agent with cryptographic keys (programmatic equivalent of `haiai init`). Requires `JACS_MCP_ALLOW_REGISTRATION=true` |
+| `hai_generate_verify_link` | Generate a shareable verification URL for a signed document (for https://hai.ai/jacs/verify) |
 
-### Agent Discovery
+### Agent Identity & Discovery
 
 | Tool | Purpose |
 |------|---------|
-| `jacs_fetch_pubkey` | Fetch another agent's public key from their domain |
-| `jacs_dns_lookup` | Look up an agent's DNS TXT record for verification |
-| `jacs_lookup_agent` | Get complete info about an agent (DNS + public key + HAI.ai status) |
-| `jacs_identity` | Get your JACS identity and trust level |
-| `jacs_share_public_key` | Share your current public key PEM for trust bootstrap |
-| `jacs_share_agent` | Share your self-signed agent document for trust establishment |
-| `jacs_trust_agent_with_key` | Trust an agent document using an explicit public key PEM |
+| `jacs_export_agent` | Export this agent's full JACS JSON document (identity, public key hash, signed metadata) |
+| `jacs_export_agent_card` | Export this agent's A2A Agent Card for discovery |
+| `jacs_generate_well_known` | Generate all .well-known documents for A2A discovery (returns array of {path, document} objects) |
+
+### Trust Store
+
+| Tool | Purpose |
+|------|---------|
+| `jacs_trust_agent` | Add an agent to the local trust store (verifies self-signature before trusting) |
+| `jacs_untrust_agent` | Remove an agent from the trust store. Requires `JACS_MCP_ALLOW_UNTRUST=true` |
+| `jacs_list_trusted_agents` | List all agent IDs in the local trust store |
+| `jacs_is_trusted` | Check whether a specific agent is trusted (returns boolean) |
+| `jacs_get_trusted_agent` | Retrieve the full agent JSON for a trusted agent |
+
+### State Management
+
+| Tool | Purpose |
+|------|---------|
+| `jacs_sign_state` | Sign an agent state file (memory, skill, plan, config, or hook) to establish provenance and integrity |
+| `jacs_verify_state` | Verify the integrity and authenticity of a signed agent state (checks file hash and signature) |
+| `jacs_load_state` | Load a signed agent state document, optionally verifying before returning content |
+| `jacs_update_state` | Update a previously signed state file (recomputes hash, creates new signed version) |
+| `jacs_list_state` | List signed agent state documents with optional filtering by type, framework, or tags |
+| `jacs_adopt_state` | Adopt an external file as signed agent state (marks origin as 'adopted', optionally records source URL) |
+
+### Memory
+
+| Tool | Purpose |
+|------|---------|
+| `jacs_memory_save` | Save a memory as a cryptographically signed private document. Persists context, decisions, or learned information across sessions |
+| `jacs_memory_recall` | Search saved memories by query string and optional tag filter |
+| `jacs_memory_list` | List all saved memory documents with optional filtering by tags or framework |
+| `jacs_memory_update` | Update an existing memory with new content, name, or tags (creates new signed version) |
+| `jacs_memory_forget` | Mark a memory document as removed (provenance chain preserved, no longer returned by recall) |
+
+### Messaging
+
+| Tool | Purpose |
+|------|---------|
+| `jacs_message_send` | Create and cryptographically sign a message for sending to another agent. Returns the signed JACS document for transmission |
+| `jacs_message_receive` | Verify a received signed message and extract content, sender ID, and timestamp |
+| `jacs_message_update` | Update and re-sign an existing message document with new content |
+| `jacs_message_agree` | Verify and co-sign (agree to) a received signed message. Creates an agreement document referencing the original |
+
+### Multi-Party Agreements
+
+| Tool | Purpose |
+|------|---------|
+| `jacs_create_agreement` | Create a multi-party cryptographic agreement. Specify signers, optional quorum (e.g. 2-of-3), timeout deadline, and algorithm constraints |
+| `jacs_sign_agreement` | Co-sign an existing agreement (adds your cryptographic signature) |
+| `jacs_check_agreement` | Check agreement status: who has signed, whether quorum is met, whether expired, who still needs to sign |
+
+### Attestation
+
+| Tool | Purpose |
+|------|---------|
+| `jacs_attest_create` | Create a signed attestation document with subject, claims, optional evidence and policy context |
+| `jacs_attest_verify` | Verify an attestation document. Set `full=true` for full-tier verification including evidence and derivation chain |
+| `jacs_attest_lift` | Lift an existing signed JACS document into an attestation by attaching claims |
+| `jacs_attest_export_dsse` | Export an attestation as a DSSE envelope for in-toto/SLSA compatibility |
+
+### A2A Interoperability
+
+| Tool | Purpose |
+|------|---------|
+| `jacs_wrap_a2a_artifact` | Wrap an A2A artifact with JACS provenance (signs artifact, binds agent identity, optional parent signatures for chain-of-custody) |
+| `jacs_verify_a2a_artifact` | Verify a JACS-wrapped A2A artifact's signature and hash |
+| `jacs_assess_a2a_agent` | Assess trust level of a remote A2A agent given its Agent Card (apply open, verified, or strict trust policy) |
+
+### Security & Audit
+
+| Tool | Purpose |
+|------|---------|
+| `jacs_audit` | Run a read-only JACS security audit and health checks. Returns risks, health_checks, summary, and overall_status |
+| `jacs_audit_log` | Record a tool-use, data-access, or other event as a signed audit trail entry (tamper-evident log) |
+| `jacs_audit_query` | Search the audit trail by action type, target, and/or time range. Supports pagination |
+| `jacs_audit_export` | Export audit trail entries for a time period as a single signed JACS document |
+
+### Search
+
+| Tool | Purpose |
+|------|---------|
+| `jacs_search` | Search across all signed documents using the unified search interface. Supports fulltext search with optional filtering by document type |
+
+### Key Management
+
+| Tool | Purpose |
+|------|---------|
+| `jacs_reencrypt_key` | Re-encrypt the agent's private key with a new password (rotates password without changing key) |
 
 ### HAI.ai Platform -- Registration & Identity
 
 | Tool | Purpose |
 |------|---------|
-| `hai_hello` | Call HAI hello endpoint with JACS auth |
+| `hai_hello` | Run authenticated hello handshake with HAI using local JACS config |
 | `hai_agent_status` | Get the current agent's verification status |
 | `hai_verify_status` | Get verification status for the current or provided agent |
 | `hai_register_agent` | Register this agent with HAI (requires owner_email) |
@@ -272,7 +321,7 @@ JACS supports several typed document formats, each with a schema:
 
 | Tool | Purpose |
 |------|---------|
-| `hai_send_email` | Send signed email from this agent's mailbox (supports attachments) |
+| `hai_send_email` | Send signed email from this agent's @hai.ai address |
 | `hai_list_messages` | List inbox/outbox messages with pagination |
 | `hai_get_message` | Fetch one message by ID |
 | `hai_search_messages` | Search mailbox by query, sender, recipient, direction |
@@ -287,88 +336,13 @@ JACS supports several typed document formats, each with a schema:
 | `hai_get_email_status` | Get mailbox limits, capacity, and tier info |
 | `hai_list_contacts` | List contacts from email history with verification status |
 
-### Onboarding & Diagnostics
-
-| Tool | Purpose |
-|------|---------|
-| `jacs_onboard_status` | Check setup progress and get the next step (init, register, username, email) |
-
-### HAI.ai Platform -- Verification & Attestation
-
-| Tool | Purpose |
-|------|---------|
-| `jacs_verify_hai_registration` | Verify an agent is registered with HAI.ai |
-| `jacs_get_attestation` | Get full attestation status for any agent |
-| `jacs_set_verification_claim` | Set your verification claim level |
-
-### HAI.ai Platform -- Benchmarks
-
-| Tool | Purpose |
-|------|---------|
-| `jacs_hai_free_chaotic_run` | Run free-chaotic benchmark tier |
-| `jacs_hai_dns_certified_run` | Run DNS-certified benchmark flow |
-| `jacs_hai_submit_response` | Submit benchmark job response |
-| `jacs_hai_benchmark_run` | Run legacy benchmark endpoint |
-
-### Multi-Party Agreements
-
-| Tool | Purpose |
-|------|---------|
-| `jacs_create_agreement` | Create multi-party signing agreements |
-| `jacs_sign_agreement` | Add your signature to an agreement |
-| `jacs_check_agreement` | Check which parties have signed |
-
-### Agent State Management
-
-| Tool | Purpose |
-|------|---------|
-| `jacs_create_agentstate` | Create a signed agent state document (memory, skill, plan, config, hook) |
-| `jacs_sign_file_as_state` | Sign a file (MEMORY.md, SKILL.md, etc.) as agent state with hash reference |
-| `jacs_verify_agentstate` | Verify an agent state document's signature and integrity |
-
-### Commitment Tracking
-
-| Tool | Purpose |
-|------|---------|
-| `jacs_create_commitment` | Create a signed commitment between agents |
-| `jacs_update_commitment` | Update commitment status (pending -> active -> completed/failed/etc.) |
-| `jacs_dispute_commitment` | Dispute a commitment with a reason |
-| `jacs_revoke_commitment` | Revoke a commitment with a reason |
-
-### Todo List Management
-
-| Tool | Purpose |
-|------|---------|
-| `jacs_create_todo` | Create a signed todo list with goals and tasks |
-| `jacs_add_todo_item` | Add a goal or task to an existing todo list |
-| `jacs_update_todo_item` | Update a todo item's status, description, or priority |
-
-### Conversations
-
-| Tool | Purpose |
-|------|---------|
-| `jacs_start_conversation` | Create the first signed message payload in a new thread |
-| `jacs_send_message` | Create a signed message payload in an existing thread |
-
-### Security
-
-| Tool | Purpose |
-|------|---------|
-| `jacs_audit` | Run a read-only security audit (risks, health_checks, summary). Optional: configPath, recentN. |
-
-### Utilities
-
-| Tool | Purpose |
-|------|---------|
-| `jacs_hash` | Create a cryptographic hash of content |
-
 ## Usage Examples
 
 ### Complete onboarding (from scratch)
 
 ```
 1. Set password: export JACS_PRIVATE_KEY_PASSWORD=my-strong-password
-2. Initialize: jacs_identity (or haiai init from CLI)
+2. Initialize: jacs_create_agent (or haiai init from CLI)
 3. Register: hai_register_agent with owner_email="me@example.com"
 4. Check username: hai_check_username with username="myagent"
 5. Claim username: hai_claim_username with agent_id="your-agent-id", username="myagent"
@@ -387,20 +361,15 @@ Sign this task result with JACS:
 }
 ```
 
-Then share the `verification_url` from the result. Recipients open the link at `https://hai.ai/jacs/verify` to confirm authenticity.
+Then use `hai_generate_verify_link` with the signed document to get a shareable URL. Recipients open the link at `https://hai.ai/jacs/verify` to confirm authenticity.
 
-### Verify with trust level requirement
+### Verify a document
 
 ```
-Verify this document requires "attested" trust level:
-{paste signed JSON document}
+jacs_verify_document with document="{...signed JSON...}"
 ```
 
-This will:
-1. Fetch the signer's public key
-2. Verify DNS record matches
-3. Check HAI.ai registration
-4. Only pass if agent has "attested" trust level
+This checks the content hash and cryptographic signature. If you have the signer's agent document in your trust store (`jacs_is_trusted`), you can confirm the signer's identity.
 
 ### Email workflow
 
@@ -421,7 +390,7 @@ hai_search_messages with q="proposal"
 ### Sign agent memory as state
 
 ```
-Sign my MEMORY.md file as agent state for provenance tracking
+jacs_sign_state with file_path="MEMORY.md", state_type="memory"
 ```
 
 This will create a signed agentstate document with:
@@ -429,94 +398,135 @@ This will create a signed agentstate document with:
 - File reference with SHA-256 hash
 - Cryptographic signature proving authorship
 
-### Create a commitment
+### Save and recall agent memory
 
 ```
-Create a commitment: "Deliver API documentation by end of week"
-with terms: { "deliverable": "API docs", "deadline": "2026-02-14" }
+# Save a memory
+jacs_memory_save with name="project-context", content="The auth rewrite is driven by compliance requirements", tags=["project", "auth"]
+
+# Recall it later
+jacs_memory_recall with query="auth rewrite"
+
+# List all memories
+jacs_memory_list
 ```
 
-### Track work with a todo list
+### Create a multi-party agreement
 
 ```
-Create a todo list called "Sprint 12" with:
-- goal: "Complete authentication system"
-- task: "Implement JWT token generation"
-- task: "Add password reset flow"
+jacs_create_agreement with signers=["agent-id-1", "agent-id-2", "agent-id-3"], quorum=2, description="Approve deployment to production"
 ```
 
-### Start a conversation
-
+Then each signer runs:
 ```
-Start a conversation with agent-123 about the API design proposal
-```
-
-### Bootstrap trust with explicit key + agent doc
-
-```
-Share my identity package:
-1) jacs_share_public_key
-2) jacs_share_agent
-
-Then trust a remote package:
-jacs_trust_agent_with_key with:
-- agentJson: "<remote agent json>"
-- publicKeyPem: "<remote public pem>"
+jacs_sign_agreement with agreement="{...agreement JSON...}"
 ```
 
-### Transport (MCP vs channel messaging)
+Check status:
+```
+jacs_check_agreement with agreement="{...agreement JSON...}"
+```
 
-`jacs_start_conversation` and `jacs_send_message` create signed JACS message payloads; they do **not** deliver messages on their own.
+### Agent-to-agent messaging
+
+`jacs_message_send` creates signed JACS message payloads; it does **not** deliver messages on its own.
 
 Use this flow:
-1. Create/sign the message payload
+1. Create/sign the message payload with `jacs_message_send`
 2. Deliver the returned signed JSON via your transport (MCP, HTTP, queue, chat bridge, etc.)
-3. Verify inbound payloads before acting (`jacs_verify_auto` or `jacs_verify_with_key`)
+3. Recipient verifies on receipt with `jacs_message_receive`
+4. Recipient can agree to the message with `jacs_message_agree`
 
-### Commitment lifecycle
+### Bootstrap trust with another agent
 
 ```
-# Create
-Create a commitment to "Complete code review for PR #42"
+# Export your agent document
+jacs_export_agent
 
-# Activate
-Update the commitment status to "active"
+# Share it with the remote agent (out of band)
+# Remote agent trusts you:
+jacs_trust_agent with agent="{...your agent JSON...}"
 
-# Complete
-Update the commitment status to "completed" with completion answer "All review comments addressed"
+# Check trust:
+jacs_is_trusted with agent_id="your-agent-id"
+```
 
-# Or dispute
-Dispute the commitment with reason "Scope changed significantly after agreement"
+### Create and verify attestations
+
+```
+# Create an attestation
+jacs_attest_create with subject={"type": "software", "id": "myapp-v1.0"}, claims=[{"name": "security-review", "value": "passed", "confidence": 0.95}]
+
+# Verify it
+jacs_attest_verify with document_key="jacsId:jacsVersion", full=true
+
+# Export as DSSE for SLSA/in-toto compatibility
+jacs_attest_export_dsse with document="{...attestation JSON...}"
+```
+
+### Audit trail
+
+```
+# Log an action
+jacs_audit_log with action="data-access", target="customer-records", details={"reason": "support ticket #123"}
+
+# Query the trail
+jacs_audit_query with action="data-access", from="2026-03-01T00:00:00Z"
+
+# Export for compliance
+jacs_audit_export with from="2026-03-01T00:00:00Z", to="2026-03-15T23:59:59Z"
 ```
 
 ## CLI Commands
 
-### Core Commands
+### Identity & Registration
 
-- `haiai init` - Initialize JACS with key generation
-- `haiai status` - Show agent status and trust level
-- `haiai sign <file>` - Sign a document file
-- `haiai verify <file>` - Verify a signed document
-- `haiai hash <string>` - Hash a string
+- `haiai init` - Initialize a new JACS agent with keys and config
+- `haiai status` - Check registration and verification status
+- `haiai register` - Register this agent with the HAI platform
+- `haiai hello` - Ping the HAI API and verify connectivity
+- `haiai check-username <username>` - Check if a username is available
+- `haiai claim-username <username>` - Claim a @hai.ai username for this agent
 
-### Discovery Commands
+### Email
 
-- `haiai lookup <domain>` - Look up another agent's info
-- `haiai dns-record <domain>` - Generate DNS TXT record for your domain
+- `haiai send-email` - Send a signed email from this agent
+- `haiai list-messages` - List email messages
+- `haiai search-messages` - Search email messages
+- `haiai reply-email` - Reply to an email message
+- `haiai forward-email` - Forward an email message to another recipient
+- `haiai archive-message <message_id>` - Archive an email message
+- `haiai unarchive-message <message_id>` - Unarchive an email message
+- `haiai list-contacts` - List contacts derived from email history
+- `haiai email-status` - Get email account status including usage limits
 
-### HAI.ai Commands
+### Agent Lifecycle
 
-- `haiai register` - Register this agent with HAI.ai
-- `haiai attestation [domain]` - Check attestation status (self or other agent)
-- `haiai claim [level]` - Set or view verification claim level (includes DNS/HAI proof details)
+- `haiai update` - Update agent metadata and re-sign with existing key
+- `haiai rotate` - Rotate this agent's cryptographic keys
+- `haiai migrate` - Migrate a legacy agent to the current schema
+- `haiai doctor` - Diagnose agent health, storage, and configuration
+- `haiai benchmark` - Run a benchmark against the HAI platform
+
+### Document Storage
+
+- `haiai store-document <path>` - Store a signed document
+- `haiai list-documents` - List stored documents
+- `haiai search-documents <query>` - Search stored documents
+- `haiai get-document <key>` - Get a document by key (id:version)
+- `haiai remove-document <key>` - Remove a document
+
+### MCP Server
+
+- `haiai mcp` - Start the built-in HAIAI MCP server (stdio transport)
 
 ## Shareable verification links
 
-When you sign a document and share it with humans (e.g. in email or chat), include a **verification link** so they can confirm it came from you. Use `hai_generate_verify_link` with the signed document to get a URL, or use the `verification_url` returned by `jacs_sign` when the signed payload is small enough (under ~1515 bytes).
+When you sign a document and share it with humans (e.g. in email or chat), include a **verification link** so they can confirm it came from you. Use `hai_generate_verify_link` with the signed document to get a URL.
 
 - **Verification page**: https://hai.ai/jacs/verify -- recipients open this (with `?s=<base64>` in the URL) to see signer, timestamp, and validity.
 - **API**: HAI exposes `GET /api/jacs/verify?s=<base64>` (rate-limited); the page calls this and displays the result.
-- **Limit**: Full URL must be <= 2048 characters; if the signed document is too large, `hai_generate_verify_link` fails and you omit the link or share a digest instead.
+- **Limit**: Full URL must be <= 2048 characters; if the signed document is too large, `hai_generate_verify_link` fails and you should share the signed JSON directly instead.
 
 ## Public Endpoints
 
@@ -524,7 +534,12 @@ Your agent exposes these endpoints:
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
+| `/.well-known/agent-card.json` | GET | A2A Agent Card for discovery |
+| `/.well-known/jwks.json` | GET | A2A/JACS JWKS for verifier interoperability |
+| `/.well-known/jacs-agent.json` | GET | JACS agent descriptor |
+| `/.well-known/jacs-extension.json` | GET | JACS A2A extension descriptor |
 | `/.well-known/jacs-pubkey.json` | GET | Your public key + verification claim |
+| `/jacs/agent` | GET | Current self-signed JACS agent document |
 | `/jacs/status` | GET | Health check with trust info |
 | `/jacs/attestation` | GET | Full attestation status |
 | `/jacs/verify` | POST | Public verification endpoint (this agent) |
@@ -533,51 +548,15 @@ Your agent exposes these endpoints:
 
 Other agents discover you via DNS TXT record at `_v1.agent.jacs.{your-domain}`
 
-**IMPORTANT: No signing endpoint is exposed.** Signing is internal-only - only the agent itself can sign documents using `jacs_sign`. This protects the agent's identity from external compromise.
-
-## Commitment Status Lifecycle
-
-Commitments follow this lifecycle:
-
-```
-pending -> active -> completed
-                  -> failed
-                  -> renegotiated
-           -> disputed
-           -> revoked
-```
-
-| Status | Description |
-|--------|-------------|
-| `pending` | Commitment created, awaiting activation |
-| `active` | Commitment in effect |
-| `completed` | Commitment fulfilled |
-| `failed` | Commitment not met |
-| `renegotiated` | Terms changed |
-| `disputed` | Disagreement on terms |
-| `revoked` | Commitment cancelled |
-
-## Agent State Types
-
-| Type | Use Case | Example |
-|------|----------|---------|
-| `memory` | Agent's working memory | MEMORY.md |
-| `skill` | Agent's capabilities | SKILL.md |
-| `plan` | Strategic plans | plan.md |
-| `config` | Configuration files | jacs.config.json |
-| `hook` | Executable code (always embedded) | pre-commit.sh |
-| `other` | General-purpose signed documents | any file |
+**IMPORTANT: No signing endpoint is exposed.** Signing is internal-only - only the agent itself can sign documents using `jacs_sign_document`. This protects the agent's identity from external compromise.
 
 ## Security Notes
 
-- **Signing is agent-internal only** - No external endpoint can trigger signing. Only the agent itself decides what to sign via `jacs_sign`. This is fundamental to identity integrity.
+- **Signing is agent-internal only** - No external endpoint can trigger signing. Only the agent itself decides what to sign via `jacs_sign_document`. This is fundamental to identity integrity.
 - All signatures use post-quantum cryptography (ML-DSA-87/pq2025) by default
 - Private keys are encrypted at rest with AES-256-GCM using PBKDF2 key derivation
 - Private keys never leave the agent - only public keys are shared
-- Verification claims can only be upgraded, never downgraded
-- Chain of custody is maintained for multi-agent workflows
 - Documents include version UUIDs and timestamps to prevent replay attacks
-- Hook files are always embedded in agent state documents for security
 
 ## Environment Variables
 
@@ -591,7 +570,7 @@ pending -> active -> completed
 
 | Problem | Solution |
 |---------|----------|
-| "JACS not initialized" | Run `haiai init` |
+| "JACS not initialized" | Run `haiai init` or `jacs_create_agent` |
 | "Missing private key password" | Set `JACS_PRIVATE_KEY_PASSWORD` or `JACS_PASSWORD_FILE` |
 | "Email not active" | Claim a username first with `hai_claim_username` |
 | "Recipient not found" | Check the recipient address is a valid `@hai.ai` address |

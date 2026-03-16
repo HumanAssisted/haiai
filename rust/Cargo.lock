@@ -1044,6 +1044,7 @@ dependencies = [
  "jacs",
  "jacs-binding-core",
  "jacs-mcp",
+ "regex",
  "rmcp",
  "schemars",
  "serde",
