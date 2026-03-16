@@ -7,7 +7,6 @@
  * Resolution order:
  * 1. HAIAI_BINARY_PATH environment variable
  * 2. Platform-specific @haiai/cli-{os}-{arch} optional dependency
- * 3. Fall back to the TypeScript CLI (./dist/esm/cli.js)
  */
 
 const { execFileSync } = require("child_process");

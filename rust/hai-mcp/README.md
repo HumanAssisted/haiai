@@ -1,15 +1,10 @@
 # hai-mcp
 
-[HAI.AI](https://hai.ai) MCP server library. Extends
-[jacs-mcp](https://crates.io/crates/jacs-mcp) with HAI platform tools for
-agent registration, email, usernames, and verification.
+[HAI.AI](https://hai.ai) MCP server library. Extends [jacs-mcp](https://crates.io/crates/jacs-mcp) with HAI platform tools for agent registration, email, usernames, and verification.
 
-> **Note:** The standalone `hai-mcp` binary is deprecated. Use `haiai mcp` from
-> [haiai-cli](https://crates.io/crates/haiai-cli) instead.
+> **Note:** The standalone `hai-mcp` binary is deprecated. Use `haiai mcp` from [haiai-cli](https://crates.io/crates/haiai-cli) instead.
 
 ## Install
-
-Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -23,7 +18,7 @@ cargo install haiai-cli
 haiai mcp
 ```
 
-## Quickstart -- embed in your own MCP server
+## Embed in Your Own MCP Server
 
 ```rust
 use hai_mcp::{HaiMcpServer, HaiServerContext, LoadedSharedAgent};
@@ -32,13 +27,11 @@ use rmcp::{transport::stdio, ServiceExt};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Load the JACS agent from config/env
     let shared_agent = LoadedSharedAgent::load_from_config_env()?;
     let provider = shared_agent.embedded_provider()?;
     let fallback_jacs_id = provider.jacs_id().to_string();
     let config_path = Some(shared_agent.config_path().display().to_string());
 
-    // Build the context and server
     let context = HaiServerContext::from_process_env(
         fallback_jacs_id,
         config_path,
@@ -49,7 +42,6 @@ async fn main() -> anyhow::Result<()> {
         context,
     );
 
-    // Serve on stdio
     let (stdin, stdout) = stdio();
     let running = server.serve((stdin, stdout)).await?;
     running.waiting().await?;
@@ -57,17 +49,12 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-## Quickstart -- use via CLI
+## Use via CLI
 
 ```bash
-# 1. Create an agent
 haiai init --name my-agent --domain example.com
-
-# 2. Start the MCP server
 haiai mcp
 ```
-
-Then point your MCP client at it:
 
 ```json
 {
@@ -80,7 +67,7 @@ Then point your MCP client at it:
 }
 ```
 
-## HAI tools exposed
+## HAI Tools
 
 The server adds these tools on top of the base JACS MCP tools:
 
@@ -89,8 +76,8 @@ The server adds these tools on top of the base JACS MCP tools:
 | `hai_create_agent` | Create a new JACS agent locally |
 | `hai_register_agent` | Register with HAI platform |
 | `hai_check_username` | Check username availability |
-| `hai_claim_username` | Claim a username for an agent |
-| `hai_hello` | Authenticated handshake with HAI |
+| `hai_claim_username` | Claim a @hai.ai username |
+| `hai_hello` | Authenticated handshake |
 | `hai_agent_status` | Agent verification status |
 | `hai_verify_status` | Verification status lookup |
 | `hai_generate_verify_link` | Generate verify link for signed doc |
@@ -103,7 +90,7 @@ The server adds these tools on top of the base JACS MCP tools:
 | `hai_mark_read` | Mark read |
 | `hai_mark_unread` | Mark unread |
 | `hai_get_unread_count` | Unread count |
-| `hai_get_email_status` | Email account status & limits |
+| `hai_get_email_status` | Email account status and limits |
 
 ## Architecture
 
@@ -112,11 +99,9 @@ The server adds these tools on top of the base JACS MCP tools:
 1. **JACS tools** (from `jacs-mcp`) -- signing, verification, document management
 2. **HAI tools** (from this crate) -- platform registration, email, usernames
 
-Tool dispatch checks HAI tools first, then falls through to JACS. This means
-a single MCP server gives clients the full stack: cryptographic identity via
-JACS plus HAI platform integration.
+Tool dispatch checks HAI tools first, then falls through to JACS.
 
-## Environment variables
+## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
@@ -124,11 +109,6 @@ JACS plus HAI platform integration.
 | `JACS_PRIVATE_KEY_PASSWORD` | Private key password |
 | `HAI_URL` | HAI API base URL override |
 | `RUST_LOG` | Tracing filter (default: `info,rmcp=warn`) |
-
-For email tools, `hai_register_agent` and `hai_claim_username` seed the
-in-process cache of HAI `agent_id` / claimed email so later mailbox calls work
-without repeating identity state. Stateless callers may also pass `agent_id`
-(and for send/reply, `email`) directly.
 
 ## License
 

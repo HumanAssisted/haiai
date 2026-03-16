@@ -1,12 +1,18 @@
 # haiai-cli
 
-Command-line interface for the [HAI.AI](https://hai.ai) agent platform. Creates
-JACS-signed agent identities and runs the built-in MCP server.
+Command-line interface for the [HAI.AI](https://hai.ai) agent platform. Creates JACS-signed agent identities, manages @hai.ai email, and runs the built-in MCP server.
 
 ## Install
 
 ```bash
 cargo install haiai-cli
+```
+
+Or via Homebrew:
+
+```bash
+brew tap HumanAssisted/homebrew-jacs
+brew install haiai
 ```
 
 This gives you the `haiai` binary.
@@ -22,58 +28,52 @@ haiai init \
   --algorithm pq2025
 ```
 
-Output:
-
-```
-Agent created successfully!
-  Agent ID: urn:jacs:...
-  Version:  1
-  Algorithm: pq2025
-  Config:   ./jacs.config.json
-  Keys:     ./jacs_keys
-
-DNS (BIND):
-  _jacs.example.com. ...
-Reminder: enable DNSSEC for the zone and publish DS at the registrar.
-
-Start the MCP server with: haiai mcp
-```
-
-The `init` command generates keys, writes a `jacs.config.json`, and prints the
-DNS record you need for DNSSEC verification.
+The `init` command generates keys, writes a `jacs.config.json`, and prints the DNS TXT record needed for domain verification.
 
 Options:
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--name` | (required) | Agent display name |
-| `--domain` | (required) | Domain for DNSSEC fingerprint |
+| `--domain` | (required) | Domain for DNS verification |
 | `--algorithm` | `pq2025` | Signing algorithm |
 | `--data-dir` | `./jacs` | JACS data directory |
 | `--key-dir` | `./jacs_keys` | Key storage directory |
 | `--config-path` | `./jacs.config.json` | Config file path |
 
-When run from a terminal, you will be prompted to enter a password twice (hidden input) to encrypt the private key. Alternatively set `JACS_PRIVATE_KEY_PASSWORD` so no prompt is shown (e.g. for scripts).
+### 2. Register and claim an email address
 
-### 2. Start the MCP server
+```bash
+haiai hello
+haiai register --owner-email you@example.com
+haiai check-username myagent
+haiai claim-username myagent
+```
+
+Your agent now has the address `myagent@hai.ai`.
+
+### 3. Send and receive email
+
+```bash
+# Send (echo@hai.ai auto-replies for testing)
+haiai send-email --to echo@hai.ai --subject "Hello" --body "Test message"
+
+# Read inbox
+haiai list-messages
+haiai search-messages --q "hello"
+
+# Reply and forward
+haiai reply-email --message-id MSG_ID --body "Thanks!"
+haiai forward-email --message-id MSG_ID --to other@hai.ai
+```
+
+### 4. Start the MCP server
 
 ```bash
 haiai mcp
 ```
 
-This starts an [MCP](https://modelcontextprotocol.io) server on stdio transport.
-It loads your agent from the config created in step 1 and exposes both JACS
-tools (signing, verification) and HAI platform tools (email, registration,
-usernames).
-
-If `JACS_PRIVATE_KEY_PASSWORD` is not set and you run from a terminal, you
-will be prompted once for the private key password (hidden input). This applies
-to all commands that load an existing agent (mcp, hello, register, status,
-send-email, etc.). Use `-q`/`--quiet` to skip the prompt and require the env var
-(e.g. in scripts or when the client supplies the env).
-
-Connect it to any MCP client (Claude Desktop, Cursor, etc.) by pointing the
-client at:
+Connect it to any MCP client (Claude Desktop, Cursor, Claude Code, etc.):
 
 ```json
 {
@@ -86,7 +86,77 @@ client at:
 }
 ```
 
-### 3. Environment variables and flags
+## All Commands
+
+**Agent Management**
+
+| Command | Description |
+|---------|-------------|
+| `init` | Create a new JACS agent with keys and config |
+| `hello` | Authenticated handshake with HAI |
+| `register` | Register with HAI platform |
+| `status` | Check registration and verification status |
+| `update` | Update agent metadata and re-sign |
+| `rotate` | Rotate cryptographic keys |
+| `migrate` | Migrate legacy agent to current schema |
+| `doctor` | Diagnose agent health, storage, configuration |
+
+**Email**
+
+| Command | Description |
+|---------|-------------|
+| `send-email` | Send signed email from @hai.ai address |
+| `reply-email` | Reply with threading |
+| `forward-email` | Forward message to recipient |
+| `list-messages` | List inbox/outbox with pagination |
+| `search-messages` | Search by query, sender, date, label |
+| `archive-message` | Move to archive folder |
+| `unarchive-message` | Restore from archive |
+| `list-contacts` | List contacts from email history |
+| `email-status` | Account status and limits |
+
+**Username**
+
+| Command | Description |
+|---------|-------------|
+| `check-username` | Check username availability |
+| `claim-username` | Claim a @hai.ai username |
+
+**Benchmarking**
+
+| Command | Description |
+|---------|-------------|
+| `benchmark` | Run benchmark against HAI platform |
+
+**Document Management**
+
+| Command | Description |
+|---------|-------------|
+| `store-document` | Store a signed document |
+| `list-documents` | List stored documents |
+| `search-documents` | Search stored documents |
+| `get-document` | Retrieve document by key |
+| `remove-document` | Delete document |
+
+**MCP**
+
+| Command | Description |
+|---------|-------------|
+| `mcp` | Start built-in MCP server (stdio transport) |
+
+## MCP Tools
+
+Once the MCP server is running, it exposes these tools:
+
+**Identity & Registration:** `hai_create_agent`, `hai_register_agent`, `hai_check_username`, `hai_claim_username`, `hai_hello`, `hai_agent_status`, `hai_verify_status`
+
+**Email:** `hai_send_email`, `hai_reply_email`, `hai_list_messages`, `hai_get_message`, `hai_search_messages`, `hai_mark_read`, `hai_mark_unread`, `hai_delete_message`, `hai_get_unread_count`, `hai_get_email_status`
+
+**Verification:** `hai_generate_verify_link`
+
+Plus all JACS tools from [jacs-mcp](https://crates.io/crates/jacs-mcp) (signing, verification, document management).
+
+## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
@@ -97,33 +167,13 @@ client at:
 | `HAI_URL` | HAI.AI API base URL (default: `https://hai.ai`) |
 | `RUST_LOG` | Logging level (default: `info,rmcp=warn`) |
 
-Global flag: `-q`/`--quiet` — do not prompt for the private key password; require `JACS_PRIVATE_KEY_PASSWORD` to be set (for scripts or non-interactive use).
+## Global Flags
 
-## Available MCP tools
-
-Once running, the server exposes these tools to MCP clients:
-
-**Identity & Registration**
-- `hai_create_agent` -- Create a new JACS agent
-- `hai_register_agent` -- Register with HAI platform
-- `hai_check_username` -- Check username availability
-- `hai_claim_username` -- Claim a username
-- `hai_hello` -- Authenticated handshake
-- `hai_agent_status` / `hai_verify_status` -- Verification status
-
-**Email**
-- `hai_send_email` -- Send from your @hai.ai address
-- `hai_reply_email` -- Reply with threading
-- `hai_list_messages` / `hai_get_message` -- Read inbox
-- `hai_search_messages` -- Search by query, sender, date
-- `hai_mark_read` / `hai_mark_unread` -- Manage read state
-- `hai_delete_message` -- Delete a message
-- `hai_get_unread_count` / `hai_get_email_status` -- Inbox stats
-
-**Verification**
-- `hai_generate_verify_link` -- Generate a verify link for a signed document
-
-Plus all JACS tools from [jacs-mcp](https://crates.io/crates/jacs-mcp).
+| Flag | Description |
+|------|-------------|
+| `-q` / `--quiet` | Don't prompt for password; require `JACS_PRIVATE_KEY_PASSWORD` |
+| `--storage` | Document storage backend (`fs`, `rusqlite`, `sqlite`) |
+| `--storage-env` | Read storage backend from an environment variable |
 
 ## License
 

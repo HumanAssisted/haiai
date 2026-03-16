@@ -513,22 +513,15 @@ describe('sendSignedEmail', () => {
     vi.restoreAllMocks();
   });
 
-  it('builds MIME, signs, and POSTs to send-signed endpoint', async () => {
+  it('delegates to sendEmail (deprecated, TASK_017)', async () => {
     const client = await makeClient();
-    let signCalled = false;
-    let sendSignedUrl = '';
-    let sendSignedContentType = '';
+    let sendUrl = '';
+    let sendBody: Record<string, unknown> = {};
 
-    // Mock signEmail to return fake signed bytes
-    vi.spyOn(client, 'signEmail').mockImplementation(async (_raw: Buffer | string) => {
-      signCalled = true;
-      return Buffer.from('FAKE-SIGNED-EMAIL');
-    });
-
-    // Mock fetch for the send-signed POST
+    // Mock fetch for the send POST
     const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
-      sendSignedUrl = url.toString();
-      sendSignedContentType = (init?.headers as Record<string, string>)?.['Content-Type'] || '';
+      sendUrl = url.toString();
+      sendBody = JSON.parse(init?.body as string ?? '{}');
       return jsonResponse({ message_id: 'msg-signed-1', status: 'sent' });
     });
     vi.stubGlobal('fetch', fetchMock);
@@ -541,9 +534,10 @@ describe('sendSignedEmail', () => {
 
     expect(result.messageId).toBe('msg-signed-1');
     expect(result.status).toBe('sent');
-    expect(signCalled).toBe(true);
-    expect(sendSignedUrl).toContain('/email/send-signed');
-    expect(sendSignedContentType).toBe('message/rfc822');
+    // Delegates to sendEmail which POSTs to /email/send (not send-signed)
+    expect(sendUrl).toContain('/email/send');
+    expect(sendBody.to).toBe('bob@hai.ai');
+    expect(sendBody.subject).toBe('Hello Signed');
   });
 
   it('throws when agentEmail not set', async () => {

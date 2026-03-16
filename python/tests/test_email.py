@@ -883,54 +883,23 @@ class TestHaiErrorFromResponseErrorCode:
 
 
 class TestSendSignedEmail:
-    """Verify send_signed_email builds MIME, signs, and POSTs to send-signed."""
+    """Verify send_signed_email delegates to send_email (deprecated)."""
 
-    def test_send_signed_email_builds_mime_and_posts(
+    def test_send_signed_email_delegates_to_send_email(
         self,
         loaded_config: None,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """send_signed_email should call sign_email then POST raw bytes to send-signed."""
+        """send_signed_email should delegate to send_email (TASK_017 deprecation)."""
         captured: dict[str, Any] = {}
-        call_count = {"sign": 0, "send": 0}
 
         def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            if "/email/sign" in url:
-                # sign_email call: return fake signed bytes
-                call_count["sign"] += 1
-                captured["sign_content_type"] = kwargs.get("headers", {}).get("Content-Type", "")
-                return _FakeResponse(
-                    200,
-                    text=b"signed-email-bytes",
-                )
-            elif "/email/send-signed" in url:
-                # send-signed call: return success
-                call_count["send"] += 1
-                captured["send_content_type"] = kwargs.get("headers", {}).get("Content-Type", "")
-                captured["send_url"] = url
-                return _FakeResponse(200, {"message_id": "msg-signed-1", "status": "sent"})
-            return _FakeResponse(404)
+            captured["url"] = url
+            captured["json"] = kwargs.get("json", {})
+            return _FakeResponse(200, {"message_id": "msg-signed-1", "status": "sent"})
 
         import httpx
         monkeypatch.setattr(httpx, "post", fake_post)
-
-        # Patch sign_email to return mock signed bytes instead of calling HTTP
-        def mock_sign_email(self_inner: Any, hai_url: str, raw_email: bytes) -> bytes:
-            call_count["sign"] += 1
-            captured["sign_input_size"] = len(raw_email)
-            return b"FAKE-SIGNED-EMAIL"
-
-        monkeypatch.setattr(HaiClient, "sign_email", mock_sign_email)
-
-        # Now override fake_post for just the send-signed call
-        def fake_post_send(url: str, **kwargs: Any) -> _FakeResponse:
-            call_count["send"] += 1
-            captured["send_url"] = url
-            captured["send_content_type"] = kwargs.get("headers", {}).get("Content-Type", "")
-            captured["send_body"] = kwargs.get("content", b"")
-            return _FakeResponse(200, {"message_id": "msg-signed-1", "status": "sent"})
-
-        monkeypatch.setattr(httpx, "post", fake_post_send)
 
         result = HaiClient().send_signed_email(
             BASE_URL, "bob@hai.ai", "Hello Signed", "Signed body",
@@ -938,9 +907,10 @@ class TestSendSignedEmail:
 
         assert result.message_id == "msg-signed-1"
         assert result.status == "sent"
-        assert call_count["sign"] >= 1, "sign_email should have been called"
-        assert "send-signed" in captured["send_url"]
-        assert captured["send_content_type"] == "message/rfc822"
+        # Delegates to send_email, which POSTs to /email/send (not send-signed)
+        assert "/email/send" in captured["url"]
+        assert captured["json"]["to"] == "bob@hai.ai"
+        assert captured["json"]["subject"] == "Hello Signed"
 
     def test_send_signed_email_fails_without_agent_email(
         self,

@@ -84,7 +84,7 @@ describe("binary wrapper", () => {
 
   it("wrapper falls back gracefully when binary not present", () => {
     const content = require("fs").readFileSync(binWrapper, "utf-8");
-    expect(content).toContain("Fall back to TypeScript CLI");
+    expect(content).toContain("native binary not found");
     expect(content).toContain("process.exit(1)");
   });
 });
