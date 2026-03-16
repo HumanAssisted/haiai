@@ -1,0 +1,6 @@
+{
+  "haiai": {
+    "command": "haiai",
+    "args": ["mcp"]
+  }
+}

@@ -46,7 +46,7 @@ Full parity map: `docs/haisdk/PARITY_MAP.md` (53 exposed, 18 excluded, 71 total)
 
 1. **No local crypto in haiai.** Delegate to `jacs`. CI enforces via `scripts/ci/check_no_local_crypto.sh`.
 2. **Cross-language parity.** Changes must apply to all 4 SDKs. Tests read shared fixtures from `fixtures/`.
-3. **All 5 packages share one version.** `make check-versions` to verify.
+3. **All 6 packages share one version.** `make check-versions` to verify.
 4. **Releases are tag-triggered.** `rust/v*` → crates.io, `python/v*` → PyPI, `node/v*` → npm. Use `make release-*`.
 
 ## Gotchas

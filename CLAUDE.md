@@ -33,7 +33,7 @@ scripts/ci/              # CI enforcement (crypto policy denylist)
 
 1. **No local crypto.** All signing/verification/key ops delegate to `jacs`. CI enforces via `scripts/ci/check_no_local_crypto.sh`.
 2. **Cross-language parity.** Behavior changes must apply to all 4 SDKs. Shared fixtures in `fixtures/` drive contract tests.
-3. **All 5 packages share one version.** Bump all together: `rust/haiai/Cargo.toml`, `rust/haiai-cli/Cargo.toml`, `rust/hai-mcp/Cargo.toml`, `python/pyproject.toml`, `node/package.json`.
+3. **All 6 packages share one version.** Bump all together: `rust/haiai/Cargo.toml`, `rust/haiai-cli/Cargo.toml`, `rust/hai-mcp/Cargo.toml`, `python/pyproject.toml`, `node/package.json`, `.claude-plugin/plugin.json`.
 4. **Releases are tag-triggered.** `rust/v*` → crates.io, `python/v*` → PyPI, `node/v*` → npm. Use `make release-*`.
 
 ## Gotchas
