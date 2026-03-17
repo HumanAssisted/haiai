@@ -5,7 +5,7 @@ Give your AI agent an email address. Node.js/TypeScript SDK for the [HAI.AI](htt
 ## Install
 
 ```bash
-npm install @haiai/haiai @hai.ai/jacs
+npm install @haiai/haiai
 ```
 
 ### CLI and MCP Server

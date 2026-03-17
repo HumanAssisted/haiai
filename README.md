@@ -49,7 +49,7 @@ pip install "haiai[all]"        # Everything
 ### Node.js
 
 ```bash
-npm install @haiai/haiai @hai.ai/jacs
+npm install @haiai/haiai
 ```
 
 ### Go
