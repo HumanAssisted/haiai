@@ -297,19 +297,50 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(&source).expect("read fixture config"))
                 .expect("parse fixture config");
 
-        for field in ["jacs_data_directory", "jacs_key_directory"] {
-            let path = value.get(field).and_then(Value::as_str).map(PathBuf::from);
-            if let Some(path) = path {
-                let resolved = if path.is_absolute() {
-                    path
-                } else {
-                    source_dir.join(path)
-                };
-                value[field] = Value::String(resolved.to_string_lossy().into_owned());
-            }
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+
+        // Copy key directory to temp
+        let source_key_dir = value
+            .get("jacs_key_directory")
+            .and_then(Value::as_str)
+            .map(|p| if PathBuf::from(p).is_absolute() { PathBuf::from(p) } else { source_dir.join(p) })
+            .expect("key dir in config");
+        let temp_key_dir = temp_dir.path().join("keys");
+        fs::create_dir_all(&temp_key_dir).expect("create temp key dir");
+        for entry in fs::read_dir(&source_key_dir).expect("read key dir") {
+            let entry = entry.expect("key dir entry");
+            fs::copy(entry.path(), temp_key_dir.join(entry.file_name())).expect("copy key file");
         }
 
-        let temp_dir = tempfile::tempdir().expect("tempdir");
+        // Copy agent data to temp, converting underscore filenames to colon
+        // (colons are illegal on Windows, so fixtures use underscores in git)
+        let source_data_dir = value
+            .get("jacs_data_directory")
+            .and_then(Value::as_str)
+            .map(|p| if PathBuf::from(p).is_absolute() { PathBuf::from(p) } else { source_dir.join(p) })
+            .expect("data dir in config");
+        let temp_data_dir = temp_dir.path().join("data");
+        fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
+            fs::create_dir_all(dst).expect("create dir");
+            for entry in fs::read_dir(src).expect("read dir") {
+                let entry = entry.expect("dir entry");
+                let src_path = entry.path();
+                // Convert underscores back to colons for JACS {id}:{version} filenames
+                let name = entry.file_name().to_string_lossy().replace('_', ":");
+                let dst_path = dst.join(&name);
+                if src_path.is_dir() {
+                    copy_dir_recursive(&src_path, &dst_path);
+                } else {
+                    fs::copy(&src_path, &dst_path).expect("copy file");
+                }
+            }
+        }
+        copy_dir_recursive(&source_data_dir, &temp_data_dir);
+
+        // Point config at temp directories
+        value["jacs_data_directory"] = Value::String(temp_data_dir.to_string_lossy().into_owned());
+        value["jacs_key_directory"] = Value::String(temp_key_dir.to_string_lossy().into_owned());
+
         let config_path = temp_dir.path().join("embedded-jacs.config.json");
         fs::write(
             &config_path,

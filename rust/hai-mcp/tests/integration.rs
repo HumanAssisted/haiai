@@ -119,17 +119,30 @@ impl TestWorkspace {
             serde_json::from_str(&std::fs::read_to_string(&source).expect("read fixture config"))
                 .expect("parse fixture config");
 
-        for field in ["jacs_data_directory", "jacs_key_directory"] {
-            let path = value.get(field).and_then(Value::as_str).map(PathBuf::from);
-            if let Some(path) = path {
-                let resolved = if path.is_absolute() {
-                    path
-                } else {
-                    source_dir.join(path)
-                };
-                value[field] = Value::String(resolved.to_string_lossy().into_owned());
-            }
+        // Copy key directory to workspace
+        let source_key_dir = value
+            .get("jacs_key_directory")
+            .and_then(Value::as_str)
+            .map(|p| if PathBuf::from(p).is_absolute() { PathBuf::from(p) } else { source_dir.join(p) })
+            .expect("key dir in config");
+        let temp_key_dir = self.path().join("keys");
+        std::fs::create_dir_all(&temp_key_dir).expect("create temp key dir");
+        for entry in std::fs::read_dir(&source_key_dir).expect("read key dir") {
+            let entry = entry.expect("key dir entry");
+            std::fs::copy(entry.path(), temp_key_dir.join(entry.file_name())).expect("copy key");
         }
+
+        // Copy agent data, converting underscore filenames to colons
+        let source_data_dir = value
+            .get("jacs_data_directory")
+            .and_then(Value::as_str)
+            .map(|p| if PathBuf::from(p).is_absolute() { PathBuf::from(p) } else { source_dir.join(p) })
+            .expect("data dir in config");
+        let temp_data_dir = self.path().join("data");
+        copy_fixture_dir(&source_data_dir, &temp_data_dir);
+
+        value["jacs_data_directory"] = Value::String(temp_data_dir.to_string_lossy().into_owned());
+        value["jacs_key_directory"] = Value::String(temp_key_dir.to_string_lossy().into_owned());
 
         let config_path = self.path().join("embedded-jacs.config.json");
         std::fs::write(
@@ -286,6 +299,24 @@ fn jacs_fixture_config() -> PathBuf {
     let path = manifest_dir.join("../../fixtures/jacs-agent/jacs.config.json");
     path.canonicalize()
         .expect("fixtures/jacs-agent/jacs.config.json must exist in repo")
+}
+
+/// Copy fixture directory, converting underscore filenames to colons.
+/// JACS uses `{id}:{version}.json` but colons are illegal on Windows,
+/// so fixtures use underscores in git and get converted at test runtime.
+fn copy_fixture_dir(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).expect("create dir");
+    for entry in std::fs::read_dir(src).expect("read dir") {
+        let entry = entry.expect("dir entry");
+        let src_path = entry.path();
+        let name = entry.file_name().to_string_lossy().replace('_', ":");
+        let dst_path = dst.join(&name);
+        if src_path.is_dir() {
+            copy_fixture_dir(&src_path, &dst_path);
+        } else {
+            std::fs::copy(&src_path, &dst_path).expect("copy file");
+        }
+    }
 }
 
 fn read_request(stream: &mut TcpStream) -> Option<RecordedRequest> {

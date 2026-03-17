@@ -391,7 +391,7 @@ impl Drop for McpSession {
 /// both HAI and embedded JACS tools over stdio.
 #[test]
 fn mcp_serves_hai_and_jacs_tools() {
-    let jacs_config = jacs_fixture_config();
+    let (_temp, jacs_config) = prepare_jacs_fixture();
     let server = MiniHaiServer::start();
     let mut session = McpSession::spawn(&server.base_url, &jacs_config, "secretpassord");
     let init_resp = session.initialize();
@@ -470,11 +470,58 @@ fn init_then_mcp_fails_due_to_raw_key_format() {
     );
 }
 
-fn jacs_fixture_config() -> PathBuf {
+/// Prepare a JACS fixture config in a temp directory with colon-named agent files.
+/// Fixtures use underscores in git (colons are illegal on Windows) and get
+/// converted to colons at runtime.
+fn prepare_jacs_fixture() -> (tempfile::TempDir, PathBuf) {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let path = manifest_dir.join("../../fixtures/jacs-agent/jacs.config.json");
-    path.canonicalize()
-        .expect("fixtures/jacs-agent/jacs.config.json must exist in repo")
+    let source = manifest_dir
+        .join("../../fixtures/jacs-agent/jacs.config.json")
+        .canonicalize()
+        .expect("fixtures/jacs-agent/jacs.config.json must exist in repo");
+    let source_dir = source.parent().expect("fixture dir");
+
+    let mut value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&source).expect("read config"))
+            .expect("parse config");
+
+    let temp = tempfile::tempdir().expect("tempdir");
+
+    // Copy keys
+    let src_key_dir = source_dir.join(value["jacs_key_directory"].as_str().unwrap_or("keys"));
+    let tmp_key_dir = temp.path().join("keys");
+    std::fs::create_dir_all(&tmp_key_dir).expect("mkdir keys");
+    for entry in std::fs::read_dir(&src_key_dir).expect("read keys") {
+        let entry = entry.expect("entry");
+        std::fs::copy(entry.path(), tmp_key_dir.join(entry.file_name())).expect("copy key");
+    }
+
+    // Copy data with underscore→colon conversion
+    let src_data_dir = source_dir.join(value["jacs_data_directory"].as_str().unwrap_or("."));
+    let tmp_data_dir = temp.path().join("data");
+    copy_fixture_dir(&src_data_dir, &tmp_data_dir);
+
+    value["jacs_data_directory"] = serde_json::Value::String(tmp_data_dir.to_string_lossy().into_owned());
+    value["jacs_key_directory"] = serde_json::Value::String(tmp_key_dir.to_string_lossy().into_owned());
+
+    let config_path = temp.path().join("jacs.config.json");
+    std::fs::write(&config_path, serde_json::to_vec_pretty(&value).expect("encode")).expect("write");
+    (temp, config_path)
+}
+
+fn copy_fixture_dir(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).expect("mkdir");
+    for entry in std::fs::read_dir(src).expect("readdir") {
+        let entry = entry.expect("entry");
+        let src_path = entry.path();
+        let name = entry.file_name().to_string_lossy().replace('_', ":");
+        let dst_path = dst.join(&name);
+        if src_path.is_dir() {
+            copy_fixture_dir(&src_path, &dst_path);
+        } else {
+            std::fs::copy(&src_path, &dst_path).expect("copy");
+        }
+    }
 }
 
 // ── MCP without config fails gracefully ─────────────────────────
