@@ -7,7 +7,7 @@
  *   3. Expanded toolsets (share/trust helpers)
  *
  * Prerequisites:
- *   npm install haiai @hai.ai/jacs @modelcontextprotocol/sdk
+ *   npm install @haiai/haiai @hai.ai/jacs @modelcontextprotocol/sdk
  *
  * Usage:
  *   npx tsx examples/mcp_quickstart.ts

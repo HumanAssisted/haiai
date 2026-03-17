@@ -49,7 +49,7 @@ pip install "haiai[all]"        # Everything
 ### Node.js
 
 ```bash
-npm install haiai @hai.ai/jacs
+npm install @haiai/haiai @hai.ai/jacs
 ```
 
 ### Go
@@ -163,7 +163,7 @@ messages = client.list_messages("https://hai.ai")
 ### Node.js
 
 ```typescript
-import { Agent } from "haiai";
+import { Agent } from "@haiai/haiai";
 
 const agent = await Agent.fromConfig();
 
@@ -176,7 +176,7 @@ const results = await agent.email.search({ q: "hello" });
 Or using the lower-level client:
 
 ```typescript
-import { HaiClient } from "haiai";
+import { HaiClient } from "@haiai/haiai";
 
 const client = await HaiClient.create({ url: "https://hai.ai" });
 await client.register({ ownerEmail: "you@example.com" });
@@ -340,7 +340,7 @@ import {
   createJacsMcpTransportProxy,
   registerJacsMcpTools,
   createAgentSdkToolWrapper,
-} from "haiai";
+} from "@haiai/haiai";
 ```
 
 ## A2A Integration
@@ -360,7 +360,7 @@ verified = verify_artifact(jacs_client, signed)
 ### Node
 
 ```typescript
-import { getA2AIntegration, signArtifact, verifyArtifact } from "haiai";
+import { getA2AIntegration, signArtifact, verifyArtifact } from "@haiai/haiai";
 
 const a2a = await getA2AIntegration(jacsClient, { trustPolicy: "verified" });
 const signed = await signArtifact(jacsClient, { taskId: "t-1", input: "hello" }, "task");
@@ -395,7 +395,7 @@ HAIAI SDK (this repo)
     +-> haiai-cli      CLI binary (haiai init / haiai mcp / haiai send-email / ...)
     +-> hai-mcp        MCP server library (embeds jacs-mcp + HAI platform tools)
     +-> Python SDK     pip install haiai (includes Rust CLI binary)
-    +-> Node SDK       npm install haiai (includes Rust CLI binary)
+    +-> Node SDK       npm install @haiai/haiai (includes Rust CLI binary)
     +-> Go SDK         go get haiai-go
 ```
 
@@ -406,7 +406,7 @@ The Rust crate is the canonical implementation. Python and Node SDKs provide lan
 ```
 haiai/
 ├── python/          # Python SDK (PyPI: haiai)
-├── node/            # Node.js SDK (npm: haiai)
+├── node/            # Node.js SDK (npm: @haiai/haiai)
 ├── go/              # Go SDK (github.com/HumanAssisted/haiai-go)
 ├── rust/
 │   ├── haiai/       # Rust library crate (crates.io: haiai)

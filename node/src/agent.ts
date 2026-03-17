@@ -7,7 +7,7 @@
  *
  * @example
  * ```typescript
- * import { Agent } from 'haiai';
+ * import { Agent } from '@haiai/haiai';
  *
  * const agent = await Agent.fromConfig('./jacs.config.json');
  * await agent.email.send({ to: 'other@hai.ai', subject: 'Hello', body: 'World' });

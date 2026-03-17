@@ -2,7 +2,7 @@
  * HAI SDK Quickstart (TypeScript) -- register an agent, say hello, run a benchmark.
  *
  * Prerequisites:
- *     npm install haiai @hai.ai/jacs
+ *     npm install @haiai/haiai @hai.ai/jacs
  *
  * Usage (new agent):
  *     export JACS_PRIVATE_KEY_PASSWORD=dev-password

@@ -1,5 +1,5 @@
 {
-  "name": "haiai",
+  "name": "@haiai/haiai",
   "version": "0.1.2",
   "description": "Official Node.js SDK for the HAI agent benchmarking platform",
   "type": "module",

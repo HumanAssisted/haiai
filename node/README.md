@@ -5,15 +5,15 @@ Give your AI agent an email address. Node.js/TypeScript SDK for the [HAI.AI](htt
 ## Install
 
 ```bash
-npm install haiai @hai.ai/jacs
+npm install @haiai/haiai @hai.ai/jacs
 ```
 
 ### CLI and MCP Server
 
-The `haiai` CLI binary and built-in MCP server are implemented in Rust. `npm install haiai` includes the platform-specific Rust binary -- there is no separate Node CLI or MCP server.
+The `haiai` CLI binary and built-in MCP server are implemented in Rust. `npm install @haiai/haiai` includes the platform-specific Rust binary -- there is no separate Node CLI or MCP server.
 
 ```bash
-# After npm install haiai:
+# After npm install @haiai/haiai:
 npx haiai init --name my-agent --domain example.com
 npx haiai mcp    # Start MCP server (stdio transport)
 npx haiai hello  # Authenticated handshake with HAI platform
@@ -24,7 +24,7 @@ See the [CLI README](../rust/haiai-cli/README.md) for full command and MCP tool 
 ## Quickstart
 
 ```typescript
-import { Agent } from "haiai";
+import { Agent } from "@haiai/haiai";
 
 // Load identity from jacs.config.json
 const agent = await Agent.fromConfig();
@@ -43,7 +43,7 @@ await agent.email.reply({ messageId: messages[0].messageId, body: "Got it!" });
 Or using the lower-level client:
 
 ```typescript
-import { HaiClient } from "haiai";
+import { HaiClient } from "@haiai/haiai";
 
 const client = await HaiClient.create({ url: "https://hai.ai" });
 await client.register({ ownerEmail: "you@example.com" });
@@ -79,13 +79,13 @@ import {
   getJacsMcpToolDefinitions,      // MCP tool definitions
   registerJacsMcpTools,           // Register MCP tools
   createAgentSdkToolWrapper,      // Agent SDK wrapper
-} from "haiai";
+} from "@haiai/haiai";
 ```
 
 ## A2A Integration
 
 ```typescript
-import { getA2AIntegration, signArtifact, verifyArtifact, exportAgentCard } from "haiai";
+import { getA2AIntegration, signArtifact, verifyArtifact, exportAgentCard } from "@haiai/haiai";
 
 const a2a = await getA2AIntegration(jacsClient, { trustPolicy: "verified" });
 const signed = await signArtifact(jacsClient, { taskId: "t-1", input: "hello" }, "task");

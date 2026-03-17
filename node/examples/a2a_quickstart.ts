@@ -9,7 +9,7 @@
  *   5. Generate .well-known discovery documents
  *
  * Prerequisites:
- *   npm install haiai @hai.ai/jacs
+ *   npm install @haiai/haiai @hai.ai/jacs
  *
  * Usage:
  *   npx tsx examples/a2a_quickstart.ts

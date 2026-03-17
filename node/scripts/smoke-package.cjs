@@ -83,7 +83,7 @@ async function main() {
 
     // Verify package.json has correct fields
     const pkg = JSON.parse(fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8'));
-    if (pkg.name !== 'haiai') {
+    if (pkg.name !== '@haiai/haiai') {
       throw new Error(`Wrong package name: ${pkg.name}`);
     }
     if (!pkg.bin || !pkg.bin.haiai) {
