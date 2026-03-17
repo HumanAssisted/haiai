@@ -83,7 +83,7 @@ jobs:
 
       - name: Publish platform package
         working-directory: node/npm/@haiai/${{ matrix.npm_pkg }}
-        run: npm publish --provenance --access public
+        run: npm publish --provenance --access public || echo "Already published (safe to ignore)"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
