@@ -55,7 +55,8 @@ fn version_flag_exits_zero() {
         .expect("run --version");
     assert!(output.status.success(), "exit code: {}", output.status);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("0.1.2"), "stdout: {stdout}");
+    let expected_version = env!("CARGO_PKG_VERSION");
+    assert!(stdout.contains(expected_version), "expected {expected_version} in stdout: {stdout}");
 }
 
 #[test]
