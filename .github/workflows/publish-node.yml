@@ -113,6 +113,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd node
+          npm install --package-lock-only
           npm ci
       - name: Build
         run: |
