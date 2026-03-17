@@ -1036,7 +1036,7 @@ dependencies = [
 
 [[package]]
 name = "hai-mcp"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "base64",
@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "haiai"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "base64",
@@ -1084,7 +1084,7 @@ dependencies = [
 
 [[package]]
 name = "haiai-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "atty",
@@ -1628,9 +1628,9 @@ checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
 
 [[package]]
 name = "jacs"
-version = "0.9.4"
+version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "208149a522c34ec249aa74144f381d721e578eea3b55539d29c7b4da519b459d"
+checksum = "5f86843fa141600d34860c70d6bde1a0a7b34b3b302c560b742332c1b0adeaf8"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1690,9 +1690,9 @@ dependencies = [
 
 [[package]]
 name = "jacs-binding-core"
-version = "0.9.4"
+version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4385386a2ca504d02f9d4d509096619e068873fdd6a10c9065b2f6e7d6315d10"
+checksum = "df240ff3193b62816228ad762f9e62463a37d6647b034b4080f1b56274331a7d"
 dependencies = [
  "base64",
  "jacs",
@@ -1703,9 +1703,9 @@ dependencies = [
 
 [[package]]
 name = "jacs-mcp"
-version = "0.9.4"
+version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42065111c7de601edee28d94cfedc75cd0207cb0ff4daecc072d2e9de04980f2"
+checksum = "510210309caba6c236a1d272fb999b369cd9325be766834870d7b2bce3c24bab"
 dependencies = [
  "anyhow",
  "chrono",
