@@ -47,6 +47,7 @@ rust/.cargo/
 rust/target/
 rust/haiai/target/
 rust/haiai/data/
+rust/haiai/documents/
 rust/haiai/keys/
 rust/haiai/jacs.config.json
 
