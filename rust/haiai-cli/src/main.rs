@@ -1095,7 +1095,11 @@ async fn main() -> anyhow::Result<()> {
                     println!("    Source: {}", result.path);
                     println!("    ---");
                     let snippet = if result.content.len() > 500 {
-                        format!("{}...", &result.content[..497])
+                        let mut end = 497;
+                        while !result.content.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        format!("{}...", &result.content[..end])
                     } else {
                         result.content.clone()
                     };

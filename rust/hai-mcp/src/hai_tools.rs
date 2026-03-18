@@ -843,7 +843,11 @@ async fn call_self_knowledge(args: &Value) -> ToolResult {
                 r.score,
                 r.path,
                 if r.content.len() > 200 {
-                    format!("{}...", &r.content[..197])
+                    let mut end = 197;
+                    while !r.content.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    format!("{}...", &r.content[..end])
                 } else {
                     r.content.clone()
                 }
