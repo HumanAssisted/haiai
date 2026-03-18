@@ -36,6 +36,7 @@ tokio-tungstenite = "0.28"
 url.workspace = true
 uuid.workspace = true
 tempfile = "3"
+bm25 = { version = "2.3", features = ["default_tokenizer"] }
 jacs = { version = "=0.9.7", optional = true, features = ["a2a"] }
 
 [dev-dependencies]

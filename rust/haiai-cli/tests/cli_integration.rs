@@ -525,6 +525,63 @@ fn copy_fixture_dir(src: &Path, dst: &Path) {
     }
 }
 
+// ── Self-knowledge subcommand ───────────────────────────────────
+
+#[test]
+fn self_knowledge_text_output() {
+    let output = Command::new(haiai_bin())
+        .args(["self-knowledge", "JACS"])
+        .env_remove("JACS_PRIVATE_KEY_PASSWORD")
+        .output()
+        .expect("run self-knowledge");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "self-knowledge failed. stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("[1]"),
+        "should have ranked results: {stdout}"
+    );
+}
+
+#[test]
+fn self_knowledge_json_output() {
+    let output = Command::new(haiai_bin())
+        .args(["self-knowledge", "JACS", "--json"])
+        .env_remove("JACS_PRIVATE_KEY_PASSWORD")
+        .output()
+        .expect("run self-knowledge --json");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "self-knowledge --json failed. stdout: {stdout}\nstderr: {stderr}"
+    );
+    let parsed: Vec<serde_json::Value> =
+        serde_json::from_str(&stdout).expect("stdout should be valid JSON array");
+    assert!(!parsed.is_empty());
+}
+
+#[test]
+fn self_knowledge_limit() {
+    let output = Command::new(haiai_bin())
+        .args(["self-knowledge", "JACS", "--limit", "1", "--json"])
+        .env_remove("JACS_PRIVATE_KEY_PASSWORD")
+        .output()
+        .expect("run self-knowledge --limit 1");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "self-knowledge --limit 1 failed. stdout: {stdout}\nstderr: {stderr}"
+    );
+    let parsed: Vec<serde_json::Value> =
+        serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(parsed.len(), 1);
+}
+
 // ── MCP without config fails gracefully ─────────────────────────
 
 #[test]

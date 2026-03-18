@@ -295,6 +295,20 @@ enum Commands {
         key: String,
     },
 
+    /// Search embedded JACS and HAI documentation
+    SelfKnowledge {
+        /// Search query
+        query: String,
+
+        /// Maximum results to return
+        #[arg(long, default_value = "5")]
+        limit: usize,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Manage the OS keychain password for your agent's private key
     Keychain {
         #[command(subcommand)]
@@ -482,7 +496,10 @@ async fn main() -> anyhow::Result<()> {
             .context("failed to resolve storage flag")?;
 
     // Commands that load an existing agent need the private key password. Prompt once if not set and not -q.
-    if !matches!(cli.command, Commands::Init { .. }) {
+    if !matches!(
+        cli.command,
+        Commands::Init { .. } | Commands::SelfKnowledge { .. }
+    ) {
         ensure_agent_password(cli.quiet).context("failed to resolve private key password")?;
     }
 
@@ -1057,6 +1074,38 @@ async fn main() -> anyhow::Result<()> {
                 .remove_document(&key)
                 .context("remove_document failed")?;
             println!("Document removed: {}", key);
+        }
+
+        Commands::SelfKnowledge { query, limit, json } => {
+            let results = haiai::self_knowledge::self_knowledge(&query, limit);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&results)
+                        .context("failed to serialize results")?
+                );
+            } else if results.is_empty() {
+                println!("No results found.");
+            } else {
+                for result in &results {
+                    println!(
+                        "[{}] {} (score: {:.2})",
+                        result.rank, result.title, result.score
+                    );
+                    println!("    Source: {}", result.path);
+                    println!("    ---");
+                    let snippet = if result.content.len() > 500 {
+                        format!("{}...", &result.content[..497])
+                    } else {
+                        result.content.clone()
+                    };
+                    for line in snippet.lines() {
+                        println!("    {}", line);
+                    }
+                    println!("    ---");
+                    println!();
+                }
+            }
         }
 
         Commands::Keychain { action } => {
@@ -1804,6 +1853,39 @@ mod tests {
             result.is_err(),
             "--storage and --storage-env should conflict"
         );
+    }
+
+    #[test]
+    fn parse_self_knowledge() {
+        let cli = Cli::parse_from(["haiai", "self-knowledge", "key rotation"]);
+        match cli.command {
+            Commands::SelfKnowledge { query, limit, json } => {
+                assert_eq!(query, "key rotation");
+                assert_eq!(limit, 5);
+                assert!(!json);
+            }
+            _ => panic!("expected SelfKnowledge command"),
+        }
+    }
+
+    #[test]
+    fn parse_self_knowledge_with_options() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "self-knowledge",
+            "email signing",
+            "--limit",
+            "3",
+            "--json",
+        ]);
+        match cli.command {
+            Commands::SelfKnowledge { query, limit, json } => {
+                assert_eq!(query, "email signing");
+                assert_eq!(limit, 3);
+                assert!(json);
+            }
+            _ => panic!("expected SelfKnowledge command"),
+        }
     }
 
     #[test]

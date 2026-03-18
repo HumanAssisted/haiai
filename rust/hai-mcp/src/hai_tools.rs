@@ -44,6 +44,7 @@ pub fn has_tool(name: &str) -> bool {
             | "hai_archive_message"
             | "hai_unarchive_message"
             | "hai_list_contacts"
+            | "hai_self_knowledge"
     )
 }
 
@@ -83,6 +84,7 @@ pub async fn dispatch(
         "hai_archive_message" => call_archive_message(context, &args).await,
         "hai_unarchive_message" => call_unarchive_message(context, &args).await,
         "hai_list_contacts" => call_list_contacts(context, &args).await,
+        "hai_self_knowledge" => call_self_knowledge(&args).await,
         _ => Err(ToolError::InvalidParams(format!(
             "unknown HAI tool: {name}"
         ))),
@@ -379,6 +381,24 @@ fn definition_values() -> Vec<Value> {
                     "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
                     "config_path": { "type": "string" }
                 }
+            }
+        }),
+        json!({
+            "name": "hai_self_knowledge",
+            "description": "Search embedded JACS and HAI documentation. Use this to look up how signing, verification, email, key rotation, A2A, schemas, storage, and other concepts work. Returns ranked chapters with full text.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language or keyword search query"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (default 5)"
+                    }
+                },
+                "required": ["query"]
             }
         }),
     ]
@@ -799,6 +819,45 @@ async fn call_list_contacts(context: &HaiServerContext, args: &Value) -> ToolRes
     ))
 }
 
+async fn call_self_knowledge(args: &Value) -> ToolResult {
+    let query = required_string(args, "query")?;
+    let limit = optional_u32(args, "limit").unwrap_or(5) as usize;
+
+    let results = haiai::self_knowledge::self_knowledge(query, limit);
+
+    if results.is_empty() {
+        return Ok(success_tool_result(
+            "No documentation found for that query.".to_string(),
+            json!({ "results": [], "count": 0 }),
+        ));
+    }
+
+    let count = results.len();
+    let text_summary = results
+        .iter()
+        .map(|r| {
+            format!(
+                "[{}] {} (score: {:.2})\n    Source: {}\n    {}",
+                r.rank,
+                r.title,
+                r.score,
+                r.path,
+                if r.content.len() > 200 {
+                    format!("{}...", &r.content[..197])
+                } else {
+                    r.content.clone()
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    Ok(success_tool_result(
+        text_summary,
+        json!({ "results": results, "count": count }),
+    ))
+}
+
 fn success_tool_result(text: String, structured: Value) -> CallToolResult {
     CallToolResult {
         content: vec![Content::text(text)],
@@ -959,6 +1018,71 @@ mod tests {
         assert!(
             matches!(err, ToolError::InvalidParams(message) if message == "message_id is required")
         );
+    }
+
+    #[test]
+    fn hai_self_knowledge_tool_is_recognized() {
+        assert!(has_tool("hai_self_knowledge"));
+    }
+
+    #[test]
+    fn hai_self_knowledge_tool_definition_exists() {
+        let defs = definition_values();
+        let sk_tool = defs.iter().find(|t| {
+            t.get("name")
+                .and_then(Value::as_str)
+                .map(|s| s == "hai_self_knowledge")
+                .unwrap_or(false)
+        });
+        assert!(
+            sk_tool.is_some(),
+            "hai_self_knowledge tool should be in definitions"
+        );
+        let schema = sk_tool.unwrap();
+        let props = schema["inputSchema"]["properties"].as_object().unwrap();
+        assert!(props.contains_key("query"), "should have query property");
+        assert!(props.contains_key("limit"), "should have limit property");
+        let required = schema["inputSchema"]["required"]
+            .as_array()
+            .expect("required array");
+        assert!(
+            required.iter().any(|v| v.as_str() == Some("query")),
+            "query should be required"
+        );
+    }
+
+    #[tokio::test]
+    async fn hai_self_knowledge_returns_results() {
+        let result = call_self_knowledge(&json!({
+            "query": "JACS"
+        }))
+        .await
+        .expect("self_knowledge result");
+
+        assert_eq!(result.is_error, Some(false));
+        let structured = result.structured_content.as_ref().expect("structured");
+        let count = structured["count"].as_u64().expect("count");
+        assert!(count > 0, "should return results for JACS query");
+    }
+
+    #[tokio::test]
+    async fn hai_self_knowledge_empty_query_returns_no_results() {
+        let result = call_self_knowledge(&json!({
+            "query": ""
+        }))
+        .await;
+        // Empty query is still valid string -- returns no results
+        // (required_string will pass for empty string)
+        match result {
+            Ok(r) => {
+                let structured = r.structured_content.as_ref().expect("structured");
+                let count = structured["count"].as_u64().expect("count");
+                assert_eq!(count, 0);
+            }
+            Err(_) => {
+                // Also acceptable -- empty string could be rejected
+            }
+        }
     }
 
     #[test]
