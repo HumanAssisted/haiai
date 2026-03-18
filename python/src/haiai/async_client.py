@@ -235,15 +235,42 @@ class AsyncHaiClient:
             )
 
         data = resp.json()
+        hai_sig_valid = False
+        hai_ack_sig = data.get("hai_signed_ack", "")
+        if hai_ack_sig:
+            hai_sig_valid = self.verify_hai_message(
+                message=json.dumps(data, sort_keys=True),
+                signature=hai_ack_sig,
+                hai_public_key=data.get("hai_public_key_fingerprint", ""),
+                hai_url=hai_url,
+            )
         return HelloWorldResult(
             success=True,
             timestamp=data.get("timestamp", ""),
             client_ip=data.get("client_ip", ""),
             hai_public_key_fingerprint=data.get("hai_public_key_fingerprint", ""),
             message=data.get("message", ""),
+            hai_signature_valid=hai_sig_valid,
             hello_id=data.get("hello_id", ""),
             test_scenario=data.get("test_scenario"),
             raw_response=data,
+        )
+
+    def verify_hai_message(
+        self,
+        message: str,
+        signature: str,
+        hai_public_key: str = "",
+        hai_url: Optional[str] = None,
+    ) -> bool:
+        """Verify a HAI-signed message with the same rules as the sync client."""
+        from haiai.client import _verify_hai_message_impl
+
+        return _verify_hai_message_impl(
+            message=message,
+            signature=signature,
+            hai_public_key=hai_public_key,
+            hai_url=hai_url,
         )
 
     # ------------------------------------------------------------------

@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 import pytest
 
+from haiai.async_client import AsyncHaiClient
 from haiai.client import HaiClient, register_new_agent
 
 
@@ -34,6 +35,14 @@ class _FakeResponse:
                 request=httpx.Request("POST", "https://hai.ai"),
                 response=httpx.Response(self.status_code, text=self.text),
             )
+
+
+class _FakeAsyncHTTP:
+    def __init__(self, response: _FakeResponse) -> None:
+        self._response = response
+
+    async def post(self, *_args: Any, **_kwargs: Any) -> _FakeResponse:
+        return self._response
 
 
 def test_verify_hai_message_supports_key_id_lookup(
@@ -121,6 +130,49 @@ def test_hello_world_passes_hai_url_to_verifier(
 
     result = HaiClient().hello_world("https://hai.ai")
     assert result.success
+    assert captured["hai_url"] == "https://hai.ai"
+
+
+@pytest.mark.asyncio
+async def test_async_hello_world_passes_hai_url_to_verifier(
+    loaded_config: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_verify(
+        self: AsyncHaiClient,
+        message: str,
+        signature: str,
+        hai_public_key: str = "",
+        hai_url: str | None = None,
+    ) -> bool:
+        captured["hai_url"] = hai_url or ""
+        return True
+
+    fake_http = _FakeAsyncHTTP(
+        _FakeResponse(
+            status_code=200,
+            payload={
+                "timestamp": "2026-01-01T00:00:00Z",
+                "client_ip": "127.0.0.1",
+                "hai_public_key_fingerprint": "fingerprint-123",
+                "hai_signed_ack": "abc",
+                "message": "ok",
+                "hello_id": "h1",
+            },
+        )
+    )
+
+    async def fake_get_http(_self: AsyncHaiClient) -> _FakeAsyncHTTP:
+        return fake_http
+
+    monkeypatch.setattr(AsyncHaiClient, "verify_hai_message", fake_verify)
+    monkeypatch.setattr(AsyncHaiClient, "_get_http", fake_get_http)
+
+    result = await AsyncHaiClient().hello_world("https://hai.ai")
+    assert result.success
+    assert result.hai_signature_valid is True
     assert captured["hai_url"] == "https://hai.ai"
 
 

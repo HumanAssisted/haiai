@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { JacsAgent, hashString, verifyDocumentStandalone } from '@hai.ai/jacs';
 
+type ResponseSigner = Pick<JacsAgent, 'signStringSync'> & Partial<Pick<JacsAgent, 'signResponseSync'>>;
+
 /** JACS document envelope wrapping data with metadata and jacsSignature. */
 export interface JacsDocument {
   version: string;
@@ -191,23 +193,24 @@ export function unwrapSignedEvent(
  */
 export function signResponse(
   jobResponse: unknown,
-  agent: JacsAgent,
+  signer: ResponseSigner,
   jacsId: string,
+  canonicalizer?: JacsAgent,
 ): { signed_document: string; agent_jacs_id: string } {
   // Prefer JACS binding delegation (JACS canonicalizes internally via RFC 8785)
-  if ('signResponseSync' in agent && typeof (agent as unknown as Record<string, unknown>).signResponseSync === 'function') {
+  if ('signResponseSync' in signer && typeof (signer as unknown as Record<string, unknown>).signResponseSync === 'function') {
     const rawJson = JSON.stringify(jobResponse);
-    const resultJson = (agent as unknown as Record<string, unknown> & { signResponseSync: (p: string) => string }).signResponseSync(rawJson);
+    const resultJson = (signer as unknown as Record<string, unknown> & { signResponseSync: (p: string) => string }).signResponseSync(rawJson);
     return { signed_document: resultJson, agent_jacs_id: jacsId };
   }
 
   // Fallback for agents without signResponseSync
-  const canonicalPayload = canonicalJson(jobResponse, agent);
+  const canonicalPayload = canonicalJson(jobResponse, canonicalizer);
   const now = new Date().toISOString();
   const documentId = randomUUID();
   const hash = hashString(canonicalPayload);
   const sortedData: unknown = JSON.parse(canonicalPayload);
-  const signature = agent.signStringSync(canonicalPayload);
+  const signature = signer.signStringSync(canonicalPayload);
 
   const jacsDoc: JacsDocument = {
     version: '1.0.0',

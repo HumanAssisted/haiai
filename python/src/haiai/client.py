@@ -117,6 +117,48 @@ def _read_public_key_pem(cfg: "AgentConfig") -> str:
     )
 
 
+def _verify_hai_message_impl(
+    message: str,
+    signature: str,
+    hai_public_key: str = "",
+    hai_url: Optional[str] = None,
+) -> bool:
+    """Verify a HAI-signed message using PEM, base64 key material, or key lookup."""
+    if not signature or not message:
+        return False
+
+    if not hai_public_key:
+        return False
+
+    from haiai.signing import verify_string as _verify_string
+
+    try:
+        if hai_public_key.startswith("-----"):
+            return _verify_string(message, signature, hai_public_key)
+
+        try:
+            base64.b64decode(hai_public_key)
+            pem_key = (
+                "-----BEGIN PUBLIC KEY-----\n"
+                + hai_public_key
+                + "\n-----END PUBLIC KEY-----\n"
+            )
+            return _verify_string(message, signature, pem_key)
+        except Exception:
+            if not hai_url:
+                return False
+            from haiai.signing import fetch_server_keys
+
+            keys = fetch_server_keys(hai_url)
+            match = next((k for k in keys if k.key_id == hai_public_key), None)
+            if match is None:
+                return False
+            return _verify_string(message, signature, match.public_key_pem)
+    except Exception as exc:
+        logger.debug("Signature verification failed: %s", exc)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # HaiClient
 # ---------------------------------------------------------------------------
@@ -430,43 +472,12 @@ class HaiClient:
         Returns:
             True if signature is valid.
         """
-        if not signature or not message:
-            return False
-
-        if not hai_public_key:
-            return False
-
-        from haiai.signing import verify_string as _verify_string
-
-        try:
-            if hai_public_key.startswith("-----"):
-                # PEM-encoded public key
-                return _verify_string(message, signature, hai_public_key)
-            else:
-                # Try base64 raw key first, then treat as key ID
-                try:
-                    base64.b64decode(hai_public_key)
-                    # Wrap raw base64 as PEM
-                    pem_key = (
-                        "-----BEGIN PUBLIC KEY-----\n"
-                        + hai_public_key
-                        + "\n-----END PUBLIC KEY-----\n"
-                    )
-                    return _verify_string(message, signature, pem_key)
-                except Exception:
-                    # Treat as key ID/fingerprint -- look up from server
-                    if not hai_url:
-                        return False
-                    from haiai.signing import fetch_server_keys
-
-                    keys = fetch_server_keys(hai_url)
-                    match = next((k for k in keys if k.key_id == hai_public_key), None)
-                    if match is None:
-                        return False
-                    return _verify_string(message, signature, match.public_key_pem)
-        except Exception as exc:
-            logger.debug("Signature verification failed: %s", exc)
-            return False
+        return _verify_hai_message_impl(
+            message=message,
+            signature=signature,
+            hai_public_key=hai_public_key,
+            hai_url=hai_url,
+        )
 
     # ------------------------------------------------------------------
     # register (existing agent)

@@ -53,6 +53,13 @@ import {
   RecipientNotFoundError,
   RateLimitedError,
 } from './errors.js';
+import {
+  constants as cryptoConstants,
+  createPrivateKey,
+  createPublicKey,
+  sign as cryptoSign,
+} from 'node:crypto';
+import { rmSync } from 'node:fs';
 import { signResponse, canonicalJson, getServerKeys, unwrapSignedEvent } from './signing.js';
 import { loadConfig } from './config.js';
 import { JacsAgent, createAgentSync, verifyDocumentStandalone, hashString } from '@hai.ai/jacs';
@@ -76,6 +83,96 @@ function normalizeKeyText(raw: Buffer, blockType: string): string {
   return armorKeyData(raw, blockType);
 }
 
+type CredentialSigner = {
+  algorithm: 'ring-Ed25519' | 'RSA-PSS';
+  privateKeyPem: string;
+  publicKeyPem: string;
+  signStringSync(message: string): string;
+};
+
+const credentialWorkspaceDirs = new Set<string>();
+let credentialWorkspaceCleanupRegistered = false;
+
+function registerCredentialWorkspace(dir: string): void {
+  credentialWorkspaceDirs.add(dir);
+  if (credentialWorkspaceCleanupRegistered) {
+    return;
+  }
+  credentialWorkspaceCleanupRegistered = true;
+  process.once('exit', () => {
+    for (const workspaceDir of credentialWorkspaceDirs) {
+      try {
+        rmSync(workspaceDir, { recursive: true, force: true });
+      } catch {
+        // Best-effort temp workspace cleanup.
+      }
+    }
+    credentialWorkspaceDirs.clear();
+  });
+}
+
+function createCredentialSigner(
+  privateKeyPem: string,
+  privateKeyPassphrase?: string,
+): CredentialSigner {
+  const privateKey = privateKeyPassphrase
+    ? createPrivateKey({ key: privateKeyPem, format: 'pem', passphrase: privateKeyPassphrase })
+    : createPrivateKey({ key: privateKeyPem, format: 'pem' });
+  const keyType = privateKey.asymmetricKeyType;
+
+  if (keyType !== 'ed25519' && keyType !== 'rsa' && keyType !== 'rsa-pss') {
+    throw new AuthenticationError(
+      `fromCredentials does not support ${keyType ?? 'this'} private key type in this runtime. ` +
+      'Use a config-backed client for other JACS key types.',
+    );
+  }
+
+  const publicKeyPem = createPublicKey(privateKey)
+    .export({ format: 'pem', type: 'spki' })
+    .toString()
+    .trim();
+
+  return {
+    algorithm: keyType === 'ed25519' ? 'ring-Ed25519' : 'RSA-PSS',
+    privateKeyPem: privateKeyPem.trim(),
+    publicKeyPem,
+    signStringSync(message: string): string {
+      const data = Buffer.from(message, 'utf-8');
+      const signature = keyType === 'ed25519'
+        ? cryptoSign(null, data, privateKey)
+        : cryptoSign('sha256', data, {
+          key: privateKey,
+          padding: cryptoConstants.RSA_PKCS1_PSS_PADDING,
+          saltLength: cryptoConstants.RSA_PSS_SALTLEN_DIGEST,
+        });
+      return signature.toString('base64');
+    },
+  };
+}
+
+async function withPrivateKeyPassphrase<T>(
+  passphrase: string | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  const envKey = 'JACS_PRIVATE_KEY_PASSWORD';
+  const hadOriginal = Object.prototype.hasOwnProperty.call(process.env, envKey);
+  const original = process.env[envKey];
+
+  if (passphrase) {
+    process.env[envKey] = passphrase;
+  }
+
+  try {
+    return await run();
+  } finally {
+    if (hadOriginal) {
+      process.env[envKey] = original;
+    } else {
+      delete process.env[envKey];
+    }
+  }
+}
+
 /**
  * HAI platform client.
  *
@@ -91,8 +188,11 @@ function normalizeKeyText(raw: Buffer, blockType: string): string {
  */
 export class HaiClient {
   private config!: AgentConfig;
+  private configPath: string | null = null;
   /** JACS native agent for all cryptographic operations. */
   private agent!: JacsAgent;
+  /** Explicit credential signer used when the runtime cannot import a PEM into JACS directly. */
+  private credentialSigner: CredentialSigner | null = null;
   private baseUrl: string;
   private timeout: number;
   private maxRetries: number;
@@ -136,6 +236,7 @@ export class HaiClient {
 
     client.agent = new JacsAgent();
     await client.agent.load(resolvedConfigPath);
+    client.configPath = resolvedConfigPath;
 
     return client;
   }
@@ -144,8 +245,10 @@ export class HaiClient {
    * Create a HaiClient directly from a JACS ID and PEM-encoded private key.
    * Useful for testing or programmatic setup without config files.
    *
-   * Creates a temporary JACS agent backed by on-disk key files so that
-   * all cryptographic operations delegate to JACS core.
+   * Creates a temporary JACS-shaped workspace for compatibility with
+   * config-based flows. When this runtime cannot import PEM material into
+   * JACS directly, signing uses the supplied credentials and verification
+   * still delegates to JACS.
    */
   static async fromCredentials(
     jacsId: string,
@@ -153,25 +256,54 @@ export class HaiClient {
     options?: Omit<HaiClientOptions, 'configPath'> & { privateKeyPassphrase?: string },
   ): Promise<HaiClient> {
     const client = new HaiClient(options);
+    const signer = createCredentialSigner(privateKeyPem, options?.privateKeyPassphrase);
 
-    // Store the caller's private key PEM for exportKeys/rotateKeys compatibility
-    (client as any)._privateKeyPem = privateKeyPem;
-    (client as any).privateKeyPem = privateKeyPem;
+    // Store the caller's PEM material for exportKeys/rotateKeys compatibility.
+    (client as any)._privateKeyPem = signer.privateKeyPem;
+    (client as any).privateKeyPem = signer.privateKeyPem;
+    (client as any)._publicKeyPem = signer.publicKeyPem;
     (client as any)._privateKeyPassphrase = options?.privateKeyPassphrase;
+    client.credentialSigner = signer;
 
-    // Create an ephemeral JACS agent (in-memory keys, no disk I/O required).
-    // The ephemeral agent generates its own key pair — this is appropriate
-    // because fromCredentials is typically followed by register() which sends
-    // the new public key to the server.
-    client.agent = new JacsAgent();
-    const ephResult = JSON.parse(client.agent.ephemeralSync('pq2025'));
+    // Materialize a minimal JACS-shaped workspace so file-based flows (for
+    // example rotateKeys) have a stable key directory, even though this
+    // runtime still lacks a direct "load PEM credentials into JacsAgent"
+    // bootstrap path.
+    const { mkdir, mkdtemp, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const tempDir = await mkdtemp(join(tmpdir(), 'haiai-creds-'));
+    registerCredentialWorkspace(tempDir);
+    const keyDir = join(tempDir, 'keys');
+    const dataDir = join(tempDir, 'data');
+    await mkdir(keyDir, { recursive: true });
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(join(keyDir, 'agent_private_key.pem'), `${signer.privateKeyPem}\n`, { mode: 0o600 });
+    await writeFile(join(keyDir, 'agent_public_key.pem'), `${signer.publicKeyPem}\n`, { mode: 0o644 });
 
-    client.config = {
+    const configPath = join(tempDir, 'jacs.config.json');
+    const configJson = {
       jacsAgentName: jacsId,
-      jacsAgentVersion: ephResult.version || '1.0.0',
-      jacsKeyDir: '',
+      jacsAgentVersion: '1.0.0',
+      jacsKeyDir: './keys',
+      jacsPrivateKeyPath: './keys/agent_private_key.pem',
       jacsId,
+      jacs_data_directory: './data',
+      jacs_key_directory: './keys',
+      jacs_agent_private_key_filename: 'agent_private_key.pem',
+      jacs_agent_public_key_filename: 'agent_public_key.pem',
+      jacs_agent_key_algorithm: signer.algorithm,
+      jacs_default_storage: 'fs',
     };
+    await writeFile(configPath, JSON.stringify(configJson, null, 2) + '\n');
+    client.config = await loadConfig(configPath);
+    client.configPath = configPath;
+
+    // Keep a lightweight JACS agent around for canonicalization and explicit
+    // verifyStringSync checks. Signing is handled by the credentialSigner above
+    // so fromCredentials actually uses the caller's key material.
+    client.agent = new JacsAgent();
+    client.agent.ephemeralSync(signer.algorithm);
 
     return client;
   }
@@ -231,6 +363,10 @@ export class HaiClient {
     this.keyCache.clear();
   }
 
+  private activeSigner(): CredentialSigner | JacsAgent {
+    return this.credentialSigner ?? this.agent;
+  }
+
   // ---------------------------------------------------------------------------
   // Auth helpers
   // ---------------------------------------------------------------------------
@@ -248,11 +384,17 @@ export class HaiClient {
 
   /** Sign a UTF-8 message with the agent's private key via JACS. Returns base64. */
   signMessage(message: string): string {
-    return this.agent.signStringSync(message);
+    return this.activeSigner().signStringSync(message);
   }
 
   /** Build the JACS Authorization header value string. */
   buildAuthHeader(): string {
+    if (this.credentialSigner) {
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const message = `${this.jacsId}:${timestamp}`;
+      const signature = this.credentialSigner.signStringSync(message);
+      return `JACS ${this.jacsId}:${timestamp}:${signature}`;
+    }
     // Prefer JACS binding delegation
     if ('buildAuthHeaderSync' in this.agent && typeof (this.agent as unknown as Record<string, unknown>).buildAuthHeaderSync === 'function') {
       return (this.agent as unknown as Record<string, unknown> & { buildAuthHeaderSync: () => string }).buildAuthHeaderSync();
@@ -411,7 +553,7 @@ export class HaiClient {
 
       // Sign canonical JSON via JACS
       const canonical = canonicalJson(agentDoc);
-      const signature = this.agent.signStringSync(canonical);
+      const signature = this.activeSigner().signStringSync(canonical);
       (agentDoc.jacsSignature as Record<string, string>).signature = signature;
       agentJson = JSON.stringify(agentDoc);
     }
@@ -502,7 +644,7 @@ export class HaiClient {
     // Build old-key auth header BEFORE rotation (chain of trust)
     const oldAuthTimestamp = Math.floor(Date.now() / 1000).toString();
     const oldAuthMessage = `${jacsId}:${oldVersion}:${oldAuthTimestamp}`;
-    const oldAuthSig = this.agent.signStringSync(oldAuthMessage);
+    const oldAuthSig = this.activeSigner().signStringSync(oldAuthMessage);
     const oldAgent = this.agent;
 
     // Find existing private key file
@@ -553,6 +695,7 @@ export class HaiClient {
     const newVersion = randomUUID();
     const generatedKeyDir = await mkdtemp(join(tmpdir(), 'haiai-rotate-'));
     let newPublicKeyPem: string;
+    let generatedSignerAgent: JacsAgent | null = null;
     try {
       const resultJson = createAgentSync(
         this.config.jacsAgentName,
@@ -560,7 +703,7 @@ export class HaiClient {
         'pq2025',
         null, // data dir
         generatedKeyDir,
-        null, // config path (don't overwrite main config)
+        join(generatedKeyDir, 'jacs.config.json'),
         null, // agent type
         (this.config as unknown as Record<string, unknown>).description as string
           ?? 'Agent registered via Node SDK',
@@ -568,10 +711,21 @@ export class HaiClient {
         null, // default storage
       );
       const result = JSON.parse(resultJson);
+      const generatedConfigPath = result.config_path as string | undefined;
       const newPubKeyPath = result.public_key_path || join(keyDir, 'jacs.public.pem');
       const newPrivKeyPath = result.private_key_path || join(keyDir, 'jacs.private.pem.enc');
       const newPublicKeyRaw = await readF(newPubKeyPath);
       newPublicKeyPem = normalizeKeyText(newPublicKeyRaw, 'PUBLIC KEY');
+
+      if (generatedConfigPath) {
+        const nextAgent = new JacsAgent();
+        try {
+          await withPrivateKeyPassphrase(passphrase || undefined, () => nextAgent.load(generatedConfigPath));
+          generatedSignerAgent = nextAgent;
+        } catch {
+          generatedSignerAgent = null;
+        }
+      }
 
       if (newPrivKeyPath !== privKeyPath) {
         await copyFile(newPrivKeyPath, privKeyPath);
@@ -581,8 +735,9 @@ export class HaiClient {
       } else {
         await writeFile(pubKeyPath, `${newPublicKeyPem}\n`);
       }
-      (this as any)._privateKeyPem = (await readF(privKeyPath)).toString('base64');
+      (this as any)._privateKeyPem = (await readF(privKeyPath, 'utf-8')).trim();
       (this as any).privateKeyPem = (this as any)._privateKeyPem;
+      (this as any)._publicKeyPem = newPublicKeyPem.trim();
     } catch (err) {
       // Rollback: restore archived keys
       await rename(archivePriv, privKeyPath).catch(() => {});
@@ -609,19 +764,44 @@ export class HaiClient {
     };
 
     // Reload the agent with new keys for signing
-    const configPath = resolve(process.env.JACS_CONFIG_PATH ?? './jacs.config.json');
+    const configPath = resolve(process.env.JACS_CONFIG_PATH ?? this.configPath ?? './jacs.config.json');
     const reloadedAgent = new JacsAgent();
+    let reloadedWithNewKeys = false;
     try {
-      await reloadedAgent.load(configPath);
+      await withPrivateKeyPassphrase(passphrase || undefined, () => reloadedAgent.load(configPath));
       this.agent = reloadedAgent;
+      reloadedWithNewKeys = true;
     } catch {
-      // Fall back to the currently loaded in-memory agent when the freshly
-      // generated on-disk config cannot be reloaded in this process.
-      this.agent = oldAgent;
+      if (generatedSignerAgent) {
+        this.agent = generatedSignerAgent;
+        reloadedWithNewKeys = true;
+      } else {
+        // Fall back to the currently loaded in-memory agent when we cannot
+        // hydrate the new key material in this process.
+        this.agent = oldAgent;
+      }
+    }
+
+    let rotatedSigner: CredentialSigner | JacsAgent = this.agent;
+    if (this.credentialSigner) {
+      try {
+        this.credentialSigner = createCredentialSigner(
+          (this as any)._privateKeyPem,
+          passphrase || undefined,
+        );
+        rotatedSigner = this.credentialSigner;
+      } catch {
+        // Some runtimes can generate post-quantum keys before they can
+        // re-import them through the local PEM compatibility path. In that
+        // case we keep the best available in-memory signer and preserve the
+        // local rotation result rather than failing the entire operation.
+        this.credentialSigner = null;
+        rotatedSigner = this.agent;
+      }
     }
 
     const canonical = canonicalJson(agentDoc);
-    const signature = this.agent.signStringSync(canonical);
+    const signature = rotatedSigner.signStringSync(canonical);
     (agentDoc.jacsSignature as Record<string, string>).signature = signature;
     const signedAgentJson = JSON.stringify(agentDoc, null, 2);
 
@@ -909,7 +1089,7 @@ export class HaiClient {
     };
 
     // Sign the response as a JACS document via JACS
-    const signed = signResponse(body, this.agent, this.jacsId);
+    const signed = signResponse(body, this.activeSigner(), this.jacsId, this.agent);
 
     const response = await this.fetchWithRetry(url, {
       method: 'POST',
@@ -1221,7 +1401,7 @@ export class HaiClient {
     description?: string;
     quiet?: boolean;
   }): Promise<RegistrationResult> {
-    const { mkdtemp, readFile: readF } = await import('node:fs/promises');
+    const { mkdtemp, readFile: readF, rm } = await import('node:fs/promises');
     const { join } = await import('node:path');
     const { tmpdir } = await import('node:os');
 
@@ -1230,108 +1410,111 @@ export class HaiClient {
     const keyDir = join(tempDir, 'keys');
     const dataDir = join(tempDir, 'data');
     const passphrase = process.env.JACS_PRIVATE_KEY_PASSWORD ?? 'register-temp';
-
-    const resultJson = createAgentSync(
-      agentName,
-      passphrase,
-      'pq2025',
-      dataDir,
-      keyDir,
-      join(tempDir, 'jacs.config.json'),
-      null,
-      options.description ?? 'Agent registered via Node SDK',
-      options.domain ?? null,
-      null,
-    );
-    const createResult = JSON.parse(resultJson);
-
-    const pubKeyPath = createResult.public_key_path || join(keyDir, 'jacs.public.pem');
-    const publicKeyPem = normalizeKeyText(await readF(pubKeyPath), 'PUBLIC KEY');
-
-    // Load the new agent for signing
-    const tempAgent = new JacsAgent();
-    const tempConfigPath = createResult.config_path || join(tempDir, 'jacs.config.json');
-    const { resolve } = await import('node:path');
-    let signingAgent: JacsAgent = tempAgent;
     try {
-      await tempAgent.load(resolve(tempConfigPath));
-    } catch {
-      tempAgent.ephemeralSync('pq2025');
-      signingAgent = tempAgent;
-    }
+      const resultJson = createAgentSync(
+        agentName,
+        passphrase,
+        'pq2025',
+        dataDir,
+        keyDir,
+        join(tempDir, 'jacs.config.json'),
+        null,
+        options.description ?? 'Agent registered via Node SDK',
+        options.domain ?? null,
+        null,
+      );
+      const createResult = JSON.parse(resultJson);
 
-    // Build minimal JACS agent document
-    const agentDoc: Record<string, unknown> = {
-      jacsId: agentName,
-      jacsVersion: '1.0.0',
-      jacsSignature: {
-        agentID: agentName,
-        date: new Date().toISOString(),
-      },
-      jacsPublicKey: publicKeyPem,
-      name: agentName,
-      description: options.description ?? 'Agent registered via Node SDK',
-      capabilities: ['mediation'],
-      version: '1.0.0',
-    };
+      const pubKeyPath = createResult.public_key_path || join(keyDir, 'jacs.public.pem');
+      const publicKeyPem = normalizeKeyText(await readF(pubKeyPath), 'PUBLIC KEY');
 
-    // Sign canonical JSON via JACS
-    const canonical = canonicalJson(agentDoc);
-    const signature = signingAgent.signStringSync(canonical);
-    (agentDoc.jacsSignature as Record<string, string>).signature = signature;
-
-    const url = this.makeUrl('/api/v1/agents/register');
-    const publicKeyB64 = Buffer.from(publicKeyPem, 'utf-8').toString('base64');
-    const body: Record<string, unknown> = {
-      agent_json: JSON.stringify(agentDoc),
-      public_key: publicKeyB64,
-      owner_email: options.ownerEmail,
-    };
-    if (options.domain) {
-      body.domain = options.domain;
-    }
-    if (options.description) {
-      body.description = options.description;
-    }
-
-    const response = await this.fetchWithRetry(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-
-    const data = await response.json() as Record<string, unknown>;
-
-    if (!options.quiet) {
-      console.log(`\nAgent created and submitted for registration!`);
-      console.log(`  -> Check your email (${options.ownerEmail}) for a verification link`);
-      console.log(`  -> Click the link and log into hai.ai to complete registration`);
-      console.log(`  -> After verification, claim a @hai.ai username with:`);
-      console.log(`     client.claimUsername('${(data.agent_id as string) || ''}', 'my-agent')`);
-      console.log(`  -> Save your config and private key to a secure, access-controlled location`);
-
-      if (options.domain) {
-        const pubKeyHash = hashString(publicKeyPem);
-        console.log(`\n--- DNS Setup Instructions ---`);
-        console.log(`Add this TXT record to your domain '${options.domain}':`);
-        console.log(`  Name:  _jacs.${options.domain}`);
-        console.log(`  Type:  TXT`);
-        console.log(`  Value: sha256:${pubKeyHash}`);
-        console.log(`DNS verification enables the pro tier.\n`);
-      } else {
-        console.log();
+      // Load the new agent for signing
+      const tempAgent = new JacsAgent();
+      const tempConfigPath = createResult.config_path || join(tempDir, 'jacs.config.json');
+      const { resolve } = await import('node:path');
+      let signingAgent: JacsAgent = tempAgent;
+      try {
+        await withPrivateKeyPassphrase(passphrase || undefined, () => tempAgent.load(resolve(tempConfigPath)));
+      } catch {
+        tempAgent.ephemeralSync('pq2025');
+        signingAgent = tempAgent;
       }
-    }
 
-    return {
-      success: true,
-      agentId: (data.agent_id as string) || (data.agentId as string) || '',
-      jacsId: (data.jacs_id as string) || (data.jacsId as string) || (agentDoc.jacsId as string) || '',
-      haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
-      registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
-      registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
-      rawResponse: data,
-    };
+      // Build minimal JACS agent document
+      const agentDoc: Record<string, unknown> = {
+        jacsId: agentName,
+        jacsVersion: '1.0.0',
+        jacsSignature: {
+          agentID: agentName,
+          date: new Date().toISOString(),
+        },
+        jacsPublicKey: publicKeyPem,
+        name: agentName,
+        description: options.description ?? 'Agent registered via Node SDK',
+        capabilities: ['mediation'],
+        version: '1.0.0',
+      };
+
+      // Sign canonical JSON via JACS
+      const canonical = canonicalJson(agentDoc);
+      const signature = signingAgent.signStringSync(canonical);
+      (agentDoc.jacsSignature as Record<string, string>).signature = signature;
+
+      const url = this.makeUrl('/api/v1/agents/register');
+      const publicKeyB64 = Buffer.from(publicKeyPem, 'utf-8').toString('base64');
+      const body: Record<string, unknown> = {
+        agent_json: JSON.stringify(agentDoc),
+        public_key: publicKeyB64,
+        owner_email: options.ownerEmail,
+      };
+      if (options.domain) {
+        body.domain = options.domain;
+      }
+      if (options.description) {
+        body.description = options.description;
+      }
+
+      const response = await this.fetchWithRetry(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const data = await response.json() as Record<string, unknown>;
+
+      if (!options.quiet) {
+        console.log(`\nAgent created and submitted for registration!`);
+        console.log(`  -> Check your email (${options.ownerEmail}) for a verification link`);
+        console.log(`  -> Click the link and log into hai.ai to complete registration`);
+        console.log(`  -> After verification, claim a @hai.ai username with:`);
+        console.log(`     client.claimUsername('${(data.agent_id as string) || ''}', 'my-agent')`);
+        console.log(`  -> Save your config and private key to a secure, access-controlled location`);
+
+        if (options.domain) {
+          const pubKeyHash = hashString(publicKeyPem);
+          console.log(`\n--- DNS Setup Instructions ---`);
+          console.log(`Add this TXT record to your domain '${options.domain}':`);
+          console.log(`  Name:  _jacs.${options.domain}`);
+          console.log(`  Type:  TXT`);
+          console.log(`  Value: sha256:${pubKeyHash}`);
+          console.log(`DNS verification enables the pro tier.\n`);
+        } else {
+          console.log();
+        }
+      }
+
+      return {
+        success: true,
+        agentId: (data.agent_id as string) || (data.agentId as string) || '',
+        jacsId: (data.jacs_id as string) || (data.jacsId as string) || (agentDoc.jacsId as string) || '',
+        haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
+        registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
+        registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
+        rawResponse: data,
+      };
+    } finally {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1709,8 +1892,9 @@ export class HaiClient {
   signBenchmarkResult(benchmarkResult: Record<string, unknown>): { signed_document: string; agent_jacs_id: string } {
     return signResponse(
       benchmarkResult,
-      this.agent,
+      this.activeSigner(),
       this.jacsId,
+      this.agent,
     );
   }
 
