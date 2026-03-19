@@ -56,7 +56,17 @@ jobs:
           else
             EXT="tar.gz"
           fi
-          curl -fLO "https://github.com/HumanAssisted/haiai/releases/download/rust/v${VERSION}/${ASSET}.${EXT}"
+          URL="https://github.com/HumanAssisted/haiai/releases/download/rust/v${VERSION}/${ASSET}.${EXT}"
+          for i in 1 2 3 4 5 6; do
+            if curl -fLO "$URL"; then
+              echo "Downloaded ${ASSET}.${EXT}"
+              exit 0
+            fi
+            echo "Attempt $i failed, Rust release may still be building. Waiting 60s..."
+            sleep 60
+          done
+          echo "::error::Failed to download $URL after 6 attempts"
+          exit 1
 
       - name: Extract binary into platform package
         run: |

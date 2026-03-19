@@ -107,8 +107,12 @@ release-node:
 	git push origin node/v$(NODE_VERSION)
 	@echo "Tagged node/v$(NODE_VERSION) - CI will publish to npm"
 
-release-all: check-versions release-rust release-python release-node
+release-all: check-versions release-rust
+	@echo "Waiting 30s for Rust CI to start building CLI binaries..."
+	@sleep 30
+	$(MAKE) release-python release-node
 	@echo "All release tags pushed for v$(RUST_VERSION). CI will handle publishing."
+	@echo "Note: Node and Python CI will retry up to 6 min waiting for Rust binaries."
 
 release-delete-tags:
 	@echo "Deleting tags for version $(RUST_VERSION)..."
