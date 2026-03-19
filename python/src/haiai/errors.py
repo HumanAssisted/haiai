@@ -51,9 +51,10 @@ class HaiError(Exception):
         self.error_code = ""  # populated from API error_code field when available
 
     def __str__(self) -> str:
-        if self.status_code:
-            return f"{self.message} (HTTP {self.status_code})"
-        return self.message
+        base = f"{self.message} (HTTP {self.status_code})" if self.status_code else self.message
+        if self.action:
+            return f"{base}. {self.action}"
+        return base
 
     @classmethod
     def from_response(

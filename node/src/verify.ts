@@ -15,10 +15,8 @@ export const MAX_VERIFY_DOCUMENT_BYTES = 1515;
  * URL-safe base64 encoding for verification payloads.
  *
  * Delegates to JACS binding-core `encodeVerifyPayloadSync` when an agent
- * is provided and supports it. Falls back to local base64url encoding when
- * the agent does not expose the method.
- *
- * @throws {HaiError} If no agent is provided (JACS_NOT_LOADED).
+ * is provided and supports it. Falls back to local base64url encoding
+ * otherwise (base64url is deterministic encoding, not cryptography).
  */
 function encodeVerifyPayload(document: string, agent?: JacsAgent): string {
   if (agent && 'encodeVerifyPayloadSync' in agent && typeof (agent as unknown as Record<string, unknown>).encodeVerifyPayloadSync === 'function') {

@@ -25,11 +25,11 @@ func init() {
 type jacsBackend struct{}
 
 func (b *jacsBackend) SignString(message string) (string, error) {
-	return "", fmt.Errorf("jacs backend: SignString requires a loaded agent; use Client.crypto instead")
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: SignString requires a loaded agent", Action: "Use Client.crypto instead"}
 }
 
 func (b *jacsBackend) SignBytes(data []byte) ([]byte, error) {
-	return nil, fmt.Errorf("jacs backend: SignBytes requires a loaded agent; use Client.crypto instead")
+	return nil, &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: SignBytes requires a loaded agent", Action: "Use Client.crypto instead"}
 }
 
 func (b *jacsBackend) VerifyBytes(data, signature []byte, publicKeyPEM string) error {
@@ -49,7 +49,7 @@ func (b *jacsBackend) VerifyResponse(documentJSON string) (string, error) {
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {
-		return "", fmt.Errorf("jacs backend: failed to marshal verify result: %w", err)
+		return "", wrapError(ErrJacsOpFailed, err, "jacs backend: failed to marshal verify result")
 	}
 	return string(encoded), nil
 }
@@ -71,18 +71,18 @@ func (b *jacsBackend) GenerateKeyPair() ([]byte, []byte, error) {
 	})
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("jacs backend: key generation failed: %w", err)
+		return nil, nil, wrapError(ErrSigningFailed, err, "jacs backend: key generation failed")
 	}
 
 	pubDER, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
-		return nil, nil, fmt.Errorf("jacs backend: failed to marshal public key: %w", err)
+		return nil, nil, wrapError(ErrSigningFailed, err, "jacs backend: failed to marshal public key")
 	}
 	pubPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
 
 	privDER, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
-		return nil, nil, fmt.Errorf("jacs backend: failed to marshal private key: %w", err)
+		return nil, nil, wrapError(ErrSigningFailed, err, "jacs backend: failed to marshal private key")
 	}
 	privPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})
 
@@ -94,43 +94,43 @@ func (b *jacsBackend) Algorithm() string {
 }
 
 func (b *jacsBackend) CanonicalizeJSON(jsonStr string) (string, error) {
-	return "", fmt.Errorf("jacs backend: CanonicalizeJSON requires a loaded agent; use Client.crypto instead")
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: CanonicalizeJSON requires a loaded agent", Action: "Use Client.crypto instead"}
 }
 
 func (b *jacsBackend) SignResponse(payloadJSON string) (string, error) {
-	return "", fmt.Errorf("jacs backend: SignResponse requires a loaded agent; use Client.crypto instead")
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: SignResponse requires a loaded agent", Action: "Use Client.crypto instead"}
 }
 
 func (b *jacsBackend) EncodeVerifyPayload(document string) (string, error) {
-	return "", fmt.Errorf("jacs backend: EncodeVerifyPayload requires a loaded agent; use Client.crypto instead")
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: EncodeVerifyPayload requires a loaded agent", Action: "Use Client.crypto instead"}
 }
 
 func (b *jacsBackend) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
-	return "", fmt.Errorf("jacs backend: UnwrapSignedEvent requires a loaded agent; use Client.crypto instead")
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: UnwrapSignedEvent requires a loaded agent", Action: "Use Client.crypto instead"}
 }
 
 func (b *jacsBackend) BuildAuthHeader() (string, error) {
-	return "", fmt.Errorf("jacs backend: BuildAuthHeader requires a loaded agent; use Client.crypto instead")
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: BuildAuthHeader requires a loaded agent", Action: "Use Client.crypto instead"}
 }
 
 func (b *jacsBackend) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
-	return "", fmt.Errorf("jacs backend: SignA2AArtifact requires a loaded agent; use Client.crypto instead")
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: SignA2AArtifact requires a loaded agent", Action: "Use Client.crypto instead"}
 }
 
 func (b *jacsBackend) VerifyA2AArtifact(wrappedJSON string) (string, error) {
-	return "", fmt.Errorf("jacs backend: VerifyA2AArtifact requires a loaded agent; use Client.crypto instead")
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: VerifyA2AArtifact requires a loaded agent", Action: "Use Client.crypto instead"}
 }
 
 func (b *jacsBackend) VerifyA2AArtifactWithPolicy(wrappedJSON, agentCardJSON, policyJSON string) (string, error) {
-	return "", fmt.Errorf("jacs backend: VerifyA2AArtifactWithPolicy requires a loaded agent; use Client.crypto instead")
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: VerifyA2AArtifactWithPolicy requires a loaded agent", Action: "Use Client.crypto instead"}
 }
 
 func (b *jacsBackend) AssessA2AAgent(agentCardJSON, policyJSON string) (string, error) {
-	return "", fmt.Errorf("jacs backend: AssessA2AAgent requires a loaded agent; use Client.crypto instead")
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: AssessA2AAgent requires a loaded agent", Action: "Use Client.crypto instead"}
 }
 
 func (b *jacsBackend) ExportAgentCard(agentDataJSON string) (string, error) {
-	return "", fmt.Errorf("jacs backend: ExportAgentCard requires a loaded agent; use Client.crypto instead")
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: ExportAgentCard requires a loaded agent", Action: "Use Client.crypto instead"}
 }
 
 // clientJacsBackend implements CryptoBackend bound to a loaded JACS agent for
@@ -142,14 +142,14 @@ type clientJacsBackend struct {
 
 func (b *clientJacsBackend) SignString(message string) (string, error) {
 	if b.agent == nil {
-		return "", fmt.Errorf("jacs backend: agent not loaded")
+		return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: agent not loaded", Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 	}
 	return b.agent.SignString(message)
 }
 
 func (b *clientJacsBackend) SignBytes(data []byte) ([]byte, error) {
 	if b.agent == nil {
-		return nil, fmt.Errorf("jacs backend: agent not loaded")
+		return nil, &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: agent not loaded", Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 	}
 	sigB64, err := b.agent.SignString(string(data))
 	if err != nil {
@@ -160,7 +160,7 @@ func (b *clientJacsBackend) SignBytes(data []byte) ([]byte, error) {
 
 func (b *clientJacsBackend) VerifyBytes(data, signature []byte, publicKeyPEM string) error {
 	if b.agent == nil {
-		return fmt.Errorf("jacs backend: agent not loaded")
+		return &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: agent not loaded", Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 	}
 	sigB64 := base64.StdEncoding.EncodeToString(signature)
 	return b.agent.VerifyString(string(data), sigB64, []byte(publicKeyPEM), "pem")
@@ -168,14 +168,14 @@ func (b *clientJacsBackend) VerifyBytes(data, signature []byte, publicKeyPEM str
 
 func (b *clientJacsBackend) SignRequest(payloadJSON string) (string, error) {
 	if b.agent == nil {
-		return "", fmt.Errorf("jacs backend: agent not loaded")
+		return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: agent not loaded", Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 	}
 	return b.agent.SignRequest(json.RawMessage(payloadJSON))
 }
 
 func (b *clientJacsBackend) VerifyResponse(documentJSON string) (string, error) {
 	if b.agent == nil {
-		return "", fmt.Errorf("jacs backend: agent not loaded")
+		return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: agent not loaded", Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 	}
 	result, err := b.agent.VerifyResponse(documentJSON)
 	if err != nil {
@@ -183,7 +183,7 @@ func (b *clientJacsBackend) VerifyResponse(documentJSON string) (string, error) 
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {
-		return "", fmt.Errorf("jacs backend: failed to marshal verify result: %w", err)
+		return "", wrapError(ErrJacsOpFailed, err, "jacs backend: failed to marshal verify result")
 	}
 	return string(encoded), nil
 }
@@ -198,70 +198,70 @@ func (b *clientJacsBackend) Algorithm() string {
 
 func (b *clientJacsBackend) CanonicalizeJSON(jsonStr string) (string, error) {
 	if b.agent == nil {
-		return "", fmt.Errorf("jacs backend: agent not loaded")
+		return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: agent not loaded", Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 	}
 	return b.agent.CanonicalizeJson(jsonStr)
 }
 
 func (b *clientJacsBackend) SignResponse(payloadJSON string) (string, error) {
 	if b.agent == nil {
-		return "", fmt.Errorf("jacs backend: agent not loaded")
+		return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: agent not loaded", Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 	}
 	return b.agent.SignResponse(payloadJSON)
 }
 
 func (b *clientJacsBackend) EncodeVerifyPayload(document string) (string, error) {
 	if b.agent == nil {
-		return "", fmt.Errorf("jacs backend: agent not loaded")
+		return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: agent not loaded", Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 	}
 	return b.agent.EncodeVerifyPayload(document)
 }
 
 func (b *clientJacsBackend) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
 	if b.agent == nil {
-		return "", fmt.Errorf("jacs backend: agent not loaded")
+		return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: agent not loaded", Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 	}
 	return b.agent.UnwrapSignedEvent(eventJSON, serverKeysJSON)
 }
 
 func (b *clientJacsBackend) BuildAuthHeader() (string, error) {
 	if b.agent == nil {
-		return "", fmt.Errorf("jacs backend: agent not loaded")
+		return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: agent not loaded", Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 	}
 	return b.agent.BuildAuthHeader()
 }
 
 func (b *clientJacsBackend) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
 	if b.agent == nil {
-		return "", fmt.Errorf("jacs backend: agent not loaded")
+		return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: agent not loaded", Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 	}
 	return b.agent.SignA2AArtifact(artifactJSON, artifactType)
 }
 
 func (b *clientJacsBackend) VerifyA2AArtifact(wrappedJSON string) (string, error) {
 	if b.agent == nil {
-		return "", fmt.Errorf("jacs backend: agent not loaded")
+		return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: agent not loaded", Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 	}
 	return b.agent.VerifyA2AArtifact(wrappedJSON)
 }
 
 func (b *clientJacsBackend) VerifyA2AArtifactWithPolicy(wrappedJSON, agentCardJSON, policyJSON string) (string, error) {
 	if b.agent == nil {
-		return "", fmt.Errorf("jacs backend: agent not loaded")
+		return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: agent not loaded", Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 	}
 	return b.agent.VerifyA2AArtifactWithPolicy(wrappedJSON, agentCardJSON, policyJSON)
 }
 
 func (b *clientJacsBackend) AssessA2AAgent(agentCardJSON, policyJSON string) (string, error) {
 	if b.agent == nil {
-		return "", fmt.Errorf("jacs backend: agent not loaded")
+		return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: agent not loaded", Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 	}
 	return b.agent.AssessA2AAgent(agentCardJSON, policyJSON)
 }
 
 func (b *clientJacsBackend) ExportAgentCard(agentDataJSON string) (string, error) {
 	if b.agent == nil {
-		return "", fmt.Errorf("jacs backend: agent not loaded")
+		return "", &Error{Kind: ErrJacsNotLoaded, Message: "jacs backend: agent not loaded", Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 	}
 	// The JACS core ExportAgentCard uses the loaded agent's own metadata.
 	// The agentDataJSON parameter is used by the Go-side orchestration in a2a.go

@@ -5,10 +5,20 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
+	"sync"
 	"time"
 )
 
+// signResponseLocallyWarningOnce guards the one-time warning for local Ed25519 signing
+// in non-JACS builds.
+var signResponseLocallyWarningOnce sync.Once
+
 func signResponseLocally(privateKey ed25519.PrivateKey, jacsID, payloadJSON string) (string, error) {
+	signResponseLocallyWarningOnce.Do(func() {
+		log.Println("WARNING: signResponseLocally uses local Ed25519 signing (non-JACS fallback build). " +
+			"Build with 'go build -tags jacs' for full JACS support.")
+	})
 	if privateKey == nil {
 		return "", fmt.Errorf("private key not loaded")
 	}

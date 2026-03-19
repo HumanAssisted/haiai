@@ -98,7 +98,7 @@ function sortedKeyJson(obj: unknown): string {
  * JacsDocument, it is returned as-is.
  *
  * @throws {HaiError} If JACS delegation fails (JACS_OP_FAILED).
- * @throws {Error} If a known key fails verification (signature mismatch).
+ * @throws {HaiError} If a known key fails verification (VERIFICATION_FAILED).
  */
 export function unwrapSignedEvent(
   eventData: Record<string, unknown>,
@@ -152,7 +152,13 @@ export function unwrapSignedEvent(
         valid = standaloneResult.valid;
       }
       if (!valid) {
-        throw new Error(`JACS signature verification failed for agentID="${agentID}"`);
+        throw new HaiError(
+          `Signature verification failed for agentID="${agentID}"`,
+          undefined,
+          undefined,
+          'VERIFICATION_FAILED',
+          'Verify the public key and algorithm match the signer',
+        );
       }
     }
 
@@ -182,9 +188,21 @@ export function unwrapSignedEvent(
           Buffer.from(publicKeyPem, 'utf-8'),
           'pem',
         );
+      } else {
+        // Use standalone verification as fallback (matching canonical path)
+        try {
+          const standaloneResult = verifyDocumentStandalone(JSON.stringify(eventData));
+          valid = standaloneResult.valid;
+        } catch { /* standalone verification not available */ }
       }
       if (!valid) {
-        throw new Error(`JACS signature verification failed for key_id="${keyId}"`);
+        throw new HaiError(
+          `Signature verification failed for key_id="${keyId}"`,
+          undefined,
+          undefined,
+          'VERIFICATION_FAILED',
+          'Verify the public key and algorithm match the signer',
+        );
       }
     }
 

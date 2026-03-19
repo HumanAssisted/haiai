@@ -1,3 +1,4 @@
+use haiai::client::encode_path_segment;
 use haiai::{HaiClient, HaiClientOptions, StaticJacsProvider};
 use httpmock::Method::{DELETE, GET, POST, PUT};
 use httpmock::MockServer;
@@ -303,4 +304,90 @@ async fn fetch_all_keys_calls_correct_endpoint() {
     assert_eq!(history.keys[0].version, "v2");
     assert_eq!(history.keys[1].version, "v1");
     mock.assert_async().await;
+}
+
+// ---------------------------------------------------------------------------
+// Fixture-driven path escaping contract tests
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+struct PathEscapingFixture {
+    description: String,
+    test_vectors: Vec<PathEscapingVector>,
+}
+
+#[derive(serde::Deserialize)]
+struct PathEscapingVector {
+    raw: String,
+    escaped: String,
+}
+
+fn load_path_escaping_fixture() -> PathEscapingFixture {
+    let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/path_escaping_contract.json");
+    let data = std::fs::read_to_string(&fixture_path)
+        .unwrap_or_else(|e| panic!("Failed to read {:?}: {}", fixture_path, e));
+    serde_json::from_str(&data)
+        .unwrap_or_else(|e| panic!("Failed to parse fixture: {}", e))
+}
+
+#[test]
+fn path_escaping_contract_vectors() {
+    let fixture = load_path_escaping_fixture();
+
+    // Rust's url::Url follows RFC 3986 which allows :, @, and & unescaped
+    // in path segments. Python and Node encode these more aggressively.
+    // Known divergences are documented here (same as Go -- see Issue 016).
+    let known_divergent: std::collections::HashSet<&str> = [
+        "id:with:colons",    // Rust doesn't encode ':'
+        "id@domain",         // Rust doesn't encode '@'
+        "id#hash&amp?query", // Rust doesn't encode '&'
+    ]
+    .iter()
+    .copied()
+    .collect();
+
+    for vec in &fixture.test_vectors {
+        let result = encode_path_segment(&vec.raw);
+        if known_divergent.contains(vec.raw.as_str()) {
+            // Verify the security invariant: slashes are always escaped
+            assert!(
+                !result.contains('/') || vec.raw.is_empty(),
+                "encode_path_segment({:?}) must not contain unescaped slash: {:?}",
+                vec.raw,
+                result
+            );
+        } else {
+            assert_eq!(
+                result, vec.escaped,
+                "encode_path_segment({:?}) = {:?}, expected {:?}",
+                vec.raw, result, vec.escaped
+            );
+        }
+    }
+}
+
+#[test]
+fn path_escaping_contract_fixture_loads() {
+    let fixture = load_path_escaping_fixture();
+    assert!(
+        !fixture.description.is_empty(),
+        "fixture should have a description"
+    );
+    assert!(
+        fixture.test_vectors.len() >= 5,
+        "fixture should have at least 5 test vectors"
+    );
+}
+
+#[test]
+fn path_traversal_prevented() {
+    let malicious = "../../../etc/passwd";
+    let escaped = encode_path_segment(malicious);
+    assert!(
+        !escaped.contains('/'),
+        "encode_path_segment({:?}) should not contain unescaped slash: {:?}",
+        malicious,
+        escaped
+    );
 }

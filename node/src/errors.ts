@@ -68,15 +68,12 @@ export class SSEError extends HaiError {
 
 /** General API error (non-auth, non-connection). */
 export class HaiApiError extends HaiError {
-  /** Structured error code from the API (e.g., 'EMAIL_NOT_ACTIVE'). */
-  errorCode: string;
   /** Raw response body text. */
   body: string;
 
   constructor(message: string, statusCode?: number, responseData?: Record<string, unknown>, errorCode: string = '', body: string = '') {
-    super(message, statusCode, responseData);
+    super(message, statusCode, responseData, errorCode);
     this.name = 'HaiApiError';
-    this.errorCode = errorCode;
     this.body = body;
   }
 }

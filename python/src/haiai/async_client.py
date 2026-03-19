@@ -894,7 +894,8 @@ class AsyncHaiClient:
                 data = resp.json()
                 return JobResponseResult(
                     success=data.get("success", True),
-                    run_id=data.get("run_id", data.get("runId", "")),
+                    job_id=data.get("job_id", data.get("jobId", job_id)),
+                    message=data.get("message", "Response accepted"),
                     raw_response=data,
                 )
             except (httpx.ConnectError, httpx.TimeoutException) as exc:
@@ -938,13 +939,12 @@ class AsyncHaiClient:
         """
         from haiai.client import HaiClient
 
-        sync_client = HaiClient.__new__(HaiClient)
-        sync_client._hai_url = getattr(self, '_hai_url', hai_url or '')
-        sync_client._timeout = self._timeout
-        sync_client._hai_agent_id = getattr(self, '_hai_agent_id', '')
-        sync_client._verify_server_signatures = getattr(
-            self, '_verify_server_signatures', True,
+        sync_client = HaiClient(
+            timeout=self._timeout,
+            verify_server_signatures=self._verify_server_signatures,
         )
+        sync_client._hai_url = self._hai_url or hai_url or ''
+        sync_client._hai_agent_id = self._hai_agent_id or ''
 
         return await asyncio.to_thread(
             sync_client.rotate_keys,
