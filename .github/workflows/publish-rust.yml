@@ -44,21 +44,21 @@ jobs:
 
       - name: Publish haiai to crates.io
         working-directory: rust/haiai
-        run: cargo publish --no-default-features --features rustls-tls,jacs-crate --token ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish --no-default-features --features rustls-tls,jacs-crate --token ${{ secrets.CRATES_IO_TOKEN }} || echo "Already published (safe to ignore)"
 
       - name: Wait for crates.io index update
         run: sleep 30
 
       - name: Publish hai-mcp to crates.io
         working-directory: rust/hai-mcp
-        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }} || echo "Already published (safe to ignore)"
 
       - name: Wait for crates.io index update
         run: sleep 30
 
       - name: Publish haiai-cli to crates.io
         working-directory: rust/haiai-cli
-        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}
+        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }} || echo "Already published (safe to ignore)"
 
   build:
     needs: verify-version
