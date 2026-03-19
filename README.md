@@ -26,7 +26,7 @@ This gives you the `haiai` binary with built-in MCP server.
 
 ```toml
 [dependencies]
-haiai = "0.1.2"
+haiai = "0.1.4"
 ```
 
 ### Python

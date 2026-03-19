@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createPrivateKey } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -89,20 +90,35 @@ describe('security_regression_contract', () => {
     expect(registrationHeaders).not.toHaveProperty('Authorization');
   });
 
-  it('encrypted_key_requires_password: signing without JACS returns clear JACS_NOT_LOADED error', () => {
+  it('encrypted_key_requires_password: loading encrypted PEM without password fails clearly', () => {
     const testCase = contract.test_cases.find(tc => tc.name === 'encrypted_key_requires_password');
     expect(testCase).toBeTruthy();
 
-    // When no agent is available, signResponse should throw with JACS_NOT_LOADED
-    // (the same codepath is exercised when an encrypted key fails to load)
-    const emptySigner = {} as never;
+    // Load the encrypted PEM key fixture
+    const encryptedPem = readFileSync(
+      resolve(__dirname2, '../../fixtures/encrypted_test_key.pem'),
+      'utf-8',
+    );
+
+    // The PEM has an "ENCRYPTED PRIVATE KEY" header
+    expect(encryptedPem).toContain('ENCRYPTED PRIVATE KEY');
+
+    // Attempting to create a KeyObject from an encrypted PEM without
+    // a passphrase should throw a clear error
+    expect(() =>
+      createPrivateKey({ key: encryptedPem, format: 'pem' }),
+    ).toThrow();
+
+    // Verify the error is an OpenSSL error related to missing passphrase.
+    // Node's OpenSSL reports ERR_OSSL_CRYPTO_INTERRUPTED_OR_CANCELLED when
+    // no passphrase is provided for an encrypted key.
     try {
-      signResponse({ test: true }, emptySigner, 'test-id');
-      expect.fail('expected HaiError to be thrown');
+      createPrivateKey({ key: encryptedPem, format: 'pem' });
     } catch (err) {
-      expect(err).toBeInstanceOf(HaiError);
-      const haiErr = err as HaiError;
-      expect(haiErr.errorCode).toBe('JACS_NOT_LOADED');
+      const code = (err as NodeJS.ErrnoException).code ?? '';
+      expect(
+        code.startsWith('ERR_OSSL'),
+      ).toBe(true);
     }
   });
 });

@@ -181,7 +181,7 @@ func (b *clientEd25519Backend) Algorithm() string {
 }
 
 func (b *clientEd25519Backend) CanonicalizeJSON(jsonStr string) (string, error) {
-	return canonicalizeJSONLocal(jsonStr)
+	return "", &Error{Kind: ErrJacsBuildRequired, Message: "ed25519 fallback: CanonicalizeJSON requires JACS backend", Action: jacsBuildAction}
 }
 
 func (b *clientEd25519Backend) SignResponse(payloadJSON string) (string, error) {
@@ -193,7 +193,7 @@ func (b *clientEd25519Backend) SignResponse(payloadJSON string) (string, error) 
 }
 
 func (b *clientEd25519Backend) EncodeVerifyPayload(document string) (string, error) {
-	return base64.RawURLEncoding.EncodeToString([]byte(document)), nil
+	return "", &Error{Kind: ErrJacsBuildRequired, Message: "ed25519 fallback: EncodeVerifyPayload requires JACS backend", Action: jacsBuildAction}
 }
 
 func (b *clientEd25519Backend) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
@@ -241,12 +241,12 @@ func newClientCryptoBackend(privateKey ed25519.PrivateKey, jacsID string) Crypto
 func canonicalizeJSONLocal(jsonStr string) (string, error) {
 	var raw interface{}
 	if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
-		return "", fmt.Errorf("canonicalize: invalid JSON: %w", err)
+		return "", wrapError(ErrJacsOpFailed, err, "canonicalize: invalid JSON")
 	}
 	sorted := sortKeys(raw)
 	result, err := json.Marshal(sorted)
 	if err != nil {
-		return "", fmt.Errorf("canonicalize: marshal failed: %w", err)
+		return "", wrapError(ErrJacsOpFailed, err, "canonicalize: marshal failed")
 	}
 	return string(result), nil
 }

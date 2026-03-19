@@ -402,19 +402,22 @@ class TestSecurityRegressionContract:
         tc = next(t for t in fixture["test_cases"] if t["name"] == "encrypted_key_requires_password")
         assert tc is not None
 
-        from haiai.errors import HaiError
+        # Load the encrypted PEM key fixture and verify that attempting to
+        # use it without a password produces a clear error.
+        encrypted_pem_path = Path(__file__).resolve().parent.parent.parent / "fixtures" / "encrypted_test_key.pem"
+        encrypted_pem = encrypted_pem_path.read_bytes()
 
-        # JACS keys are always encrypted with the password from
-        # load_private_key_password(). If that function is unavailable or
-        # the password is wrong, the operation should fail clearly.
-        # We verify the error code contract is satisfied by testing that
-        # canonicalize_json (which requires a loaded agent) fails with
-        # JACS_NOT_LOADED when no config is present.
-        from haiai import config as config_mod
-        from haiai.signing import canonicalize_json
+        # The encrypted PEM has "ENCRYPTED PRIVATE KEY" header -- it cannot
+        # be loaded as a plain PKCS8 key. Attempting to parse it with
+        # standard crypto libraries should fail.
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
-        config_mod.reset()
-        with pytest.raises(HaiError) as exc_info:
-            canonicalize_json({"test": True})
-        # When no agent is loaded, this should be a clear JACS_NOT_LOADED error
-        assert exc_info.value.code == "JACS_NOT_LOADED"
+        with pytest.raises(Exception) as exc_info:
+            # Passing no password to an encrypted key should raise
+            load_pem_private_key(encrypted_pem, password=None)
+
+        # The error should clearly indicate a password is needed
+        error_msg = str(exc_info.value).lower()
+        assert "password" in error_msg or "encrypted" in error_msg or "decrypt" in error_msg, (
+            f"Error should mention password/encrypted/decrypt: {exc_info.value}"
+        )

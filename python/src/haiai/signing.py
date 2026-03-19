@@ -450,7 +450,10 @@ def sign_response(
         result_json = agent.sign_response(raw_json)
         return {"signed_document": result_json, "agent_jacs_id": jacs_id}
 
-    # Local envelope construction with JACS sign_string delegation
+    # Local envelope construction with JACS sign_string delegation.
+    # NOTE: The signature covers canonicalize_json(job_response_payload).
+    # The server re-canonicalizes jacs_doc["data"] before verifying.
+    # This matches the Node SDK's signResponse behavior.
     canonical_payload = canonicalize_json(job_response_payload)
     doc_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()

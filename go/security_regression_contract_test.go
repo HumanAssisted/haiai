@@ -196,21 +196,27 @@ func TestSecurityRegressionEncryptedKeyRequiresPassword(t *testing.T) {
 		t.Fatal("encrypted_key_requires_password test case not found in fixture")
 	}
 
-	// When no agent is loaded, crypto operations should return a clear
-	// structured error. This covers the case where an encrypted key
-	// cannot be decrypted (agent fails to load -> ErrJacsNotLoaded or
-	// ErrPrivateKeyMissing).
-	fb := &ed25519Fallback{}
-	_, err := fb.SignString("test")
+	// Load the encrypted PEM key fixture and verify parsing fails without
+	// password, producing a clear structured error.
+	encryptedPEM, err := os.ReadFile("../fixtures/encrypted_test_key.pem")
+	if err != nil {
+		t.Fatalf("Failed to load encrypted_test_key.pem: %v", err)
+	}
+
+	// Parsing with no password should fail with a clear error
+	_, err = ParsePrivateKeyWithPassword(encryptedPEM, nil)
 	if err == nil {
-		t.Fatal("expected error from fallback SignString")
+		t.Fatal("expected error when loading encrypted key without password")
 	}
 
 	var sdkErr *Error
 	if !errors.As(err, &sdkErr) {
 		t.Fatalf("expected *Error, got %T: %v", err, err)
 	}
-	if sdkErr.Kind != ErrPrivateKeyMissing {
-		t.Errorf("expected ErrPrivateKeyMissing, got Kind=%d", sdkErr.Kind)
+	if sdkErr.Kind != ErrSigningFailed {
+		t.Errorf("expected ErrSigningFailed, got Kind=%d", sdkErr.Kind)
+	}
+	if !strings.Contains(sdkErr.Message, "encrypted") && !strings.Contains(sdkErr.Message, "PKCS#8") {
+		t.Errorf("error message should mention encrypted key: %q", sdkErr.Message)
 	}
 }

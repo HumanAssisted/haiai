@@ -154,6 +154,19 @@ class AsyncHaiClient:
         agent = get_agent()
         if cfg.jacs_id is None:
             raise HaiAuthError("jacsId is required for JACS authentication")
+
+        # Prefer JACS binding delegation
+        if hasattr(agent, "build_auth_header"):
+            return agent.build_auth_header()
+
+        # Local construction using JACS sign_string
+        if not hasattr(agent, "sign_string"):
+            raise HaiError(
+                "build_auth_header requires a JACS agent with sign_string support",
+                code="JACS_NOT_LOADED",
+                action="Run 'haiai init' or set JACS_CONFIG_PATH environment variable",
+            )
+
         timestamp = int(time.time())
         message = f"{cfg.jacs_id}:{timestamp}"
         signature = agent.sign_string(message)

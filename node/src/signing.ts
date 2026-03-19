@@ -193,7 +193,11 @@ export function unwrapSignedEvent(
         try {
           const standaloneResult = verifyDocumentStandalone(JSON.stringify(eventData));
           valid = standaloneResult.valid;
-        } catch { /* standalone verification not available */ }
+        } catch (verifyErr) {
+          // verifyDocumentStandalone may not be available or may fail for this format.
+          // Log but don't throw -- the valid=false path below handles it.
+          if (typeof console !== 'undefined') console.warn('standalone verify failed:', verifyErr);
+        }
       }
       if (!valid) {
         throw new HaiError(
