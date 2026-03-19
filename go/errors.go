@@ -32,20 +32,37 @@ const (
 	ErrNotFound
 	// ErrRateLimited indicates the server returned 429.
 	ErrRateLimited
+	// ErrJacsNotLoaded indicates a crypto operation was attempted without a JACS agent.
+	ErrJacsNotLoaded
+	// ErrJacsOpFailed indicates a JACS operation threw an error.
+	ErrJacsOpFailed
+	// ErrJacsBuildRequired indicates the binary was built without JACS support.
+	ErrJacsBuildRequired
+	// ErrVerificationFailed indicates signature verification failed.
+	ErrVerificationFailed
+	// ErrPrivateKeyMissing indicates the private key file was not found.
+	ErrPrivateKeyMissing
+	// ErrPrivateKeyPasswordRequired indicates an encrypted key needs a password.
+	ErrPrivateKeyPasswordRequired
 )
 
 // Error represents errors from HAI SDK operations.
 type Error struct {
 	Kind    ErrorKind
 	Message string
-	Err     error // underlying error, if any
+	Action  string // developer-facing hint describing how to fix the issue
+	Err     error  // underlying error, if any
 }
 
 func (e *Error) Error() string {
+	base := e.Message
 	if e.Err != nil {
-		return fmt.Sprintf("%s: %v", e.Message, e.Err)
+		base = fmt.Sprintf("%s: %v", e.Message, e.Err)
 	}
-	return e.Message
+	if e.Action != "" {
+		return fmt.Sprintf("%s. %s", base, e.Action)
+	}
+	return base
 }
 
 func (e *Error) Unwrap() error {
@@ -59,10 +76,27 @@ func newError(kind ErrorKind, format string, args ...interface{}) *Error {
 	}
 }
 
+func newErrorWithAction(kind ErrorKind, action string, format string, args ...interface{}) *Error {
+	return &Error{
+		Kind:    kind,
+		Message: fmt.Sprintf(format, args...),
+		Action:  action,
+	}
+}
+
 func wrapError(kind ErrorKind, err error, format string, args ...interface{}) *Error {
 	return &Error{
 		Kind:    kind,
 		Message: fmt.Sprintf(format, args...),
+		Err:     err,
+	}
+}
+
+func wrapErrorWithAction(kind ErrorKind, err error, action string, format string, args ...interface{}) *Error {
+	return &Error{
+		Kind:    kind,
+		Message: fmt.Sprintf(format, args...),
+		Action:  action,
 		Err:     err,
 	}
 }

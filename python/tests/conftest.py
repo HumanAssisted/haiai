@@ -39,6 +39,13 @@ class _MockJacsAgent:
         self._signatures[data] = sig_b64
         return sig_b64
 
+    def canonicalize_json(self, json_str: str) -> str:
+        """Return canonical JSON (sorted keys, compact separators)."""
+        import json as _json
+
+        obj = _json.loads(json_str)
+        return _json.dumps(obj, sort_keys=True, separators=(",", ":"))
+
     def load(self, config_path: str) -> None:
         pass
 

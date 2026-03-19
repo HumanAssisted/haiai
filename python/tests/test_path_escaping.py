@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 
@@ -370,3 +373,31 @@ async def test_async_verify_agent_document_uses_public_endpoint(
     await client.verify_agent_document("https://hai.ai", {"jacsId": "agent-1"}, domain="example.com")
 
     assert fake_http.last_post_url == "https://hai.ai/api/v1/agents/verify"
+
+
+# ---------------------------------------------------------------------------
+# Fixture-driven path escaping tests (T09)
+# ---------------------------------------------------------------------------
+
+
+def _load_path_escaping_fixture() -> dict:
+    path = Path(__file__).resolve().parent.parent.parent / "fixtures" / "path_escaping_contract.json"
+    return json.loads(path.read_text())
+
+
+class TestPathEscapingContract:
+    """Tests driven by fixtures/path_escaping_contract.json."""
+
+    def test_all_vectors(self) -> None:
+        fixture = _load_path_escaping_fixture()
+        for vec in fixture["test_vectors"]:
+            result = quote(vec["raw"], safe="")
+            assert result == vec["escaped"], (
+                f"Escaping {vec['raw']!r}: expected {vec['escaped']!r}, got {result!r}"
+            )
+
+    def test_path_traversal_escaped(self) -> None:
+        malicious = "../../../etc/passwd"
+        escaped = quote(malicious, safe="")
+        # Slashes must be encoded to prevent path traversal
+        assert "/" not in escaped

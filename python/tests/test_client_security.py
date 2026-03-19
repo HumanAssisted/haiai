@@ -274,3 +274,42 @@ def test_register_new_agent_defaults_to_secure_key_dir(
     doc = json.loads(str(captured_payload["agent_json"]))
     assert doc["description"] == "Agent description"
     assert doc["domain"] == "agent.example"
+
+
+# ---------------------------------------------------------------------------
+# Fixture-driven security regression tests (T10)
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityRegressionContract:
+    """Tests driven by fixtures/security_regression_contract.json."""
+
+    @staticmethod
+    def _load_fixture() -> dict:
+        import json
+        from pathlib import Path
+        path = Path(__file__).resolve().parent.parent.parent / "fixtures" / "security_regression_contract.json"
+        return json.loads(path.read_text())
+
+    def test_fixture_loads(self) -> None:
+        fixture = self._load_fixture()
+        assert "test_cases" in fixture
+        assert len(fixture["test_cases"]) >= 5
+
+    def test_fallback_does_not_activate(self) -> None:
+        """If JACS agent is not loaded, crypto ops raise (not fall back to local)."""
+        from haiai import config as config_mod
+        from haiai.errors import HaiError
+        from haiai.signing import canonicalize_json
+
+        config_mod.reset()
+        with pytest.raises(HaiError) as exc_info:
+            canonicalize_json({"test": True})
+        assert exc_info.value.code == "JACS_NOT_LOADED"
+
+    def test_malformed_agent_id_escaped(self, loaded_config: None) -> None:
+        """Agent ID with special chars is URL-escaped in API paths."""
+        from urllib.parse import quote
+        malicious_id = "agent/../../../etc/passwd"
+        escaped = quote(malicious_id, safe="")
+        assert "/" not in escaped

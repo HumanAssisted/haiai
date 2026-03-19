@@ -1,0 +1,25 @@
+{
+  "description": "Security invariants that must never regress",
+  "test_cases": [
+    {
+      "name": "register_omits_private_key",
+      "assertion": "POST /api/v1/agents/register body must not contain 'BEGIN PRIVATE KEY'"
+    },
+    {
+      "name": "register_is_unauthenticated",
+      "assertion": "POST /api/v1/agents/register must not have Authorization header"
+    },
+    {
+      "name": "fallback_does_not_activate",
+      "assertion": "If JACS is loaded but signing fails, SDK propagates error (does not fall back to local crypto)"
+    },
+    {
+      "name": "malformed_agent_id_escaped",
+      "assertion": "Agent ID with special chars is URL-escaped in all API paths"
+    },
+    {
+      "name": "encrypted_key_requires_password",
+      "assertion": "Loading encrypted private key without password returns clear error"
+    }
+  ]
+}

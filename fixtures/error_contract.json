@@ -1,0 +1,47 @@
+{
+  "description": "Error codes and message patterns across all SDKs",
+  "error_codes": {
+    "JACS_NOT_LOADED": {
+      "message_pattern": "requires.*JACS|JACS.*not.*loaded",
+      "action_hint_pattern": "haiai init|JACS_CONFIG_PATH|install"
+    },
+    "JACS_OP_FAILED": {
+      "message_pattern": "failed.*JACS|JACS.*error|JACS.*failed",
+      "action_hint_pattern": "JACS installation|pip install jacs|npm install @hai.ai/jacs"
+    },
+    "SIGNING_FAILED": {
+      "message_pattern": "sign.*failed|signing.*error",
+      "action_hint_pattern": "private key|JACS agent"
+    },
+    "VERIFICATION_FAILED": {
+      "message_pattern": "verif.*failed",
+      "action_hint_pattern": "key.*ID|algorithm|public key"
+    },
+    "CONFIG_MISSING": {
+      "message_pattern": "config.*not found|missing.*config",
+      "action_hint_pattern": "jacs.config.json|haiai init|JACS_CONFIG_PATH"
+    },
+    "CONFIG_INVALID": {
+      "message_pattern": "config.*invalid|invalid.*config|malformed.*config",
+      "action_hint_pattern": "jacs.config.json|syntax"
+    },
+    "PRIVATE_KEY_MISSING": {
+      "message_pattern": "private key.*not found|key.*missing",
+      "action_hint_pattern": "haiai init|key path"
+    },
+    "PRIVATE_KEY_PASSWORD_REQUIRED": {
+      "message_pattern": "encrypted.*password|password.*required",
+      "action_hint_pattern": "JACS_PRIVATE_KEY_PASSWORD|JACS_PASSWORD_FILE"
+    },
+    "JACS_BUILD_REQUIRED": {
+      "message_pattern": "requires JACS|build with.*jacs",
+      "action_hint_pattern": "-tags jacs|JACS.*installed"
+    }
+  },
+  "http_error_mapping": {
+    "401": "AUTHENTICATION_FAILED",
+    "403": "EMAIL_NOT_ACTIVE",
+    "404": "NOT_FOUND",
+    "429": "RATE_LIMITED"
+  }
+}

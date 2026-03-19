@@ -28,6 +28,8 @@ class HaiError(Exception):
         message: Human-readable error description.
         status_code: HTTP status code if available.
         response_data: Raw response data from the API if available.
+        code: Structured error code (e.g. ``JACS_NOT_LOADED``).
+        action: Developer-facing hint describing how to fix the issue.
     """
 
     def __init__(
@@ -35,11 +37,17 @@ class HaiError(Exception):
         message: str,
         status_code: Optional[int] = None,
         response_data: Optional[dict[str, Any]] = None,
+        *,
+        code: str = "",
+        action: str = "",
     ) -> None:
-        super().__init__(message)
+        full_msg = f"{message}. {action}" if action else message
+        super().__init__(full_msg)
         self.message = message
         self.status_code = status_code
         self.response_data = response_data or {}
+        self.code = code
+        self.action = action
         self.error_code = ""  # populated from API error_code field when available
 
     def __str__(self) -> str:

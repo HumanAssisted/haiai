@@ -2,12 +2,19 @@
 export class HaiError extends Error {
   statusCode?: number;
   responseData?: Record<string, unknown>;
+  /** Structured error code (e.g. 'JACS_NOT_LOADED'). */
+  errorCode: string;
+  /** Developer-facing hint describing how to fix the issue. */
+  action: string;
 
-  constructor(message: string, statusCode?: number, responseData?: Record<string, unknown>) {
-    super(message);
+  constructor(message: string, statusCode?: number, responseData?: Record<string, unknown>,
+              errorCode: string = '', action: string = '') {
+    super(action ? `${message}. ${action}` : message);
     this.name = 'HaiError';
     this.statusCode = statusCode;
     this.responseData = responseData;
+    this.errorCode = errorCode;
+    this.action = action;
   }
 }
 

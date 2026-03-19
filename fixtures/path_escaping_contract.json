@@ -1,0 +1,14 @@
+{
+  "description": "URL path segment escaping test vectors",
+  "test_vectors": [
+    {"raw": "simple-id", "escaped": "simple-id"},
+    {"raw": "agent/with/slash", "escaped": "agent%2Fwith%2Fslash"},
+    {"raw": "id:with:colons", "escaped": "id%3Awith%3Acolons"},
+    {"raw": "id@domain", "escaped": "id%40domain"},
+    {"raw": "id with spaces", "escaped": "id%20with%20spaces"},
+    {"raw": "id%already%encoded", "escaped": "id%25already%25encoded"},
+    {"raw": "unicode-\u00e9\u00e8", "escaped": "unicode-%C3%A9%C3%A8"},
+    {"raw": "id#hash&amp?query", "escaped": "id%23hash%26amp%3Fquery"},
+    {"raw": "", "escaped": ""}
+  ]
+}

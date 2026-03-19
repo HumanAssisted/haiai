@@ -288,124 +288,94 @@ func newClientCryptoBackend(privateKey ed25519.PrivateKey, jacsID string) Crypto
 		agent.Close()
 	}
 
-	// Fall back to Ed25519 wrapper if JACS agent cannot be loaded.
-	// This can happen when the client is created with WithPrivateKey()
-	// without a jacs.config.json present.
-	return &clientEd25519FallbackInJacs{
-		privateKey: privateKey,
-		jacsID:     jacsID,
+	// JACS agent could not be loaded -- return error-only backend.
+	// In v0.2.0+, falling back to local Ed25519 is no longer allowed.
+	log.Printf("WARNING: JACS agent could not be loaded (err=%v). "+
+		"All crypto operations will fail. Run 'haiai init' or set JACS_CONFIG_PATH.", err)
+	return &jacsNotLoadedBackend{
+		loadErr: err,
 	}
 }
 
-// clientEd25519FallbackInJacs is used in jacs-tagged builds when the JACS agent
-// cannot be loaded (e.g., test code using WithPrivateKey directly).
-// It signs with local Ed25519 as a last resort and emits a one-time deprecation
-// warning on first use.
-type clientEd25519FallbackInJacs struct {
-	privateKey ed25519.PrivateKey
-	jacsID     string
-	warnOnce   sync.Once
+// jacsNotLoadedBackend is returned when the JACS agent cannot be loaded in a
+// jacs-tagged build. Every operation returns a clear error directing the
+// developer to load a JACS agent. This replaces the old
+// clientEd25519FallbackInJacs that silently signed with local Ed25519.
+type jacsNotLoadedBackend struct {
+	loadErr error
 }
 
-// logFallbackWarning emits a one-time warning that the JACS agent could not be
-// loaded and signing is falling back to local Ed25519.
-func (b *clientEd25519FallbackInJacs) logFallbackWarning() {
-	b.warnOnce.Do(func() {
-		log.Println("WARNING: Using Ed25519 fallback in JACS build — JACS agent not loaded")
-	})
+func (b *jacsNotLoadedBackend) errMsg(op string) string {
+	return fmt.Sprintf("%s requires a loaded JACS agent (load error: %v). Run 'haiai init' or set JACS_CONFIG_PATH", op, b.loadErr)
 }
 
-func (b *clientEd25519FallbackInJacs) SignString(message string) (string, error) {
-	if b.privateKey == nil {
-		return "", fmt.Errorf("jacs fallback: private key not loaded")
-	}
-	b.logFallbackWarning()
-	sig := ed25519.Sign(b.privateKey, []byte(message))
-	return base64.StdEncoding.EncodeToString(sig), nil
+func (b *jacsNotLoadedBackend) SignString(message string) (string, error) {
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: b.errMsg("SignString"), Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 }
 
-func (b *clientEd25519FallbackInJacs) SignBytes(data []byte) ([]byte, error) {
-	if b.privateKey == nil {
-		return nil, fmt.Errorf("jacs fallback: private key not loaded")
-	}
-	b.logFallbackWarning()
-	return ed25519.Sign(b.privateKey, data), nil
+func (b *jacsNotLoadedBackend) SignBytes(data []byte) ([]byte, error) {
+	return nil, &Error{Kind: ErrJacsNotLoaded, Message: b.errMsg("SignBytes"), Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 }
 
-func (b *clientEd25519FallbackInJacs) VerifyBytes(data, signature []byte, publicKeyPEM string) error {
-	b.logFallbackWarning()
-	pubKey, err := ParsePublicKey([]byte(publicKeyPEM))
-	if err != nil {
-		return err
-	}
-	if !ed25519.Verify(pubKey, data, signature) {
-		return fmt.Errorf("signature verification failed")
-	}
-	return nil
+func (b *jacsNotLoadedBackend) VerifyBytes(data, signature []byte, publicKeyPEM string) error {
+	// Standalone verify can use the module-level JACS backend
+	return cryptoBackend.VerifyBytes(data, signature, publicKeyPEM)
 }
 
-func (b *clientEd25519FallbackInJacs) SignRequest(payloadJSON string) (string, error) {
-	return "", fmt.Errorf("jacs fallback: SignRequest requires loaded JACS agent")
+func (b *jacsNotLoadedBackend) SignRequest(payloadJSON string) (string, error) {
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: b.errMsg("SignRequest"), Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 }
 
-func (b *clientEd25519FallbackInJacs) VerifyResponse(documentJSON string) (string, error) {
-	return "", fmt.Errorf("jacs fallback: VerifyResponse requires loaded JACS agent")
+func (b *jacsNotLoadedBackend) VerifyResponse(documentJSON string) (string, error) {
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: b.errMsg("VerifyResponse"), Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 }
 
-func (b *clientEd25519FallbackInJacs) GenerateKeyPair() ([]byte, []byte, error) {
+func (b *jacsNotLoadedBackend) GenerateKeyPair() ([]byte, []byte, error) {
 	return cryptoBackend.GenerateKeyPair()
 }
 
-func (b *clientEd25519FallbackInJacs) Algorithm() string {
-	return "Ed25519"
+func (b *jacsNotLoadedBackend) Algorithm() string {
+	return "JACS (not loaded)"
 }
 
-func (b *clientEd25519FallbackInJacs) CanonicalizeJSON(jsonStr string) (string, error) {
-	return canonicalizeJSONLocal(jsonStr)
+func (b *jacsNotLoadedBackend) CanonicalizeJSON(jsonStr string) (string, error) {
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: b.errMsg("CanonicalizeJSON"), Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 }
 
-func (b *clientEd25519FallbackInJacs) SignResponse(payloadJSON string) (string, error) {
-	signed, err := signResponseLocally(b.privateKey, b.jacsID, payloadJSON)
-	if err != nil {
-		return "", fmt.Errorf("jacs fallback: %w", err)
-	}
-	return signed, nil
+func (b *jacsNotLoadedBackend) SignResponse(payloadJSON string) (string, error) {
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: b.errMsg("SignResponse"), Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 }
 
-func (b *clientEd25519FallbackInJacs) EncodeVerifyPayload(document string) (string, error) {
-	return base64.RawURLEncoding.EncodeToString([]byte(document)), nil
+func (b *jacsNotLoadedBackend) EncodeVerifyPayload(document string) (string, error) {
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: b.errMsg("EncodeVerifyPayload"), Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 }
 
-func (b *clientEd25519FallbackInJacs) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
-	return "", fmt.Errorf("jacs fallback: UnwrapSignedEvent requires loaded JACS agent")
+func (b *jacsNotLoadedBackend) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: b.errMsg("UnwrapSignedEvent"), Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 }
 
-func (b *clientEd25519FallbackInJacs) BuildAuthHeader() (string, error) {
-	if b.privateKey == nil {
-		return "", fmt.Errorf("jacs fallback: private key not loaded")
-	}
-	b.logFallbackWarning()
-	return BuildAuthHeader(b.jacsID, b.privateKey), nil
+func (b *jacsNotLoadedBackend) BuildAuthHeader() (string, error) {
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: b.errMsg("BuildAuthHeader"), Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 }
 
-func (b *clientEd25519FallbackInJacs) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
-	return "", fmt.Errorf("jacs fallback: SignA2AArtifact requires loaded JACS agent")
+func (b *jacsNotLoadedBackend) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: b.errMsg("SignA2AArtifact"), Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 }
 
-func (b *clientEd25519FallbackInJacs) VerifyA2AArtifact(wrappedJSON string) (string, error) {
-	return "", fmt.Errorf("jacs fallback: VerifyA2AArtifact requires loaded JACS agent")
+func (b *jacsNotLoadedBackend) VerifyA2AArtifact(wrappedJSON string) (string, error) {
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: b.errMsg("VerifyA2AArtifact"), Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 }
 
-func (b *clientEd25519FallbackInJacs) VerifyA2AArtifactWithPolicy(wrappedJSON, agentCardJSON, policyJSON string) (string, error) {
-	return "", fmt.Errorf("jacs fallback: VerifyA2AArtifactWithPolicy requires loaded JACS agent")
+func (b *jacsNotLoadedBackend) VerifyA2AArtifactWithPolicy(wrappedJSON, agentCardJSON, policyJSON string) (string, error) {
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: b.errMsg("VerifyA2AArtifactWithPolicy"), Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 }
 
-func (b *clientEd25519FallbackInJacs) AssessA2AAgent(agentCardJSON, policyJSON string) (string, error) {
-	return "", fmt.Errorf("jacs fallback: AssessA2AAgent requires loaded JACS agent")
+func (b *jacsNotLoadedBackend) AssessA2AAgent(agentCardJSON, policyJSON string) (string, error) {
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: b.errMsg("AssessA2AAgent"), Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 }
 
-func (b *clientEd25519FallbackInJacs) ExportAgentCard(agentDataJSON string) (string, error) {
-	return "", fmt.Errorf("jacs fallback: ExportAgentCard requires loaded JACS agent")
+func (b *jacsNotLoadedBackend) ExportAgentCard(agentDataJSON string) (string, error) {
+	return "", &Error{Kind: ErrJacsNotLoaded, Message: b.errMsg("ExportAgentCard"), Action: "Run 'haiai init' or set JACS_CONFIG_PATH"}
 }
 
 // discoverConfigPath returns the first existing jacs config path, or empty string.

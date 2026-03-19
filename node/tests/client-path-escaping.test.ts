@@ -78,3 +78,33 @@ describe('client path escaping', () => {
     await client.getAgentAttestation('other/agent');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fixture-driven path escaping tests (T09)
+// ---------------------------------------------------------------------------
+
+import { readFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname2 = dirname(fileURLToPath(import.meta.url));
+
+describe('path_escaping_contract', () => {
+  const fixture = JSON.parse(
+    readFileSync(resolve(__dirname2, '../../fixtures/path_escaping_contract.json'), 'utf-8'),
+  ) as { test_vectors: Array<{ raw: string; escaped: string }> };
+
+  for (const vec of fixture.test_vectors) {
+    it(`escapes "${vec.raw}" to "${vec.escaped}"`, () => {
+      const result = encodeURIComponent(vec.raw);
+      expect(result).toBe(vec.escaped);
+    });
+  }
+
+  it('prevents path traversal', () => {
+    const malicious = '../../../etc/passwd';
+    const escaped = encodeURIComponent(malicious);
+    // Slashes must be encoded to prevent path traversal
+    expect(escaped).not.toContain('/');
+  });
+});

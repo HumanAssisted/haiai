@@ -22,7 +22,7 @@ def test_haiai_submodule_imports_work() -> None:
     assert callable(load)
 
 
-def test_haiai_signing_and_crypt_are_consistent() -> None:
+def test_haiai_signing_and_crypt_are_consistent(loaded_config: None) -> None:
     from haiai.crypt import canonicalize_json as public_canonicalize_json
     from haiai.signing import sign_response as public_sign_response
     from haiai.signing import canonicalize_json as signing_canonicalize_json

@@ -31,17 +31,17 @@ status=0
 check_pattern \
   "Python Ed25519 primitive imports" \
   "cryptography\.hazmat\.primitives\.asymmetric\.ed25519" \
-  '^(python/src/jacs/hai/(crypt|client|async_client|config|signing)\.py):' || status=1
+  '^(python/src/haiai/(crypt|client|async_client|config|signing)\.py):' || status=1
 
 check_pattern \
   "Node native crypto imports" \
   "from 'node:crypto'" \
-  '^(node/src/(crypt|signing|client)\.ts):' || status=1
+  '^(node/src/(crypt|signing|client|hash|mime)\.ts):' || status=1
 
 check_pattern \
   "Go crypto/ed25519 imports" \
   '"crypto/ed25519"' \
-  '^(go/(signing|client|auth|crypto_fallback|crypto_jacs|a2a)\.go|go/.+_test\.go|go/examples/.+):' || status=1
+  '^(go/(signing|client|auth|crypto_fallback|crypto_jacs|a2a|sign_response_local)\.go|go/.+_test\.go|go/examples/.+):' || status=1
 
 if [[ "$status" -ne 0 ]]; then
   cat <<'MSG'

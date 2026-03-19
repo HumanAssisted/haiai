@@ -1,0 +1,22 @@
+{
+  "description": "JACS-only crypto policy enforcement across all SDKs",
+  "canonicalization": {
+    "test_vectors": [
+      {"input": {"b": 2, "a": 1}, "expected": "{\"a\":1,\"b\":2}"},
+      {"input": {"z": [3,1,2], "a": {"c": 3, "b": 2}}, "expected": "{\"a\":{\"b\":2,\"c\":3},\"z\":[3,1,2]}"},
+      {"input": {}, "expected": "{}"}
+    ],
+    "jacs_required": true,
+    "error_when_no_jacs": "JACS_NOT_LOADED"
+  },
+  "signing": {
+    "operations": ["sign_string", "sign_response", "build_auth_header"],
+    "jacs_required": true,
+    "error_when_no_jacs": "JACS_NOT_LOADED"
+  },
+  "verification": {
+    "operations": ["verify_string", "verify_bytes", "unwrap_signed_event"],
+    "jacs_required": true,
+    "error_when_no_jacs": "JACS_NOT_LOADED"
+  }
+}

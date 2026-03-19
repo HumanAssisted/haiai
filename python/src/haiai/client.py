@@ -267,9 +267,9 @@ class HaiClient:
     def _build_jacs_auth_header(self) -> str:
         """Build ``Authorization: JACS {jacsId}:{timestamp}:{signature}``.
 
-        Delegates to JACS binding-core ``build_auth_header`` when available,
-        falling back to local construction for agents that only provide
-        ``sign_string`` (e.g. test mocks).
+        Delegates to JACS binding-core ``build_auth_header`` when available.
+        Otherwise constructs the header locally using JACS ``sign_string``.
+        Both paths require a loaded JACS agent.
         """
         from haiai.config import get_config, get_agent
 
@@ -283,7 +283,14 @@ class HaiClient:
         if hasattr(agent, "build_auth_header"):
             return agent.build_auth_header()
 
-        # Fallback: local construction (test mocks without build_auth_header)
+        # Local construction using JACS sign_string
+        if not hasattr(agent, "sign_string"):
+            raise HaiError(
+                "build_auth_header requires a JACS agent with sign_string support",
+                code="JACS_NOT_LOADED",
+                action="Run 'haiai init' or set JACS_CONFIG_PATH environment variable",
+            )
+
         timestamp = int(time.time())
         message = f"{cfg.jacs_id}:{timestamp}"
         signature = agent.sign_string(message)
@@ -3988,19 +3995,25 @@ def _encode_verify_payload(document: str) -> str:
 
     Delegates to JACS binding-core when available so the encoding is
     identical to the Rust implementation.  Falls back to Python's
-    ``base64.urlsafe_b64encode`` when JACS is not loaded.
+    ``base64.urlsafe_b64encode`` when the loaded JACS agent does not
+    expose the method.
+
+    Raises :class:`~haiai.errors.HaiError` if no JACS agent is loaded.
     """
-    try:
-        from haiai.config import is_loaded, get_agent
+    from haiai.config import is_loaded, get_agent
 
-        if is_loaded():
-            agent = get_agent()
-            if hasattr(agent, "encode_verify_payload"):
-                return agent.encode_verify_payload(document)
-    except Exception:
-        pass
+    if not is_loaded():
+        raise HaiError(
+            "encode_verify_payload requires a loaded JACS agent",
+            code="JACS_NOT_LOADED",
+            action="Run 'haiai init' or set JACS_CONFIG_PATH environment variable",
+        )
 
-    # Fallback: local base64url encoding (no padding)
+    agent = get_agent()
+    if hasattr(agent, "encode_verify_payload"):
+        return agent.encode_verify_payload(document)
+
+    # Local base64url encoding (no padding) -- consistent with JACS Rust
     return base64.urlsafe_b64encode(
         document.encode("utf-8")
     ).rstrip(b"=").decode("ascii")

@@ -14,7 +14,7 @@ def _load_fixture() -> dict[str, object]:
     return json.loads(fixture_path.read_text())
 
 
-def test_cross_lang_canonical_json_cases() -> None:
+def test_cross_lang_canonical_json_cases(loaded_config: None) -> None:
     fixture = _load_fixture()
     for case in fixture["canonical_json_cases"]:
         assert canonicalize_json(case["input"]) == case["expected"]

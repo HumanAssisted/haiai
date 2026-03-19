@@ -27,7 +27,9 @@ func printFallbackWarning() {
 		if os.Getenv("HAIAI_QUIET_FALLBACK") == "" {
 			fmt.Fprintln(os.Stderr,
 				"WARNING: haiai using local Ed25519 fallback crypto. "+
-					"Build with '-tags jacs' and install JACS for full algorithm support (Ed25519, RSA-PSS, PQ2025).")
+					"Build with 'go build -tags jacs' and ensure JACS is installed "+
+					"for full algorithm support (Ed25519, RSA-PSS, PQ2025). "+
+					"See docs/MIGRATION_v0.1.4_to_v0.2.0.md for details.")
 		}
 	})
 }
@@ -88,7 +90,7 @@ func (f *ed25519Fallback) Algorithm() string {
 }
 
 func (f *ed25519Fallback) CanonicalizeJSON(jsonStr string) (string, error) {
-	return canonicalizeJSONLocal(jsonStr)
+	return "", fmt.Errorf("ed25519 fallback: CanonicalizeJSON requires JACS backend. Build with 'go build -tags jacs' and ensure JACS is installed")
 }
 
 func (f *ed25519Fallback) SignResponse(payloadJSON string) (string, error) {
@@ -96,7 +98,7 @@ func (f *ed25519Fallback) SignResponse(payloadJSON string) (string, error) {
 }
 
 func (f *ed25519Fallback) EncodeVerifyPayload(document string) (string, error) {
-	return base64.RawURLEncoding.EncodeToString([]byte(document)), nil
+	return "", fmt.Errorf("ed25519 fallback: EncodeVerifyPayload requires JACS backend. Build with 'go build -tags jacs' and ensure JACS is installed")
 }
 
 func (f *ed25519Fallback) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
