@@ -294,6 +294,42 @@ enum Commands {
         #[arg()]
         key: String,
     },
+
+    /// Search embedded JACS and HAI documentation
+    SelfKnowledge {
+        /// Search query
+        query: String,
+
+        /// Maximum results to return
+        #[arg(long, default_value = "5")]
+        limit: usize,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Manage the OS keychain password for your agent's private key
+    Keychain {
+        #[command(subcommand)]
+        action: KeychainAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum KeychainAction {
+    /// Store the private key password in the OS keychain
+    Set {
+        /// Password to store (omit to be prompted)
+        #[arg(long)]
+        password: Option<String>,
+    },
+    /// Retrieve the stored password from the OS keychain
+    Get,
+    /// Delete the stored password from the OS keychain
+    Delete,
+    /// Check if the OS keychain is available and has a stored password
+    Status,
 }
 
 /// Resolve the effective `--storage` value, considering `--storage-env`.
@@ -460,7 +496,10 @@ async fn main() -> anyhow::Result<()> {
             .context("failed to resolve storage flag")?;
 
     // Commands that load an existing agent need the private key password. Prompt once if not set and not -q.
-    if !matches!(cli.command, Commands::Init { .. }) {
+    if !matches!(
+        cli.command,
+        Commands::Init { .. } | Commands::SelfKnowledge { .. }
+    ) {
         ensure_agent_password(cli.quiet).context("failed to resolve private key password")?;
     }
 
@@ -1035,6 +1074,90 @@ async fn main() -> anyhow::Result<()> {
                 .remove_document(&key)
                 .context("remove_document failed")?;
             println!("Document removed: {}", key);
+        }
+
+        Commands::SelfKnowledge { query, limit, json } => {
+            let results = haiai::self_knowledge::self_knowledge(&query, limit);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&results)
+                        .context("failed to serialize results")?
+                );
+            } else if results.is_empty() {
+                println!("No results found.");
+            } else {
+                for result in &results {
+                    println!(
+                        "[{}] {} (score: {:.2})",
+                        result.rank, result.title, result.score
+                    );
+                    println!("    Source: {}", result.path);
+                    println!("    ---");
+                    let snippet = if result.content.len() > 500 {
+                        let mut end = 497;
+                        while !result.content.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        format!("{}...", &result.content[..end])
+                    } else {
+                        result.content.clone()
+                    };
+                    for line in snippet.lines() {
+                        println!("    {}", line);
+                    }
+                    println!("    ---");
+                    println!();
+                }
+            }
+        }
+
+        Commands::Keychain { action } => {
+            use jacs::keystore::keychain;
+
+            match action {
+                KeychainAction::Set { password } => {
+                    let pass = match password {
+                        Some(p) => p,
+                        None => {
+                            if !atty::is(atty::Stream::Stdin) {
+                                anyhow::bail!("No password provided. Use --password or run from a terminal.");
+                            }
+                            eprintln!("Enter password to store in keychain:");
+                            rpassword::read_password().context("failed to read password")?
+                        }
+                    };
+                    if pass.is_empty() {
+                        anyhow::bail!("Password cannot be empty.");
+                    }
+                    keychain::store_password(&pass)
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    println!("Password stored in OS keychain.");
+                }
+                KeychainAction::Get => {
+                    match keychain::get_password() {
+                        Ok(Some(p)) => println!("{p}"),
+                        Ok(None) => {
+                            eprintln!("No password stored in OS keychain.");
+                            std::process::exit(1);
+                        }
+                        Err(e) => anyhow::bail!("Keychain error: {e}"),
+                    }
+                }
+                KeychainAction::Delete => {
+                    keychain::delete_password()
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    println!("Password deleted from OS keychain.");
+                }
+                KeychainAction::Status => {
+                    let available = keychain::is_available();
+                    let has_password = keychain::get_password()
+                        .map(|p| p.is_some())
+                        .unwrap_or(false);
+                    println!("Keychain available: {available}");
+                    println!("Password stored:    {has_password}");
+                }
+            }
         }
     }
 
@@ -1734,6 +1857,39 @@ mod tests {
             result.is_err(),
             "--storage and --storage-env should conflict"
         );
+    }
+
+    #[test]
+    fn parse_self_knowledge() {
+        let cli = Cli::parse_from(["haiai", "self-knowledge", "key rotation"]);
+        match cli.command {
+            Commands::SelfKnowledge { query, limit, json } => {
+                assert_eq!(query, "key rotation");
+                assert_eq!(limit, 5);
+                assert!(!json);
+            }
+            _ => panic!("expected SelfKnowledge command"),
+        }
+    }
+
+    #[test]
+    fn parse_self_knowledge_with_options() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "self-knowledge",
+            "email signing",
+            "--limit",
+            "3",
+            "--json",
+        ]);
+        match cli.command {
+            Commands::SelfKnowledge { query, limit, json } => {
+                assert_eq!(query, "email signing");
+                assert_eq!(limit, 3);
+                assert!(json);
+            }
+            _ => panic!("expected SelfKnowledge command"),
+        }
     }
 
     #[test]

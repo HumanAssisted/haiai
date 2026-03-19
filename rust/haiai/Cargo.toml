@@ -1,6 +1,6 @@
 [package]
 name = "haiai"
-version = "0.1.3"
+version = "0.1.4"
 description = "Rust SDK for HAI.AI agent benchmarking, designed as a JACS-delegating wrapper"
 readme = "README.md"
 keywords = ["hai", "jacs", "agent", "benchmark", "sdk"]
@@ -36,7 +36,8 @@ tokio-tungstenite = "0.28"
 url.workspace = true
 uuid.workspace = true
 tempfile = "3"
-jacs = { version = "=0.9.6", optional = true, features = ["a2a"] }
+bm25 = { version = "2.3", features = ["default_tokenizer"] }
+jacs = { version = "=0.9.7", optional = true, features = ["a2a"] }
 
 [dev-dependencies]
 httpmock = "0.8"

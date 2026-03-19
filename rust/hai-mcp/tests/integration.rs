@@ -478,6 +478,7 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     assert!(tools.contains(&"hai_send_email".to_string()));
     assert!(tools.contains(&"jacs_export_agent".to_string()));
     assert!(!tools.contains(&"hai_create_agent".to_string()));
+    assert!(tools.contains(&"hai_self_knowledge".to_string()));
 
     let exported = session.call_tool(10, "jacs_export_agent", json!({}));
     let export_text = exported["content"][0]["text"]
@@ -513,6 +514,18 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     assert_eq!(
         email_status["structuredContent"]["email_status"]["status"].as_str(),
         Some("active")
+    );
+
+    // Self-knowledge tool (no auth required, no network)
+    let sk_result = session.call_tool(13, "hai_self_knowledge", json!({
+        "query": "key rotation"
+    }));
+    let sk_text = sk_result["content"][0]["text"]
+        .as_str()
+        .expect("hai_self_knowledge text");
+    assert!(
+        sk_text.contains("Key Rotation") || sk_text.contains("[1]"),
+        "self_knowledge should return ranked results: {sk_text}"
     );
 
     server.assert_request(

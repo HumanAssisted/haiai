@@ -37,24 +37,33 @@ logger = logging.getLogger("haiai.signing")
 def canonicalize_json(obj: dict) -> str:
     """Produce canonical JSON per RFC 8785 (JCS).
 
-    Delegates to JACS binding-core when available, falling back to
-    Python's ``json.dumps`` with sorted keys for environments where
-    the JACS native module is not installed.
+    Delegates to JACS binding-core ``canonicalize_json`` when the loaded
+    agent exposes it.  Falls back to deterministic sorted-key JSON when
+    the JACS agent is loaded but does not expose the method (this is the
+    same serialisation JACS uses internally for signing in this SDK).
+
+    Raises :class:`~haiai.errors.HaiError` if no JACS agent is loaded at all.
     """
-    try:
-        from haiai.config import is_loaded, get_agent
+    from haiai.config import is_loaded, get_agent
+    from haiai.errors import HaiError
 
-        if is_loaded():
-            agent = get_agent()
-            if hasattr(agent, "canonicalize_json"):
-                # JACS expects a JSON string, not a dict
-                json_str = json.dumps(obj, sort_keys=True, separators=(",", ":"))
-                return agent.canonicalize_json(json_str)
-    except Exception:
-        pass
+    if not is_loaded():
+        raise HaiError(
+            "canonicalize_json requires a loaded JACS agent",
+            code="JACS_NOT_LOADED",
+            action="Run 'haiai init' or set JACS_CONFIG_PATH environment variable",
+        )
 
-    # Fallback: local sorted-key JSON (matches for simple cases)
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"))
+    agent = get_agent()
+    json_str = json.dumps(obj, sort_keys=True, separators=(",", ":"))
+
+    if hasattr(agent, "canonicalize_json"):
+        return agent.canonicalize_json(json_str)
+
+    # Agent loaded but lacks canonicalize_json binding (e.g. older JACS).
+    # Sorted-key compact JSON is the canonical form used by the SDK for
+    # signing payloads -- this is consistent with what JACS validates.
+    return json_str
 
 
 # ---------------------------------------------------------------------------
@@ -65,38 +74,28 @@ def canonicalize_json(obj: dict) -> str:
 def _extract_raw_key_from_pem(pem_str: str) -> bytes:
     """Extract raw key bytes from a PEM-encoded public key.
 
-    Delegates ASN.1 parsing to JACS binding-core when available so that
-    all key formats (Ed25519, pq2025, future algorithms) are supported.
-    Falls back to manual DER stripping only when JACS is unavailable.
+    Delegates ASN.1 parsing to JACS binding-core.  Raises
+    :class:`~haiai.errors.HaiError` if JACS is unavailable.
     """
+    from haiai.errors import HaiError
+
     try:
         from jacs.jacs import extract_public_key_bytes as _jacs_extract
         return _jacs_extract(pem_str)
+    except ImportError:
+        pass
+
+    try:
+        import jacs as _jacs_module
+        return _jacs_module.extract_public_key_bytes(pem_str)
     except (ImportError, AttributeError):
         pass
 
-    # Fallback: manual PEM → DER → raw key extraction
-    lines = pem_str.strip().splitlines()
-    if lines[0].startswith("-----BEGIN"):
-        b64_data = "".join(
-            line for line in lines
-            if not line.startswith("-----") and not line.startswith("#")
-        )
-        der_bytes = base64.b64decode(b64_data)
-
-        # SubjectPublicKeyInfo: strip the ASN.1 header to get raw key.
-        # Ed25519 = 44 bytes total (12 header + 32 key).
-        # Other algorithms have different sizes — return full DER
-        # and let the caller/JACS handle it.
-        if len(der_bytes) > 32 and len(der_bytes) <= 64:
-            # Heuristic: find the BIT STRING (03) or OCTET STRING (04)
-            # containing the raw key at the end of the structure.
-            # For Ed25519: 12-byte prefix. For others, return full DER.
-            if len(der_bytes) == 44:
-                return der_bytes[12:]
-        return der_bytes
-    else:
-        return base64.b64decode(pem_str)
+    raise HaiError(
+        "_extract_raw_key_from_pem requires JACS binding-core",
+        code="JACS_NOT_LOADED",
+        action="Install JACS: pip install jacs",
+    )
 
 
 def verify_string(
@@ -117,20 +116,37 @@ def verify_string(
         algorithm: Signing algorithm (default "pq2025").
 
     Returns:
-        True if the signature is valid, False otherwise.
+        True if the signature is valid.
+
+    Raises:
+        HaiError: If JACS is not available or verification encounters an error.
     """
+    from haiai.errors import HaiError
+
     try:
         from jacs.jacs import verify_string as _jacs_verify_string
     except ImportError:
-        import jacs as _jacs_module
-        _jacs_verify_string = _jacs_module.verify_string
+        try:
+            import jacs as _jacs_module
+            _jacs_verify_string = _jacs_module.verify_string
+        except (ImportError, AttributeError):
+            raise HaiError(
+                "verify_string requires JACS binding-core",
+                code="JACS_NOT_LOADED",
+                action="Install JACS: pip install jacs",
+            )
 
     try:
-        # JACS verify_string expects raw key bytes, not PEM.
         key_bytes = _extract_raw_key_from_pem(public_key_pem)
         return _jacs_verify_string(data, signature_b64, key_bytes, algorithm)
-    except Exception:
-        return False
+    except HaiError:
+        raise
+    except Exception as exc:
+        raise HaiError(
+            f"Signature verification failed: {exc}",
+            code="VERIFICATION_FAILED",
+            action="Verify the public key and algorithm match the signer",
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -305,39 +321,43 @@ def unwrap_signed_event(
     """
     # Try JACS binding-core delegation first
     if verify and hai_url:
-        try:
-            from haiai.config import is_loaded, get_agent
+        from haiai.config import is_loaded, get_agent
+        from haiai.errors import HaiError
 
-            if is_loaded():
-                agent = get_agent()
-                if hasattr(agent, "unwrap_signed_event"):
-                    keys = fetch_server_keys(hai_url)
-                    server_keys_dict: dict[str, Any] = {
-                        "keys": [
-                            {
-                                "key_id": k.key_id,
-                                "algorithm": k.algorithm,
-                                "public_key": k.public_key_pem,
-                            }
-                            for k in keys
-                        ]
-                    }
-                    event_json = json.dumps(data)
-                    server_keys_json = json.dumps(server_keys_dict)
+        if is_loaded():
+            agent = get_agent()
+            if hasattr(agent, "unwrap_signed_event"):
+                keys = fetch_server_keys(hai_url)
+                server_keys_dict: dict[str, Any] = {
+                    "keys": [
+                        {
+                            "key_id": k.key_id,
+                            "algorithm": k.algorithm,
+                            "public_key": k.public_key_pem,
+                        }
+                        for k in keys
+                    ]
+                }
+                event_json = json.dumps(data)
+                server_keys_json = json.dumps(server_keys_dict)
+                try:
                     result_json = agent.unwrap_signed_event(
                         event_json, server_keys_json
                     )
-                    result = json.loads(result_json)
-                    payload = result.get("data", data)
-                    verified = result.get("verified", False)
-                    if isinstance(payload, dict):
-                        return payload, verified
-                    return data, False
-        except Exception:
-            # Fall through to local implementation
-            pass
+                except Exception as exc:
+                    raise HaiError(
+                        f"unwrap_signed_event failed: {exc}",
+                        code="JACS_OP_FAILED",
+                        action="Check JACS installation: pip install jacs",
+                    ) from exc
+                result = json.loads(result_json)
+                payload = result.get("data", data)
+                verified = result.get("verified", False)
+                if isinstance(payload, dict):
+                    return payload, verified
+                return data, False
 
-    # Fallback: local unwrap with JACS verify_string for signature checks
+    # Local unwrap with JACS verify_string for signature checks
     # JacsDocument format
     if "payload" in data and "signature" in data:
         payload = data["payload"]
@@ -399,9 +419,10 @@ def sign_response(
 
         {"signed_document": "<json string>", "agent_jacs_id": "..."}
 
-    Delegates envelope construction to JACS binding-core when the agent
-    exposes ``sign_response``. Falls back to local construction for agents
-    that only provide ``sign_string`` (e.g. test mocks).
+    Delegates full envelope construction to JACS binding-core when the
+    agent exposes ``sign_response``.  Otherwise constructs the envelope
+    locally and delegates the signature to JACS ``sign_string``.  Either
+    path requires a loaded JACS agent.
 
     Args:
         job_response_payload: The ``JobResponseRequest`` dict.
@@ -410,14 +431,29 @@ def sign_response(
 
     Returns:
         Dict with ``signed_document`` (JSON string) and ``agent_jacs_id``.
+
+    Raises:
+        HaiError: If the agent does not support signing.
     """
+    from haiai.errors import HaiError
+
+    if not hasattr(agent, "sign_string"):
+        raise HaiError(
+            "sign_response requires a JACS agent with sign_string support",
+            code="JACS_NOT_LOADED",
+            action="Run 'haiai init' or set JACS_CONFIG_PATH environment variable",
+        )
+
     # Prefer JACS binding delegation (JACS canonicalizes internally via RFC 8785)
     if hasattr(agent, "sign_response"):
         raw_json = json.dumps(job_response_payload, separators=(",", ":"))
         result_json = agent.sign_response(raw_json)
         return {"signed_document": result_json, "agent_jacs_id": jacs_id}
 
-    # Fallback for agents without sign_response (test mocks)
+    # Local envelope construction with JACS sign_string delegation.
+    # NOTE: The signature covers canonicalize_json(job_response_payload).
+    # The server re-canonicalizes jacs_doc["data"] before verifying.
+    # This matches the Node SDK's signResponse behavior.
     canonical_payload = canonicalize_json(job_response_payload)
     doc_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()

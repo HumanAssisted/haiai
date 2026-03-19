@@ -2,12 +2,19 @@
 export class HaiError extends Error {
   statusCode?: number;
   responseData?: Record<string, unknown>;
+  /** Structured error code (e.g. 'JACS_NOT_LOADED'). */
+  errorCode: string;
+  /** Developer-facing hint describing how to fix the issue. */
+  action: string;
 
-  constructor(message: string, statusCode?: number, responseData?: Record<string, unknown>) {
-    super(message);
+  constructor(message: string, statusCode?: number, responseData?: Record<string, unknown>,
+              errorCode: string = '', action: string = '') {
+    super(action ? `${message}. ${action}` : message);
     this.name = 'HaiError';
     this.statusCode = statusCode;
     this.responseData = responseData;
+    this.errorCode = errorCode;
+    this.action = action;
   }
 }
 
@@ -61,15 +68,12 @@ export class SSEError extends HaiError {
 
 /** General API error (non-auth, non-connection). */
 export class HaiApiError extends HaiError {
-  /** Structured error code from the API (e.g., 'EMAIL_NOT_ACTIVE'). */
-  errorCode: string;
   /** Raw response body text. */
   body: string;
 
   constructor(message: string, statusCode?: number, responseData?: Record<string, unknown>, errorCode: string = '', body: string = '') {
-    super(message, statusCode, responseData);
+    super(message, statusCode, responseData, errorCode);
     this.name = 'HaiApiError';
-    this.errorCode = errorCode;
     this.body = body;
   }
 }

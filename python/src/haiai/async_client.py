@@ -64,6 +64,7 @@ from haiai.models import (
     HelloWorldResult,
     JobResponseResult,
     PublicKeyInfo,
+    RotationResult,
     SendEmailResult,
     TranscriptMessage,
 )
@@ -153,6 +154,19 @@ class AsyncHaiClient:
         agent = get_agent()
         if cfg.jacs_id is None:
             raise HaiAuthError("jacsId is required for JACS authentication")
+
+        # Prefer JACS binding delegation
+        if hasattr(agent, "build_auth_header"):
+            return agent.build_auth_header()
+
+        # Local construction using JACS sign_string
+        if not hasattr(agent, "sign_string"):
+            raise HaiError(
+                "build_auth_header requires a JACS agent with sign_string support",
+                code="JACS_NOT_LOADED",
+                action="Run 'haiai init' or set JACS_CONFIG_PATH environment variable",
+            )
+
         timestamp = int(time.time())
         message = f"{cfg.jacs_id}:{timestamp}"
         signature = agent.sign_string(message)
@@ -235,15 +249,42 @@ class AsyncHaiClient:
             )
 
         data = resp.json()
+        hai_sig_valid = False
+        hai_ack_sig = data.get("hai_signed_ack", "")
+        if hai_ack_sig:
+            hai_sig_valid = self.verify_hai_message(
+                message=json.dumps(data, sort_keys=True),
+                signature=hai_ack_sig,
+                hai_public_key=data.get("hai_public_key_fingerprint", ""),
+                hai_url=hai_url,
+            )
         return HelloWorldResult(
             success=True,
             timestamp=data.get("timestamp", ""),
             client_ip=data.get("client_ip", ""),
             hai_public_key_fingerprint=data.get("hai_public_key_fingerprint", ""),
             message=data.get("message", ""),
+            hai_signature_valid=hai_sig_valid,
             hello_id=data.get("hello_id", ""),
             test_scenario=data.get("test_scenario"),
             raw_response=data,
+        )
+
+    def verify_hai_message(
+        self,
+        message: str,
+        signature: str,
+        hai_public_key: str = "",
+        hai_url: Optional[str] = None,
+    ) -> bool:
+        """Verify a HAI-signed message with the same rules as the sync client."""
+        from haiai.client import _verify_hai_message_impl
+
+        return _verify_hai_message_impl(
+            message=message,
+            signature=signature,
+            hai_public_key=hai_public_key,
+            hai_url=hai_url,
         )
 
     # ------------------------------------------------------------------
@@ -711,6 +752,221 @@ class AsyncHaiClient:
 
         raise BenchmarkError(f"Benchmark timed out after {timeout}s")
 
+    async def free_run(
+        self,
+        hai_url: str,
+        transport: str = "sse",
+    ) -> FreeChaoticResult:
+        """Run a free benchmark (async).
+
+        Connects to HAI and runs the canonical scenario with a cheap model.
+        No judge evaluation, no scoring.
+
+        Rate limited to 3 runs per JACS keypair per 24 hours.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            transport: Transport protocol: "sse" (default) or "ws".
+
+        Returns:
+            FreeChaoticResult with transcript and annotations.
+        """
+        http = await self._get_http()
+        jacs_id = self._get_jacs_id()
+        url = self._make_url(hai_url, "/api/benchmark/run")
+        headers = self._build_auth_headers()
+        headers["Content-Type"] = "application/json"
+
+        payload: dict[str, Any] = {
+            "name": f"Free Run - {jacs_id[:8]}",
+            "tier": "free",
+            "transport": transport,
+        }
+
+        try:
+            resp = await http.post(
+                url, json=payload, headers=headers,
+                timeout=max(self._timeout, 120.0),
+            )
+
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Authentication failed",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+            if resp.status_code == 429:
+                raise HaiError(
+                    "Rate limited -- maximum 3 free chaotic runs per 24 hours",
+                    status_code=429,
+                )
+            if resp.status_code == 402:
+                raise HaiError("Payment required for this tier", status_code=402)
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Free chaotic run failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
+            data = resp.json()
+            transcript = self._parse_transcript(data.get("transcript", []))
+
+            return FreeChaoticResult(
+                success=True,
+                run_id=data.get("run_id", data.get("runId", "")),
+                transcript=transcript,
+                upsell_message=data.get(
+                    "upsell_message", data.get("upsellMessage", "")
+                ),
+                raw_response=data,
+            )
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise HaiConnectionError(f"Connection failed: {exc}")
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Free chaotic run failed: {exc}")
+
+    async def submit_benchmark_response(
+        self,
+        hai_url: str,
+        job_id: str,
+        message: str,
+        metadata: Optional[dict[str, Any]] = None,
+        processing_time_ms: int = 0,
+    ) -> JobResponseResult:
+        """Submit a benchmark job response (async).
+
+        POST /api/v1/agents/jobs/{job_id}/response
+
+        The response is wrapped as a JACS-signed document.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            job_id: The job ID from the benchmark_job event.
+            message: The mediator's response message.
+            metadata: Optional metadata dict.
+            processing_time_ms: Processing time in milliseconds.
+
+        Returns:
+            JobResponseResult with acknowledgment.
+        """
+        from haiai.config import get_config, get_agent
+
+        http = await self._get_http()
+        headers = self._build_auth_headers()
+        headers["Content-Type"] = "application/json"
+
+        response_body: dict[str, Any] = {"message": message}
+        if metadata is not None:
+            response_body["metadata"] = metadata
+        response_body["processing_time_ms"] = processing_time_ms
+
+        job_response_payload = {"response": response_body}
+
+        cfg = get_config()
+        payload: dict[str, Any] = sign_response(
+            job_response_payload, get_agent(), cfg.jacs_id or "",
+        )
+
+        safe_job_id = self._escape_path_segment(job_id)
+        url = self._make_url(hai_url, f"/api/v1/agents/jobs/{safe_job_id}/response")
+
+        last_exc: Optional[Exception] = None
+        for attempt in range(RETRY_MAX_ATTEMPTS):
+            try:
+                resp = await http.post(
+                    url, json=payload, headers=headers, timeout=30.0,
+                )
+
+                if resp.status_code in (401, 403):
+                    raise HaiAuthError(
+                        f"Auth failed submitting response: {resp.status_code}",
+                        status_code=resp.status_code,
+                        body=resp.text,
+                    )
+                if resp.status_code == 404:
+                    raise BenchmarkError(
+                        f"Job not found: {job_id}",
+                        status_code=404,
+                    )
+                if resp.status_code in (502, 503, 504) or resp.status_code == 429:
+                    delay = backoff(attempt)
+                    logger.warning(
+                        "submit_benchmark_response got %d, retrying in %.1fs",
+                        resp.status_code,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                    headers = self._build_auth_headers()
+                    headers["Content-Type"] = "application/json"
+                    continue
+
+                resp.raise_for_status()
+                data = resp.json()
+                return JobResponseResult(
+                    success=data.get("success", True),
+                    job_id=data.get("job_id", data.get("jobId", job_id)),
+                    message=data.get("message", "Response accepted"),
+                    raw_response=data,
+                )
+            except (httpx.ConnectError, httpx.TimeoutException) as exc:
+                last_exc = exc
+                delay = backoff(attempt)
+                await asyncio.sleep(delay)
+            except HaiError:
+                raise
+            except Exception as exc:
+                last_exc = exc
+                break
+
+        raise HaiConnectionError(
+            f"submit_benchmark_response failed after retries: {last_exc}"
+        )
+
+    async def rotate_keys(
+        self,
+        hai_url: Optional[str] = None,
+        register_with_hai: bool = True,
+        config_path: Optional[str] = None,
+        algorithm: str = "pq2025",
+    ) -> RotationResult:
+        """Rotate the agent's cryptographic keys (async).
+
+        Delegates to the synchronous ``HaiClient.rotate_keys()`` in a
+        thread executor, since the operation involves file I/O and JACS
+        agent creation that are inherently synchronous.
+
+        Args:
+            hai_url: Base URL of the HAI server (required if
+                ``register_with_hai=True``).
+            register_with_hai: If True (default), re-register the agent
+                with HAI after local rotation.
+            config_path: Path to jacs.config.json.
+            algorithm: Signing algorithm for the new key (default "pq2025").
+
+        Returns:
+            RotationResult with old/new versions, public key hash, and
+            whether re-registration succeeded.
+        """
+        from haiai.client import HaiClient
+
+        sync_client = HaiClient(
+            timeout=self._timeout,
+            verify_server_signatures=self._verify_server_signatures,
+        )
+        sync_client._hai_url = self._hai_url or hai_url or ''
+        sync_client._hai_agent_id = self._hai_agent_id or ''
+
+        return await asyncio.to_thread(
+            sync_client.rotate_keys,
+            hai_url=hai_url,
+            register_with_hai=register_with_hai,
+            config_path=config_path,
+            algorithm=algorithm,
+        )
+
     # ------------------------------------------------------------------
     # Email CRUD
     # ------------------------------------------------------------------
@@ -821,6 +1077,50 @@ class AsyncHaiClient:
             raise
         except Exception as exc:
             raise HaiError(f"Email send failed: {exc}")
+
+    async def send_signed_email(
+        self,
+        hai_url: str,
+        to: str,
+        subject: str,
+        body: str,
+        in_reply_to: Optional[str] = None,
+        attachments: Optional[list[dict[str, Any]]] = None,
+        cc: Optional[list[str]] = None,
+        bcc: Optional[list[str]] = None,
+        labels: Optional[list[str]] = None,
+    ) -> SendEmailResult:
+        """Send an agent-signed email (async).
+
+        .. deprecated::
+            send_signed_email currently delegates to send_email. Use
+            send_email directly.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            to: Recipient address.
+            subject: Email subject line.
+            body: Plain text email body.
+            in_reply_to: Optional Message-ID for threading.
+            attachments: Optional list of attachment dicts.
+            cc: Optional CC recipients.
+            bcc: Optional BCC recipients.
+            labels: Optional labels.
+
+        Returns:
+            SendEmailResult with message_id and status.
+        """
+        return await self.send_email(
+            hai_url,
+            to,
+            subject,
+            body,
+            in_reply_to=in_reply_to,
+            attachments=attachments,
+            cc=cc,
+            bcc=bcc,
+            labels=labels,
+        )
 
     async def sign_email(self, hai_url: str, raw_email: bytes) -> bytes:
         """Sign a raw RFC 5322 email with a JACS attachment via the HAI API.

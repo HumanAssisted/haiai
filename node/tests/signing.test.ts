@@ -117,7 +117,7 @@ describe('unwrapSignedEvent', () => {
 
     expect(() => {
       unwrapSignedEvent(doc, { [agentID]: TEST_PUBLIC_KEY_PEM }, agent);
-    }).toThrow('JACS signature verification failed');
+    }).toThrow('Signature verification failed');
   });
 
   it('propagates verification errors instead of swallowing them', () => {

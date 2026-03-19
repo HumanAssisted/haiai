@@ -1,0 +1,23 @@
+{
+  "description": "JACS-only crypto policy enforcement across all SDKs",
+  "canonicalization": {
+    "test_vectors": [
+      {"input": {"b": 2, "a": 1}, "expected": "{\"a\":1,\"b\":2}"},
+      {"input": {"z": [3,1,2], "a": {"c": 3, "b": 2}}, "expected": "{\"a\":{\"b\":2,\"c\":3},\"z\":[3,1,2]}"},
+      {"input": {}, "expected": "{}"}
+    ],
+    "jacs_required": true,
+    "error_when_no_jacs": "JACS_NOT_LOADED",
+    "notes": "Node SDK allows canonicalization without an agent (returns sorted-key JSON) since sorted-key JSON is deterministic encoding, not cryptography. Python and Go enforce jacs_required strictly. This is an intentional cross-language deviation documented in T05 review notes."
+  },
+  "signing": {
+    "operations": ["sign_string", "sign_response", "build_auth_header"],
+    "jacs_required": true,
+    "error_when_no_jacs": "JACS_NOT_LOADED"
+  },
+  "verification": {
+    "operations": ["verify_string", "verify_bytes", "unwrap_signed_event"],
+    "jacs_required": true,
+    "error_when_no_jacs": "JACS_NOT_LOADED"
+  }
+}

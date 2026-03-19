@@ -1,3 +1,4 @@
+import { verify as cryptoVerify } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
 import { generateTestKeypair as generateKeypair } from './setup.js';
@@ -53,9 +54,25 @@ describe('client register bootstrap', () => {
   it('exportKeys derives the public key from private key material', async () => {
     const keypair = generateKeypair();
     const client = await HaiClient.fromCredentials('agent-1', keypair.privateKeyPem, { privateKeyPassphrase: 'keygen-password' });
-    (client as any)._publicKeyPem = keypair.publicKeyPem;
     const exported = client.exportKeys();
+    expect(exported.publicKeyPem).toBe(keypair.publicKeyPem);
     expect(exported.publicKeyPem).toContain('-----BEGIN PUBLIC KEY-----');
     expect(exported.privateKeyPem).toContain('-----BEGIN PRIVATE KEY-----');
+  });
+
+  it('signMessage uses the supplied credential pair', async () => {
+    const keypair = generateKeypair();
+    const client = await HaiClient.fromCredentials('agent-1', keypair.privateKeyPem);
+
+    const message = 'credential-backed message';
+    const signature = client.signMessage(message);
+    const verified = cryptoVerify(
+      null,
+      Buffer.from(message, 'utf-8'),
+      keypair.publicKeyPem,
+      Buffer.from(signature, 'base64'),
+    );
+
+    expect(verified).toBe(true);
   });
 });

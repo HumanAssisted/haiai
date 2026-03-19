@@ -117,6 +117,48 @@ def _read_public_key_pem(cfg: "AgentConfig") -> str:
     )
 
 
+def _verify_hai_message_impl(
+    message: str,
+    signature: str,
+    hai_public_key: str = "",
+    hai_url: Optional[str] = None,
+) -> bool:
+    """Verify a HAI-signed message using PEM, base64 key material, or key lookup."""
+    if not signature or not message:
+        return False
+
+    if not hai_public_key:
+        return False
+
+    from haiai.signing import verify_string as _verify_string
+
+    try:
+        if hai_public_key.startswith("-----"):
+            return _verify_string(message, signature, hai_public_key)
+
+        try:
+            base64.b64decode(hai_public_key)
+            pem_key = (
+                "-----BEGIN PUBLIC KEY-----\n"
+                + hai_public_key
+                + "\n-----END PUBLIC KEY-----\n"
+            )
+            return _verify_string(message, signature, pem_key)
+        except Exception:
+            if not hai_url:
+                return False
+            from haiai.signing import fetch_server_keys
+
+            keys = fetch_server_keys(hai_url)
+            match = next((k for k in keys if k.key_id == hai_public_key), None)
+            if match is None:
+                return False
+            return _verify_string(message, signature, match.public_key_pem)
+    except Exception as exc:
+        logger.debug("Signature verification failed: %s", exc)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # HaiClient
 # ---------------------------------------------------------------------------
@@ -225,9 +267,9 @@ class HaiClient:
     def _build_jacs_auth_header(self) -> str:
         """Build ``Authorization: JACS {jacsId}:{timestamp}:{signature}``.
 
-        Delegates to JACS binding-core ``build_auth_header`` when available,
-        falling back to local construction for agents that only provide
-        ``sign_string`` (e.g. test mocks).
+        Delegates to JACS binding-core ``build_auth_header`` when available.
+        Otherwise constructs the header locally using JACS ``sign_string``.
+        Both paths require a loaded JACS agent.
         """
         from haiai.config import get_config, get_agent
 
@@ -241,7 +283,14 @@ class HaiClient:
         if hasattr(agent, "build_auth_header"):
             return agent.build_auth_header()
 
-        # Fallback: local construction (test mocks without build_auth_header)
+        # Local construction using JACS sign_string
+        if not hasattr(agent, "sign_string"):
+            raise HaiError(
+                "build_auth_header requires a JACS agent with sign_string support",
+                code="JACS_NOT_LOADED",
+                action="Run 'haiai init' or set JACS_CONFIG_PATH environment variable",
+            )
+
         timestamp = int(time.time())
         message = f"{cfg.jacs_id}:{timestamp}"
         signature = agent.sign_string(message)
@@ -430,43 +479,12 @@ class HaiClient:
         Returns:
             True if signature is valid.
         """
-        if not signature or not message:
-            return False
-
-        if not hai_public_key:
-            return False
-
-        from haiai.signing import verify_string as _verify_string
-
-        try:
-            if hai_public_key.startswith("-----"):
-                # PEM-encoded public key
-                return _verify_string(message, signature, hai_public_key)
-            else:
-                # Try base64 raw key first, then treat as key ID
-                try:
-                    base64.b64decode(hai_public_key)
-                    # Wrap raw base64 as PEM
-                    pem_key = (
-                        "-----BEGIN PUBLIC KEY-----\n"
-                        + hai_public_key
-                        + "\n-----END PUBLIC KEY-----\n"
-                    )
-                    return _verify_string(message, signature, pem_key)
-                except Exception:
-                    # Treat as key ID/fingerprint -- look up from server
-                    if not hai_url:
-                        return False
-                    from haiai.signing import fetch_server_keys
-
-                    keys = fetch_server_keys(hai_url)
-                    match = next((k for k in keys if k.key_id == hai_public_key), None)
-                    if match is None:
-                        return False
-                    return _verify_string(message, signature, match.public_key_pem)
-        except Exception as exc:
-            logger.debug("Signature verification failed: %s", exc)
-            return False
+        return _verify_hai_message_impl(
+            message=message,
+            signature=signature,
+            hai_public_key=hai_public_key,
+            hai_url=hai_url,
+        )
 
     # ------------------------------------------------------------------
     # register (existing agent)
@@ -3977,19 +3995,25 @@ def _encode_verify_payload(document: str) -> str:
 
     Delegates to JACS binding-core when available so the encoding is
     identical to the Rust implementation.  Falls back to Python's
-    ``base64.urlsafe_b64encode`` when JACS is not loaded.
+    ``base64.urlsafe_b64encode`` when the loaded JACS agent does not
+    expose the method.
+
+    Raises :class:`~haiai.errors.HaiError` if no JACS agent is loaded.
     """
-    try:
-        from haiai.config import is_loaded, get_agent
+    from haiai.config import is_loaded, get_agent
 
-        if is_loaded():
-            agent = get_agent()
-            if hasattr(agent, "encode_verify_payload"):
-                return agent.encode_verify_payload(document)
-    except Exception:
-        pass
+    if not is_loaded():
+        raise HaiError(
+            "encode_verify_payload requires a loaded JACS agent",
+            code="JACS_NOT_LOADED",
+            action="Run 'haiai init' or set JACS_CONFIG_PATH environment variable",
+        )
 
-    # Fallback: local base64url encoding (no padding)
+    agent = get_agent()
+    if hasattr(agent, "encode_verify_payload"):
+        return agent.encode_verify_payload(document)
+
+    # Local base64url encoding (no padding) -- consistent with JACS Rust
     return base64.urlsafe_b64encode(
         document.encode("utf-8")
     ).rstrip(b"=").decode("ascii")

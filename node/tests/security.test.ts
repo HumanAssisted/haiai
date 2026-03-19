@@ -4,12 +4,10 @@ import { generateTestKeypair as generateKeypair } from './setup.js';
 
 async function makeClient(): Promise<HaiClient> {
   const kp = generateKeypair();
-  const client = await HaiClient.fromCredentials('security-agent', kp.privateKeyPem, {
+  return HaiClient.fromCredentials('security-agent', kp.privateKeyPem, {
     url: 'https://hai.example',
     privateKeyPassphrase: 'keygen-password',
   });
-  (client as any)._publicKeyPem = kp.publicKeyPem;
-  return client;
 }
 
 describe('security behaviors (node)', () => {
@@ -20,6 +18,7 @@ describe('security behaviors (node)', () => {
 
   it('register does not send private key material and keeps bootstrap request unauthenticated', async () => {
     const client = await makeClient();
+    const exported = client.exportKeys();
 
     const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
@@ -32,6 +31,7 @@ describe('security behaviors (node)', () => {
       const payload = JSON.parse(rawBody) as Record<string, string>;
       expect(typeof payload.agent_json).toBe('string');
       expect(payload.public_key).toBeTypeOf('string');
+      expect(Buffer.from(payload.public_key, 'base64').toString('utf-8')).toBe(exported.publicKeyPem);
 
       return new Response(JSON.stringify({
         agent_id: 'agent-123',

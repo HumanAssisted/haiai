@@ -3,6 +3,7 @@
 // =============================================================================
 
 import type { JacsAgent } from '@hai.ai/jacs';
+import { HaiError } from './errors.js';
 
 /** Maximum total URL length for verify links. */
 export const MAX_VERIFY_URL_LEN = 2048;
@@ -14,16 +15,15 @@ export const MAX_VERIFY_DOCUMENT_BYTES = 1515;
  * URL-safe base64 encoding for verification payloads.
  *
  * Delegates to JACS binding-core `encodeVerifyPayloadSync` when an agent
- * is provided. Falls back to local base64url encoding.
+ * is provided and supports it. Falls back to local base64url encoding
+ * otherwise (base64url is deterministic encoding, not cryptography).
  */
 function encodeVerifyPayload(document: string, agent?: JacsAgent): string {
   if (agent && 'encodeVerifyPayloadSync' in agent && typeof (agent as unknown as Record<string, unknown>).encodeVerifyPayloadSync === 'function') {
-    try {
-      return (agent as unknown as Record<string, unknown> & { encodeVerifyPayloadSync: (d: string) => string }).encodeVerifyPayloadSync(document);
-    } catch {
-      // Fall through to local implementation
-    }
+    return (agent as unknown as Record<string, unknown> & { encodeVerifyPayloadSync: (d: string) => string }).encodeVerifyPayloadSync(document);
   }
+
+  // Local base64url encoding (no padding) -- consistent with JACS Rust
   return Buffer.from(document, 'utf8')
     .toString('base64')
     .replace(/\+/g, '-')

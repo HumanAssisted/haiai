@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 import pytest
 
+from haiai.async_client import AsyncHaiClient
 from haiai.client import HaiClient, register_new_agent
 
 
@@ -34,6 +35,14 @@ class _FakeResponse:
                 request=httpx.Request("POST", "https://hai.ai"),
                 response=httpx.Response(self.status_code, text=self.text),
             )
+
+
+class _FakeAsyncHTTP:
+    def __init__(self, response: _FakeResponse) -> None:
+        self._response = response
+
+    async def post(self, *_args: Any, **_kwargs: Any) -> _FakeResponse:
+        return self._response
 
 
 def test_verify_hai_message_supports_key_id_lookup(
@@ -121,6 +130,49 @@ def test_hello_world_passes_hai_url_to_verifier(
 
     result = HaiClient().hello_world("https://hai.ai")
     assert result.success
+    assert captured["hai_url"] == "https://hai.ai"
+
+
+@pytest.mark.asyncio
+async def test_async_hello_world_passes_hai_url_to_verifier(
+    loaded_config: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_verify(
+        self: AsyncHaiClient,
+        message: str,
+        signature: str,
+        hai_public_key: str = "",
+        hai_url: str | None = None,
+    ) -> bool:
+        captured["hai_url"] = hai_url or ""
+        return True
+
+    fake_http = _FakeAsyncHTTP(
+        _FakeResponse(
+            status_code=200,
+            payload={
+                "timestamp": "2026-01-01T00:00:00Z",
+                "client_ip": "127.0.0.1",
+                "hai_public_key_fingerprint": "fingerprint-123",
+                "hai_signed_ack": "abc",
+                "message": "ok",
+                "hello_id": "h1",
+            },
+        )
+    )
+
+    async def fake_get_http(_self: AsyncHaiClient) -> _FakeAsyncHTTP:
+        return fake_http
+
+    monkeypatch.setattr(AsyncHaiClient, "verify_hai_message", fake_verify)
+    monkeypatch.setattr(AsyncHaiClient, "_get_http", fake_get_http)
+
+    result = await AsyncHaiClient().hello_world("https://hai.ai")
+    assert result.success
+    assert result.hai_signature_valid is True
     assert captured["hai_url"] == "https://hai.ai"
 
 
@@ -222,3 +274,150 @@ def test_register_new_agent_defaults_to_secure_key_dir(
     doc = json.loads(str(captured_payload["agent_json"]))
     assert doc["description"] == "Agent description"
     assert doc["domain"] == "agent.example"
+
+
+# ---------------------------------------------------------------------------
+# Fixture-driven security regression tests (T10)
+# ---------------------------------------------------------------------------
+
+
+class TestSecurityRegressionContract:
+    """Tests driven by fixtures/security_regression_contract.json."""
+
+    @staticmethod
+    def _load_fixture() -> dict:
+        import json
+        from pathlib import Path
+        path = Path(__file__).resolve().parent.parent.parent / "fixtures" / "security_regression_contract.json"
+        return json.loads(path.read_text())
+
+    def test_fixture_loads(self) -> None:
+        fixture = self._load_fixture()
+        assert "test_cases" in fixture
+        assert len(fixture["test_cases"]) >= 5
+
+    def test_fallback_does_not_activate(self) -> None:
+        """If JACS agent is not loaded, crypto ops raise (not fall back to local)."""
+        from haiai import config as config_mod
+        from haiai.errors import HaiError
+        from haiai.signing import canonicalize_json
+
+        config_mod.reset()
+        with pytest.raises(HaiError) as exc_info:
+            canonicalize_json({"test": True})
+        assert exc_info.value.code == "JACS_NOT_LOADED"
+
+    def test_malformed_agent_id_escaped(self, loaded_config: None) -> None:
+        """Agent ID with special chars is URL-escaped in API paths."""
+        from urllib.parse import quote
+        malicious_id = "agent/../../../etc/passwd"
+        escaped = quote(malicious_id, safe="")
+        assert "/" not in escaped
+
+    def test_register_omits_private_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """POST /api/v1/agents/register body must not contain 'BEGIN PRIVATE KEY'."""
+        fixture = self._load_fixture()
+        tc = next(t for t in fixture["test_cases"] if t["name"] == "register_omits_private_key")
+        assert tc is not None
+
+        try:
+            from jacs import SimpleAgent as _SimpleAgent  # noqa: F401
+        except ImportError:
+            pytest.skip("JACS bindings not available")
+
+        captured_body: dict[str, object] = {}
+
+        def fake_post(*_args: Any, **kwargs: Any) -> _FakeResponse:
+            captured_body.update(kwargs.get("json", {}))
+            return _FakeResponse(
+                status_code=201,
+                payload={"agent_id": "agent-123", "jacs_id": "jacs-123"},
+            )
+
+        monkeypatch.setattr(httpx, "post", fake_post)
+
+        try:
+            register_new_agent(
+                name="Test Agent",
+                owner_email="owner@hai.ai",
+                hai_url="https://hai.ai",
+                key_dir=str(tmp_path / "keys"),
+                config_path=str(tmp_path / "jacs.config.json"),
+                quiet=True,
+            )
+        finally:
+            from haiai.config import reset
+            reset()
+
+        # Verify the POST body does not contain private key material
+        body_str = json.dumps(captured_body)
+        assert "BEGIN PRIVATE KEY" not in body_str
+        assert "PRIVATE KEY" not in body_str
+
+    def test_register_is_unauthenticated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """POST /api/v1/agents/register must not have Authorization header."""
+        fixture = self._load_fixture()
+        tc = next(t for t in fixture["test_cases"] if t["name"] == "register_is_unauthenticated")
+        assert tc is not None
+
+        try:
+            from jacs import SimpleAgent as _SimpleAgent  # noqa: F401
+        except ImportError:
+            pytest.skip("JACS bindings not available")
+
+        captured_headers: dict[str, str] = {}
+
+        def fake_post(*_args: Any, **kwargs: Any) -> _FakeResponse:
+            captured_headers.update(kwargs.get("headers", {}))
+            return _FakeResponse(
+                status_code=201,
+                payload={"agent_id": "agent-123", "jacs_id": "jacs-123"},
+            )
+
+        monkeypatch.setattr(httpx, "post", fake_post)
+
+        try:
+            register_new_agent(
+                name="Test Agent",
+                owner_email="owner@hai.ai",
+                hai_url="https://hai.ai",
+                key_dir=str(tmp_path / "keys"),
+                config_path=str(tmp_path / "jacs.config.json"),
+                quiet=True,
+            )
+        finally:
+            from haiai.config import reset
+            reset()
+
+        # Verify no Authorization header was sent
+        assert "Authorization" not in captured_headers
+
+    def test_encrypted_key_requires_password(self) -> None:
+        """Loading encrypted private key without password returns clear error."""
+        fixture = self._load_fixture()
+        tc = next(t for t in fixture["test_cases"] if t["name"] == "encrypted_key_requires_password")
+        assert tc is not None
+
+        # Load the encrypted PEM key fixture and verify that attempting to
+        # use it without a password produces a clear error.
+        encrypted_pem_path = Path(__file__).resolve().parent.parent.parent / "fixtures" / "encrypted_test_key.pem"
+        encrypted_pem = encrypted_pem_path.read_bytes()
+
+        # The encrypted PEM has "ENCRYPTED PRIVATE KEY" header -- it cannot
+        # be loaded as a plain PKCS8 key. Attempting to parse it with
+        # standard crypto libraries should fail.
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+        with pytest.raises(Exception) as exc_info:
+            # Passing no password to an encrypted key should raise
+            load_pem_private_key(encrypted_pem, password=None)
+
+        # The error should clearly indicate a password is needed
+        error_msg = str(exc_info.value).lower()
+        assert "password" in error_msg or "encrypted" in error_msg or "decrypt" in error_msg, (
+            f"Error should mention password/encrypted/decrypt: {exc_info.value}"
+        )

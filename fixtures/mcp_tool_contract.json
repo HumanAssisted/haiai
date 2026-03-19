@@ -213,6 +213,14 @@
         "config_path": "string"
       },
       "required": []
+    },
+    {
+      "name": "hai_self_knowledge",
+      "properties": {
+        "query": "string",
+        "limit": "number"
+      },
+      "required": ["query"]
     }
   ]
 }

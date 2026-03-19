@@ -13,6 +13,11 @@ from haiai.client import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _ensure_config_loaded(loaded_config: None) -> None:
+    """All verify_link tests need a loaded JACS agent for _encode_verify_payload."""
+
+
 class TestGenerateVerifyLinkDefaults:
     """Test inline mode with default base_url."""
 

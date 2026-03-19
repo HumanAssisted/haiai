@@ -45,6 +45,7 @@ pub mod jacs;
 pub mod jacs_local;
 pub mod key_format;
 pub mod mime;
+pub mod self_knowledge;
 pub mod types;
 pub mod validation;
 pub mod verify;
