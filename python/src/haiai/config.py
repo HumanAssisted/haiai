@@ -181,16 +181,36 @@ def _create_jacs_config(
             pub_file = p.name
             break
 
+    # Resolve agent_id_and_version from the data directory.
+    # JACS 0.9.7+ requires a non-empty value to load the agent document.
+    agent_id_and_version = ""
+    data_dir = config_dir / "jacs_data"
+    agent_doc_dir = data_dir / "agent"
+    if agent_doc_dir.is_dir():
+        # First try matching by jacsId prefix
+        if jacs_id:
+            for f in sorted(agent_doc_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+                if f.name.startswith(jacs_id + ":") and f.suffix == ".json":
+                    agent_id_and_version = f.stem
+                    break
+        # Fallback: use the most recent agent document (single-agent scenario)
+        if not agent_id_and_version:
+            json_files = sorted(
+                [f for f in agent_doc_dir.iterdir() if f.suffix == ".json"],
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            if json_files:
+                agent_id_and_version = json_files[0].stem
+
     jacs_config = {
-        # Empty string skips agent document loading in load_by_config
-        "jacs_agent_id_and_version": "",
-        "jacs_data_directory": str(config_dir / "jacs_data"),
+        "jacs_agent_id_and_version": agent_id_and_version,
+        "jacs_data_directory": str(data_dir),
         "jacs_key_directory": str(key_dir_path),
-        "jacs_agent_private_key_filename": priv_file or "agent_private_key.pem",
-        "jacs_agent_public_key_filename": pub_file or "agent_public_key.pem",
+        "jacs_agent_private_key_filename": priv_file or "jacs.private.pem.enc",
+        "jacs_agent_public_key_filename": pub_file or "jacs.public.pem",
         "jacs_agent_key_algorithm": "pq2025",
         "jacs_default_storage": "fs",
-        "name": name,
     }
 
     # Write the JACS config
