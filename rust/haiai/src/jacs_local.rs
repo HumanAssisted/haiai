@@ -63,7 +63,13 @@ impl LocalJacsProvider {
                     config_path.display()
                 ))
             })?;
+        // Defensive: preserve config_dir through apply_env_overrides.
+        // config_dir is #[serde(skip)] metadata that must survive env overrides
+        // so that Agent::from_config resolves storage paths relative to the
+        // config file, not CWD. See Issue 024.
+        let saved_config_dir = config.config_dir().map(std::path::PathBuf::from);
         config.apply_env_overrides();
+        config.set_config_dir(saved_config_dir);
 
         // If a storage label was requested, validate and apply it to the config
         // so Agent::from_config uses the caller's explicit choice, not the config file default.
@@ -120,7 +126,9 @@ impl LocalJacsProvider {
                         ))
                     },
                 )?;
+            let saved_dir = reload_config.config_dir().map(std::path::PathBuf::from);
             reload_config.apply_env_overrides();
+            reload_config.set_config_dir(saved_dir);
             let agent = jacs::agent::Agent::from_config(reload_config, None).map_err(|e| {
                 HaiError::Provider(format!(
                     "failed to reload JACS agent for provider: {e}",

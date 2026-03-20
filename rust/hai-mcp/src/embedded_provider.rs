@@ -60,7 +60,10 @@ impl LoadedSharedAgent {
             jacs::config::Config::from_file(&config_path.to_string_lossy()).map_err(|error| {
                 anyhow!("Invalid config file '{}': {}", config_path.display(), error)
             })?;
+        // Defensive: preserve config_dir through apply_env_overrides (Issue 024).
+        let saved_config_dir = config.config_dir().map(std::path::PathBuf::from);
         config.apply_env_overrides();
+        config.set_config_dir(saved_config_dir);
 
         let agent = Agent::from_config(config, None)
             .map_err(|error| anyhow!("Failed to load agent: {}", error))?;
