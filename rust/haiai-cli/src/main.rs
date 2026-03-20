@@ -462,7 +462,7 @@ fn ensure_agent_password(quiet: bool, password_file: Option<&str>) -> anyhow::Re
 /// or `./jacs.config.json`. The base URL comes from `HAI_URL` env var
 /// or defaults to `https://beta.hai.ai`.
 fn load_client() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
-    let provider = LocalJacsProvider::from_config_path(None)
+    let provider = LocalJacsProvider::from_config_path(None, None)
         .context("failed to load JACS agent from config")?;
     let options = HaiClientOptions {
         base_url: hai_url(),
@@ -490,7 +490,7 @@ async fn load_client_with_email() -> anyhow::Result<HaiClient<LocalJacsProvider>
 fn load_provider_with_storage(storage_flag: Option<&str>) -> anyhow::Result<LocalJacsProvider> {
     let label = haiai::resolve_storage_backend(storage_flag, None)
         .context("failed to resolve storage backend")?;
-    LocalJacsProvider::from_config_path_with_storage(None, &label)
+    LocalJacsProvider::from_config_path(None, Some(&label))
         .context("failed to load JACS agent with storage")
 }
 
@@ -634,7 +634,7 @@ async fn main() -> anyhow::Result<()> {
             owner_email,
             description,
         } => {
-            let provider = LocalJacsProvider::from_config_path(None)
+            let provider = LocalJacsProvider::from_config_path(None, None)
                 .context("failed to load JACS agent from config")?;
             let agent_json = provider
                 .export_agent_json()

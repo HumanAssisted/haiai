@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -57,24 +56,13 @@ impl LoadedSharedAgent {
             ));
         }
 
-        let cfg_str = fs::read_to_string(&config_path).map_err(|error| {
-            anyhow!(
-                "Failed to read config file '{}': {}. Check file permissions.",
-                config_path.display(),
-                error
-            )
-        })?;
-
-        let resolved_cfg_str = resolve_relative_config_paths(&cfg_str, &config_path)?;
-        #[allow(deprecated)]
-        let _ =
-            jacs::config::set_env_vars(true, Some(&resolved_cfg_str), false).map_err(|error| {
+        let mut config =
+            jacs::config::Config::from_file(&config_path.to_string_lossy()).map_err(|error| {
                 anyhow!("Invalid config file '{}': {}", config_path.display(), error)
             })?;
+        config.apply_env_overrides();
 
-        let mut agent = jacs::get_empty_agent();
-        agent
-            .load_by_config(config_path.to_string_lossy().into_owned())
+        let agent = Agent::from_config(config, None)
             .map_err(|error| anyhow!("Failed to load agent: {}", error))?;
 
         Ok(Self {
@@ -243,30 +231,6 @@ fn absolutize_path(path: &Path) -> anyhow::Result<PathBuf> {
     }
 }
 
-fn resolve_relative_config_paths(config_json: &str, config_path: &Path) -> anyhow::Result<String> {
-    let mut value: serde_json::Value =
-        serde_json::from_str(config_json).context("Config file is not valid JSON")?;
-    let config_dir = config_path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    for field in ["jacs_data_directory", "jacs_key_directory"] {
-        if let Some(path_value) = value.get_mut(field) {
-            if let Some(path_str) = path_value.as_str() {
-                let path = Path::new(path_str);
-                if !path.is_absolute() {
-                    *path_value = serde_json::Value::String(
-                        config_dir.join(path).to_string_lossy().into_owned(),
-                    );
-                }
-            }
-        }
-    }
-
-    serde_json::to_string(&value).context("Failed to serialize resolved config")
-}
-
 trait Pipe: Sized {
     fn pipe<T>(self, func: impl FnOnce(Self) -> T) -> T {
         func(self)
@@ -277,6 +241,8 @@ impl<T> Pipe for T {}
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use haiai::LocalJacsProvider;
     use tempfile::TempDir;
@@ -356,7 +322,7 @@ mod tests {
         let (_temp_dir, config_path) = write_temp_fixture_config();
         let shared = LoadedSharedAgent::load_from_config_path(&config_path).expect("load shared");
         let embedded = shared.embedded_provider().expect("embedded provider");
-        let local = LocalJacsProvider::from_config_path(Some(config_path.as_path()))
+        let local = LocalJacsProvider::from_config_path(Some(config_path.as_path()), None)
             .expect("local provider");
 
         assert_eq!(embedded.jacs_id(), local.jacs_id());

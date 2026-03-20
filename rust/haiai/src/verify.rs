@@ -65,7 +65,7 @@ mod tests {
     #[test]
     fn generates_url_safe_link() {
         let url = generate_verify_link(r#"{"k":">>>>"}"#, None).expect("link");
-        assert!(url.starts_with("https://hai.ai/jacs/verify?s="));
+        assert!(url.starts_with("https://beta.hai.ai/jacs/verify?s="));
         let encoded = url.split("?s=").nth(1).expect("encoded");
         assert!(!encoded.contains('+'));
         assert!(!encoded.contains('/'));

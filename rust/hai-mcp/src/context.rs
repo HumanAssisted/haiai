@@ -96,7 +96,7 @@ impl HaiServerContext {
     }
 
     pub fn local_provider(&self, config_path: Option<&str>) -> Result<LocalJacsProvider, String> {
-        LocalJacsProvider::from_config_path(self.effective_config_path(config_path)).map_err(|e| {
+        LocalJacsProvider::from_config_path(self.effective_config_path(config_path), None).map_err(|e| {
             format!("failed to load local JACS agent; set JACS_CONFIG or pass config_path: {e}")
         })
     }

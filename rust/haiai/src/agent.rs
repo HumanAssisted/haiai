@@ -72,7 +72,7 @@ impl Agent {
         config_path: Option<&Path>,
         options: HaiClientOptions,
     ) -> Result<Self> {
-        let provider = LocalJacsProvider::from_config_path(config_path)?;
+        let provider = LocalJacsProvider::from_config_path(config_path, None)?;
         let client = HaiClient::new(provider, options)?;
         let client = Arc::new(tokio::sync::RwLock::new(client));
 
