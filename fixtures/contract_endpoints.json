@@ -1,5 +1,5 @@
 {
-  "base_url": "https://hai.ai",
+  "base_url": "https://beta.hai.ai",
   "hello": {
     "method": "POST",
     "path": "/api/v1/agents/hello",

@@ -27,7 +27,7 @@ impl HaiServerContext {
         embedded_provider: EmbeddedJacsProvider,
     ) -> Self {
         let base_url = normalize_base_url(
-            &std::env::var("HAI_URL").unwrap_or_else(|_| "https://hai.ai".to_string()),
+            &std::env::var("HAI_URL").unwrap_or_else(|_| haiai::DEFAULT_BASE_URL.to_string()),
         );
         let default_config_path = default_config_path.map(PathBuf::from);
         Self {
@@ -96,7 +96,7 @@ impl HaiServerContext {
     }
 
     pub fn local_provider(&self, config_path: Option<&str>) -> Result<LocalJacsProvider, String> {
-        LocalJacsProvider::from_config_path(self.effective_config_path(config_path)).map_err(|e| {
+        LocalJacsProvider::from_config_path(self.effective_config_path(config_path), None).map_err(|e| {
             format!("failed to load local JACS agent; set JACS_CONFIG or pass config_path: {e}")
         })
     }
@@ -217,7 +217,7 @@ mod tests {
     use haiai::HaiClient;
 
     fn build_context(default_config_path: Option<&str>) -> HaiServerContext {
-        build_context_with_base_url("https://hai.ai", default_config_path)
+        build_context_with_base_url("https://beta.hai.ai", default_config_path)
     }
 
     fn build_context_with_base_url(

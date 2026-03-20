@@ -24,7 +24,7 @@ class TestGenerateVerifyLinkDefaults:
     def test_basic_url_generation(self) -> None:
         doc = '{"jacsId": "abc123", "data": "hello"}'
         url = generate_verify_link(doc)
-        assert url.startswith("https://hai.ai/jacs/verify?s=")
+        assert url.startswith("https://beta.hai.ai/jacs/verify?s=")
 
     def test_url_safe_base64_no_plus(self) -> None:
         # Craft a document that would produce '+' in standard base64
@@ -88,12 +88,12 @@ class TestGenerateVerifyLinkSizeLimits:
 
     def test_exactly_at_limit_succeeds(self) -> None:
         # The URL format is: base_url + /jacs/verify?s= + encoded
-        # "https://hai.ai" + "/jacs/verify?s=" = 29 chars prefix
-        # remaining for encoded = 2048 - 29 = 2019 chars
-        # base64url(1514 bytes) without padding = 2019 chars -> URL = 2048 (exact)
-        # base64url(1515 bytes) without padding = 2020 chars -> URL = 2049 (over!)
-        # So 1514 bytes is the actual maximum for the default base_url.
-        max_raw = 1514
+        # "https://beta.hai.ai" + "/jacs/verify?s=" = 34 chars prefix
+        # remaining for encoded = 2048 - 34 = 2014 chars
+        # base64url(1510 bytes) without padding = 2014 chars -> URL = 2048 (exact)
+        # base64url(1511 bytes) without padding = 2015 chars -> URL = 2049 (over!)
+        # So 1510 bytes is the actual maximum for the default base_url.
+        max_raw = 1510
         filler_len = max_raw - len('{"d":""}')
         doc = '{"d":"' + "a" * filler_len + '"}'
         assert len(doc.encode("utf-8")) == max_raw
@@ -115,7 +115,7 @@ class TestGenerateVerifyLinkEmptyDocument:
 
     def test_empty_string(self) -> None:
         url = generate_verify_link("")
-        assert url.startswith("https://hai.ai/jacs/verify?s=")
+        assert url.startswith("https://beta.hai.ai/jacs/verify?s=")
         # Empty string should encode fine (just short base64)
         assert len(url) <= MAX_VERIFY_URL_LEN
 
@@ -136,12 +136,12 @@ class TestGenerateVerifyLinkHostedMode:
     def test_hosted_mode_with_jacsDocumentId(self) -> None:
         doc = '{"jacsDocumentId": "doc-abc-123", "data": "x"}'
         url = generate_verify_link(doc, hosted=True)
-        assert url == "https://hai.ai/verify/doc-abc-123"
+        assert url == "https://beta.hai.ai/verify/doc-abc-123"
 
     def test_hosted_mode_with_id_field(self) -> None:
         doc = '{"id": "doc-xyz", "data": "x"}'
         url = generate_verify_link(doc, hosted=True)
-        assert url == "https://hai.ai/verify/doc-xyz"
+        assert url == "https://beta.hai.ai/verify/doc-xyz"
 
     def test_hosted_mode_no_id_raises(self) -> None:
         doc = '{"data": "no id here"}'

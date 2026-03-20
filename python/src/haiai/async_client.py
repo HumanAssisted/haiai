@@ -11,7 +11,7 @@ Usage::
     config.load("./jacs.config.json")
 
     async with AsyncHaiClient() as client:
-        result = await client.hello_world("https://hai.ai")
+        result = await client.hello_world("https://beta.hai.ai")
         print(result.message)
 """
 

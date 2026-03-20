@@ -43,17 +43,47 @@ pub struct LocalJacsProvider {
 }
 
 impl LocalJacsProvider {
-    pub fn from_config_path(config_path: Option<&Path>) -> Result<Self> {
+    /// Load a [`LocalJacsProvider`] from a JACS config file.
+    ///
+    /// `config_path` — path to `jacs.config.json`. Falls back to `JACS_CONFIG` /
+    /// `JACS_CONFIG_PATH` env vars or `./jacs.config.json` when `None`.
+    ///
+    /// `storage_label` — optional document storage backend (`"fs"`, `"rusqlite"`,
+    /// or `"sqlite"`). When provided, a [`DocumentService`] is resolved and
+    /// attached to the provider, enabling document CRUD operations.
+    pub fn from_config_path(
+        config_path: Option<&Path>,
+        storage_label: Option<&str>,
+    ) -> Result<Self> {
         let config_path = resolve_jacs_config_path(config_path);
-        let mut agent = jacs::get_empty_agent();
-        agent
-            .load_by_config(config_path.display().to_string())
+        let mut config = jacs::config::Config::from_file(&config_path.display().to_string())
             .map_err(|e| {
                 HaiError::Provider(format!(
-                    "failed to load JACS agent from {}: {e}",
+                    "failed to load config from {}: {e}",
                     config_path.display()
                 ))
             })?;
+        config.apply_env_overrides();
+
+        // If a storage label was requested, validate and apply it to the config
+        // so Agent::from_config uses the caller's explicit choice, not the config file default.
+        let validated_label = if let Some(label) = storage_label {
+            let validated = resolve_storage_label(label)?;
+            let override_config = jacs::config::Config::builder()
+                .default_storage(&validated)
+                .build();
+            config.merge(override_config);
+            Some(validated)
+        } else {
+            None
+        };
+
+        let agent = jacs::agent::Agent::from_config(config, None).map_err(|e| {
+            HaiError::Provider(format!(
+                "failed to load JACS agent from {}: {e}",
+                config_path.display()
+            ))
+        })?;
 
         let jacs_id = agent
             .get_id()
@@ -70,81 +100,44 @@ impl LocalJacsProvider {
             )
         })?;
 
-        Ok(Self {
-            agent: Mutex::new(agent),
-            jacs_id,
-            algorithm,
-            config_path,
-            document_service: None,
-            storage_label: None,
-        })
-    }
-
-    /// Create a provider with a configured document storage backend.
-    ///
-    /// `storage_label` accepts routed `DocumentService` labels:
-    /// `"fs"`, `"rusqlite"`, or `"sqlite"` (alias for `rusqlite`).
-    pub fn from_config_path_with_storage(
-        config_path: Option<&Path>,
-        storage_label: &str,
-    ) -> Result<Self> {
-        let config_path = resolve_jacs_config_path(config_path);
-        let mut agent = jacs::get_empty_agent();
-        agent
-            .load_by_config(config_path.display().to_string())
-            .map_err(|e| {
+        // Resolve DocumentService when a storage backend was requested.
+        // service_from_agent takes ownership of the Arc<Mutex<Agent>>, so we
+        // pass the agent to it and reload a fresh agent for provider use.
+        let (agent, document_service) = if validated_label.is_some() {
+            let agent_arc = Arc::new(Mutex::new(agent));
+            let doc_service = service_from_agent(agent_arc).map_err(|e| {
                 HaiError::Provider(format!(
-                    "failed to load JACS agent from {}: {e}",
-                    config_path.display()
+                    "failed to resolve document service for '{}': {e}",
+                    storage_label.unwrap_or("unknown")
                 ))
             })?;
-
-        let jacs_id = agent
-            .get_id()
-            .map_err(|e| HaiError::Provider(format!("failed to resolve JACS agent id: {e}")))?;
-
-        let algorithm = agent.get_key_algorithm().cloned().ok_or_else(|| {
-            HaiError::Provider(
-                "Cannot resolve signing algorithm from JACS agent. \
-                 Ensure the agent was created with a valid key algorithm."
-                    .to_string(),
-            )
-        })?;
-
-        // Validate the storage label and apply it to the agent's config
-        // so service_from_agent() uses the caller's explicit choice, not the config file default.
-        let validated_label = resolve_storage_label(storage_label)?;
-        {
-            if let Some(config) = agent.config.as_mut() {
-                let override_config = jacs::config::Config::builder()
-                    .default_storage(&validated_label)
-                    .build();
-                config.merge(override_config);
-            }
-        }
-
-        // Create agent arc for DocumentService resolution
-        let agent_arc = Arc::new(Mutex::new(agent));
-
-        // Resolve the DocumentService from the agent's config (now using the validated label)
-        let doc_service = service_from_agent(Arc::clone(&agent_arc)).map_err(|e| {
-            HaiError::Provider(format!("failed to resolve document service for '{}': {e}", storage_label))
-        })?;
-
-        // Extract the agent back from the Arc (we're the only holder)
-        let agent = Arc::try_unwrap(agent_arc)
-            .map_err(|_| HaiError::Provider("failed to unwrap agent arc".to_string()))?;
-        let agent = agent
-            .into_inner()
-            .map_err(|e| HaiError::Provider(format!("failed to extract agent: {e}")))?;
+            // Reload a fresh agent for the provider's own signing operations.
+            let mut reload_config =
+                jacs::config::Config::from_file(&config_path.display().to_string()).map_err(
+                    |e| {
+                        HaiError::Provider(format!(
+                            "failed to reload config for provider agent: {e}"
+                        ))
+                    },
+                )?;
+            reload_config.apply_env_overrides();
+            let agent = jacs::agent::Agent::from_config(reload_config, None).map_err(|e| {
+                HaiError::Provider(format!(
+                    "failed to reload JACS agent for provider: {e}",
+                ))
+            })?;
+            (agent, Some(doc_service))
+        } else {
+            (agent, None)
+        };
 
         Ok(Self {
             agent: Mutex::new(agent),
             jacs_id,
             algorithm,
             config_path,
-            document_service: Some(doc_service),
-            storage_label: Some(validated_label),
+            document_service,
+            storage_label: validated_label,
         })
     }
 
@@ -245,7 +238,8 @@ impl LocalJacsProvider {
     }
 
     fn load_simple_agent(&self) -> Result<SimpleAgent> {
-        SimpleAgent::load(Some(&self.config_path.display().to_string()), Some(false)).map_err(|e| {
+        let config_path_str = self.config_path.display().to_string();
+        SimpleAgent::load(Some(&config_path_str), Some(false)).map_err(|e| {
             HaiError::Provider(format!(
                 "failed to load SimpleAgent from {}: {e}",
                 self.config_path.display()
@@ -257,8 +251,8 @@ impl LocalJacsProvider {
     fn require_document_service(&self) -> Result<&Arc<dyn DocumentService>> {
         self.document_service.as_ref().ok_or_else(|| {
             HaiError::Provider(
-                "No document service configured. Pass a supported backend label to \
-                 from_config_path_with_storage() or configure default_storage in jacs.config.json."
+                "No document service configured. Pass a storage_label to \
+                 from_config_path() or configure default_storage in jacs.config.json."
                     .to_string(),
             )
         })
@@ -447,12 +441,13 @@ impl JacsProvider for LocalJacsProvider {
             .agent
             .lock()
             .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
-        let mut new_agent = jacs::get_empty_agent();
-        new_agent
-            .load_by_config(self.config_path.display().to_string())
+        let config = jacs::config::Config::from_file(&self.config_path.display().to_string())
             .map_err(|e| {
-                HaiError::Provider(format!("failed to reload JACS agent after rotation: {e}"))
+                HaiError::Provider(format!("failed to reload config after rotation: {e}"))
             })?;
+        let new_agent = jacs::agent::Agent::from_config(config, None).map_err(|e| {
+            HaiError::Provider(format!("failed to reload JACS agent after rotation: {e}"))
+        })?;
         *agent = new_agent;
 
         Ok(RotationResult {
@@ -1173,3 +1168,4 @@ fn resolve_jacs_config_path(config_path: Option<&Path>) -> PathBuf {
 
     PathBuf::from("./jacs.config.json")
 }
+

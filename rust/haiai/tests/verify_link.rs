@@ -7,7 +7,7 @@ use haiai::{
 fn basic_url_generation() {
     let doc = r#"{"jacsId":"abc123","data":"hello"}"#;
     let url = generate_verify_link(doc, None).expect("link");
-    assert!(url.starts_with("https://hai.ai/jacs/verify?s="));
+    assert!(url.starts_with("https://beta.hai.ai/jacs/verify?s="));
 }
 
 #[test]

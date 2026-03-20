@@ -43,7 +43,7 @@ RUST_CARGO_FILES=(
 )
 
 for f in "${RUST_CARGO_FILES[@]}"; do
-  sed -i '' "0,/^version = \"$CURRENT\"/s//version = \"$NEW_VERSION\"/" "$f"
+  sed -i '' "s/^version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" "$f"
   echo "  $f: package version"
 done
 

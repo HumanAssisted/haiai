@@ -10,8 +10,8 @@ Usage (preferred)::
     config.load("./jacs.config.json")
 
     client = HaiClient()
-    if client.testconnection("https://hai.ai"):
-        result = client.hello_world("https://hai.ai")
+    if client.testconnection("https://beta.hai.ai"):
+        result = client.hello_world("https://beta.hai.ai")
         print(result.message)
 
 Zero-config quickstart::
@@ -27,6 +27,7 @@ __version__ = "0.1.0"
 from haiai import config
 from haiai.async_client import AsyncHaiClient
 from haiai.client import (
+    DEFAULT_BASE_URL,
     MAX_VERIFY_DOCUMENT_BYTES,
     MAX_VERIFY_URL_LEN,
     HaiClient,
@@ -148,6 +149,7 @@ __all__ = [
     # Hash functions
     "compute_content_hash",
     # Constants
+    "DEFAULT_BASE_URL",
     "MAX_VERIFY_URL_LEN",
     "MAX_VERIFY_DOCUMENT_BYTES",
     # Convenience functions

@@ -1,10 +1,11 @@
+use crate::client::DEFAULT_BASE_URL;
 use crate::error::{HaiError, Result};
 
 pub const MAX_VERIFY_URL_LEN: usize = 2048;
 pub const MAX_VERIFY_DOCUMENT_BYTES: usize = 1515;
 
 pub fn generate_verify_link(document: &str, base_url: Option<&str>) -> Result<String> {
-    let base = base_url.unwrap_or("https://hai.ai").trim_end_matches('/');
+    let base = base_url.unwrap_or(DEFAULT_BASE_URL).trim_end_matches('/');
     let encoded = encode_verify_payload(document);
     let full_url = format!("{base}/jacs/verify?s={encoded}");
 
@@ -18,7 +19,7 @@ pub fn generate_verify_link(document: &str, base_url: Option<&str>) -> Result<St
 }
 
 pub fn generate_verify_link_hosted(document: &str, base_url: Option<&str>) -> Result<String> {
-    let base = base_url.unwrap_or("https://hai.ai").trim_end_matches('/');
+    let base = base_url.unwrap_or(DEFAULT_BASE_URL).trim_end_matches('/');
     let doc_id = extract_document_id(document).map_err(|_| HaiError::MissingHostedDocumentId)?;
     Ok(format!("{base}/verify/{doc_id}"))
 }
@@ -65,7 +66,7 @@ mod tests {
     #[test]
     fn generates_url_safe_link() {
         let url = generate_verify_link(r#"{"k":">>>>"}"#, None).expect("link");
-        assert!(url.starts_with("https://hai.ai/jacs/verify?s="));
+        assert!(url.starts_with("https://beta.hai.ai/jacs/verify?s="));
         let encoded = url.split("?s=").nth(1).expect("encoded");
         assert!(!encoded.contains('+'));
         assert!(!encoded.contains('/'));

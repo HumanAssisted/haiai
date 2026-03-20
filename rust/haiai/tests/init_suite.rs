@@ -99,7 +99,7 @@ fn local_provider_loads_created_agent_and_signs() {
     assert!(config_path.is_file());
     std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123");
 
-    let provider = LocalJacsProvider::from_config_path(Some(&config_path)).expect("load provider");
+    let provider = LocalJacsProvider::from_config_path(Some(&config_path), None).expect("load provider");
 
     assert!(!provider.jacs_id().is_empty());
     assert_eq!(created.agent_id, provider.jacs_id());
@@ -117,9 +117,63 @@ fn local_provider_fails_for_missing_config() {
     let temp = tempfile::tempdir().expect("tempdir");
     let missing = temp.path().join("does-not-exist.config.json");
 
-    let err = match LocalJacsProvider::from_config_path(Some(&missing)) {
+    let err = match LocalJacsProvider::from_config_path(Some(&missing), None) {
         Ok(_) => panic!("expected missing-config failure"),
         Err(err) => err,
     };
-    assert!(err.to_string().contains("failed to load JACS agent"));
+    assert!(
+        err.to_string().contains("failed to load config from")
+            || err.to_string().contains("failed to load JACS agent"),
+        "unexpected error message: {err}"
+    );
+}
+
+#[test]
+fn from_config_path_with_storage_resolves_document_service() {
+    let _lock = INIT_TEST_LOCK.lock().expect("lock init tests");
+    let paths = InitPaths::new();
+    // Use JACS default directory names so that the storage override merge in
+    // from_config_path (which builds a Config with defaults) does not clobber
+    // paths set in the config file.
+    let mut options = paths.to_options();
+    options.data_directory = Some("jacs_data".to_string());
+    options.key_directory = Some("jacs_keys".to_string());
+    LocalJacsProvider::create_agent_with_options(&options).expect("create agent");
+    std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123");
+
+    let provider = LocalJacsProvider::from_config_path(
+        Some(&paths.config_path()),
+        Some("fs"),
+    )
+    .expect("load provider with storage");
+
+    assert!(
+        provider.has_document_service(),
+        "expected document service to be configured when storage_label is provided"
+    );
+}
+
+#[test]
+fn from_config_path_resolves_relative_dirs_from_config_parent_not_cwd() {
+    let _lock = INIT_TEST_LOCK.lock().expect("lock init tests");
+    // Create agent in an isolated temp directory
+    let paths = InitPaths::new();
+    let options = paths.to_options();
+    LocalJacsProvider::create_agent_with_options(&options).expect("create agent");
+    std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123");
+    let config_path = paths.config_path();
+
+    // Switch CWD to a completely different directory.
+    // Bug 2 manifested when CWD differed from the config file's parent:
+    // storage_root would resolve to "/" instead of the config dir.
+    let other_dir = tempfile::tempdir().expect("other dir");
+    std::env::set_current_dir(other_dir.path()).expect("cd to other dir");
+
+    // Loading from the absolute config path should succeed regardless of CWD
+    let provider = LocalJacsProvider::from_config_path(Some(&config_path), None)
+        .expect("load from different CWD — Bug 2 regression");
+    assert!(
+        !provider.jacs_id().is_empty(),
+        "agent should load successfully from absolute config path even when CWD differs"
+    );
 }
