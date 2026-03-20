@@ -74,7 +74,12 @@ echo "  python/pyproject.toml"
 echo ""
 echo "Node:"
 sed -i '' "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" node/package.json
-echo "  node/package.json"
+echo "  node/package.json: version"
+
+# --- Node optionalDependencies (CLI platform binary refs in main package.json) ---
+
+sed -i '' "s/\"@haiai\/cli-\(.*\)\": \"$CURRENT\"/\"@haiai\/cli-\1\": \"$NEW_VERSION\"/g" node/package.json
+echo "  node/package.json: optionalDependencies"
 
 # --- Node CLI platform binary packages ---
 # These are easy to forget! They live under node/npm/@haiai/cli-*/package.json
