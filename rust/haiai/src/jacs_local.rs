@@ -45,6 +45,9 @@ pub struct LocalJacsProvider {
 impl LocalJacsProvider {
     pub fn from_config_path(config_path: Option<&Path>) -> Result<Self> {
         let config_path = resolve_jacs_config_path(config_path);
+        // Resolve relative directory paths to absolute and propagate via env
+        // vars so JACS storage resolves correctly regardless of CWD.
+        resolve_config_and_set_env(&config_path);
         let mut agent = jacs::get_empty_agent();
         agent
             .load_by_config(config_path.display().to_string())
@@ -89,6 +92,9 @@ impl LocalJacsProvider {
         storage_label: &str,
     ) -> Result<Self> {
         let config_path = resolve_jacs_config_path(config_path);
+        // Resolve relative directory paths to absolute and propagate via env
+        // vars so JACS storage resolves correctly regardless of CWD.
+        resolve_config_and_set_env(&config_path);
         let mut agent = jacs::get_empty_agent();
         agent
             .load_by_config(config_path.display().to_string())
@@ -245,7 +251,16 @@ impl LocalJacsProvider {
     }
 
     fn load_simple_agent(&self) -> Result<SimpleAgent> {
-        SimpleAgent::load(Some(&self.config_path.display().to_string()), Some(false)).map_err(|e| {
+        // Resolve relative directory paths in the config to absolute paths
+        // based on the config file's parent directory. This prevents JACS from
+        // setting the storage root to "/" when an absolute key/data directory
+        // falls outside the config directory -- which would cause document
+        // storage to write to "/documents/" (read-only on most systems).
+        let config_path_str = match resolve_config_and_set_env(&self.config_path) {
+            Some(path) => path,
+            None => self.config_path.display().to_string(),
+        };
+        SimpleAgent::load(Some(&config_path_str), Some(false)).map_err(|e| {
             HaiError::Provider(format!(
                 "failed to load SimpleAgent from {}: {e}",
                 self.config_path.display()
@@ -1172,4 +1187,39 @@ fn resolve_jacs_config_path(config_path: Option<&Path>) -> PathBuf {
     }
 
     PathBuf::from("./jacs.config.json")
+}
+
+/// Resolve `jacs_data_directory` and `jacs_key_directory` from the config to
+/// absolute paths (relative to the config file's parent directory) and set them
+/// as environment variables (`JACS_DATA_DIRECTORY`, `JACS_KEY_DIRECTORY`).
+///
+/// This ensures JACS resolves document storage paths correctly when the process
+/// CWD differs from the config file's directory. Without this, JACS's internal
+/// `load_by_config` may set `storage_root` to `/` when one directory is
+/// absolute and external, causing document writes to `/documents/` which fails
+/// with a read-only filesystem error.
+///
+/// Returns the resolved config path string if the config was readable, for use
+/// with `SimpleAgent::load`.
+fn resolve_config_and_set_env(config_path: &Path) -> Option<String> {
+    let config_str = std::fs::read_to_string(config_path).ok()?;
+    let config: serde_json::Value = serde_json::from_str(&config_str).ok()?;
+    let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+
+    for (field, env_name) in [
+        ("jacs_data_directory", "JACS_DATA_DIRECTORY"),
+        ("jacs_key_directory", "JACS_KEY_DIRECTORY"),
+    ] {
+        if let Some(dir) = config.get(field).and_then(|v| v.as_str()) {
+            let path = Path::new(dir);
+            let absolute = if path.is_absolute() {
+                dir.to_string()
+            } else {
+                config_dir.join(path).to_string_lossy().into_owned()
+            };
+            env::set_var(env_name, &absolute);
+        }
+    }
+
+    Some(config_path.display().to_string())
 }

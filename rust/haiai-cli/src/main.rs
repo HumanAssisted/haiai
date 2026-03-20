@@ -17,6 +17,10 @@ struct Cli {
     #[arg(short, long, global = true)]
     quiet: bool,
 
+    /// Read private key password from a file instead of prompting or using env var
+    #[arg(long, global = true)]
+    password_file: Option<String>,
+
     /// Document storage backend: fs, rusqlite, sqlite
     #[arg(long, global = true)]
     storage: Option<String>,
@@ -362,19 +366,38 @@ fn hai_url() -> String {
     std::env::var("HAI_URL").unwrap_or_else(|_| "https://beta.hai.ai".to_string())
 }
 
-/// Resolve password for agent creation: use JACS_PRIVATE_KEY_PASSWORD if set,
-/// otherwise prompt twice on stdin when it's a TTY (hidden input). Non-interactive
-/// runs must set the env var.
-fn resolve_init_password() -> anyhow::Result<String> {
+/// Read and trim a password from a file path.
+fn read_password_file(path: &str) -> anyhow::Result<String> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read password file: {}", path))?;
+    let trimmed = content.trim().to_string();
+    if trimmed.is_empty() {
+        anyhow::bail!("password file is empty: {}", path);
+    }
+    Ok(trimmed)
+}
+
+/// Resolve password for agent creation: check --password-file, then
+/// JACS_PRIVATE_KEY_PASSWORD env var, then prompt twice on stdin when it's a
+/// TTY (hidden input). Non-interactive runs must set the env var or use
+/// --password-file.
+fn resolve_init_password(password_file: Option<&str>) -> anyhow::Result<String> {
+    // 1. --password-file takes highest priority
+    if let Some(path) = password_file {
+        return read_password_file(path);
+    }
+    // 2. Environment variable
     if let Ok(pass) = std::env::var("JACS_PRIVATE_KEY_PASSWORD") {
         if !pass.is_empty() {
             return Ok(pass);
         }
     }
+    // 3. Interactive prompt
     if !atty::is(atty::Stream::Stdin) {
         anyhow::bail!(
             "Password is required for agent creation. \
             Set the JACS_PRIVATE_KEY_PASSWORD environment variable, \
+            pass --password-file /path/to/file, \
             or run haiai init from a terminal to be prompted for a password."
         );
     }
@@ -398,7 +421,16 @@ fn resolve_init_password() -> anyhow::Result<String> {
 /// If JACS_PRIVATE_KEY_PASSWORD is not set and we're not in quiet mode, prompt for it
 /// (once, hidden) and set the env var so the subsequent agent load can decrypt the key.
 /// Used by all commands that load an existing agent (everything except init).
-fn ensure_agent_password(quiet: bool) -> anyhow::Result<()> {
+///
+/// When `password_file` is provided, the password is read from that file and set
+/// as the env var, bypassing both the env-var check and the interactive prompt.
+fn ensure_agent_password(quiet: bool, password_file: Option<&str>) -> anyhow::Result<()> {
+    // --password-file takes highest priority: read, set env var, done.
+    if let Some(path) = password_file {
+        let pass = read_password_file(path)?;
+        std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", &pass);
+        return Ok(());
+    }
     if std::env::var("JACS_PRIVATE_KEY_PASSWORD")
         .map(|s| !s.is_empty())
         .unwrap_or(false)
@@ -411,7 +443,8 @@ fn ensure_agent_password(quiet: bool) -> anyhow::Result<()> {
     if !atty::is(atty::Stream::Stdin) {
         anyhow::bail!(
                 "JACS_PRIVATE_KEY_PASSWORD is not set. \
-                Set it to the password for your private key, or run haiai from a terminal to be prompted."
+                Set it to the password for your private key, pass --password-file /path/to/file, \
+                or run haiai from a terminal to be prompted."
             );
     }
     eprintln!("Enter private key password:");
@@ -500,7 +533,8 @@ async fn main() -> anyhow::Result<()> {
         cli.command,
         Commands::Init { .. } | Commands::SelfKnowledge { .. }
     ) {
-        ensure_agent_password(cli.quiet).context("failed to resolve private key password")?;
+        ensure_agent_password(cli.quiet, cli.password_file.as_deref())
+            .context("failed to resolve private key password")?;
     }
 
     match cli.command {
@@ -512,7 +546,7 @@ async fn main() -> anyhow::Result<()> {
             key_dir,
             config_path,
         } => {
-            let password_resolved = resolve_init_password()?;
+            let password_resolved = resolve_init_password(cli.password_file.as_deref())?;
             let options = CreateAgentOptions {
                 name: name.clone(),
                 password: password_resolved,
@@ -1917,5 +1951,61 @@ mod tests {
     fn resolve_storage_flag_none_returns_none() {
         let result = resolve_storage_flag(None, None).unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_global_password_file_flag() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "--password-file",
+            "/tmp/my-secret.txt",
+            "hello",
+        ]);
+        assert_eq!(cli.password_file.as_deref(), Some("/tmp/my-secret.txt"));
+        assert!(matches!(cli.command, Commands::Hello));
+    }
+
+    #[test]
+    fn parse_password_file_with_init() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "--password-file",
+            "/tmp/pw.txt",
+            "init",
+            "--name",
+            "myagent",
+            "--domain",
+            "example.com",
+        ]);
+        assert_eq!(cli.password_file.as_deref(), Some("/tmp/pw.txt"));
+        assert!(matches!(cli.command, Commands::Init { .. }));
+    }
+
+    #[test]
+    fn read_password_file_reads_and_trims() {
+        let dir = std::env::temp_dir().join("haiai_test_pw");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pw.txt");
+        std::fs::write(&path, "  my-secret-password  \n").unwrap();
+        let result = read_password_file(path.to_str().unwrap()).unwrap();
+        assert_eq!(result, "my-secret-password");
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn read_password_file_empty_file_errors() {
+        let dir = std::env::temp_dir().join("haiai_test_pw");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("empty.txt");
+        std::fs::write(&path, "  \n").unwrap();
+        let result = read_password_file(path.to_str().unwrap());
+        assert!(result.is_err());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn read_password_file_missing_file_errors() {
+        let result = read_password_file("/nonexistent/path/to/pw.txt");
+        assert!(result.is_err());
     }
 }
