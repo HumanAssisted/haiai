@@ -12,6 +12,12 @@ export interface HaiClientOptions {
   timeout?: number;
   /** Maximum retry attempts for retryable requests. Default: 3. */
   maxRetries?: number;
+  /**
+   * Private key password for JACS agent decryption.
+   * When provided, passed directly to the JacsAgent via setPrivateKeyPassword()
+   * instead of relying on the JACS_PRIVATE_KEY_PASSWORD environment variable.
+   */
+  password?: string;
 }
 
 /** JACS agent configuration loaded from jacs.config.json. */

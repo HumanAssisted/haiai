@@ -16,11 +16,11 @@ func TestGenerateVerifyLinkBasic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(link, "https://hai.ai/jacs/verify?s=") {
+	if !strings.HasPrefix(link, "https://beta.hai.ai/jacs/verify?s=") {
 		t.Errorf("expected default base URL, got '%s'", link)
 	}
 	// Decode the query parameter and verify it matches the input
-	encoded := strings.TrimPrefix(link, "https://hai.ai/jacs/verify?s=")
+	encoded := strings.TrimPrefix(link, "https://beta.hai.ai/jacs/verify?s=")
 	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
 		t.Fatalf("failed to decode base64: %v", err)
@@ -59,7 +59,7 @@ func TestGenerateVerifyLinkURLSafeBase64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	encoded := strings.TrimPrefix(link, "https://hai.ai/jacs/verify?s=")
+	encoded := strings.TrimPrefix(link, "https://beta.hai.ai/jacs/verify?s=")
 	// URL-safe base64 should not contain + or /
 	if strings.ContainsAny(encoded, "+/=") {
 		t.Errorf("encoded string contains non-URL-safe characters: '%s'", encoded)
@@ -83,7 +83,7 @@ func TestGenerateVerifyLinkEmptyDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(link, "https://hai.ai/jacs/verify?s=") {
+	if !strings.HasPrefix(link, "https://beta.hai.ai/jacs/verify?s=") {
 		t.Errorf("expected valid link for empty doc, got '%s'", link)
 	}
 }
