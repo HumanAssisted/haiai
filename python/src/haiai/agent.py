@@ -54,7 +54,7 @@ class Agent:
         cls,
         config_path: Optional[Union[str, Path]] = None,
         *,
-        hai_url: str = "https://hai.ai",
+        hai_url: str = "https://beta.hai.ai",
     ) -> "Agent":
         """Create an Agent from a ``jacs.config.json`` file.
 

@@ -177,8 +177,8 @@ class HaiClient:
 
         config.load("./jacs.config.json")
         client = HaiClient()
-        if client.testconnection("https://hai.ai"):
-            result = client.hello_world("https://hai.ai")
+        if client.testconnection("https://beta.hai.ai"):
+            result = client.hello_world("https://beta.hai.ai")
             print(result.message)
     """
 
@@ -4021,7 +4021,7 @@ def _encode_verify_payload(document: str) -> str:
 
 def generate_verify_link(
     document: str,
-    base_url: str = "https://hai.ai",
+    base_url: str = "https://beta.hai.ai",
     hosted: Optional[bool] = None,
 ) -> str:
     """Build a verification URL for a signed JACS document.
@@ -4036,7 +4036,7 @@ def generate_verify_link(
     Args:
         document: The full signed JACS document string (JSON).
         base_url: Base URL of the verifier (no trailing slash).
-            Default ``"https://hai.ai"``.
+            Default ``"https://beta.hai.ai"``.
         hosted: Force hosted mode (``True``) or inline mode (``False``).
             ``None`` defaults to inline mode.
 
@@ -4093,7 +4093,7 @@ def register_new_agent(
     name: str,
     owner_email: str,
     version: str = "1.0.0",
-    hai_url: str = "https://hai.ai",
+    hai_url: str = "https://beta.hai.ai",
     key_dir: Optional[str] = None,
     config_path: str = "./jacs.config.json",
     domain: Optional[str] = None,
@@ -4353,7 +4353,7 @@ def verify_agent(
     agent_document: Union[str, dict],
     min_level: int = 1,
     require_domain: Optional[str] = None,
-    hai_url: str = "https://hai.ai",
+    hai_url: str = "https://beta.hai.ai",
 ) -> AgentVerificationResult:
     """Verify another agent's trust level.
 

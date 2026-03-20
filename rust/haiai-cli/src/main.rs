@@ -359,7 +359,7 @@ fn resolve_storage_flag(
 }
 
 fn hai_url() -> String {
-    std::env::var("HAI_URL").unwrap_or_else(|_| "https://hai.ai".to_string())
+    std::env::var("HAI_URL").unwrap_or_else(|_| "https://beta.hai.ai".to_string())
 }
 
 /// Resolve password for agent creation: use JACS_PRIVATE_KEY_PASSWORD if set,
@@ -427,7 +427,7 @@ fn ensure_agent_password(quiet: bool) -> anyhow::Result<()> {
 ///
 /// The provider is loaded from `JACS_CONFIG` / `JACS_CONFIG_PATH` env vars
 /// or `./jacs.config.json`. The base URL comes from `HAI_URL` env var
-/// or defaults to `https://hai.ai`.
+/// or defaults to `https://beta.hai.ai`.
 fn load_client() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
     let provider = LocalJacsProvider::from_config_path(None)
         .context("failed to load JACS agent from config")?;

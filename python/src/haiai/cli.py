@@ -17,7 +17,7 @@ import subprocess
 import sys
 from typing import Optional, Sequence
 
-DEFAULT_API_URL = "https://hai.ai"
+DEFAULT_API_URL = "https://beta.hai.ai"
 
 
 def _default_api_url() -> str:

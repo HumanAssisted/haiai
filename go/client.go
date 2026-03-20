@@ -36,7 +36,7 @@ import (
 
 const (
 	// DefaultEndpoint is the default HAI API endpoint.
-	DefaultEndpoint = "https://hai.ai"
+	DefaultEndpoint = "https://beta.hai.ai"
 
 	// DefaultKeysEndpoint is the default HAI key distribution service.
 	DefaultKeysEndpoint = "https://keys.hai.ai"

@@ -68,7 +68,7 @@ function extractHostedDocumentId(document: string): string {
  */
 export function generateVerifyLink(
   document: string,
-  baseUrl: string = 'https://hai.ai',
+  baseUrl: string = 'https://beta.hai.ai',
   hosted: boolean = false,
   agent?: JacsAgent,
 ): string {

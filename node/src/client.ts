@@ -211,7 +211,7 @@ export class HaiClient {
   private static readonly KEY_CACHE_TTL = 300_000;
 
   private constructor(options?: HaiClientOptions) {
-    this.baseUrl = (options?.url ?? 'https://hai.ai').replace(/\/+$/, '');
+    this.baseUrl = (options?.url ?? 'https://beta.hai.ai').replace(/\/+$/, '');
     this.timeout = options?.timeout ?? 30000;
     this.maxRetries = options?.maxRetries ?? 3;
   }

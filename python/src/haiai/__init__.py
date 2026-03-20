@@ -10,8 +10,8 @@ Usage (preferred)::
     config.load("./jacs.config.json")
 
     client = HaiClient()
-    if client.testconnection("https://hai.ai"):
-        result = client.hello_world("https://hai.ai")
+    if client.testconnection("https://beta.hai.ai"):
+        result = client.hello_world("https://beta.hai.ai")
         print(result.message)
 
 Zero-config quickstart::

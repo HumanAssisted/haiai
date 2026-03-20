@@ -24,7 +24,7 @@ use crate::types::{
     VerifyAgentDocumentRequest, VerifyAgentResult,
 };
 
-const DEFAULT_BASE_URL: &str = "https://hai.ai";
+const DEFAULT_BASE_URL: &str = "https://beta.hai.ai";
 
 pub struct SseConnection {
     events: mpsc::Receiver<HaiEvent>,
