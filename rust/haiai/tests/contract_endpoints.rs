@@ -52,7 +52,7 @@ fn method_from_fixture(method: &str) -> httpmock::Method {
 #[tokio::test]
 async fn hello_uses_shared_method_path_auth_contract() {
     let fixture = load_contract_fixture();
-    assert_eq!(fixture.base_url, "https://hai.ai");
+    assert_eq!(fixture.base_url, "https://beta.hai.ai");
     let server = MockServer::start_async().await;
 
     let hello = server
