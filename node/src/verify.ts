@@ -3,6 +3,7 @@
 // =============================================================================
 
 import type { JacsAgent } from '@hai.ai/jacs';
+import { DEFAULT_BASE_URL } from './client.js';
 import { HaiError } from './errors.js';
 
 /** Maximum total URL length for verify links. */
@@ -68,7 +69,7 @@ function extractHostedDocumentId(document: string): string {
  */
 export function generateVerifyLink(
   document: string,
-  baseUrl: string = 'https://beta.hai.ai',
+  baseUrl: string = DEFAULT_BASE_URL,
   hosted: boolean = false,
   agent?: JacsAgent,
 ): string {

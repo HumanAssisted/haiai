@@ -17,12 +17,12 @@ import subprocess
 import sys
 from typing import Optional, Sequence
 
-DEFAULT_API_URL = "https://beta.hai.ai"
+from haiai.client import DEFAULT_BASE_URL
 
 
 def _default_api_url() -> str:
-    """API URL: HAI_API_URL env (for local testing) else https://hai.ai."""
-    return os.getenv("HAI_API_URL", DEFAULT_API_URL)
+    """API URL: HAI_API_URL env var, else DEFAULT_BASE_URL."""
+    return os.getenv("HAI_API_URL", DEFAULT_BASE_URL)
 
 
 def _load_config_if_exists() -> None:
@@ -196,7 +196,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--api-url",
         default=None,
-        help=f"HAI API URL (default: HAI_API_URL env or {DEFAULT_API_URL})",
+        help=f"HAI API URL (default: HAI_API_URL env or {DEFAULT_BASE_URL})",
     )
 
     sub = parser.add_subparsers(dest="command", help="Available commands")

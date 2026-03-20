@@ -1,5 +1,5 @@
 // Client
-export { HaiClient } from './client.js';
+export { HaiClient, DEFAULT_BASE_URL } from './client.js';
 
 // Agent (high-level wrapper with agent.email.* namespace)
 export { Agent, EmailNamespace } from './agent.js';

@@ -27,7 +27,7 @@ impl HaiServerContext {
         embedded_provider: EmbeddedJacsProvider,
     ) -> Self {
         let base_url = normalize_base_url(
-            &std::env::var("HAI_URL").unwrap_or_else(|_| "https://beta.hai.ai".to_string()),
+            &std::env::var("HAI_URL").unwrap_or_else(|_| haiai::DEFAULT_BASE_URL.to_string()),
         );
         let default_config_path = default_config_path.map(PathBuf::from);
         Self {

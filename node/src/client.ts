@@ -186,6 +186,10 @@ async function withPrivateKeyPassphrase<T>(
  * console.log(result.message);
  * ```
  */
+
+/** Default HAI API base URL. Override with the `url` option or `HAI_URL` env var. */
+export const DEFAULT_BASE_URL = 'https://beta.hai.ai';
+
 export class HaiClient {
   private config!: AgentConfig;
   private configPath: string | null = null;
@@ -211,7 +215,7 @@ export class HaiClient {
   private static readonly KEY_CACHE_TTL = 300_000;
 
   private constructor(options?: HaiClientOptions) {
-    this.baseUrl = (options?.url ?? 'https://beta.hai.ai').replace(/\/+$/, '');
+    this.baseUrl = (options?.url ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
     this.timeout = options?.timeout ?? 30000;
     this.maxRetries = options?.maxRetries ?? 3;
   }

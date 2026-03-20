@@ -23,7 +23,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-from haiai.client import HaiClient
+from haiai.client import DEFAULT_BASE_URL, HaiClient
 from haiai.errors import HaiError, RateLimited
 from haiai.models import (
     EmailMessage,
@@ -54,7 +54,7 @@ class Agent:
         cls,
         config_path: Optional[Union[str, Path]] = None,
         *,
-        hai_url: str = "https://beta.hai.ai",
+        hai_url: str = DEFAULT_BASE_URL,
     ) -> "Agent":
         """Create an Agent from a ``jacs.config.json`` file.
 

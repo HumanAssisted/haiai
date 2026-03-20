@@ -363,7 +363,7 @@ fn resolve_storage_flag(
 }
 
 fn hai_url() -> String {
-    std::env::var("HAI_URL").unwrap_or_else(|_| "https://beta.hai.ai".to_string())
+    std::env::var("HAI_URL").unwrap_or_else(|_| haiai::DEFAULT_BASE_URL.to_string())
 }
 
 /// Read and trim a password from a file path.

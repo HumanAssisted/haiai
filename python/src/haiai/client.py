@@ -74,6 +74,9 @@ from haiai.signing import is_signed_event, sign_response, unwrap_signed_event
 
 logger = logging.getLogger("haiai.client")
 
+# Default HAI API base URL. Override with HAI_URL or HAI_API_URL env vars.
+DEFAULT_BASE_URL = "https://beta.hai.ai"
+
 # Verify link constants (HAI / public verification URLs)
 MAX_VERIFY_URL_LEN = 2048
 MAX_VERIFY_DOCUMENT_BYTES = 1515
@@ -4021,7 +4024,7 @@ def _encode_verify_payload(document: str) -> str:
 
 def generate_verify_link(
     document: str,
-    base_url: str = "https://beta.hai.ai",
+    base_url: str = DEFAULT_BASE_URL,
     hosted: Optional[bool] = None,
 ) -> str:
     """Build a verification URL for a signed JACS document.
@@ -4093,7 +4096,7 @@ def register_new_agent(
     name: str,
     owner_email: str,
     version: str = "1.0.0",
-    hai_url: str = "https://beta.hai.ai",
+    hai_url: str = DEFAULT_BASE_URL,
     key_dir: Optional[str] = None,
     config_path: str = "./jacs.config.json",
     domain: Optional[str] = None,
@@ -4353,7 +4356,7 @@ def verify_agent(
     agent_document: Union[str, dict],
     min_level: int = 1,
     require_domain: Optional[str] = None,
-    hai_url: str = "https://beta.hai.ai",
+    hai_url: str = DEFAULT_BASE_URL,
 ) -> AgentVerificationResult:
     """Verify another agent's trust level.
 

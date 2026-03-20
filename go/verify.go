@@ -17,7 +17,7 @@ const (
 
 // GenerateVerifyLink creates a verification URL for a signed JACS document.
 // The document is base64url-encoded and appended as a query parameter.
-// If baseUrl is empty, "https://beta.hai.ai" is used.
+// If baseUrl is empty, DefaultEndpoint is used.
 // Uses local base64url encoding. For JACS-delegated encoding, use
 // GenerateVerifyLinkWithBackend.
 func GenerateVerifyLink(document string, baseUrl string) (string, error) {
@@ -32,7 +32,7 @@ func GenerateVerifyLinkWithBackend(document string, baseUrl string, backend Cryp
 
 func generateVerifyLinkImpl(document string, baseUrl string, backend CryptoBackend) (string, error) {
 	if baseUrl == "" {
-		baseUrl = "https://beta.hai.ai"
+		baseUrl = DefaultEndpoint
 	}
 	base := strings.TrimRight(baseUrl, "/")
 
@@ -60,10 +60,10 @@ func generateVerifyLinkImpl(document string, baseUrl string, backend CryptoBacke
 
 // GenerateVerifyLinkHosted creates a hosted verification URL for a signed JACS document.
 // The document must contain one of: jacsDocumentId, document_id, or id.
-// If baseUrl is empty, "https://beta.hai.ai" is used.
+// If baseUrl is empty, DefaultEndpoint is used.
 func GenerateVerifyLinkHosted(document string, baseUrl string) (string, error) {
 	if baseUrl == "" {
-		baseUrl = "https://beta.hai.ai"
+		baseUrl = DefaultEndpoint
 	}
 	base := strings.TrimRight(baseUrl, "/")
 
