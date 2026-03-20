@@ -1,7 +1,7 @@
 [package]
 name = "haiai"
-version = "0.1.5"
-description = "Rust SDK for HAI.AI -- build helpful, trustworthy AI agents with cryptographic identity, signed email, and verified benchmarks"
+version = "0.1.6"
+description = "Rust SDK for HAI.AI agent benchmarking, designed as a JACS-delegating wrapper"
 readme = "README.md"
 keywords = ["hai", "jacs", "agent", "benchmark", "sdk"]
 categories = ["api-bindings", "network-programming"]

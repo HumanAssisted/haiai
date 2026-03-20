@@ -1,7 +1,7 @@
 {
   "name": "@haiai/haiai",
-  "version": "0.1.5",
-  "description": "Node.js SDK for HAI.AI -- build helpful, trustworthy AI agents with cryptographic identity, signed email, and verified benchmarks",
+  "version": "0.1.6",
+  "description": "Official Node.js SDK for the HAI agent benchmarking platform",
   "type": "module",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
@@ -25,11 +25,11 @@
     "ws": "^8.16.0"
   },
   "optionalDependencies": {
-    "@haiai/cli-darwin-arm64": "0.1.5",
-    "@haiai/cli-darwin-x64": "0.1.5",
-    "@haiai/cli-linux-x64": "0.1.5",
-    "@haiai/cli-linux-arm64": "0.1.5",
-    "@haiai/cli-win32-x64": "0.1.5"
+    "@haiai/cli-darwin-arm64": "0.1.6",
+    "@haiai/cli-darwin-x64": "0.1.6",
+    "@haiai/cli-linux-x64": "0.1.6",
+    "@haiai/cli-linux-arm64": "0.1.6",
+    "@haiai/cli-win32-x64": "0.1.6"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
