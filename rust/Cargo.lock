@@ -1773,8 +1773,6 @@ checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
 [[package]]
 name = "jacs"
 version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4185aa0f7b2f1fee209accf402b778d2f2ea17adaa285a47c5f046dff755340"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1837,8 +1835,6 @@ dependencies = [
 [[package]]
 name = "jacs-binding-core"
 version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca9cde9fa790942f18fb9ae41c40236089be4369aafca9c410c2b4804c65172f"
 dependencies = [
  "base64",
  "jacs",
@@ -1850,8 +1846,6 @@ dependencies = [
 [[package]]
 name = "jacs-mcp"
 version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc065630b00926734058139891bb71d515d111caeb45be14620ebe8950fc4ed4"
 dependencies = [
  "anyhow",
  "chrono",
