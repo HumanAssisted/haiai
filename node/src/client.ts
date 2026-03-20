@@ -239,7 +239,7 @@ export class HaiClient {
     const resolvedConfigPath = resolve(configPath);
 
     client.agent = new JacsAgent();
-    if (options?.password) {
+    if (options?.password != null) {
       client.agent.setPrivateKeyPassword(options.password);
     }
     await client.agent.load(resolvedConfigPath);
