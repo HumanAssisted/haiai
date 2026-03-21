@@ -57,9 +57,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
+      - name: Switch to production dependencies
+        run: cd node && npm run deps:prod
       - name: Install dependencies
         run: |
           cd node
+          npm install --package-lock-only
           npm ci
       - name: Run tests
         run: |
@@ -104,6 +107,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust-version }}
+      - name: Remove local dev patches
+        run: sed -i '/^\[patch\.crates-io\]/,/^$/d' rust/Cargo.toml
       - name: Run tests
         run: |
           cd rust

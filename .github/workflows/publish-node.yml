@@ -120,6 +120,9 @@ jobs:
             }
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
+      - name: Switch to production dependencies
+        run: cd node && npm run deps:prod
+
       - name: Install dependencies
         run: |
           cd node
