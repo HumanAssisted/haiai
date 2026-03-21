@@ -58,3 +58,68 @@ def test_haiai_step2_modules_import() -> None:
     assert callable(register_trust_tools)
     assert callable(langgraph_wrap_tool_call)
     assert callable(mcp_tool)
+
+
+def test_haiai_exports_all_platform_convenience_functions() -> None:
+    """Every platform operation convenience function must be importable from haiai."""
+    from haiai import (
+        check_username,
+        claim_username,
+        get_message,
+        delete_message,
+        mark_unread,
+        search_messages,
+        get_unread_count,
+        reply,
+        forward,
+        archive,
+        unarchive,
+        contacts,
+        send_signed_email,
+        rotate_keys,
+        update_labels,
+    )
+
+    for fn in [
+        check_username,
+        claim_username,
+        get_message,
+        delete_message,
+        mark_unread,
+        search_messages,
+        get_unread_count,
+        reply,
+        forward,
+        archive,
+        unarchive,
+        contacts,
+        send_signed_email,
+        rotate_keys,
+        update_labels,
+    ]:
+        assert callable(fn), f"{fn.__name__} should be callable"
+
+
+def test_haiai_all_includes_new_exports() -> None:
+    """All new exports should be in __all__ for `from haiai import *`."""
+    import haiai
+
+    expected = [
+        "check_username",
+        "claim_username",
+        "get_message",
+        "delete_message",
+        "mark_unread",
+        "search_messages",
+        "get_unread_count",
+        "reply",
+        "forward",
+        "archive",
+        "unarchive",
+        "contacts",
+        "send_signed_email",
+        "rotate_keys",
+        "update_labels",
+    ]
+    for name in expected:
+        assert name in haiai.__all__, f"{name} missing from haiai.__all__"

@@ -14,5 +14,10 @@
     "method": "POST",
     "path": "/api/v1/agents/jobs/{job_id}/response",
     "auth_required": true
+  },
+  "update_labels": {
+    "method": "POST",
+    "path": "/api/agents/{agent_id}/email/messages/{message_id}/labels",
+    "auth_required": true
   }
 }

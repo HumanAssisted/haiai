@@ -120,3 +120,44 @@ def test_submit_response_contract_uses_shared_method_path_and_auth(
         assert str(captured["headers"].get("Authorization", "")).startswith("JACS ")
     else:
         assert "Authorization" not in captured["headers"]
+
+
+def test_update_labels_contract_uses_correct_method_path_body_and_auth(
+    loaded_config: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = _load_contract()
+    captured: dict[str, Any] = {}
+    message_id = "msg-456"
+
+    def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
+        captured["url"] = url
+        captured["headers"] = kwargs.get("headers", {})
+        captured["json"] = kwargs.get("json", {})
+        return _FakeResponse(200, {"labels": ["urgent", "important"]})
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    client = HaiClient()
+    result = client.update_labels(
+        contract["base_url"],
+        message_id,
+        add=["urgent"],
+        remove=["spam"],
+    )
+
+    # Verify the URL contains the labels endpoint pattern
+    assert "/email/messages/" in captured["url"]
+    assert captured["url"].endswith("/labels")
+
+    # Verify auth header
+    assert str(captured["headers"].get("Authorization", "")).startswith("JACS ")
+
+    # Verify request body
+    assert captured["json"]["add"] == ["urgent"]
+    assert captured["json"]["remove"] == ["spam"]
+
+    # Verify return type is a list of strings
+    assert isinstance(result, list)
+    assert result == ["urgent", "important"]
