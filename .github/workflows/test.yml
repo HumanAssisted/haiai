@@ -108,7 +108,7 @@ jobs:
         with:
           toolchain: ${{ matrix.rust-version }}
       - name: Remove local dev patches
-        run: node -e "const f='rust/Cargo.toml';let t=require('fs').readFileSync(f,'utf8');t=t.replace(/\n*\[patch\.crates-io\][\s\S]*$/,'');require('fs').writeFileSync(f,t)"
+        run: node -e "const f='rust/Cargo.toml';let t=require('fs').readFileSync(f,'utf8').replace(/\r\n/g,'\n');t=t.replace(/\n*(#[^\n]*\n)*\[patch[\s\S]*$/,'\n');require('fs').writeFileSync(f,t)"
       - name: Run tests
         run: |
           cd rust
