@@ -1660,6 +1660,59 @@ class AsyncHaiClient:
         except Exception as exc:
             raise HaiError(f"Email unarchive failed: {exc}")
 
+    async def update_labels(
+        self,
+        hai_url: str,
+        message_id: str,
+        add: list[str] | None = None,
+        remove: list[str] | None = None,
+    ) -> list[str]:
+        """Update labels on an email message.
+
+        Adds and removes labels atomically.
+
+        Args:
+            hai_url: Base URL of the HAI server.
+            message_id: ID of the message to update.
+            add: Labels to add.
+            remove: Labels to remove.
+
+        Returns:
+            The resulting list of labels on the message.
+        """
+        http = await self._get_http()
+        jacs_id = self._get_hai_agent_id()
+        safe_jacs_id = self._escape_path_segment(jacs_id)
+        safe_message_id = self._escape_path_segment(message_id)
+        url = self._make_url(
+            hai_url,
+            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/labels",
+        )
+        headers = self._build_auth_headers()
+        body = {
+            "add": add or [],
+            "remove": remove or [],
+        }
+
+        try:
+            resp = await http.post(url, headers=headers, json=body)
+            if resp.status_code in (401, 403):
+                raise HaiAuthError(
+                    "Update labels auth failed",
+                    status_code=resp.status_code, body=resp.text,
+                )
+            if resp.status_code not in (200, 201):
+                raise HaiApiError(
+                    f"Update labels failed: HTTP {resp.status_code}",
+                    status_code=resp.status_code, body=resp.text,
+                )
+            data = resp.json()
+            return data.get("labels", [])
+        except HaiError:
+            raise
+        except Exception as exc:
+            raise HaiError(f"Update labels failed: {exc}")
+
     async def contacts(self, hai_url: str) -> list[Contact]:
         """List contacts derived from email history."""
         http = await self._get_http()
