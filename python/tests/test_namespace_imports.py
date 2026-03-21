@@ -78,6 +78,7 @@ def test_haiai_exports_all_platform_convenience_functions() -> None:
         send_signed_email,
         rotate_keys,
         update_labels,
+        verify_email,
     )
 
     for fn in [
@@ -96,6 +97,7 @@ def test_haiai_exports_all_platform_convenience_functions() -> None:
         send_signed_email,
         rotate_keys,
         update_labels,
+        verify_email,
     ]:
         assert callable(fn), f"{fn.__name__} should be callable"
 
@@ -120,6 +122,7 @@ def test_haiai_all_includes_new_exports() -> None:
         "send_signed_email",
         "rotate_keys",
         "update_labels",
+        "verify_email",
     ]
     for name in expected:
         assert name in haiai.__all__, f"{name} missing from haiai.__all__"

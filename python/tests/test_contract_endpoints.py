@@ -147,12 +147,18 @@ def test_update_labels_contract_uses_correct_method_path_body_and_auth(
         remove=["spam"],
     )
 
-    # Verify the URL contains the labels endpoint pattern
-    assert "/email/messages/" in captured["url"]
-    assert captured["url"].endswith("/labels")
+    # Verify the URL matches the contract fixture path exactly
+    agent_id = client._get_hai_agent_id()
+    safe_agent_id = client._escape_path_segment(agent_id)
+    safe_message_id = client._escape_path_segment(message_id)
+    expected_path = contract["update_labels"]["path"].replace(
+        "{agent_id}", safe_agent_id
+    ).replace("{message_id}", safe_message_id)
+    assert captured["url"] == contract["base_url"] + expected_path
 
     # Verify auth header
-    assert str(captured["headers"].get("Authorization", "")).startswith("JACS ")
+    if contract["update_labels"]["auth_required"]:
+        assert str(captured["headers"].get("Authorization", "")).startswith("JACS ")
 
     # Verify request body
     assert captured["json"]["add"] == ["urgent"]

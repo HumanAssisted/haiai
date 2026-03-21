@@ -22,7 +22,12 @@ Zero-config quickstart::
     print(f"Registered: {result.jacs_id}")
 """
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import version as _pkg_version
+
+    __version__ = _pkg_version("haiai")
+except Exception:
+    __version__ = "0.0.0"  # fallback when package metadata unavailable
 
 from haiai import config
 from haiai.async_client import AsyncHaiClient
