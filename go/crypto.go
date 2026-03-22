@@ -1,14 +1,8 @@
 package haiai
 
-// CryptoBackend abstracts all cryptographic operations so that the SDK can
-// delegate to the JACS Rust core via CGo when available, or fall back to a
-// pure-Go Ed25519 implementation.
-//
-// Build with tags "cgo" and "jacs" to use the JACS backend:
-//
-//	go build -tags jacs ./...
-//
-// Without those tags the SDK compiles as pure Go using crypto/ed25519.
+// CryptoBackend abstracts all cryptographic operations. The SDK delegates
+// to the JACS Rust core via CGo. CGo must be enabled (default on macOS/Linux)
+// and the jacsgo shared library must be available at link time.
 type CryptoBackend interface {
 	// SignString signs an arbitrary message string and returns the base64-encoded signature.
 	SignString(message string) (string, error)
@@ -39,35 +33,28 @@ type CryptoBackend interface {
 	// CanonicalizeJSON produces canonical JSON per RFC 8785 (JCS).
 	// jsonStr is any valid JSON string.
 	// Returns the canonicalized JSON string.
-	// Fallback backends use Go's json.Marshal (sorted keys).
 	CanonicalizeJSON(jsonStr string) (string, error)
 
 	// SignResponse wraps a response payload in a signed JACS document envelope.
 	// payloadJSON is the JSON string of the payload to sign.
 	// Returns the signed document JSON string.
-	// Fallback backends return an error.
 	SignResponse(payloadJSON string) (string, error)
 
 	// EncodeVerifyPayload encodes a document as URL-safe base64 (no padding)
 	// for verification links.
-	// Fallback backends use Go's base64.RawURLEncoding.
 	EncodeVerifyPayload(document string) (string, error)
 
 	// UnwrapSignedEvent unwraps and verifies a signed event using server keys.
 	// eventJSON is the signed event JSON string.
 	// serverKeysJSON is the server public keys JSON string.
 	// Returns the unwrapped event payload as a JSON string.
-	// Fallback backends return an error.
 	UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error)
 
 	// BuildAuthHeader constructs the full JACS Authorization header value.
 	// Format: "JACS {jacsId}:{timestamp}:{signature_base64}"
-	// Delegates to JACS core when available. Fallback backends return an error.
 	BuildAuthHeader() (string, error)
 
 	// --- A2A Protocol Methods ---
-	// These methods delegate to the JACS Rust core for A2A operations.
-	// Fallback backends return descriptive errors since A2A requires JACS core.
 
 	// SignA2AArtifact wraps an artifact with a JACS signature for A2A exchange.
 	// artifactJSON is the JSON payload to sign, artifactType identifies the artifact kind
@@ -94,6 +81,6 @@ type CryptoBackend interface {
 	ExportAgentCard(agentDataJSON string) (string, error)
 }
 
-// cryptoBackend is the package-level crypto backend, set at init time based on
-// build tags. See crypto_jacs.go and crypto_fallback.go.
+// cryptoBackend is the package-level crypto backend, set at init time.
+// See crypto_jacs.go.
 var cryptoBackend CryptoBackend

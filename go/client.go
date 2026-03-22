@@ -196,7 +196,7 @@ func NewClient(opts ...Option) (*Client, error) {
 		return nil, newError(ErrConfigInvalid, "jacsId is empty in config")
 	}
 
-	// Initialize crypto backend (JACS CGo or Ed25519 fallback based on build tags)
+	// Initialize crypto backend (JACS CGo agent)
 	cl.crypto = newClientCryptoBackend(cl.privateKey, cl.jacsID)
 
 	return cl, nil
