@@ -107,43 +107,6 @@ func parsePrivateKeyDER(der []byte) (ed25519.PrivateKey, error) {
 	}
 }
 
-// Sign signs a message using the Ed25519 private key and returns the raw signature.
-//
-// Deprecated: Use CryptoBackend.SignBytes instead. This function is retained for
-// backward compatibility with tests and the Ed25519 fallback backend.
-func Sign(key ed25519.PrivateKey, message []byte) []byte {
-	return ed25519.Sign(key, message)
-}
-
-// Verify checks an Ed25519 signature against a public key and message.
-//
-// Deprecated: Use CryptoBackend.VerifyBytes instead. This function is retained for
-// backward compatibility with tests and the Ed25519 fallback backend.
-func Verify(publicKey ed25519.PublicKey, message, signature []byte) bool {
-	if len(publicKey) != ed25519.PublicKeySize {
-		return false
-	}
-	return ed25519.Verify(publicKey, message, signature)
-}
-
-// PublicKeyFromPrivate extracts the public key from a private key.
-func PublicKeyFromPrivate(key ed25519.PrivateKey) ed25519.PublicKey {
-	return key.Public().(ed25519.PublicKey)
-}
-
-// GenerateKeyPair generates a new Ed25519 key pair.
-// Returns (publicKey, privateKey, error).
-//
-// Deprecated: Use CryptoBackend.GenerateKeyPair instead. This function is retained
-// for backward compatibility with tests.
-func GenerateKeyPair() (ed25519.PublicKey, ed25519.PrivateKey, error) {
-	pub, priv, err := ed25519.GenerateKey(nil)
-	if err != nil {
-		return nil, nil, wrapError(ErrSigningFailed, err, "failed to generate Ed25519 key pair")
-	}
-	return pub, priv, nil
-}
-
 // ErrInvalidKeyFormat is returned when a key cannot be parsed.
 var ErrInvalidKeyFormat = errors.New("invalid key format")
 
@@ -177,7 +140,7 @@ func ParsePublicKey(pemData []byte) (ed25519.PublicKey, error) {
 // The signature is expected to be base64-encoded. The publicKeyPem
 // should be a PEM-encoded Ed25519 public key.
 //
-// Deprecated: Use CryptoBackend.VerifyBytes instead.
+// Verification is delegated to the CryptoBackend (JACS).
 func VerifyHaiMessage(message string, signatureB64 string, publicKeyPem string) (bool, error) {
 	if message == "" || signatureB64 == "" || publicKeyPem == "" {
 		return false, nil
@@ -192,10 +155,8 @@ func VerifyHaiMessage(message string, signatureB64 string, publicKeyPem string) 
 		}
 	}
 
-	pubKey, err := ParsePublicKey([]byte(publicKeyPem))
-	if err != nil {
-		return false, err
+	if err := cryptoBackend.VerifyBytes([]byte(message), sigBytes, publicKeyPem); err != nil {
+		return false, nil
 	}
-
-	return Verify(pubKey, []byte(message), sigBytes), nil
+	return true, nil
 }

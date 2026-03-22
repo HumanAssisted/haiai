@@ -61,7 +61,7 @@ func (b *jacsBackend) GenerateKeyPair() ([]byte, []byte, error) {
 	// (jacsgo) does not yet expose pq2025 key generation via FFI. The JACS core
 	// supports pq2025 internally, but that functionality is not available from Go.
 	// The actual signing with these keys still goes through the CryptoBackend
-	// (JACS agent or Ed25519 fallback).
+	// (JACS agent).
 	//
 	// TODO: Replace with jacs.GenerateKeyPair(algorithm) when jacsgo exposes pq2025 keygen FFI
 	jacsKeygenWarningOnce.Do(func() {

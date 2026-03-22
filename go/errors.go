@@ -37,6 +37,7 @@ const (
 	// ErrJacsOpFailed indicates a JACS operation threw an error.
 	ErrJacsOpFailed
 	// ErrJacsBuildRequired indicates the binary was built without JACS support.
+	// Deprecated: Unused after fallback removal. Retained for iota stability.
 	ErrJacsBuildRequired
 	// ErrVerificationFailed indicates signature verification failed.
 	ErrVerificationFailed

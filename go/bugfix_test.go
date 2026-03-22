@@ -39,7 +39,7 @@ func TestProRunUsesCorrectPurchaseEndpoint(t *testing.T) {
 	defer srv.Close()
 
 	cl, _ := newTestClient(t, srv.URL)
-	_, err := cl.ProRun(context.Background())
+	_, err := cl.ProRun(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("ProRun: %v", err)
 	}
@@ -75,7 +75,12 @@ func TestProRunPollsCorrectPaymentStatusEndpoint(t *testing.T) {
 	defer srv.Close()
 
 	cl, _ := newTestClient(t, srv.URL)
-	_, err := cl.ProRun(context.Background())
+	_, err := cl.ProRun(context.Background(), &ProRunOptions{
+		OnCheckoutURL: func(url string) {
+			// Test captures the URL but doesn't open a browser.
+		},
+		PollInterval: 100 * time.Millisecond,
+	})
 	if err != nil {
 		t.Fatalf("ProRun: %v", err)
 	}
