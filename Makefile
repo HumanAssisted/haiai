@@ -35,7 +35,7 @@ test-node:
 	cd node && npm ci && npm test
 
 test-go:
-	cd go && go test -race ./...
+	cd go && CGO_ENABLED=1 go test -race ./...
 
 test-rust:
 	cd rust && cargo test --workspace

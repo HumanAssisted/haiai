@@ -41,7 +41,7 @@ check_pattern \
 check_pattern \
   "Go crypto/ed25519 imports" \
   '"crypto/ed25519"' \
-  '^(go/(signing|client|auth|crypto_fallback|crypto_jacs|a2a|sign_response_local)\.go|go/.+_test\.go|go/examples/.+):' || status=1
+  '^(go/(signing|client|auth|crypto_jacs|a2a)\.go|go/.+_test\.go|go/examples/.+):' || status=1
 
 if [[ "$status" -ne 0 ]]; then
   cat <<'MSG'

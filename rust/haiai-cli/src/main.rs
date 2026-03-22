@@ -315,6 +315,10 @@ enum Commands {
 
     /// Manage the OS keychain password for your agent's private key
     Keychain {
+        /// Agent ID to scope the keychain entry (e.g. your JACS ID)
+        #[arg(long)]
+        agent_id: String,
+
         #[command(subcommand)]
         action: KeychainAction,
     },
@@ -1146,7 +1150,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Keychain { action } => {
+        Commands::Keychain { agent_id, action } => {
             use jacs::keystore::keychain;
 
             match action {
@@ -1164,12 +1168,12 @@ async fn main() -> anyhow::Result<()> {
                     if pass.is_empty() {
                         anyhow::bail!("Password cannot be empty.");
                     }
-                    keychain::store_password(&pass)
+                    keychain::store_password(&agent_id, &pass)
                         .map_err(|e| anyhow::anyhow!("{e}"))?;
                     println!("Password stored in OS keychain.");
                 }
                 KeychainAction::Get => {
-                    match keychain::get_password() {
+                    match keychain::get_password(&agent_id) {
                         Ok(Some(p)) => println!("{p}"),
                         Ok(None) => {
                             eprintln!("No password stored in OS keychain.");
@@ -1179,13 +1183,13 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 KeychainAction::Delete => {
-                    keychain::delete_password()
+                    keychain::delete_password(&agent_id)
                         .map_err(|e| anyhow::anyhow!("{e}"))?;
                     println!("Password deleted from OS keychain.");
                 }
                 KeychainAction::Status => {
                     let available = keychain::is_available();
-                    let has_password = keychain::get_password()
+                    let has_password = keychain::get_password(&agent_id)
                         .map(|p| p.is_some())
                         .unwrap_or(false);
                     println!("Keychain available: {available}");
