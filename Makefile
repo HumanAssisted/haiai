@@ -1,5 +1,6 @@
 .PHONY: test test-python test-node test-go test-rust \
         versions check-versions check-jacs-versions \
+        bump-version bump-jacs-version \
         release-node release-python release-rust release-all \
         release-delete-tags help
 
@@ -76,6 +77,14 @@ check-versions:
 	@if [ "$(RUST_VERSION)" != "$(PLUGIN_VERSION)" ]; then \
 		echo "ERROR: haiai ($(RUST_VERSION)) != plugin ($(PLUGIN_VERSION))"; exit 1; fi
 	@echo "All versions match: $(RUST_VERSION)"
+
+bump-version:
+	@if [ -z "$(V)" ]; then echo "Usage: make bump-version V=major|minor|patch"; exit 1; fi
+	./scripts/bump-version.sh $(V)
+
+bump-jacs-version:
+	@if [ -z "$(V)" ]; then echo "Usage: make bump-jacs-version V=0.9.10"; exit 1; fi
+	./scripts/bump-jacs-version.sh $(V)
 
 check-jacs-versions:
 	@echo "JACS dependency versions:"
@@ -157,6 +166,8 @@ help:
 	@echo "  make versions        Show all detected versions"
 	@echo "  make check-versions       Verify all package versions match"
 	@echo "  make check-jacs-versions  Verify JACS dep versions match across SDKs"
+	@echo "  make bump-version V=patch       Bump SDK version (major|minor|patch)"
+	@echo "  make bump-jacs-version V=0.9.10 Bump JACS dep version across all SDKs"
 	@echo ""
 	@echo "TEST:"
 	@echo "  make test            Run all tests"
