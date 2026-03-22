@@ -311,17 +311,19 @@ type SendEmailOptions struct {
 
 // SearchOptions configures a message search request.
 type SearchOptions struct {
-	Q            string `json:"q,omitempty"`
-	Direction    string `json:"direction,omitempty"`
-	FromAddress  string `json:"from_address,omitempty"`
-	ToAddress    string `json:"to_address,omitempty"`
-	Limit        int    `json:"limit,omitempty"`
-	Offset       int    `json:"offset,omitempty"`
-	IsRead       *bool  `json:"is_read,omitempty"`
-	JacsVerified *bool  `json:"jacs_verified,omitempty"`
-	Folder       string `json:"folder,omitempty"`
+	Q              string `json:"q,omitempty"`
+	Direction      string `json:"direction,omitempty"`
+	FromAddress    string `json:"from_address,omitempty"`
+	ToAddress      string `json:"to_address,omitempty"`
+	Limit          int    `json:"limit,omitempty"`
+	Offset         int    `json:"offset,omitempty"`
+	IsRead         *bool  `json:"is_read,omitempty"`
+	JacsVerified   *bool  `json:"jacs_verified,omitempty"`
+	Folder         string `json:"folder,omitempty"`
 	Label          string `json:"label,omitempty"`
 	HasAttachments *bool  `json:"has_attachments,omitempty"`
+	Since          string `json:"since,omitempty"` // Filter messages since this date (ISO 8601 or YYYY-MM-DD).
+	Until          string `json:"until,omitempty"` // Filter messages until this date (ISO 8601 or YYYY-MM-DD).
 }
 
 // UnreadCountResult is the response from the unread count endpoint.
@@ -371,6 +373,8 @@ type ListMessagesOptions struct {
 	Folder         string // Filter by folder ("inbox", "archive").
 	Label          string // Filter by label.
 	HasAttachments *bool  // Filter by attachment presence (nil = no filter).
+	Since          string // Filter messages since this date (ISO 8601 or YYYY-MM-DD).
+	Until          string // Filter messages until this date (ISO 8601 or YYYY-MM-DD).
 }
 
 // MarkReadResult is the response from marking a message as read.

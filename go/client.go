@@ -25,14 +25,47 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	neturl "net/url"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
+
+const (
+	// maxResponseSize is the maximum allowed response body size (10 MB).
+	maxResponseSize = 10 * 1024 * 1024
+
+	// defaultMaxRetries is the default number of retries for retryable HTTP errors.
+	defaultMaxRetries = 3
+)
+
+// retryableStatusCodes lists HTTP status codes that trigger automatic retry.
+var retryableStatusCodes = map[int]bool{
+	429: true,
+	500: true,
+	502: true,
+	503: true,
+	504: true,
+}
+
+// limitedReadAll reads from r up to maxResponseSize bytes.
+// Returns an error if the response body exceeds the limit.
+func limitedReadAll(r io.ReadCloser) ([]byte, error) {
+	lr := io.LimitReader(r, int64(maxResponseSize)+1)
+	data, err := io.ReadAll(lr)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxResponseSize {
+		return nil, fmt.Errorf("response body exceeds maximum allowed size of %d bytes", maxResponseSize)
+	}
+	return data, nil
+}
 
 const (
 	// DefaultEndpoint is the default HAI API endpoint.
@@ -46,12 +79,14 @@ const (
 type Client struct {
 	endpoint   string
 	jacsID     string
-	haiAgentID string // HAI-assigned agent UUID for email URL paths (set after registration)
-	agentEmail string // Agent's @hai.ai email address (set after ClaimUsername)
+	mu         sync.RWMutex // protects haiAgentID and agentEmail
+	haiAgentID string       // HAI-assigned agent UUID for email URL paths (set after registration)
+	agentEmail string       // Agent's @hai.ai email address (set after ClaimUsername)
 	privateKey ed25519.PrivateKey
 	crypto     CryptoBackend // signing/verification backend (JACS or Ed25519 fallback)
 	httpClient *http.Client
 	agentKeys  *keyCache // Agent key cache with 5-minute TTL
+	maxRetries int       // maximum number of retries for retryable HTTP errors (default 3)
 }
 
 // Option configures a Client.
@@ -99,6 +134,14 @@ func WithTimeout(timeout time.Duration) Option {
 	}
 }
 
+// WithMaxRetries sets the maximum number of retries for retryable HTTP errors.
+// Default is 3. Set to 0 to disable retries.
+func WithMaxRetries(n int) Option {
+	return func(c *Client) {
+		c.maxRetries = n
+	}
+}
+
 // NewClient creates a new HAI client.
 //
 // With no options, it auto-discovers jacs.config.json and loads the private key.
@@ -109,7 +152,8 @@ func NewClient(opts ...Option) (*Client, error) {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		agentKeys: newKeyCache(),
+		agentKeys:  newKeyCache(),
+		maxRetries: defaultMaxRetries,
 	}
 
 	// Apply options first -- user-provided values take priority
@@ -170,6 +214,8 @@ func (c *Client) JacsID() string {
 
 // HaiAgentID returns the HAI-assigned agent UUID. Falls back to jacsID if not set.
 func (c *Client) HaiAgentID() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if c.haiAgentID != "" {
 		return c.haiAgentID
 	}
@@ -178,49 +224,80 @@ func (c *Client) HaiAgentID() string {
 
 // SetHaiAgentID sets the HAI-assigned agent UUID (used for email URL paths).
 func (c *Client) SetHaiAgentID(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.haiAgentID = id
 }
 
 // doRequest performs an authenticated HTTP request and decodes the JSON response.
+// It retries on retryable status codes (429, 500, 502, 503, 504) with exponential backoff.
 func (c *Client) doRequest(ctx context.Context, method, path string, body interface{}, result interface{}) error {
 	url := c.endpoint + path
 
-	var bodyReader io.Reader
+	var bodyData []byte
 	if body != nil {
-		data, err := json.Marshal(body)
+		var err error
+		bodyData, err = json.Marshal(body)
 		if err != nil {
 			return wrapError(ErrInvalidResponse, err, "failed to marshal request body")
 		}
-		bodyReader = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
-	if err != nil {
-		return wrapError(ErrConnection, err, "failed to create request")
-	}
+	maxRetries := c.maxRetries
+	var lastErr error
 
-	if err := c.setAuthHeaders(req); err != nil {
-		return err
-	}
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 100ms, 200ms, 400ms, ...
+			backoff := time.Duration(math.Pow(2, float64(attempt-1))) * 100 * time.Millisecond
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return wrapError(ErrConnection, err, "request failed")
-	}
-	defer resp.Body.Close()
+		var bodyReader io.Reader
+		if bodyData != nil {
+			bodyReader = bytes.NewReader(bodyData)
+		}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
+		req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+		if err != nil {
+			return wrapError(ErrConnection, err, "failed to create request")
+		}
+
+		if err := c.setAuthHeaders(req); err != nil {
+			return err
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return wrapError(ErrConnection, err, "request failed")
+		}
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			defer resp.Body.Close()
+			if result != nil {
+				if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+					return wrapError(ErrInvalidResponse, err, "failed to decode response")
+				}
+			}
+			return nil
+		}
+
+		respBody, _ := limitedReadAll(resp.Body)
+		resp.Body.Close()
+
+		if retryableStatusCodes[resp.StatusCode] && attempt < maxRetries {
+			lastErr = classifyHTTPError(resp.StatusCode, respBody)
+			continue
+		}
+
 		return classifyHTTPError(resp.StatusCode, respBody)
 	}
 
-	if result != nil {
-		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-			return wrapError(ErrInvalidResponse, err, "failed to decode response")
-		}
-	}
-
-	return nil
+	return lastErr
 }
 
 // doPublicRequest performs an unauthenticated HTTP request and decodes the JSON response.
@@ -239,7 +316,7 @@ func (c *Client) doPublicRequest(ctx context.Context, method, path string, resul
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := limitedReadAll(resp.Body)
 		return classifyHTTPError(resp.StatusCode, respBody)
 	}
 
@@ -280,7 +357,7 @@ func (c *Client) doPublicJSONRequest(ctx context.Context, method, path string, b
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := limitedReadAll(resp.Body)
 		return classifyHTTPError(resp.StatusCode, respBody)
 	}
 
@@ -633,7 +710,7 @@ func (c *Client) registerWithoutAuth(ctx context.Context, opts RegisterOptions) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := limitedReadAll(resp.Body)
 		return nil, classifyHTTPError(resp.StatusCode, respBody)
 	}
 
@@ -673,7 +750,7 @@ func (c *Client) Status(ctx context.Context) (*StatusResult, error) {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := limitedReadAll(resp.Body)
 		return nil, classifyHTTPError(resp.StatusCode, body)
 	}
 
@@ -693,11 +770,13 @@ func (c *Client) Status(ctx context.Context) (*StatusResult, error) {
 // Calls POST /api/benchmark/run with {name, tier}.
 func (c *Client) Benchmark(ctx context.Context, tier string) (*BenchmarkResult, error) {
 	reqBody := struct {
-		Name string `json:"name"`
-		Tier string `json:"tier"`
+		Name      string `json:"name"`
+		Tier      string `json:"tier"`
+		Transport string `json:"transport"`
 	}{
-		Name: generateBenchmarkName(tier, c.jacsID),
-		Tier: tier,
+		Name:      generateBenchmarkName(tier, c.jacsID),
+		Tier:      tier,
+		Transport: "sse",
 	}
 
 	var result BenchmarkResult
@@ -752,7 +831,7 @@ func (c *Client) ProRun(ctx context.Context) (*BenchmarkResult, error) {
 		SessionID   string `json:"session_id"`
 		AlreadyPaid bool   `json:"already_paid"`
 	}
-	err := c.doRequest(ctx, http.MethodPost, "/api/benchmark/subscribe", map[string]string{
+	err := c.doRequest(ctx, http.MethodPost, "/api/benchmark/purchase", map[string]string{
 		"tier": "pro",
 	}, &sub)
 	if err != nil {
@@ -775,7 +854,7 @@ func (c *Client) ProRun(ctx context.Context) (*BenchmarkResult, error) {
 				var status struct {
 					Paid bool `json:"paid"`
 				}
-				statusPath := fmt.Sprintf("/api/benchmark/subscribe/status/%s", neturl.PathEscape(sub.SessionID))
+				statusPath := fmt.Sprintf("/api/benchmark/payments/%s/status", neturl.PathEscape(sub.SessionID))
 				if err := c.doRequest(ctx, http.MethodGet, statusPath, nil, &status); err == nil && status.Paid {
 					goto runBenchmark
 				}
@@ -858,7 +937,7 @@ func (c *Client) signResponse(response interface{}) (map[string]interface{}, err
 
 // GetAgentAttestation gets the agent's attestation from HAI.
 func (c *Client) GetAgentAttestation(ctx context.Context) (*AttestationResult, error) {
-	path := fmt.Sprintf("/api/v1/agents/%s/attestation", neturl.PathEscape(c.jacsID))
+	path := fmt.Sprintf("/api/v1/agents/%s/attestations", neturl.PathEscape(c.jacsID))
 	var result AttestationResult
 	if err := c.doRequest(ctx, http.MethodGet, path, nil, &result); err != nil {
 		return nil, err
@@ -904,7 +983,7 @@ func (c *Client) VerifyDocument(ctx context.Context, document string) (*Document
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := limitedReadAll(resp.Body)
 		return nil, classifyHTTPError(resp.StatusCode, respBody)
 	}
 
@@ -963,18 +1042,24 @@ func (c *Client) ClaimUsername(ctx context.Context, agentID string, username str
 		return nil, err
 	}
 	if result.Email != "" {
+		c.mu.Lock()
 		c.agentEmail = result.Email
+		c.mu.Unlock()
 	}
 	return &result, nil
 }
 
 // AgentEmail returns the agent's @hai.ai email address (set after ClaimUsername).
 func (c *Client) AgentEmail() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.agentEmail
 }
 
 // SetAgentEmail sets the agent's @hai.ai email address manually.
 func (c *Client) SetAgentEmail(email string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.agentEmail = email
 }
 
@@ -1018,7 +1103,10 @@ func (c *Client) SendEmail(ctx context.Context, to, subject, body string) (*Send
 //   - ErrRecipientNotFound: the recipient address does not exist
 //   - ErrEmailRateLimited: sending rate limit exceeded
 func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions) (*SendEmailResult, error) {
-	if c.agentEmail == "" {
+	c.mu.RLock()
+	email := c.agentEmail
+	c.mu.RUnlock()
+	if email == "" {
 		return nil, fmt.Errorf("%w: agent email not set — call ClaimUsername first", ErrEmailNotActive)
 	}
 
@@ -1051,7 +1139,7 @@ func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := limitedReadAll(resp.Body)
 		return nil, classifyEmailError(resp.StatusCode, respBody)
 	}
 
@@ -1105,11 +1193,11 @@ func (c *Client) SignEmail(ctx context.Context, rawEmail []byte) ([]byte, error)
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := limitedReadAll(resp.Body)
 		return nil, classifyHTTPError(resp.StatusCode, respBody)
 	}
 
-	return io.ReadAll(resp.Body)
+	return limitedReadAll(resp.Body)
 }
 
 // SendSignedEmail builds an RFC 5322 MIME email and sends it.
@@ -1148,7 +1236,7 @@ func (c *Client) VerifyEmail(ctx context.Context, rawEmail []byte) (*EmailVerifi
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := limitedReadAll(resp.Body)
 		return nil, classifyHTTPError(resp.StatusCode, respBody)
 	}
 
@@ -1178,6 +1266,12 @@ func (c *Client) ListMessages(ctx context.Context, opts ListMessagesOptions) ([]
 	}
 	if opts.HasAttachments != nil {
 		query.Set("has_attachments", fmt.Sprintf("%t", *opts.HasAttachments))
+	}
+	if opts.Since != "" {
+		query.Set("since", opts.Since)
+	}
+	if opts.Until != "" {
+		query.Set("until", opts.Until)
 	}
 	path := fmt.Sprintf("/api/agents/%s/email/messages?%s", neturl.PathEscape(c.HaiAgentID()), query.Encode())
 	var wrapper ListMessagesResponse
@@ -1276,6 +1370,12 @@ func (c *Client) SearchMessages(ctx context.Context, opts SearchOptions) ([]Emai
 	}
 	if opts.HasAttachments != nil {
 		query.Set("has_attachments", fmt.Sprintf("%t", *opts.HasAttachments))
+	}
+	if opts.Since != "" {
+		query.Set("since", opts.Since)
+	}
+	if opts.Until != "" {
+		query.Set("until", opts.Until)
 	}
 	path := fmt.Sprintf("/api/agents/%s/email/search?%s", neturl.PathEscape(c.HaiAgentID()), query.Encode())
 	var wrapper ListMessagesResponse
@@ -1378,11 +1478,11 @@ func (c *Client) GetContacts(ctx context.Context) ([]Contact, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := limitedReadAll(resp.Body)
 		return nil, classifyHTTPError(resp.StatusCode, respBody)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := limitedReadAll(resp.Body)
 	if err != nil {
 		return nil, wrapError(ErrInvalidResponse, err, "failed to read response body")
 	}
@@ -1649,7 +1749,7 @@ func (c *Client) FetchRemoteKey(ctx context.Context, agentID, version string) (*
 	}
 	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
 	if baseURL == "" {
-		baseURL = DefaultKeysEndpoint
+		baseURL = c.endpoint
 	}
 	result, err := FetchRemoteKeyFromURL(ctx, c.httpClient, baseURL, agentID, version)
 	if err != nil {
@@ -1667,7 +1767,7 @@ func (c *Client) FetchKeyByHash(ctx context.Context, publicKeyHash string) (*Pub
 	}
 	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
 	if baseURL == "" {
-		baseURL = DefaultKeysEndpoint
+		baseURL = c.endpoint
 	}
 	result, err := FetchKeyByHashFromURL(ctx, c.httpClient, baseURL, publicKeyHash)
 	if err != nil {
@@ -1686,7 +1786,7 @@ func (c *Client) ClearAgentKeyCache() {
 func FetchRemoteKeyFromURL(ctx context.Context, httpClient *http.Client, baseURL, agentID, version string) (*PublicKeyInfo, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 	url := fmt.Sprintf(
-		"%s/jacs/v1/agents/%s/keys/%s",
+		"%s/api/agents/keys/%s/%s",
 		baseURL,
 		neturl.PathEscape(agentID),
 		neturl.PathEscape(version),
@@ -1712,7 +1812,7 @@ func FetchRemoteKeyFromURL(ctx context.Context, httpClient *http.Client, baseURL
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := limitedReadAll(resp.Body)
 		return nil, newError(ErrConnection, "status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -1774,7 +1874,7 @@ func (c *Client) FetchKeyByEmail(ctx context.Context, email string) (*PublicKeyI
 	}
 	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
 	if baseURL == "" {
-		baseURL = DefaultKeysEndpoint
+		baseURL = c.endpoint
 	}
 	result, err := FetchKeyByEmailFromURL(ctx, c.httpClient, baseURL, email)
 	if err != nil {
@@ -1792,7 +1892,7 @@ func (c *Client) FetchKeyByDomain(ctx context.Context, domain string) (*PublicKe
 	}
 	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
 	if baseURL == "" {
-		baseURL = DefaultKeysEndpoint
+		baseURL = c.endpoint
 	}
 	result, err := FetchKeyByDomainFromURL(ctx, c.httpClient, baseURL, domain)
 	if err != nil {
@@ -1806,7 +1906,7 @@ func (c *Client) FetchKeyByDomain(ctx context.Context, domain string) (*PublicKe
 func (c *Client) FetchAllKeys(ctx context.Context, jacsID string) (*AgentKeyHistory, error) {
 	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
 	if baseURL == "" {
-		baseURL = DefaultKeysEndpoint
+		baseURL = c.endpoint
 	}
 	return FetchAllKeysFromURL(ctx, c.httpClient, baseURL, jacsID)
 }

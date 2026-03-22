@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -17,7 +16,7 @@ import (
 func FetchKeyByHash(ctx context.Context, httpClient *http.Client, publicKeyHash string) (*PublicKeyInfo, error) {
 	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
 	if baseURL == "" {
-		baseURL = DefaultKeysEndpoint
+		baseURL = DefaultEndpoint
 	}
 	return FetchKeyByHashFromURL(ctx, httpClient, baseURL, publicKeyHash)
 }
@@ -25,7 +24,7 @@ func FetchKeyByHash(ctx context.Context, httpClient *http.Client, publicKeyHash 
 // FetchKeyByHashFromURL fetches a public key by its hash from a specific URL.
 func FetchKeyByHashFromURL(ctx context.Context, httpClient *http.Client, baseURL, publicKeyHash string) (*PublicKeyInfo, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
-	url := fmt.Sprintf("%s/jacs/v1/keys/by-hash/%s", baseURL, publicKeyHash)
+	url := fmt.Sprintf("%s/api/agents/keys/hash/%s", baseURL, publicKeyHash)
 
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
@@ -47,7 +46,7 @@ func FetchKeyByHashFromURL(ctx context.Context, httpClient *http.Client, baseURL
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := limitedReadAll(resp.Body)
 		return nil, newError(ErrConnection, "status %d: %s", resp.StatusCode, string(body))
 	}
 

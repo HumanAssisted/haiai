@@ -11,6 +11,15 @@ import (
 	"time"
 )
 
+// newSSETransport creates an http.Transport with appropriate timeouts for SSE connections.
+// It sets ResponseHeaderTimeout to 30s to prevent hanging on initial connect,
+// while allowing the long-lived connection body to stream indefinitely.
+func newSSETransport() *http.Transport {
+	return &http.Transport{
+		ResponseHeaderTimeout: 30 * time.Second,
+	}
+}
+
 // SSEConnection represents an active SSE connection to HAI.
 type SSEConnection struct {
 	client *Client
@@ -53,10 +62,11 @@ func (c *Client) ConnectSSE(ctx context.Context) (*SSEConnection, error) {
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
 
-	// Use a client without timeout for long-lived SSE connections
+	// Use a client without overall timeout for long-lived SSE connections.
+	// ResponseHeaderTimeout on the transport prevents hanging on initial connect.
+	// Context cancellation handles cleanup.
 	sseHTTPClient := &http.Client{
-		// No timeout -- SSE connections are long-lived.
-		// Context cancellation handles cleanup.
+		Transport: newSSETransport(),
 	}
 
 	resp, err := sseHTTPClient.Do(req)

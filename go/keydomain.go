@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,7 +16,7 @@ import (
 func FetchKeyByDomain(ctx context.Context, httpClient *http.Client, domain string) (*PublicKeyInfo, error) {
 	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
 	if baseURL == "" {
-		baseURL = DefaultKeysEndpoint
+		baseURL = DefaultEndpoint
 	}
 	return FetchKeyByDomainFromURL(ctx, httpClient, baseURL, domain)
 }
@@ -25,7 +24,7 @@ func FetchKeyByDomain(ctx context.Context, httpClient *http.Client, domain strin
 // FetchKeyByDomainFromURL fetches the latest DNS-verified agent key for a domain from a specific URL.
 func FetchKeyByDomainFromURL(ctx context.Context, httpClient *http.Client, baseURL, domain string) (*PublicKeyInfo, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
-	apiURL := fmt.Sprintf("%s/jacs/v1/agents/by-domain/%s", baseURL, url.PathEscape(domain))
+	apiURL := fmt.Sprintf("%s/api/agents/keys/domain/%s", baseURL, url.PathEscape(domain))
 
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
@@ -47,7 +46,7 @@ func FetchKeyByDomainFromURL(ctx context.Context, httpClient *http.Client, baseU
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := limitedReadAll(resp.Body)
 		return nil, newError(ErrConnection, "status %d: %s", resp.StatusCode, string(body))
 	}
 

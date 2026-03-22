@@ -108,7 +108,7 @@ func TestFetchKeyByDomainFromURL_CallsCorrectEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchKeyByDomainFromURL: %v", err)
 	}
-	if gotPath != "/jacs/v1/agents/by-domain/example.com" {
+	if gotPath != "/api/agents/keys/domain/example.com" {
 		t.Fatalf("unexpected path: %s", gotPath)
 	}
 	if key.AgentID != "agent-abc" {
@@ -150,7 +150,7 @@ func TestFetchAllKeysFromURL_CallsCorrectEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchAllKeysFromURL: %v", err)
 	}
-	if gotPath != "/jacs/v1/agents/agent-abc/keys" {
+	if gotPath != "/api/agents/keys/agent-abc/all" {
 		t.Fatalf("unexpected path: %s", gotPath)
 	}
 	if history.JacsID != "agent-abc" {
@@ -228,7 +228,7 @@ func TestClientFetchKeyByEmail(t *testing.T) {
 
 func TestClientFetchKeyByDomain(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.EscapedPath() != "/jacs/v1/agents/by-domain/example.com" {
+		if r.URL.EscapedPath() != "/api/agents/keys/domain/example.com" {
 			t.Fatalf("unexpected path: %s", r.URL.EscapedPath())
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -250,7 +250,7 @@ func TestClientFetchKeyByDomain(t *testing.T) {
 
 func TestClientFetchAllKeys(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.EscapedPath() != "/jacs/v1/agents/agent-abc/keys" {
+		if r.URL.EscapedPath() != "/api/agents/keys/agent-abc/all" {
 			t.Fatalf("unexpected path: %s", r.URL.EscapedPath())
 		}
 		w.Header().Set("Content-Type", "application/json")

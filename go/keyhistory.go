@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -38,7 +37,7 @@ type AgentKeyHistory struct {
 func FetchAllKeys(ctx context.Context, httpClient *http.Client, jacsID string) (*AgentKeyHistory, error) {
 	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
 	if baseURL == "" {
-		baseURL = DefaultKeysEndpoint
+		baseURL = DefaultEndpoint
 	}
 	return FetchAllKeysFromURL(ctx, httpClient, baseURL, jacsID)
 }
@@ -46,7 +45,7 @@ func FetchAllKeys(ctx context.Context, httpClient *http.Client, jacsID string) (
 // FetchAllKeysFromURL fetches all key versions for an agent from a specific URL.
 func FetchAllKeysFromURL(ctx context.Context, httpClient *http.Client, baseURL, jacsID string) (*AgentKeyHistory, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
-	apiURL := fmt.Sprintf("%s/jacs/v1/agents/%s/keys", baseURL, url.PathEscape(jacsID))
+	apiURL := fmt.Sprintf("%s/api/agents/keys/%s/all", baseURL, url.PathEscape(jacsID))
 
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
@@ -68,7 +67,7 @@ func FetchAllKeysFromURL(ctx context.Context, httpClient *http.Client, baseURL, 
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := limitedReadAll(resp.Body)
 		return nil, newError(ErrConnection, "status %d: %s", resp.StatusCode, string(body))
 	}
 
