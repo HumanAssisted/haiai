@@ -90,6 +90,9 @@ type CredentialSigner = {
   signStringSync(message: string): string;
 };
 
+/** Module-level WeakMap to hold private key PEM material off the client instance. */
+const privateKeyStore = new WeakMap<HaiClient, string>();
+
 const credentialWorkspaceDirs = new Set<string>();
 let credentialWorkspaceCleanupRegistered = false;
 
@@ -200,6 +203,7 @@ export class HaiClient {
   private baseUrl: string;
   private timeout: number;
   private maxRetries: number;
+  private maxReconnectAttempts: number;
   private _shouldDisconnect = false;
   private _connected = false;
   private _wsConnection: unknown = null;
@@ -215,9 +219,16 @@ export class HaiClient {
   private static readonly KEY_CACHE_TTL = 300_000;
 
   private constructor(options?: HaiClientOptions) {
-    this.baseUrl = (options?.url ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
+    const rawUrl = options?.url ?? DEFAULT_BASE_URL;
+    if (!/^https?:\/\//i.test(rawUrl)) {
+      throw new HaiError(
+        `Invalid base URL: "${rawUrl}". URL must start with http:// or https://.`,
+      );
+    }
+    this.baseUrl = rawUrl.replace(/\/+$/, '');
     this.timeout = options?.timeout ?? 30000;
     this.maxRetries = options?.maxRetries ?? 3;
+    this.maxReconnectAttempts = options?.maxReconnectAttempts ?? 10;
   }
 
   /**
@@ -266,8 +277,7 @@ export class HaiClient {
     const signer = createCredentialSigner(privateKeyPem, options?.privateKeyPassphrase);
 
     // Store the caller's PEM material for exportKeys/rotateKeys compatibility.
-    (client as any)._privateKeyPem = signer.privateKeyPem;
-    (client as any).privateKeyPem = signer.privateKeyPem;
+    privateKeyStore.set(client, signer.privateKeyPem);
     (client as any)._publicKeyPem = signer.publicKeyPem;
     (client as any)._privateKeyPassphrase = options?.privateKeyPassphrase;
     client.credentialSigner = signer;
@@ -742,8 +752,7 @@ export class HaiClient {
       } else {
         await writeFile(pubKeyPath, `${newPublicKeyPem}\n`);
       }
-      (this as any)._privateKeyPem = (await readF(privKeyPath, 'utf-8')).trim();
-      (this as any).privateKeyPem = (this as any)._privateKeyPem;
+      privateKeyStore.set(this, (await readF(privKeyPath, 'utf-8')).trim());
       (this as any)._publicKeyPem = newPublicKeyPem.trim();
     } catch (err) {
       // Rollback: restore archived keys
@@ -793,7 +802,7 @@ export class HaiClient {
     if (this.credentialSigner) {
       try {
         this.credentialSigner = createCredentialSigner(
-          (this as any)._privateKeyPem,
+          privateKeyStore.get(this) ?? '',
           passphrase || undefined,
         );
         rotatedSigner = this.credentialSigner;
@@ -1416,7 +1425,8 @@ export class HaiClient {
     const tempDir = await mkdtemp(join(tmpdir(), 'haiai-register-'));
     const keyDir = join(tempDir, 'keys');
     const dataDir = join(tempDir, 'data');
-    const passphrase = process.env.JACS_PRIVATE_KEY_PASSWORD ?? 'register-temp';
+    const { randomBytes } = await import('node:crypto');
+    const passphrase = process.env.JACS_PRIVATE_KEY_PASSWORD ?? randomBytes(32).toString('hex');
     try {
       const resultJson = createAgentSync(
         agentName,
@@ -1574,11 +1584,11 @@ export class HaiClient {
     const fs = require('node:fs');
     const path = require('node:path');
     const explicitPublicKeyPem = (this as any)._publicKeyPem;
-    const explicitPrivateKeyPem = (this as any)._privateKeyPem;
+    const explicitPrivateKeyPem = privateKeyStore.get(this);
     if (typeof explicitPublicKeyPem === 'string' && explicitPublicKeyPem.trim() !== '') {
       return {
         publicKeyPem: explicitPublicKeyPem.trim(),
-        privateKeyPem: typeof explicitPrivateKeyPem === 'string' ? explicitPrivateKeyPem : undefined,
+        privateKeyPem: explicitPrivateKeyPem,
       };
     }
     const keyDir = this.config.jacsKeyDir;
@@ -1617,6 +1627,7 @@ export class HaiClient {
     const url = this.makeUrl('/api/v1/agents/connect');
     let reconnectDelay = 1000;
     const maxReconnectDelay = 60000;
+    let reconnectAttempts = 0;
 
     while (!this._shouldDisconnect) {
       try {
@@ -1664,6 +1675,13 @@ export class HaiClient {
         if (this._shouldDisconnect) break;
         if (e instanceof HaiError) throw e;
 
+        reconnectAttempts++;
+        if (reconnectAttempts >= this.maxReconnectAttempts) {
+          throw new HaiConnectionError(
+            `SSE connection failed after ${reconnectAttempts} reconnect attempts`,
+          );
+        }
+
         await new Promise(resolve => setTimeout(resolve, reconnectDelay));
         reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
       }
@@ -1686,6 +1704,7 @@ export class HaiClient {
 
     let reconnectDelay = 1000;
     const maxReconnectDelay = 60000;
+    let reconnectAttempts = 0;
 
     while (!this._shouldDisconnect) {
       try {
@@ -1736,6 +1755,13 @@ export class HaiClient {
         if (this._shouldDisconnect) break;
         if (e instanceof HaiError) throw e;
 
+        reconnectAttempts++;
+        if (reconnectAttempts >= this.maxReconnectAttempts) {
+          throw new HaiConnectionError(
+            `WebSocket connection failed after ${reconnectAttempts} reconnect attempts`,
+          );
+        }
+
         await new Promise(resolve => setTimeout(resolve, reconnectDelay));
         reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
       }
@@ -1771,9 +1797,6 @@ export class HaiClient {
         if (response.status === 401) {
           throw new AuthenticationError('JACS signature rejected by HAI', 401);
         }
-        if (response.status === 429) {
-          throw new HaiError('Rate limited', 429);
-        }
         if (response.ok) {
           return response;
         }
@@ -1783,9 +1806,11 @@ export class HaiClient {
           const errBody = await response.json() as Record<string, unknown>;
           if (errBody.error) msg = String(errBody.error);
         } catch { /* empty */ }
-        lastError = new HaiError(msg, response.status);
+        lastError = response.status === 429
+          ? new RateLimitedError(msg, 429)
+          : new HaiError(msg, response.status);
       } catch (e) {
-        if (e instanceof HaiError) throw e;
+        if (e instanceof HaiError && !(e instanceof RateLimitedError)) throw e;
         if (e instanceof Error && e.name === 'AbortError') {
           throw new HaiConnectionError(`Request timed out after ${effectiveTimeout}ms`);
         }
@@ -2134,6 +2159,9 @@ export class HaiClient {
     if (options?.isRead != null) params.set('is_read', String(options.isRead));
     if (options?.folder) params.set('folder', options.folder);
     if (options?.label) params.set('label', options.label);
+    if (options?.hasAttachments != null) params.set('has_attachments', String(options.hasAttachments));
+    if (options?.since) params.set('since', options.since);
+    if (options?.until) params.set('until', options.until);
 
     const qs = params.toString();
     const safeAgentId = this.encodePathSegment(this.haiAgentId);
@@ -2281,6 +2309,9 @@ export class HaiClient {
     if (options.jacsVerified != null) params.set('jacs_verified', String(options.jacsVerified));
     if (options.folder) params.set('folder', options.folder);
     if (options.label) params.set('label', options.label);
+    if (options.hasAttachments != null) params.set('has_attachments', String(options.hasAttachments));
+    if (options.since) params.set('since', options.since);
+    if (options.until) params.set('until', options.until);
 
     const safeAgentId = this.encodePathSegment(this.haiAgentId);
     const url = this.makeUrl(`/api/agents/${safeAgentId}/email/search?${params.toString()}`);
