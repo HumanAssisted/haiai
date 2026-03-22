@@ -32,7 +32,7 @@
     "haiai": "./bin/haiai.cjs"
   },
   "dependencies": {
-    "@hai.ai/jacs": "file:../../JACS/jacsnpm",
+    "@hai.ai/jacs": "0.9.9",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "ws": "^8.16.0"
   },
