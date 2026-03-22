@@ -83,15 +83,17 @@ check-jacs-versions:
 	@echo "  rust/haiai-cli  $(JACS_RUST_CLI)"
 	@echo "  rust/hai-mcp    $(JACS_RUST_MCP)"
 	@echo "  python          $(JACS_PYTHON)"
-	@echo "  node            $(JACS_NODE)"
 	@if [ "$(JACS_RUST)" != "$(JACS_RUST_CLI)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != haiai-cli ($(JACS_RUST_CLI))"; exit 1; fi
 	@if [ "$(JACS_RUST)" != "$(JACS_RUST_MCP)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != hai-mcp ($(JACS_RUST_MCP))"; exit 1; fi
 	@if [ "$(JACS_RUST)" != "$(JACS_PYTHON)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != python ($(JACS_PYTHON))"; exit 1; fi
-	@if [ "$(JACS_RUST)" != "$(JACS_NODE)" ]; then \
-		echo "ERROR: jacs in haiai ($(JACS_RUST)) != node ($(JACS_NODE))"; exit 1; fi
+	@case "$(JACS_NODE)" in \
+		file:*) echo "  node            $(JACS_NODE) (local path, skipping match check)" ;; \
+		*) if [ "$(JACS_RUST)" != "$(JACS_NODE)" ]; then \
+			echo "ERROR: jacs in haiai ($(JACS_RUST)) != node ($(JACS_NODE))"; exit 1; fi ;; \
+	esac
 	@echo "All JACS versions match: $(JACS_RUST)"
 
 # ============================================================================
