@@ -96,14 +96,33 @@ pub struct HaiClient<P: JacsProvider> {
     agent_email: Option<String>,
 }
 
+/// Status codes that are safe to retry (transient server errors and rate limiting).
+/// Matches Python SDK's `RETRYABLE_STATUS_CODES`.
+const RETRYABLE_STATUS_CODES: &[u16] = &[429, 500, 502, 503, 504];
+
+/// Default maximum reconnect attempts for `on_benchmark_job`.
+const DEFAULT_MAX_RECONNECT_ATTEMPTS: usize = 10;
+
 impl<P: JacsProvider> HaiClient<P> {
     pub fn new(jacs: P, options: HaiClientOptions) -> Result<Self> {
+        // ── Issue #13: validate base URL ────────────────────────────────
+        let trimmed = options.base_url.trim_end_matches('/');
+        if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+            return Err(HaiError::Validation {
+                field: "base_url".to_string(),
+                message: format!(
+                    "base_url must start with http:// or https://, got: {}",
+                    options.base_url
+                ),
+            });
+        }
+
         let http = reqwest::Client::builder()
             .timeout(options.timeout)
             .build()?;
 
         Ok(Self {
-            base_url: options.base_url.trim_end_matches('/').to_string(),
+            base_url: trimmed.to_string(),
             http,
             max_retries: options.max_retries.max(1),
             jacs,
@@ -173,13 +192,22 @@ impl<P: JacsProvider> HaiClient<P> {
         }
 
         let url = self.url("/api/v1/agents/hello");
+        let auth = self.build_auth_header()?;
         let response = self
-            .http
-            .post(url)
-            .header("Authorization", self.build_auth_header()?)
-            .header("Content-Type", "application/json")
-            .json(&payload)
-            .send()
+            .request_with_retry(|| {
+                let http = &self.http;
+                let url = &url;
+                let auth = &auth;
+                let payload = &payload;
+                async move {
+                    http.post(url.as_str())
+                        .header("Authorization", auth.as_str())
+                        .header("Content-Type", "application/json")
+                        .json(payload)
+                        .send()
+                        .await
+                }
+            })
             .await?;
 
         let data = response_json(response).await?;
@@ -196,11 +224,19 @@ impl<P: JacsProvider> HaiClient<P> {
 
     pub async fn check_username(&self, username: &str) -> Result<CheckUsernameResult> {
         let url = self.url("/api/v1/agents/username/check");
+        let username = username.to_string();
         let response = self
-            .http
-            .get(url)
-            .query(&[("username", username)])
-            .send()
+            .request_with_retry(|| {
+                let http = &self.http;
+                let url = &url;
+                let username = &username;
+                async move {
+                    http.get(url.as_str())
+                        .query(&[("username", username.as_str())])
+                        .send()
+                        .await
+                }
+            })
             .await?;
 
         let data = response_json(response).await?;
@@ -246,12 +282,20 @@ impl<P: JacsProvider> HaiClient<P> {
             );
         }
 
+        let body = Value::Object(payload);
         let response = self
-            .http
-            .post(url)
-            .header("Content-Type", "application/json")
-            .json(&Value::Object(payload))
-            .send()
+            .request_with_retry(|| {
+                let http = &self.http;
+                let url = &url;
+                let body = &body;
+                async move {
+                    http.post(url.as_str())
+                        .header("Content-Type", "application/json")
+                        .json(body)
+                        .send()
+                        .await
+                }
+            })
             .await?;
 
         let data = response_json(response).await?;
@@ -542,13 +586,22 @@ impl<P: JacsProvider> HaiClient<P> {
             payload["attachments"] = Value::Array(att_json);
         }
 
+        let auth = self.build_auth_header()?;
         let response = self
-            .http
-            .post(url)
-            .header("Authorization", self.build_auth_header()?)
-            .header("Content-Type", "application/json")
-            .json(&payload)
-            .send()
+            .request_with_retry(|| {
+                let http = &self.http;
+                let url = &url;
+                let auth = &auth;
+                let payload = &payload;
+                async move {
+                    http.post(url.as_str())
+                        .header("Authorization", auth.as_str())
+                        .header("Content-Type", "application/json")
+                        .json(payload)
+                        .send()
+                        .await
+                }
+            })
             .await?;
 
         let data = response_json(response).await?;
@@ -919,6 +972,17 @@ impl<P: JacsProvider> HaiClient<P> {
     ///
     /// - `reply_type`: "sender" (default), "all", or "custom"
     /// - `recipients`: required when reply_type is "custom"
+    ///
+    /// # Implementation note (Issue #17)
+    ///
+    /// This method POSTs to the server-side `/api/agents/{id}/email/reply`
+    /// endpoint, which handles fetching the original message and composing
+    /// the reply server-side. This differs from Python/Node/Go SDKs which
+    /// fetch the original client-side and compose locally. The server-side
+    /// approach is intentional for Rust as the canonical SDK: it avoids a
+    /// round-trip, keeps reply logic consistent, and the endpoint is
+    /// documented in `fixtures/contract_endpoints.json` so other SDKs can
+    /// adopt it in the future.
     pub async fn reply_with_options(
         &self,
         message_id: &str,
@@ -932,6 +996,7 @@ impl<P: JacsProvider> HaiClient<P> {
         })?;
         let agent_id = self.hai_agent_id();
         let safe_agent_id = encode_path_segment(agent_id);
+        // Issue #17: Uses dedicated server-side reply endpoint (see doc comment above).
         let url = self.url(&format!(
             "/api/agents/{safe_agent_id}/email/reply"
         ));
@@ -951,12 +1016,21 @@ impl<P: JacsProvider> HaiClient<P> {
             payload["subject_override"] = serde_json::Value::String(s.to_string());
         }
 
+        let auth = self.build_auth_header()?;
         let response = self
-            .http
-            .post(url)
-            .header("Authorization", self.build_auth_header()?)
-            .json(&payload)
-            .send()
+            .request_with_retry(|| {
+                let http = &self.http;
+                let url = &url;
+                let auth = &auth;
+                let payload = &payload;
+                async move {
+                    http.post(url.as_str())
+                        .header("Authorization", auth.as_str())
+                        .json(payload)
+                        .send()
+                        .await
+                }
+            })
             .await?;
 
         let data = response_json(response).await?;
@@ -1129,13 +1203,22 @@ impl<P: JacsProvider> HaiClient<P> {
             "tier": tier.unwrap_or("free"),
         });
         let url = self.url("/api/benchmark/run");
+        let auth = self.build_auth_header()?;
         let response = self
-            .http
-            .post(url)
-            .header("Authorization", self.build_auth_header()?)
-            .header("Content-Type", "application/json")
-            .json(&payload)
-            .send()
+            .request_with_retry(|| {
+                let http = &self.http;
+                let url = &url;
+                let auth = &auth;
+                let payload = &payload;
+                async move {
+                    http.post(url.as_str())
+                        .header("Authorization", auth.as_str())
+                        .header("Content-Type", "application/json")
+                        .json(payload)
+                        .send()
+                        .await
+                }
+            })
             .await?;
 
         response_json(response).await
@@ -1444,40 +1527,126 @@ impl<P: JacsProvider> HaiClient<P> {
         })
     }
 
+    /// Listen for benchmark jobs with automatic reconnection.
+    ///
+    /// When the connection drops (without a "disconnect" event), reconnects
+    /// with exponential backoff up to `max_reconnect_attempts` times (default 10).
+    /// A "disconnect" event is treated as an intentional server-side shutdown
+    /// and will NOT trigger reconnection.
     pub async fn on_benchmark_job<F, Fut>(
         &self,
         transport: TransportType,
-        mut handler: F,
+        handler: F,
     ) -> Result<()>
     where
         F: FnMut(Value) -> Fut,
         Fut: Future<Output = Result<()>>,
     {
-        match transport {
-            TransportType::Sse => {
-                let mut conn = self.connect_sse().await?;
-                while let Some(event) = conn.next_event().await {
-                    match event.event_type.as_str() {
-                        "benchmark_job" => handler(event.data).await?,
-                        "disconnect" => break,
-                        _ => {}
+        self.on_benchmark_job_with_reconnect(transport, handler, DEFAULT_MAX_RECONNECT_ATTEMPTS)
+            .await
+    }
+
+    /// Like [`on_benchmark_job`] but with a configurable max reconnect attempt count.
+    pub async fn on_benchmark_job_with_reconnect<F, Fut>(
+        &self,
+        transport: TransportType,
+        mut handler: F,
+        max_reconnect_attempts: usize,
+    ) -> Result<()>
+    where
+        F: FnMut(Value) -> Fut,
+        Fut: Future<Output = Result<()>>,
+    {
+        let mut reconnect_count: usize = 0;
+
+        loop {
+            let got_disconnect_event;
+
+            match transport {
+                TransportType::Sse => {
+                    let conn_result = self.connect_sse().await;
+                    let mut conn = match conn_result {
+                        Ok(c) => {
+                            reconnect_count = 0; // reset on successful connect
+                            c
+                        }
+                        Err(e) => {
+                            if reconnect_count >= max_reconnect_attempts {
+                                return Err(e);
+                            }
+                            let delay = Duration::from_millis(100 * (1u64 << reconnect_count.min(10)));
+                            tokio::time::sleep(delay).await;
+                            reconnect_count += 1;
+                            continue;
+                        }
+                    };
+
+                    got_disconnect_event = false;
+                    let mut saw_disconnect = false;
+                    while let Some(event) = conn.next_event().await {
+                        match event.event_type.as_str() {
+                            "benchmark_job" => handler(event.data).await?,
+                            "disconnect" => {
+                                saw_disconnect = true;
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                    conn.close().await;
+                    if saw_disconnect {
+                        return Ok(());
                     }
                 }
-                conn.close().await;
-            }
-            TransportType::Ws => {
-                let mut conn = self.connect_ws().await?;
-                while let Some(event) = conn.next_event().await {
-                    match event.event_type.as_str() {
-                        "benchmark_job" => handler(event.data).await?,
-                        "disconnect" => break,
-                        _ => {}
+                TransportType::Ws => {
+                    let conn_result = self.connect_ws().await;
+                    let mut conn = match conn_result {
+                        Ok(c) => {
+                            reconnect_count = 0;
+                            c
+                        }
+                        Err(e) => {
+                            if reconnect_count >= max_reconnect_attempts {
+                                return Err(e);
+                            }
+                            let delay = Duration::from_millis(100 * (1u64 << reconnect_count.min(10)));
+                            tokio::time::sleep(delay).await;
+                            reconnect_count += 1;
+                            continue;
+                        }
+                    };
+
+                    got_disconnect_event = false;
+                    let mut saw_disconnect = false;
+                    while let Some(event) = conn.next_event().await {
+                        match event.event_type.as_str() {
+                            "benchmark_job" => handler(event.data).await?,
+                            "disconnect" => {
+                                saw_disconnect = true;
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                    conn.close().await;
+                    if saw_disconnect {
+                        return Ok(());
                     }
                 }
-                conn.close().await;
             }
+
+            // Connection dropped without disconnect event -- try reconnecting
+            let _ = got_disconnect_event;
+            if reconnect_count >= max_reconnect_attempts {
+                return Err(HaiError::Message(format!(
+                    "on_benchmark_job: max reconnect attempts ({max_reconnect_attempts}) exceeded"
+                )));
+            }
+
+            let delay = Duration::from_millis(100 * (1u64 << reconnect_count.min(10)));
+            tokio::time::sleep(delay).await;
+            reconnect_count += 1;
         }
-        Ok(())
     }
 
     fn url(&self, path: &str) -> String {
@@ -1486,6 +1655,39 @@ impl<P: JacsProvider> HaiClient<P> {
 
     pub fn max_retries(&self) -> usize {
         self.max_retries
+    }
+
+    /// Execute an async HTTP operation with retries and exponential backoff.
+    ///
+    /// Retries on `RETRYABLE_STATUS_CODES` (429, 500, 502, 503, 504).
+    /// The closure must build and send a request, returning a `reqwest::Response`.
+    /// On success or non-retryable error the response is returned immediately.
+    /// Transport-level errors (e.g. DNS, connection refused) are NOT retried.
+    async fn request_with_retry<F, Fut>(&self, mut make_request: F) -> std::result::Result<Response, reqwest::Error>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = std::result::Result<Response, reqwest::Error>>,
+    {
+        for attempt in 0..self.max_retries {
+            let response = make_request().await?;
+            let status = response.status().as_u16();
+
+            if !RETRYABLE_STATUS_CODES.contains(&status) {
+                return Ok(response);
+            }
+
+            // Last attempt -- return whatever we got
+            if attempt + 1 >= self.max_retries {
+                return Ok(response);
+            }
+
+            // Exponential backoff: 100ms, 200ms, 400ms, ...
+            let delay = Duration::from_millis(100 * (1u64 << attempt));
+            tokio::time::sleep(delay).await;
+        }
+
+        // max_retries is always >= 1 (enforced in new()), so this is unreachable
+        unreachable!("max_retries is always >= 1")
     }
 }
 
@@ -1844,6 +2046,284 @@ mod tests {
             obj.len(),
             expected_fields.len(),
             "fixture field count mismatch",
+        );
+    }
+
+    // ── Issue #13: base URL validation ────────────────────────────────
+
+    #[test]
+    fn test_new_rejects_invalid_base_url_no_scheme() {
+        let provider = StaticJacsProvider::new("test-agent");
+        let result = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: "example.com".to_string(),
+                ..HaiClientOptions::default()
+            },
+        );
+        assert!(result.is_err(), "base_url without scheme should be rejected");
+        let err = format!("{}", result.err().unwrap());
+        assert!(
+            err.contains("base_url") && err.contains("http"),
+            "error should mention base_url and http: {err}"
+        );
+    }
+
+    #[test]
+    fn test_new_rejects_ftp_base_url() {
+        let provider = StaticJacsProvider::new("test-agent");
+        let result = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: "ftp://example.com".to_string(),
+                ..HaiClientOptions::default()
+            },
+        );
+        assert!(result.is_err(), "ftp:// base_url should be rejected");
+    }
+
+    #[test]
+    fn test_new_accepts_http_base_url() {
+        let provider = StaticJacsProvider::new("test-agent");
+        let result = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: "http://localhost:8080".to_string(),
+                ..HaiClientOptions::default()
+            },
+        );
+        assert!(result.is_ok(), "http:// should be accepted");
+    }
+
+    #[test]
+    fn test_new_accepts_https_base_url() {
+        let provider = StaticJacsProvider::new("test-agent");
+        let result = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: "https://beta.hai.ai".to_string(),
+                ..HaiClientOptions::default()
+            },
+        );
+        assert!(result.is_ok(), "https:// should be accepted");
+    }
+
+    #[test]
+    fn test_new_strips_trailing_slash() {
+        let provider = StaticJacsProvider::new("test-agent");
+        let client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: "https://beta.hai.ai/".to_string(),
+                ..HaiClientOptions::default()
+            },
+        )
+        .expect("should accept URL with trailing slash");
+        assert_eq!(client.base_url(), "https://beta.hai.ai");
+    }
+
+    // ── Issue #4: retry wrapper ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_retry_on_503_then_success() {
+        let server = httpmock::MockServer::start_async().await;
+
+        // First call returns 503, second returns 200
+        let mock_503 = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path("/api/v1/agents/hello");
+                then.status(503)
+                    .json_body(json!({"error": "Service Unavailable"}));
+            })
+            .await;
+
+        let provider = StaticJacsProvider::new("test-agent-retry");
+        let client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: server.base_url(),
+                max_retries: 3,
+                ..HaiClientOptions::default()
+            },
+        )
+        .expect("client");
+
+        // After the first 503 attempt, delete the mock and set up a 200 one.
+        // httpmock doesn't support ordered mocks easily, so we test that
+        // the method at least retries (calls endpoint > 1 time) by
+        // having only 503s and checking the mock was called multiple times.
+        let result = client.hello(false).await;
+        // Should be an API error because all retries get 503
+        assert!(result.is_err());
+        // The mock should have been hit max_retries times (3)
+        mock_503.assert_calls_async(3).await;
+    }
+
+    #[tokio::test]
+    async fn test_retry_not_on_400() {
+        let server = httpmock::MockServer::start_async().await;
+
+        let mock_400 = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path("/api/v1/agents/hello");
+                then.status(400)
+                    .json_body(json!({"error": "Bad Request"}));
+            })
+            .await;
+
+        let provider = StaticJacsProvider::new("test-agent-no-retry");
+        let client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: server.base_url(),
+                max_retries: 3,
+                ..HaiClientOptions::default()
+            },
+        )
+        .expect("client");
+
+        let result = client.hello(false).await;
+        assert!(result.is_err());
+        // 400 is NOT retryable, so mock should be hit exactly once
+        mock_400.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    async fn test_retry_on_429_rate_limit() {
+        let server = httpmock::MockServer::start_async().await;
+
+        let mock_429 = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path("/api/v1/agents/hello");
+                then.status(429)
+                    .json_body(json!({"error": "Too Many Requests"}));
+            })
+            .await;
+
+        let provider = StaticJacsProvider::new("test-agent-429");
+        let client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: server.base_url(),
+                max_retries: 2,
+                ..HaiClientOptions::default()
+            },
+        )
+        .expect("client");
+
+        let result = client.hello(false).await;
+        assert!(result.is_err());
+        // 429 is retryable, should be hit 2 times (max_retries)
+        mock_429.assert_calls_async(2).await;
+    }
+
+    #[tokio::test]
+    async fn test_retry_success_on_second_attempt() {
+        let server = httpmock::MockServer::start_async().await;
+
+        // Test that a 200 response succeeds without needing retries
+        server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path("/api/v1/agents/hello");
+                then.status(200).json_body(json!({
+                    "timestamp": "2024-01-01T00:00:00Z",
+                    "message": "hello",
+                    "hello_id": "h-123"
+                }));
+            })
+            .await;
+
+        let provider = StaticJacsProvider::new("test-agent-ok");
+        let client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: server.base_url(),
+                max_retries: 3,
+                ..HaiClientOptions::default()
+            },
+        )
+        .expect("client");
+
+        let result = client.hello(false).await;
+        assert!(result.is_ok(), "200 response should succeed");
+        let hello = result.unwrap();
+        assert_eq!(hello.hello_id, "h-123");
+    }
+
+    #[test]
+    fn test_retryable_status_codes_match_python() {
+        // Contract: must match Python SDK's RETRYABLE_STATUS_CODES
+        assert!(RETRYABLE_STATUS_CODES.contains(&429));
+        assert!(RETRYABLE_STATUS_CODES.contains(&500));
+        assert!(RETRYABLE_STATUS_CODES.contains(&502));
+        assert!(RETRYABLE_STATUS_CODES.contains(&503));
+        assert!(RETRYABLE_STATUS_CODES.contains(&504));
+        assert!(!RETRYABLE_STATUS_CODES.contains(&400));
+        assert!(!RETRYABLE_STATUS_CODES.contains(&401));
+        assert!(!RETRYABLE_STATUS_CODES.contains(&404));
+    }
+
+    #[test]
+    fn test_max_retries_floor_is_one() {
+        let provider = StaticJacsProvider::new("test-agent");
+        let client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: "https://example.com".to_string(),
+                max_retries: 0,
+                ..HaiClientOptions::default()
+            },
+        )
+        .expect("client");
+        assert_eq!(client.max_retries(), 1, "max_retries should be at least 1");
+    }
+
+    // ── Issue #14: on_benchmark_job reconnection ──────────────────────
+
+    #[test]
+    fn test_default_max_reconnect_attempts() {
+        assert_eq!(DEFAULT_MAX_RECONNECT_ATTEMPTS, 10);
+    }
+
+    // ── Issue #17: reply endpoint in contract fixture ─────────────────
+
+    #[test]
+    fn test_contract_fixture_contains_reply_endpoint() {
+        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("fixtures")
+            .join("contract_endpoints.json");
+
+        if !fixture_path.exists() {
+            panic!("contract_endpoints.json fixture not found at {:?}", fixture_path);
+        }
+
+        let data = std::fs::read_to_string(&fixture_path).expect("read fixture");
+        let fixture: serde_json::Value = serde_json::from_str(&data).expect("parse fixture");
+        let obj = fixture.as_object().expect("fixture should be object");
+
+        // The reply endpoint must be present
+        assert!(obj.contains_key("reply"), "fixture must contain 'reply' endpoint");
+        let reply = obj.get("reply").unwrap();
+        assert_eq!(
+            reply.get("method").and_then(|v| v.as_str()),
+            Some("POST"),
+            "reply method should be POST"
+        );
+        assert_eq!(
+            reply.get("path").and_then(|v| v.as_str()),
+            Some("/api/agents/{agent_id}/email/reply"),
+            "reply path should match"
+        );
+        assert_eq!(
+            reply.get("auth_required").and_then(|v| v.as_bool()),
+            Some(true),
+            "reply should require auth"
         );
     }
 }

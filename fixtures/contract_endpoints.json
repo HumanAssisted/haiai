@@ -14,5 +14,11 @@
     "method": "POST",
     "path": "/api/v1/agents/jobs/{job_id}/response",
     "auth_required": true
+  },
+  "reply": {
+    "method": "POST",
+    "path": "/api/agents/{agent_id}/email/reply",
+    "auth_required": true,
+    "note": "Server-side reply endpoint. Rust SDK uses this directly; Python/Node/Go currently fetch the original client-side and compose locally. Other SDKs should migrate to this endpoint for consistency."
   }
 }
