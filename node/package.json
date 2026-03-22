@@ -1,7 +1,7 @@
 {
   "name": "@haiai/haiai",
   "version": "0.1.5",
-  "description": "Official Node.js SDK for the HAI agent benchmarking platform",
+  "description": "Node.js SDK for HAI.AI -- build helpful, trustworthy AI agents with cryptographic identity, signed email, and verified benchmarks",
   "type": "module",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
