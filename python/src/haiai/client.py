@@ -222,7 +222,15 @@ class HaiClient:
 
     @staticmethod
     def _make_url(base_url: str, path: str) -> str:
-        """Construct a full URL from base and path."""
+        """Construct a full URL from base and path.
+
+        Raises:
+            ValueError: If base_url does not start with http:// or https://.
+        """
+        if not base_url or not base_url.startswith(("http://", "https://")):
+            raise ValueError(
+                f"Invalid base URL: {base_url!r} — URL must start with http:// or https://"
+            )
         base = base_url.rstrip("/")
         path = "/" + path.lstrip("/")
         return base + path
@@ -402,7 +410,7 @@ class HaiClient:
         headers = self._build_auth_headers()
         headers["Content-Type"] = "application/json"
 
-        payload: dict[str, Any] = {}
+        payload: dict[str, Any] = {"agent_id": self._get_jacs_id()}
         if include_test:
             payload["include_test"] = True
 
@@ -1492,7 +1500,7 @@ class HaiClient:
         headers = self._build_auth_headers()
         headers["Content-Type"] = "application/json"
 
-        payload = {"name": name, "tier": tier}
+        payload = {"name": name, "tier": tier, "transport": "sse"}
         request_timeout = timeout or max(self._timeout, 120.0)
 
         try:
@@ -2339,6 +2347,9 @@ class HaiClient:
         is_read: Optional[bool] = None,
         folder: Optional[str] = None,
         label: Optional[str] = None,
+        has_attachments: Optional[bool] = None,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
     ) -> list[EmailMessage]:
         """List email messages for this agent.
 
@@ -2350,6 +2361,9 @@ class HaiClient:
             is_read: Filter by read status.
             folder: Filter by folder (e.g. "inbox", "archive").
             label: Filter by label/tag.
+            has_attachments: Filter by attachment presence.
+            since: ISO 8601 start date filter.
+            until: ISO 8601 end date filter.
 
         Returns:
             List of EmailMessage objects.
@@ -2368,6 +2382,12 @@ class HaiClient:
             params["folder"] = folder
         if label is not None:
             params["label"] = label
+        if has_attachments is not None:
+            params["has_attachments"] = str(has_attachments).lower()
+        if since is not None:
+            params["since"] = since
+        if until is not None:
+            params["until"] = until
 
         try:
             resp = httpx.get(
@@ -2699,6 +2719,7 @@ class HaiClient:
         jacs_verified: Optional[bool] = None,
         folder: Optional[str] = None,
         label: Optional[str] = None,
+        has_attachments: Optional[bool] = None,
         limit: int = 20,
         offset: int = 0,
     ) -> list[EmailMessage]:
@@ -2716,6 +2737,7 @@ class HaiClient:
             jacs_verified: Filter by JACS verification status.
             folder: Filter by folder.
             label: Filter by label/tag.
+            has_attachments: Filter by attachment presence.
             limit: Max messages to return.
             offset: Pagination offset.
 
@@ -2748,6 +2770,8 @@ class HaiClient:
             params["folder"] = folder
         if label is not None:
             params["label"] = label
+        if has_attachments is not None:
+            params["has_attachments"] = str(has_attachments).lower()
 
         try:
             resp = httpx.get(
@@ -3832,11 +3856,15 @@ def list_messages(
     is_read: Optional[bool] = None,
     folder: Optional[str] = None,
     label: Optional[str] = None,
+    has_attachments: Optional[bool] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
 ) -> list[EmailMessage]:
     """List email messages for this agent."""
     return _get_client().list_messages(
         hai_url, limit, offset, direction,
         is_read=is_read, folder=folder, label=label,
+        has_attachments=has_attachments, since=since, until=until,
     )
 
 
@@ -3877,6 +3905,7 @@ def search_messages(
     jacs_verified: Optional[bool] = None,
     folder: Optional[str] = None,
     label: Optional[str] = None,
+    has_attachments: Optional[bool] = None,
     limit: int = 20,
     offset: int = 0,
 ) -> list[EmailMessage]:
@@ -3885,7 +3914,7 @@ def search_messages(
         hai_url, q=q, direction=direction, from_address=from_address,
         to_address=to_address, since=since, until=until,
         is_read=is_read, jacs_verified=jacs_verified,
-        folder=folder, label=label,
+        folder=folder, label=label, has_attachments=has_attachments,
         limit=limit, offset=offset,
     )
 
