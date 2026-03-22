@@ -38,8 +38,11 @@ pub fn load_config(path: Option<&Path>) -> Result<AgentConfig> {
 
     let config_dir = source_path.parent().unwrap_or_else(|| Path::new("."));
 
-    let jacs_agent_name = get_string(&data, &["jacsAgentName", "agent_name"])
-        .unwrap_or_else(|| "unnamed-agent".to_string());
+    let jacs_agent_name = get_string(&data, &["jacsAgentName", "agent_name"]).ok_or_else(|| {
+        HaiError::ConfigInvalid {
+            message: "jacsAgentName (or agent_name) is required but missing".to_string(),
+        }
+    })?;
     let jacs_agent_version = get_string(&data, &["jacsAgentVersion", "agent_version"])
         .unwrap_or_else(|| "1.0.0".to_string());
 
@@ -52,6 +55,11 @@ pub fn load_config(path: Option<&Path>) -> Result<AgentConfig> {
     };
 
     let jacs_id = get_string(&data, &["jacsId", "jacs_id"]);
+    if jacs_id.is_none() {
+        return Err(HaiError::ConfigInvalid {
+            message: "jacsId (or jacs_id) is required but missing".to_string(),
+        });
+    }
 
     let private_key_raw = get_string(&data, &["jacsPrivateKeyPath", "private_key_path"]);
     let jacs_private_key_path = private_key_raw.map(|p| {
@@ -258,6 +266,62 @@ mod tests {
             .jacs_private_key_path
             .expect("private key path")
             .ends_with("nested/custom/private.pem"));
+    }
+
+    // ── Issue #8: required config fields ─────────────────────────────────
+
+    #[test]
+    fn load_config_errors_when_jacs_agent_name_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("jacs.config.json");
+        fs::write(
+            &config_path,
+            r#"{"jacsId": "agent-1", "jacsAgentVersion": "2.0.0"}"#,
+        )
+        .expect("write config");
+
+        let result = load_config(Some(&config_path));
+        assert!(result.is_err(), "missing jacs_agent_name should be an error");
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("jacsAgentName") || err.contains("agent_name"),
+            "error should mention the missing field: {err}"
+        );
+    }
+
+    #[test]
+    fn load_config_errors_when_jacs_id_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("jacs.config.json");
+        fs::write(
+            &config_path,
+            r#"{"jacsAgentName": "my-agent", "jacsAgentVersion": "2.0.0"}"#,
+        )
+        .expect("write config");
+
+        let result = load_config(Some(&config_path));
+        assert!(result.is_err(), "missing jacs_id should be an error");
+        let err = format!("{}", result.unwrap_err());
+        assert!(
+            err.contains("jacsId") || err.contains("jacs_id"),
+            "error should mention the missing field: {err}"
+        );
+    }
+
+    #[test]
+    fn load_config_defaults_version_and_key_dir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("jacs.config.json");
+        fs::write(
+            &config_path,
+            r#"{"jacsAgentName": "my-agent", "jacsId": "agent-1"}"#,
+        )
+        .expect("write config");
+
+        let cfg = load_config(Some(&config_path)).expect("should succeed with defaults for version and key_dir");
+        assert_eq!(cfg.jacs_agent_version, "1.0.0");
+        assert_eq!(cfg.jacs_agent_name, "my-agent");
+        assert_eq!(cfg.jacs_id, Some("agent-1".to_string()));
     }
 
     #[test]
