@@ -93,14 +93,16 @@ jobs:
         with:
           path: /tmp/JACS/jacsgo/build
           key: jacsgo-${{ runner.os }}-${{ hashFiles('.github/workflows/test.yml') }}
-      - name: Clone JACS and build jacsgo
+      - name: Clone JACS
+        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git /tmp/JACS
+      - name: Build jacsgo shared library
         if: steps.cache-jacsgo.outputs.cache-hit != 'true'
+        run: cd /tmp/JACS/jacsgo && make build-rust
+      - name: Set go.mod replace directive for CI
         run: |
-          git clone --depth 1 https://github.com/HumanAssisted/JACS.git /tmp/JACS
-          cd /tmp/JACS/jacsgo
-          make build-rust
-      - name: Remove local dev replace directive
-        run: sed -i '/^replace github.com\/HumanAssisted\/JACS\/jacsgo/d' go/go.mod
+          cd go
+          sed -i '/^replace github.com\/HumanAssisted\/JACS\/jacsgo/d' go.mod
+          echo 'replace github.com/HumanAssisted/JACS/jacsgo => /tmp/JACS/jacsgo' >> go.mod
       - name: Run tests
         env:
           CGO_ENABLED: "1"
