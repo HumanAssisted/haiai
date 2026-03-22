@@ -34,7 +34,7 @@ use crate::error::Result;
 #[cfg(feature = "jacs-crate")]
 use crate::jacs_local::LocalJacsProvider;
 use crate::types::{
-    EmailMessage, EmailStatus, ListMessagesOptions, SearchOptions, SendEmailOptions,
+    Contact, EmailMessage, EmailStatus, ListMessagesOptions, SearchOptions, SendEmailOptions,
     SendEmailResult,
 };
 use crate::validation;
@@ -214,5 +214,45 @@ impl EmailNamespace {
     ) -> Result<SendEmailResult> {
         let client = self.client.read().await;
         client.reply(message_id, body, subject_override).await
+    }
+
+    /// Forward a message to another recipient.
+    ///
+    /// # Arguments
+    /// * `message_id` - The message ID to forward
+    /// * `to` - Recipient email address
+    /// * `comment` - Optional comment to prepend to the forwarded message
+    pub async fn forward(
+        &self,
+        message_id: &str,
+        to: &str,
+        comment: Option<&str>,
+    ) -> Result<SendEmailResult> {
+        let client = self.client.read().await;
+        client.forward(message_id, to, comment).await
+    }
+
+    /// Archive a message.
+    ///
+    /// # Arguments
+    /// * `message_id` - The message ID to archive
+    pub async fn archive(&self, message_id: &str) -> Result<()> {
+        let client = self.client.read().await;
+        client.archive(message_id).await
+    }
+
+    /// Unarchive a message.
+    ///
+    /// # Arguments
+    /// * `message_id` - The message ID to unarchive
+    pub async fn unarchive(&self, message_id: &str) -> Result<()> {
+        let client = self.client.read().await;
+        client.unarchive(message_id).await
+    }
+
+    /// List email contacts.
+    pub async fn contacts(&self) -> Result<Vec<Contact>> {
+        let client = self.client.read().await;
+        client.contacts().await
     }
 }

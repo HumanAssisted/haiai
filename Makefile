@@ -1,5 +1,5 @@
 .PHONY: test test-python test-node test-go test-rust \
-        versions check-versions \
+        versions check-versions check-jacs-versions \
         release-node release-python release-rust release-all \
         release-delete-tags help
 
@@ -13,6 +13,13 @@ MCP_VERSION := $(shell grep '^version' rust/hai-mcp/Cargo.toml | head -1 | sed '
 PYTHON_VERSION := $(shell grep '^version' python/pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
 NODE_VERSION := $(shell grep '"version"' node/package.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
 PLUGIN_VERSION := $(shell grep '"version"' .claude-plugin/plugin.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
+
+# JACS dependency versions across SDKs
+JACS_RUST := $(shell grep '^jacs ' rust/haiai/Cargo.toml | sed 's/.*"\(=*[0-9][^"]*\)".*/\1/' | sed 's/^=//')
+JACS_RUST_CLI := $(shell grep '^jacs ' rust/haiai-cli/Cargo.toml | sed 's/.*"\(=*[0-9][^"]*\)".*/\1/' | sed 's/^=//')
+JACS_RUST_MCP := $(shell grep '^jacs ' rust/hai-mcp/Cargo.toml | sed 's/.*"\(=*[0-9][^"]*\)".*/\1/' | sed 's/^=//')
+JACS_PYTHON := $(shell grep 'jacs==' python/pyproject.toml | sed 's/.*jacs==\([^"]*\)".*/\1/')
+JACS_NODE := $(shell grep '@hai.ai/jacs' node/package.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
 
 # ============================================================================
 # TEST
@@ -70,6 +77,23 @@ check-versions:
 		echo "ERROR: haiai ($(RUST_VERSION)) != plugin ($(PLUGIN_VERSION))"; exit 1; fi
 	@echo "All versions match: $(RUST_VERSION)"
 
+check-jacs-versions:
+	@echo "JACS dependency versions:"
+	@echo "  rust/haiai      $(JACS_RUST)"
+	@echo "  rust/haiai-cli  $(JACS_RUST_CLI)"
+	@echo "  rust/hai-mcp    $(JACS_RUST_MCP)"
+	@echo "  python          $(JACS_PYTHON)"
+	@echo "  node            $(JACS_NODE)"
+	@if [ "$(JACS_RUST)" != "$(JACS_RUST_CLI)" ]; then \
+		echo "ERROR: jacs in haiai ($(JACS_RUST)) != haiai-cli ($(JACS_RUST_CLI))"; exit 1; fi
+	@if [ "$(JACS_RUST)" != "$(JACS_RUST_MCP)" ]; then \
+		echo "ERROR: jacs in haiai ($(JACS_RUST)) != hai-mcp ($(JACS_RUST_MCP))"; exit 1; fi
+	@if [ "$(JACS_RUST)" != "$(JACS_PYTHON)" ]; then \
+		echo "ERROR: jacs in haiai ($(JACS_RUST)) != python ($(JACS_PYTHON))"; exit 1; fi
+	@if [ "$(JACS_RUST)" != "$(JACS_NODE)" ]; then \
+		echo "ERROR: jacs in haiai ($(JACS_RUST)) != node ($(JACS_NODE))"; exit 1; fi
+	@echo "All JACS versions match: $(JACS_RUST)"
+
 # ============================================================================
 # GITHUB CI RELEASE (via git tags)
 # ============================================================================
@@ -107,7 +131,7 @@ release-node:
 	git push origin node/v$(NODE_VERSION)
 	@echo "Tagged node/v$(NODE_VERSION) - CI will publish to npm"
 
-release-all: check-versions release-rust
+release-all: check-versions check-jacs-versions release-rust
 	@echo "Waiting 30s for Rust CI to start building CLI binaries..."
 	@sleep 30
 	$(MAKE) release-python release-node
@@ -129,7 +153,8 @@ help:
 	@echo ""
 	@echo "VERSION INFO:"
 	@echo "  make versions        Show all detected versions"
-	@echo "  make check-versions  Verify all package versions match"
+	@echo "  make check-versions       Verify all package versions match"
+	@echo "  make check-jacs-versions  Verify JACS dep versions match across SDKs"
 	@echo ""
 	@echo "TEST:"
 	@echo "  make test            Run all tests"

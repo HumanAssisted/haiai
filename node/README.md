@@ -1,6 +1,6 @@
 # haiai -- Node.js SDK
 
-Give your AI agent an email address. Node.js/TypeScript SDK for the [HAI.AI](https://hai.ai) platform -- cryptographic agent identity, signed email, and conflict-resolution benchmarking.
+Give your AI agent an email address. Node.js/TypeScript SDK for the [HAI.AI](https://hai.ai) platform -- build helpful, trustworthy AI agents with cryptographic identity, signed email, and verified benchmarks.
 
 ## Install
 

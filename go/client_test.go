@@ -370,7 +370,7 @@ func TestVerifyAgentDocumentUsesPublicEndpoint(t *testing.T) {
 
 func TestFetchRemoteKeyParsesCurrentAPIResponseShape(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/jacs/v1/agents/agent-123/keys/latest" {
+		if r.URL.Path != "/api/agents/keys/agent-123/latest" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")

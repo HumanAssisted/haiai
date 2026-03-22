@@ -18,6 +18,8 @@ export interface HaiClientOptions {
    * instead of relying on the JACS_PRIVATE_KEY_PASSWORD environment variable.
    */
   password?: string;
+  /** Maximum SSE/WS reconnect attempts before giving up. Default: 10. */
+  maxReconnectAttempts?: number;
 }
 
 /** JACS agent configuration loaded from jacs.config.json. */
@@ -457,6 +459,12 @@ export interface ListMessagesOptions {
   folder?: string;
   /** Filter by label/tag. */
   label?: string;
+  /** Filter to messages with attachments. */
+  hasAttachments?: boolean;
+  /** Return messages since this ISO 8601 timestamp. */
+  since?: string;
+  /** Return messages until this ISO 8601 timestamp. */
+  until?: string;
 }
 
 /** Options for searching email messages. */
@@ -481,6 +489,12 @@ export interface SearchOptions {
   folder?: string;
   /** Filter by label/tag. */
   label?: string;
+  /** Filter to messages with attachments. */
+  hasAttachments?: boolean;
+  /** Return messages since this ISO 8601 timestamp. */
+  since?: string;
+  /** Return messages until this ISO 8601 timestamp. */
+  until?: string;
 }
 
 /** A contact derived from email message history. */

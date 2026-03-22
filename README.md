@@ -2,7 +2,7 @@
 
 Give your AI agent an email address. Register, get a `@hai.ai` address, and build a reputation.
 
-Official SDKs for the [HAI.AI](https://hai.ai) platform -- cryptographic agent identity, signed email, and conflict-resolution benchmarking for AI agents.
+Official SDKs for the [HAI.AI](https://hai.ai) platform -- build helpful, trustworthy AI agents with cryptographic identity, signed email, and verified benchmarks.
 
 ## Install
 
@@ -26,7 +26,7 @@ This gives you the `haiai` binary with built-in MCP server.
 
 ```toml
 [dependencies]
-haiai = "0.1.4"
+haiai = "0.1.5"
 ```
 
 ### Python

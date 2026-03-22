@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,7 +16,7 @@ import (
 func FetchKeyByEmail(ctx context.Context, httpClient *http.Client, email string) (*PublicKeyInfo, error) {
 	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
 	if baseURL == "" {
-		baseURL = DefaultKeysEndpoint
+		baseURL = DefaultEndpoint
 	}
 	return FetchKeyByEmailFromURL(ctx, httpClient, baseURL, email)
 }
@@ -47,7 +46,7 @@ func FetchKeyByEmailFromURL(ctx context.Context, httpClient *http.Client, baseUR
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := limitedReadAll(resp.Body)
 		return nil, newError(ErrConnection, "status %d: %s", resp.StatusCode, string(body))
 	}
 
