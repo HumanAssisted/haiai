@@ -49,6 +49,16 @@ Full parity map: `docs/haisdk/PARITY_MAP.md` (53 exposed, 18 excluded, 71 total)
 3. **All 6 packages share one version.** `make check-versions` to verify.
 4. **Releases are tag-triggered.** `rust/v*` → crates.io, `python/v*` → PyPI, `node/v*` → npm. Use `make release-*`.
 
+## Local JACS Development
+
+Each SDK pins a published JACS version for CI/release, but supports local path overrides for development:
+
+- **Node:** `npm run deps:local` switches `@hai.ai/jacs` to `file:../../JACS/jacsnpm`. Use `npm run deps:prod` to switch back. The committed `package.json` must always use the published version.
+- **Rust:** Uncomment the `[patch.crates-io]` block in `rust/Cargo.toml` to build against `../../JACS/`. Must be commented out before publish.
+- **Python:** Pin in `pyproject.toml` (`jacs==X.Y.Z`). For local dev, use `pip install -e ../../JACS/jacspy` (or equivalent) to shadow the published version.
+
+`make check-jacs-versions` verifies all SDKs agree on the published JACS version.
+
 ## Gotchas
 
 - **JACS filenames use `:`** (`{id}:{version}.json`) — illegal on Windows. Rust CI uses sparse checkout for Windows builds.

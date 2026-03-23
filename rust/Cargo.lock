@@ -1200,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "hai-mcp"
-version = "0.1.5"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "base64",
@@ -1224,7 +1224,7 @@ dependencies = [
 
 [[package]]
 name = "haiai"
-version = "0.1.5"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "base64",
@@ -1249,7 +1249,7 @@ dependencies = [
 
 [[package]]
 name = "haiai-cli"
-version = "0.1.5"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "atty",
@@ -1796,9 +1796,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jacs"
-version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4185aa0f7b2f1fee209accf402b778d2f2ea17adaa285a47c5f046dff755340"
+version = "0.9.10"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1860,9 +1858,7 @@ dependencies = [
 
 [[package]]
 name = "jacs-binding-core"
-version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca9cde9fa790942f18fb9ae41c40236089be4369aafca9c410c2b4804c65172f"
+version = "0.9.10"
 dependencies = [
  "base64",
  "jacs",
@@ -1873,9 +1869,7 @@ dependencies = [
 
 [[package]]
 name = "jacs-mcp"
-version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc065630b00926734058139891bb71d515d111caeb45be14620ebe8950fc4ed4"
+version = "0.9.10"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1925,7 +1919,7 @@ dependencies = [
  "cesu8",
  "cfg-if",
  "combine",
- "jni-sys",
+ "jni-sys 0.3.1",
  "log",
  "thiserror 1.0.69",
  "walkdir",
@@ -1934,9 +1928,31 @@ dependencies = [
 
 [[package]]
 name = "jni-sys"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8eaf4bc02d17cbdd7ff4c7438cafcdf7fb9a4613313ad11b4f8fefe7d3fa0130"
+checksum = "41a652e1f9b6e0275df1f15b32661cf0d4b78d4d87ddec5e0c3c20f097433258"
+dependencies = [
+ "jni-sys 0.4.1",
+]
+
+[[package]]
+name = "jni-sys"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6377a88cb3910bee9b0fa88d4f42e1d2da8e79915598f65fb0c7ee14c878af2"
+dependencies = [
+ "jni-sys-macros",
+]
+
+[[package]]
+name = "jni-sys-macros"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38c0b942f458fe50cdac086d2f946512305e5631e720728f2a61aabcd47a6264"
+dependencies = [
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "jobserver"
@@ -2182,9 +2198,9 @@ dependencies = [
 
 [[package]]
 name = "moka"
-version = "0.12.14"
+version = "0.12.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85f8024e1c8e71c778968af91d43700ce1d11b219d127d79fb2934153b82b42b"
+checksum = "957228ad12042ee839f93c8f257b62b4c0ab5eaae1d4fa60de53b27c9d7c5046"
 dependencies = [
  "crossbeam-channel",
  "crossbeam-epoch",
@@ -3266,9 +3282,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.9"
+version = "0.103.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7df23109aa6c1567d1c575b9952556388da57401e4ace1d15f79eedad0d8f53"
+checksum = "df33b2b81ac578cabaf06b89b0631153a3f416b0a886e8a7a1707fb51abbd1ef"
 dependencies = [
  "aws-lc-rs",
  "ring",

@@ -73,7 +73,7 @@ jobs:
   test-go:
     runs-on: ubuntu-latest
     needs: [crypto-policy]
-    timeout-minutes: 10
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -83,7 +83,32 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go-version }}
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Setup Rust (for jacsgo build)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache jacsgo shared library
+        id: cache-jacsgo
+        uses: actions/cache@v4
+        with:
+          path: /tmp/JACS/jacsgo/build
+          key: jacsgo-${{ runner.os }}-${{ hashFiles('.github/workflows/test.yml') }}
+      - name: Clone JACS
+        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git /tmp/JACS
+      - name: Build jacsgo shared library
+        if: steps.cache-jacsgo.outputs.cache-hit != 'true'
+        run: cd /tmp/JACS/jacsgo && make build-rust
+      - name: Set go.mod replace directive for CI
+        run: |
+          cd go
+          sed -i '/^replace github.com\/HumanAssisted\/JACS\/jacsgo/d' go.mod
+          echo 'replace github.com/HumanAssisted/JACS/jacsgo => /tmp/JACS/jacsgo' >> go.mod
       - name: Run tests
+        env:
+          CGO_ENABLED: "1"
+          CGO_LDFLAGS: "-L/tmp/JACS/jacsgo/build -ljacsgo"
+          CGO_CFLAGS: "-I/tmp/JACS/jacsgo"
+          LD_LIBRARY_PATH: /tmp/JACS/jacsgo/build
         run: |
           cd go
           go test -race -v ./...
@@ -104,6 +129,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust-version }}
+      - name: Remove local dev patches
+        run: node -e "const f='rust/Cargo.toml';let t=require('fs').readFileSync(f,'utf8').replace(/\r\n/g,'\n');t=t.replace(/\n*(#[^\n]*\n)*\[patch[\s\S]*$/,'\n');require('fs').writeFileSync(f,t)"
       - name: Run tests
         run: |
           cd rust

@@ -76,7 +76,8 @@ jobs:
             unzip -o "haiai-cli-${VERSION}-${{ matrix.platform }}.zip" -d /tmp/bin
             cp /tmp/bin/haiai-cli.exe "${PKG_DIR}/bin/haiai.exe" 2>/dev/null || cp /tmp/bin/haiai.exe "${PKG_DIR}/bin/haiai.exe"
           else
-            tar xzf "haiai-cli-${VERSION}-${{ matrix.platform }}.tar.gz" -C /tmp/bin 2>/dev/null || mkdir -p /tmp/bin && tar xzf "haiai-cli-${VERSION}-${{ matrix.platform }}.tar.gz" -C /tmp/bin
+            mkdir -p /tmp/bin
+            tar xzf "haiai-cli-${VERSION}-${{ matrix.platform }}.tar.gz" -C /tmp/bin
             cp /tmp/bin/haiai-cli "${PKG_DIR}/bin/haiai" 2>/dev/null || cp /tmp/bin/haiai "${PKG_DIR}/bin/haiai"
           fi
           chmod +x "${PKG_DIR}/bin/"*
@@ -120,6 +121,9 @@ jobs:
             }
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
+      - name: Switch to production dependencies
+        run: cd node && npm run deps:prod
+
       - name: Install dependencies
         run: |
           cd node

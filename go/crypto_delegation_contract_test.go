@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"sort"
 	"testing"
 )
 
 type cryptoDelegationFixture struct {
-	Description     string `json:"description"`
+	Description      string `json:"description"`
 	Canonicalization struct {
 		TestVectors []struct {
 			Input    interface{} `json:"input"`
@@ -42,6 +43,74 @@ func loadCryptoDelegationFixture(t *testing.T) cryptoDelegationFixture {
 	return fixture
 }
 
+// testCanonicalizeJSON is a test-only local canonicalization for verifying
+// fixture vectors. This is NOT used in runtime code.
+func testCanonicalizeJSON(jsonStr string) (string, error) {
+	var raw interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
+		return "", err
+	}
+	sorted := testSortKeys(raw)
+	result, err := json.Marshal(sorted)
+	if err != nil {
+		return "", err
+	}
+	return string(result), nil
+}
+
+type testOrderedEntry struct {
+	Key   string
+	Value interface{}
+}
+
+type testOrderedMap []testOrderedEntry
+
+func (om testOrderedMap) MarshalJSON() ([]byte, error) {
+	buf := []byte{'{'}
+	for i, entry := range om {
+		if i > 0 {
+			buf = append(buf, ',')
+		}
+		key, err := json.Marshal(entry.Key)
+		if err != nil {
+			return nil, err
+		}
+		val, err := json.Marshal(entry.Value)
+		if err != nil {
+			return nil, err
+		}
+		buf = append(buf, key...)
+		buf = append(buf, ':')
+		buf = append(buf, val...)
+	}
+	buf = append(buf, '}')
+	return buf, nil
+}
+
+func testSortKeys(v interface{}) interface{} {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		sorted := make(testOrderedMap, 0, len(val))
+		for _, k := range keys {
+			sorted = append(sorted, testOrderedEntry{k, testSortKeys(val[k])})
+		}
+		return sorted
+	case []interface{}:
+		result := make([]interface{}, len(val))
+		for i, item := range val {
+			result[i] = testSortKeys(item)
+		}
+		return result
+	default:
+		return v
+	}
+}
+
 func TestCryptoDelegationCanonicalizationVectors(t *testing.T) {
 	fixture := loadCryptoDelegationFixture(t)
 
@@ -51,9 +120,9 @@ func TestCryptoDelegationCanonicalizationVectors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("vector %d: json.Marshal: %v", i, err)
 		}
-		result, err := canonicalizeJSONLocal(string(inputJSON))
+		result, err := testCanonicalizeJSON(string(inputJSON))
 		if err != nil {
-			t.Fatalf("vector %d: canonicalizeJSONLocal: %v", i, err)
+			t.Fatalf("vector %d: testCanonicalizeJSON: %v", i, err)
 		}
 		if result != vec.Expected {
 			t.Errorf("vector %d: got %q, want %q", i, result, vec.Expected)
@@ -75,31 +144,31 @@ func TestCryptoDelegationFixtureAssertions(t *testing.T) {
 	}
 }
 
-func TestCryptoDelegationModuleLevelFallbackErrors(t *testing.T) {
-	// The module-level ed25519Fallback should return structured errors for
-	// operations that require JACS.
-	fb := &ed25519Fallback{}
+func TestCryptoDelegationJacsNotLoadedErrors(t *testing.T) {
+	// When a JACS agent cannot be loaded, all crypto operations should
+	// return structured errors directing the developer to load JACS.
+	nlb := &jacsNotLoadedBackend{loadErr: errors.New("test: no agent")}
 
 	tests := []struct {
 		name string
 		fn   func() error
 	}{
-		{"SignString", func() error { _, err := fb.SignString("msg"); return err }},
-		{"SignBytes", func() error { _, err := fb.SignBytes([]byte("msg")); return err }},
-		{"SignRequest", func() error { _, err := fb.SignRequest("{}"); return err }},
-		{"VerifyResponse", func() error { _, err := fb.VerifyResponse("{}"); return err }},
-		{"CanonicalizeJSON", func() error { _, err := fb.CanonicalizeJSON("{}"); return err }},
-		{"SignResponse", func() error { _, err := fb.SignResponse("{}"); return err }},
-		{"EncodeVerifyPayload", func() error { _, err := fb.EncodeVerifyPayload("doc"); return err }},
-		{"UnwrapSignedEvent", func() error { _, err := fb.UnwrapSignedEvent("{}", "{}"); return err }},
-		{"BuildAuthHeader", func() error { _, err := fb.BuildAuthHeader(); return err }},
+		{"SignString", func() error { _, err := nlb.SignString("msg"); return err }},
+		{"SignBytes", func() error { _, err := nlb.SignBytes([]byte("msg")); return err }},
+		{"SignRequest", func() error { _, err := nlb.SignRequest("{}"); return err }},
+		{"VerifyResponse", func() error { _, err := nlb.VerifyResponse("{}"); return err }},
+		{"CanonicalizeJSON", func() error { _, err := nlb.CanonicalizeJSON("{}"); return err }},
+		{"SignResponse", func() error { _, err := nlb.SignResponse("{}"); return err }},
+		{"EncodeVerifyPayload", func() error { _, err := nlb.EncodeVerifyPayload("doc"); return err }},
+		{"UnwrapSignedEvent", func() error { _, err := nlb.UnwrapSignedEvent("{}", "{}"); return err }},
+		{"BuildAuthHeader", func() error { _, err := nlb.BuildAuthHeader(); return err }},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.fn()
 			if err == nil {
-				t.Fatal("expected error from fallback")
+				t.Fatal("expected error from jacsNotLoadedBackend")
 			}
 
 			var sdkErr *Error
@@ -107,12 +176,10 @@ func TestCryptoDelegationModuleLevelFallbackErrors(t *testing.T) {
 				t.Fatalf("expected *Error, got %T: %v", err, err)
 			}
 
-			// All should be ErrJacsBuildRequired or ErrPrivateKeyMissing
-			if sdkErr.Kind != ErrJacsBuildRequired && sdkErr.Kind != ErrPrivateKeyMissing {
-				t.Errorf("expected ErrJacsBuildRequired or ErrPrivateKeyMissing, got Kind=%d", sdkErr.Kind)
+			if sdkErr.Kind != ErrJacsNotLoaded {
+				t.Errorf("expected ErrJacsNotLoaded, got Kind=%d", sdkErr.Kind)
 			}
 
-			// All should have an Action hint
 			if sdkErr.Action == "" {
 				t.Error("expected non-empty Action hint")
 			}

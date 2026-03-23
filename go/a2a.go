@@ -189,7 +189,7 @@ func (a *A2AIntegration) ExportAgentCard(agentData map[string]interface{}) *A2AA
 	return a.exportAgentCardLocal(agentData)
 }
 
-// exportAgentCardLocal is the pure-Go fallback for ExportAgentCard.
+// exportAgentCardLocal is the pure-Go local logic for ExportAgentCard.
 func (a *A2AIntegration) exportAgentCardLocal(agentData map[string]interface{}) *A2AAgentCard {
 	agentID := stringValue(agentData["jacsId"])
 	if agentID == "" {
@@ -297,7 +297,7 @@ func (a *A2AIntegration) SignArtifact(
 	return a.signArtifactLocal(artifact, artifactType, parentSignatures)
 }
 
-// signArtifactLocal is the pure-Go Ed25519 fallback for SignArtifact.
+// signArtifactLocal is the pure-Go local logic for SignArtifact.
 func (a *A2AIntegration) signArtifactLocal(
 	artifact map[string]interface{},
 	artifactType string,
@@ -336,9 +336,9 @@ func (a *A2AIntegration) signArtifactLocal(
 // VerifyArtifact verifies a wrapped artifact signature.
 //
 // When the JACS CGo backend is loaded, this delegates to the Rust core for
-// verification. Falls back to local Ed25519 logic otherwise.
+// verification. Uses local logic with CryptoBackend.VerifyBytes otherwise.
 //
-// If no explicit public key is provided, verification falls back to:
+// If no explicit public key is provided, uses:
 // 1) this client's own public key (when signerId matches this client)
 func (a *A2AIntegration) VerifyArtifact(
 	wrapped *A2AWrappedArtifact,
@@ -370,7 +370,7 @@ func (a *A2AIntegration) VerifyArtifact(
 	return a.verifyArtifactLocal(wrapped, publicKeyPEM...)
 }
 
-// verifyArtifactLocal is the pure-Go Ed25519 fallback for VerifyArtifact.
+// verifyArtifactLocal is the pure-Go local logic for VerifyArtifact.
 func (a *A2AIntegration) verifyArtifactLocal(
 	wrapped *A2AWrappedArtifact,
 	publicKeyPEM ...string,
@@ -542,7 +542,7 @@ func (a *A2AIntegration) RegisterWithAgentCard(
 // AssessRemoteAgent applies trust policy to a remote A2A agent card.
 //
 // When the JACS CGo backend is loaded, this delegates to the Rust core for
-// trust assessment. Falls back to local Go logic otherwise.
+// trust assessment. Uses local Go logic otherwise.
 func (a *A2AIntegration) AssessRemoteAgent(
 	agentCardJSON string,
 	policy ...A2ATrustPolicy,
@@ -580,7 +580,7 @@ func (a *A2AIntegration) AssessRemoteAgent(
 	return a.assessRemoteAgentLocal(agentCardJSON, resolvedPolicy)
 }
 
-// assessRemoteAgentLocal is the pure-Go fallback for AssessRemoteAgent.
+// assessRemoteAgentLocal is the pure-Go local logic for AssessRemoteAgent.
 func (a *A2AIntegration) assessRemoteAgentLocal(
 	agentCardJSON string,
 	resolvedPolicy A2ATrustPolicy,
@@ -930,7 +930,7 @@ func resolveVerificationKeyPEM(client *Client, wrapped *A2AWrappedArtifact, publ
 		if client.privateKey == nil {
 			return "", fmt.Errorf("client private key is not configured")
 		}
-		pemStr, err := MarshalPublicKeyPEM(PublicKeyFromPrivate(client.privateKey))
+		pemStr, err := MarshalPublicKeyPEM(client.privateKey.Public().(ed25519.PublicKey))
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal client public key: %w", err)
 		}

@@ -1,5 +1,3 @@
-//go:build cgo && jacs
-
 package haiai
 
 import (
@@ -13,7 +11,7 @@ import (
 	"os"
 	"sync"
 
-	jacs "github.com/HumanAssisted/jacsgo"
+	jacs "github.com/HumanAssisted/JACS/jacsgo"
 )
 
 func init() {
@@ -63,7 +61,7 @@ func (b *jacsBackend) GenerateKeyPair() ([]byte, []byte, error) {
 	// (jacsgo) does not yet expose pq2025 key generation via FFI. The JACS core
 	// supports pq2025 internally, but that functionality is not available from Go.
 	// The actual signing with these keys still goes through the CryptoBackend
-	// (JACS agent or Ed25519 fallback).
+	// (JACS agent).
 	//
 	// TODO: Replace with jacs.GenerateKeyPair(algorithm) when jacsgo exposes pq2025 keygen FFI
 	jacsKeygenWarningOnce.Do(func() {
@@ -269,10 +267,17 @@ func (b *clientJacsBackend) ExportAgentCard(agentDataJSON string) (string, error
 	return b.agent.ExportAgentCard()
 }
 
+// newClientCryptoBackendOverride is a test-only hook. When non-nil, it replaces
+// the default newClientCryptoBackend implementation. Set in _test.go files only.
+var newClientCryptoBackendOverride func(privateKey ed25519.PrivateKey, jacsID string) CryptoBackend
+
 // newClientCryptoBackend creates a per-client JACS CryptoBackend.
-// In JACS mode, it attempts to load a JACS agent from config.
-// Falls back to wrapping the Ed25519 private key if agent loading fails.
+// Attempts to load a JACS agent from config. If the agent cannot be loaded,
+// returns a jacsNotLoadedBackend that fails all crypto operations with clear errors.
 func newClientCryptoBackend(privateKey ed25519.PrivateKey, jacsID string) CryptoBackend {
+	if newClientCryptoBackendOverride != nil {
+		return newClientCryptoBackendOverride(privateKey, jacsID)
+	}
 	// Try loading a JACS agent from config
 	agent, err := jacs.NewJacsAgent()
 	if err == nil {
@@ -289,7 +294,6 @@ func newClientCryptoBackend(privateKey ed25519.PrivateKey, jacsID string) Crypto
 	}
 
 	// JACS agent could not be loaded -- return error-only backend.
-	// In v0.2.0+, falling back to local Ed25519 is no longer allowed.
 	log.Printf("WARNING: JACS agent could not be loaded (err=%v). "+
 		"All crypto operations will fail. Run 'haiai init' or set JACS_CONFIG_PATH.", err)
 	return &jacsNotLoadedBackend{
@@ -297,10 +301,8 @@ func newClientCryptoBackend(privateKey ed25519.PrivateKey, jacsID string) Crypto
 	}
 }
 
-// jacsNotLoadedBackend is returned when the JACS agent cannot be loaded in a
-// jacs-tagged build. Every operation returns a clear error directing the
-// developer to load a JACS agent. This replaces the old
-// clientEd25519FallbackInJacs that silently signed with local Ed25519.
+// jacsNotLoadedBackend is returned when the JACS agent cannot be loaded.
+// Every operation returns a clear error directing the developer to load a JACS agent.
 type jacsNotLoadedBackend struct {
 	loadErr error
 }

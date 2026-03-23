@@ -1,5 +1,29 @@
 # Go No-Fallback Migration Scope
 
+## Status: Complete (2026-03-22)
+
+The crypto fallback has been fully removed from the Go SDK. The JACS CGo
+backend is the only active `CryptoBackend`. All stages below are complete.
+
+- `go/crypto_fallback.go` -- deleted
+- `go/sign_response_local.go` -- deleted
+- Build tags removed from `crypto_jacs.go` -- JACS backend compiles unconditionally
+- Deprecated raw-key helpers (`BuildAuthHeader`, `Sign`, `Verify`, `GenerateKeyPair`,
+  `PublicKeyFromPrivate`) moved from runtime code to test-only `_test.go` files
+- `VerifyHaiMessage` now delegates to `cryptoBackend.VerifyBytes`
+- CI builds jacsgo shared library and runs Go tests with CGo enabled
+- `check_no_local_crypto.sh` allowlist tightened (removed `crypto_fallback`,
+  `sign_response_local`)
+- All 286+ tests pass, `go vet` clean, crypto policy passes
+
+### Remaining known limitation
+
+`jacsBackend.GenerateKeyPair()` still uses local `ed25519.GenerateKey` because
+jacsgo does not yet expose pq2025 key generation via FFI. This is documented
+in `crypto_jacs.go` with a TODO.
+
+---
+
 ## Goal
 
 Remove Go runtime fallback crypto from `haiai` while preserving HAI contract
@@ -18,98 +42,56 @@ behavior and A2A parity.
 3. algorithm selection and algorithm-specific details
 4. canonicalization used for signatures where JACS already defines it
 
-## Current Fallback Seams
+## Former Fallback Seams (all resolved)
 
-These are the places that still let Go operate without a JACS-backed signer:
-
-1. `go/crypto_fallback.go`
-   Pure Go Ed25519 backend that implements `CryptoBackend`.
-2. `go/signing.go`
-   Compatibility helpers for parsing keys, signing, verifying, and generating
-   keypairs. These are still used by runtime bootstrap paths.
-3. `go/auth.go`
-   `Client.buildAuthHeader()` still falls back to direct Ed25519 signing if the
-   backend cannot sign.
-4. `go/client.go`
-   Client construction and bootstrap flows still create runtime state from raw
-   PEM/private-key material and can end up on the fallback backend.
-5. `go/a2a.go`
-   A2A signing and verification go through `client.crypto`; if the client was
-   built on fallback crypto, A2A silently does too.
+1. `go/crypto_fallback.go` -- DELETED
+2. `go/signing.go` -- deprecated helpers moved to test-only files; key parsing retained
+3. `go/auth.go` -- deprecated helpers moved to test-only files; `Client.buildAuthHeader()` delegates to CryptoBackend
+4. `go/client.go` -- bootstrap uses `CryptoBackend.GenerateKeyPair()`
+5. `go/a2a.go` -- signing and verification go through `CryptoBackend`
 
 ## Constraints
 
-These constraints should not change during migration:
+These constraints were preserved during migration:
 
 1. `Authorization: JACS {jacsId}:{timestamp}:{signature_base64}` stays the auth format.
-2. Bootstrap registration must still work before the agent is HAI-registered.
-3. A2A parity stays in place; do not remove Go A2A features while removing crypto fallback.
-4. Shared fixtures remain the arbiter for wrapper-level behavior:
-   `fixtures/cross_lang_test.json`, `fixtures/a2a_verification_contract.json`,
-   and `fixtures/mcp_tool_contract.json`.
+2. Bootstrap registration still works before the agent is HAI-registered.
+3. A2A parity stays in place; Go A2A features were not removed.
+4. Shared fixtures remain the arbiter for wrapper-level behavior.
 5. Encrypted key handling remains mandatory for disk-backed keys.
 
-## Recommended Staged Plan
+## Staged Plan (all complete)
 
-### Stage 1: Make the JACS seam explicit
+### Stage 1: Make the JACS seam explicit -- DONE
 
-1. Document the exact Go call-site mapping in `docs/crypto-mapping.md`.
-2. Require `CryptoBackend` for all runtime signing and verification paths.
-3. Treat missing backend support as an initialization error, not a warning with
-   silent fallback.
+1. `CryptoBackend` required for all runtime signing and verification paths.
+2. Missing backend is an initialization error, not a warning with silent fallback.
 
-### Stage 2: Split bootstrap from runtime crypto
+### Stage 2: Split bootstrap from runtime crypto -- DONE
 
-The main blocker is bootstrap.
+1. Bootstrap uses `CryptoBackend.GenerateKeyPair()`.
+2. Client construction goes through JACS-backed backend.
 
-Today, Go can be given raw PEM material and immediately sign requests. After
-fallback removal, bootstrap needs a JACS-backed path instead:
+### Stage 3: Remove fallback from auth and response signing -- DONE
 
-1. Accept bootstrap credentials as import material only.
-2. Write/import those credentials into a JACS-owned agent/config layout.
-3. Re-open the client through the JACS-backed backend.
+1. Direct Ed25519 fallback removed from `go/auth.go`.
+2. Response signing goes only through the backend.
+3. Client fails fast when crypto backend cannot sign.
 
-That keeps `haiai` thin while still supporting register/create flows.
+### Stage 4: Keep A2A parity, swap signing source -- DONE
 
-### Stage 3: Remove fallback from auth and response signing
+1. `SignBytes` comes from the JACS-backed backend.
+2. `VerifyBytes` comes from the JACS-backed backend.
 
-After Stage 2:
+### Stage 5: Demote remaining local helpers -- DONE
 
-1. Remove direct Ed25519 fallback from `go/auth.go`.
-2. Route response signing only through the backend in `go/client.go`.
-3. Fail fast when a client lacks signing capability.
+1. Raw sign/verify/generate helpers moved to `_test.go` files.
+2. Runtime code only uses `CryptoBackend` interface.
 
-### Stage 4: Keep A2A parity, swap signing source
+## Exit Criteria (all met)
 
-Do not rewrite A2A behavior while doing this migration.
-
-Keep:
-
-1. Go A2A artifact wrapping/unwrapping
-2. shared fixture coverage
-3. wrapper-level contract parity
-
-Change only the signing and verification source:
-
-1. `SignBytes` must come from the JACS-backed backend
-2. `VerifyBytes` must come from the JACS-backed backend
-3. any algorithm-specific assumptions in A2A should be moved behind the backend
-
-### Stage 5: Demote remaining local helpers
-
-Once runtime code is clean:
-
-1. mark raw key parsing/sign/verify helpers as compatibility-only
-2. keep them only where tests or explicit migration tooling still require them
-3. remove them from runtime paths in the next major release
-
-## Exit Criteria
-
-The migration is complete when:
-
-1. `go/auth.go` no longer falls back to direct Ed25519 signing
-2. `go/crypto_fallback.go` is unused by runtime code
-3. `go/client.go` and `go/a2a.go` require a JACS-backed signer/verifier
-4. Go still passes the shared wrapper and A2A parity fixtures
-5. bootstrap flows work through JACS-owned key/config state rather than local
-   runtime crypto
+1. `go/auth.go` no longer falls back to direct Ed25519 signing -- DONE
+2. `go/crypto_fallback.go` deleted -- DONE
+3. `go/client.go` and `go/a2a.go` require a JACS-backed signer/verifier -- DONE
+4. Go still passes the shared wrapper and A2A parity fixtures -- DONE
+5. Bootstrap flows use CryptoBackend -- DONE

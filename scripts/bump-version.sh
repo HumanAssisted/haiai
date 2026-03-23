@@ -68,6 +68,9 @@ echo ""
 echo "Python:"
 sed -i '' "s/^version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" python/pyproject.toml
 echo "  python/pyproject.toml"
+# Safety net: update __init__.py fallback version if it contains a hardcoded version string
+sed -i '' "s/__version__ = \"$CURRENT\"/__version__ = \"$NEW_VERSION\"/" python/src/haiai/__init__.py 2>/dev/null || true
+echo "  python/src/haiai/__init__.py (fallback version)"
 
 # --- Node main package ---
 
@@ -106,11 +109,15 @@ echo "Plugin:"
 sed -i '' "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" .claude-plugin/plugin.json
 echo "  .claude-plugin/plugin.json"
 
-# --- Regenerate Cargo.lock ---
+# --- Regenerate lockfiles ---
 
 echo ""
 echo "Regenerating Cargo.lock..."
-(cd rust && cargo generate-lockfile 2>/dev/null) || echo "  (skipped — cargo not available or workspace issue)"
+(cd rust && cargo generate-lockfile 2>/dev/null) || echo "  (skipped — cargo not available or crate not yet published)"
+
+echo ""
+echo "Regenerating package-lock.json..."
+(cd node && npm install --package-lock-only 2>/dev/null) || echo "  (skipped — npm not available or package not yet published)"
 
 # --- Verify ---
 

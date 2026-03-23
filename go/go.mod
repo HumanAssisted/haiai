@@ -3,9 +3,12 @@ module github.com/HumanAssisted/haiai-go
 go 1.23.0
 
 require (
+	github.com/HumanAssisted/JACS/jacsgo v0.0.0
 	github.com/gorilla/websocket v1.5.1
 	github.com/mark3labs/mcp-go v0.44.0
 )
+
+replace github.com/HumanAssisted/JACS/jacsgo => ../../JACS/jacsgo
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect

@@ -38,10 +38,17 @@ check_pattern \
   "from 'node:crypto'" \
   '^(node/src/(crypt|signing|client|hash|mime)\.ts):' || status=1
 
+# Go allowlist rationale:
+#   signing.go     -- key parsing (LoadPrivateKey, ParsePublicKey) uses ed25519 types
+#   client.go      -- Client.privateKey field is ed25519.PrivateKey
+#   crypto_jacs.go -- GenerateKeyPair uses local ed25519 (jacsgo lacks keygen FFI)
+#   a2a.go         -- references ed25519 types for key handling
+#   _test.go       -- test files may use ed25519 directly
+#   examples/      -- example code may demonstrate key usage
 check_pattern \
   "Go crypto/ed25519 imports" \
   '"crypto/ed25519"' \
-  '^(go/(signing|client|auth|crypto_fallback|crypto_jacs|a2a|sign_response_local)\.go|go/.+_test\.go|go/examples/.+):' || status=1
+  '^(go/(signing|client|crypto_jacs|a2a)\.go|go/.+_test\.go|go/examples/.+):' || status=1
 
 if [[ "$status" -ne 0 ]]; then
   cat <<'MSG'

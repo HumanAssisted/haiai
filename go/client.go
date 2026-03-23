@@ -29,8 +29,6 @@ import (
 	"net/http"
 	neturl "net/url"
 	"os"
-	"os/exec"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -83,7 +81,7 @@ type Client struct {
 	haiAgentID string       // HAI-assigned agent UUID for email URL paths (set after registration)
 	agentEmail string       // Agent's @hai.ai email address (set after ClaimUsername)
 	privateKey ed25519.PrivateKey
-	crypto     CryptoBackend // signing/verification backend (JACS or Ed25519 fallback)
+	crypto     CryptoBackend // signing/verification backend (JACS CGo)
 	httpClient *http.Client
 	agentKeys  *keyCache // Agent key cache with 5-minute TTL
 	maxRetries int       // maximum number of retries for retryable HTTP errors (default 3)
@@ -196,7 +194,7 @@ func NewClient(opts ...Option) (*Client, error) {
 		return nil, newError(ErrConfigInvalid, "jacsId is empty in config")
 	}
 
-	// Initialize crypto backend (JACS CGo or Ed25519 fallback based on build tags)
+	// Initialize crypto backend (JACS CGo agent)
 	cl.crypto = newClientCryptoBackend(cl.privateKey, cl.jacsID)
 
 	return cl, nil
@@ -544,7 +542,7 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 		_ = os.Rename(archivePub, pubKeyPath)
 		return nil, wrapError(ErrSigningFailed, err, "failed to parse generated private key")
 	}
-	newPub := PublicKeyFromPrivate(newPriv)
+	newPub := newPriv.Public().(ed25519.PublicKey)
 
 	// Re-encode to canonical PEM formats for disk storage
 	pubDER, err := x509.MarshalPKIXPublicKey(newPub)
@@ -821,10 +819,40 @@ func (c *Client) FreeRun(ctx context.Context) (*BenchmarkResult, error) {
 	return c.Benchmark(ctx, "free")
 }
 
+// ProRunOptions configures the pro benchmark run.
+type ProRunOptions struct {
+	// OnCheckoutURL is called with the Stripe checkout URL when payment is
+	// required. The caller is responsible for presenting this URL to the user
+	// (e.g., opening a browser, printing to stdout, sending via chat).
+	// If nil, ProRun returns ErrAuthRequired with the checkout URL in the
+	// error message so the caller can still act on it.
+	OnCheckoutURL func(checkoutURL string)
+
+	// PollInterval is the time between payment status checks. Default 5s.
+	PollInterval time.Duration
+
+	// PollTimeout is the maximum time to wait for payment. Default 5 min.
+	PollTimeout time.Duration
+}
+
 // ProRun runs the pro benchmark tier with Stripe checkout.
-// It creates a subscription session, opens the user's browser, polls for
-// payment confirmation, then runs the benchmark.
-func (c *Client) ProRun(ctx context.Context) (*BenchmarkResult, error) {
+// It creates a subscription session, notifies the caller of the checkout URL
+// via opts.OnCheckoutURL, polls for payment confirmation, then runs the benchmark.
+//
+// If opts is nil, defaults are used and the checkout URL is returned in the
+// error message when payment is required.
+func (c *Client) ProRun(ctx context.Context, opts *ProRunOptions) (*BenchmarkResult, error) {
+	pollInterval := 5 * time.Second
+	pollTimeout := 5 * time.Minute
+	if opts != nil {
+		if opts.PollInterval > 0 {
+			pollInterval = opts.PollInterval
+		}
+		if opts.PollTimeout > 0 {
+			pollTimeout = opts.PollTimeout
+		}
+	}
+
 	// 1. Create subscription session.
 	var sub struct {
 		CheckoutURL string `json:"checkout_url"`
@@ -840,13 +868,21 @@ func (c *Client) ProRun(ctx context.Context) (*BenchmarkResult, error) {
 
 	// Skip checkout if already subscribed.
 	if !sub.AlreadyPaid && sub.CheckoutURL != "" {
-		// 2. Open browser to Stripe checkout.
-		_ = openBrowser(sub.CheckoutURL)
+		// 2. Notify caller of checkout URL.
+		if opts != nil && opts.OnCheckoutURL != nil {
+			opts.OnCheckoutURL(sub.CheckoutURL)
+		} else {
+			return nil, newErrorWithAction(
+				ErrAuthRequired,
+				fmt.Sprintf("Open this URL to complete payment: %s", sub.CheckoutURL),
+				"payment required for pro tier benchmark",
+			)
+		}
 
 		// 3. Poll for payment confirmation.
-		ticker := time.NewTicker(5 * time.Second)
+		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()
-		timeout := time.After(5 * time.Minute)
+		timeout := time.After(pollTimeout)
 
 		for {
 			select {
@@ -859,7 +895,7 @@ func (c *Client) ProRun(ctx context.Context) (*BenchmarkResult, error) {
 					goto runBenchmark
 				}
 			case <-timeout:
-				return nil, newError(ErrTimeout, "payment confirmation timed out after 5 minutes")
+				return nil, newError(ErrTimeout, "payment confirmation timed out after %v", pollTimeout)
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
@@ -873,7 +909,7 @@ runBenchmark:
 // DnsCertifiedRun is a deprecated alias for ProRun.
 // Deprecated: Use ProRun instead. The tier was renamed from dns_certified to pro.
 func (c *Client) DnsCertifiedRun(ctx context.Context) (*BenchmarkResult, error) {
-	return c.ProRun(ctx)
+	return c.ProRun(ctx, nil)
 }
 
 // EnterpriseRun runs an enterprise tier benchmark.
@@ -1531,7 +1567,7 @@ func (c *Client) RegisterNewAgent(ctx context.Context, agentName string, opts *R
 	if err != nil {
 		return nil, wrapError(ErrSigningFailed, err, "failed to parse generated private key")
 	}
-	pub := PublicKeyFromPrivate(priv)
+	pub := priv.Public().(ed25519.PublicKey)
 
 	// Re-encode public key to canonical SPKI PEM (matches Rust verifier expectation)
 	pubDER, err := x509.MarshalPKIXPublicKey(pub)
@@ -1662,20 +1698,6 @@ func RegisterNewAgentWithEndpoint(ctx context.Context, endpoint, agentName strin
 		},
 	}
 	return cl.RegisterNewAgent(ctx, agentName, opts)
-}
-
-// openBrowser opens a URL in the user's default browser.
-func openBrowser(url string) error {
-	switch runtime.GOOS {
-	case "darwin":
-		return exec.Command("open", url).Start()
-	case "linux":
-		return exec.Command("xdg-open", url).Start()
-	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	default:
-		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
-	}
 }
 
 // generateUUID produces a UUIDv4 string.

@@ -1,5 +1,6 @@
 .PHONY: test test-python test-node test-go test-rust \
         versions check-versions check-jacs-versions \
+        bump-version bump-jacs-version \
         release-node release-python release-rust release-all \
         release-delete-tags help
 
@@ -34,7 +35,7 @@ test-node:
 	cd node && npm ci && npm test
 
 test-go:
-	cd go && go test -race ./...
+	cd go && CGO_ENABLED=1 go test -race ./...
 
 test-rust:
 	cd rust && cargo test --workspace
@@ -77,21 +78,31 @@ check-versions:
 		echo "ERROR: haiai ($(RUST_VERSION)) != plugin ($(PLUGIN_VERSION))"; exit 1; fi
 	@echo "All versions match: $(RUST_VERSION)"
 
+bump-version:
+	@if [ -z "$(V)" ]; then echo "Usage: make bump-version V=major|minor|patch"; exit 1; fi
+	./scripts/bump-version.sh $(V)
+
+bump-jacs-version:
+	@if [ -z "$(V)" ]; then echo "Usage: make bump-jacs-version V=0.9.10"; exit 1; fi
+	./scripts/bump-jacs-version.sh $(V)
+
 check-jacs-versions:
 	@echo "JACS dependency versions:"
 	@echo "  rust/haiai      $(JACS_RUST)"
 	@echo "  rust/haiai-cli  $(JACS_RUST_CLI)"
 	@echo "  rust/hai-mcp    $(JACS_RUST_MCP)"
 	@echo "  python          $(JACS_PYTHON)"
-	@echo "  node            $(JACS_NODE)"
 	@if [ "$(JACS_RUST)" != "$(JACS_RUST_CLI)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != haiai-cli ($(JACS_RUST_CLI))"; exit 1; fi
 	@if [ "$(JACS_RUST)" != "$(JACS_RUST_MCP)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != hai-mcp ($(JACS_RUST_MCP))"; exit 1; fi
 	@if [ "$(JACS_RUST)" != "$(JACS_PYTHON)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != python ($(JACS_PYTHON))"; exit 1; fi
-	@if [ "$(JACS_RUST)" != "$(JACS_NODE)" ]; then \
-		echo "ERROR: jacs in haiai ($(JACS_RUST)) != node ($(JACS_NODE))"; exit 1; fi
+	@case "$(JACS_NODE)" in \
+		file:*) echo "  node            $(JACS_NODE) (local path, skipping match check)" ;; \
+		*) if [ "$(JACS_RUST)" != "$(JACS_NODE)" ]; then \
+			echo "ERROR: jacs in haiai ($(JACS_RUST)) != node ($(JACS_NODE))"; exit 1; fi ;; \
+	esac
 	@echo "All JACS versions match: $(JACS_RUST)"
 
 # ============================================================================
@@ -155,6 +166,8 @@ help:
 	@echo "  make versions        Show all detected versions"
 	@echo "  make check-versions       Verify all package versions match"
 	@echo "  make check-jacs-versions  Verify JACS dep versions match across SDKs"
+	@echo "  make bump-version V=patch       Bump SDK version (major|minor|patch)"
+	@echo "  make bump-jacs-version V=0.9.10 Bump JACS dep version across all SDKs"
 	@echo ""
 	@echo "TEST:"
 	@echo "  make test            Run all tests"
