@@ -441,6 +441,8 @@ export interface EmailMessage {
   ccAddresses: string[];
   /** Labels/tags on the message. */
   labels: string[];
+  /** MUSUBI composite trust score (0-100). Higher = safer. Absent for outbound/unanalyzed. */
+  trustScore?: number;
   /** Folder the message is in (e.g., "inbox", "archive"). */
   folder: string;
 }

@@ -201,6 +201,12 @@ func TestContractDeserializeEmailMessage(t *testing.T) {
 	if *msg.JacsVerified != true {
 		t.Fatalf("JacsVerified = %v, want true", *msg.JacsVerified)
 	}
+	if msg.TrustScore == nil {
+		t.Fatal("TrustScore should not be nil for inbound message")
+	}
+	if *msg.TrustScore != 92.4 {
+		t.Fatalf("TrustScore = %v, want 92.4", *msg.TrustScore)
+	}
 }
 
 func TestContractDeserializeListMessagesResponse(t *testing.T) {
@@ -214,17 +220,17 @@ func TestContractDeserializeListMessagesResponse(t *testing.T) {
 		t.Fatalf("unmarshal ListMessagesResponse: %v", err)
 	}
 
-	if len(resp.Messages) != 1 {
-		t.Fatalf("len(Messages) = %d, want 1", len(resp.Messages))
+	if len(resp.Messages) != 2 {
+		t.Fatalf("len(Messages) = %d, want 2", len(resp.Messages))
 	}
-	if resp.Total != 1 {
-		t.Fatalf("Total = %d, want 1", resp.Total)
+	if resp.Total != 2 {
+		t.Fatalf("Total = %d, want 2", resp.Total)
 	}
 	if resp.Unread != 1 {
 		t.Fatalf("Unread = %d, want 1", resp.Unread)
 	}
 
-	// Verify the nested message matches the same contract values.
+	// Verify the inbound message.
 	msg := resp.Messages[0]
 	if msg.ID != "550e8400-e29b-41d4-a716-446655440000" {
 		t.Fatalf("Messages[0].ID = %q, want %q", msg.ID, "550e8400-e29b-41d4-a716-446655440000")
@@ -234,6 +240,21 @@ func TestContractDeserializeListMessagesResponse(t *testing.T) {
 	}
 	if msg.Direction != "inbound" {
 		t.Fatalf("Messages[0].Direction = %q, want %q", msg.Direction, "inbound")
+	}
+	if msg.TrustScore == nil || *msg.TrustScore != 92.4 {
+		t.Fatalf("Messages[0].TrustScore = %v, want 92.4", msg.TrustScore)
+	}
+
+	// Verify the outbound message omits trust_score.
+	outbound := resp.Messages[1]
+	if outbound.ID != "660e8400-e29b-41d4-a716-446655440001" {
+		t.Fatalf("Messages[1].ID = %q, want %q", outbound.ID, "660e8400-e29b-41d4-a716-446655440001")
+	}
+	if outbound.Direction != "outbound" {
+		t.Fatalf("Messages[1].Direction = %q, want %q", outbound.Direction, "outbound")
+	}
+	if outbound.TrustScore != nil {
+		t.Fatalf("Messages[1].TrustScore = %v, want nil (absent)", outbound.TrustScore)
 	}
 }
 
@@ -382,6 +403,71 @@ func TestContractDeserializeKeyLookupVersionedResponse(t *testing.T) {
 	}
 	if resp.PublicKeyRawB64 == "" {
 		t.Fatal("PublicKeyRawB64 should not be empty")
+	}
+}
+
+func TestContractTrustScorePresent(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(contractDir(), "email_message.json"))
+	if err != nil {
+		t.Fatalf("read email_message.json: %v", err)
+	}
+
+	var msg EmailMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		t.Fatalf("unmarshal EmailMessage: %v", err)
+	}
+
+	if msg.TrustScore == nil {
+		t.Fatal("TrustScore should not be nil")
+	}
+	if *msg.TrustScore != 92.4 {
+		t.Fatalf("TrustScore = %v, want 92.4", *msg.TrustScore)
+	}
+}
+
+func TestContractTrustScoreAbsent(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(contractDir(), "list_messages_response.json"))
+	if err != nil {
+		t.Fatalf("read list_messages_response.json: %v", err)
+	}
+
+	var resp ListMessagesResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("unmarshal ListMessagesResponse: %v", err)
+	}
+
+	if len(resp.Messages) < 2 {
+		t.Fatalf("expected at least 2 messages, got %d", len(resp.Messages))
+	}
+
+	outbound := resp.Messages[1]
+	if outbound.TrustScore != nil {
+		t.Fatalf("outbound TrustScore = %v, want nil", outbound.TrustScore)
+	}
+}
+
+func TestContractTrustScoreRoundTrip(t *testing.T) {
+	score := 75.0
+	msg := EmailMessage{
+		ID:         "round-trip-id",
+		TrustScore: &score,
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var restored EmailMessage
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if restored.TrustScore == nil {
+		t.Fatal("restored TrustScore should not be nil")
+	}
+	if *restored.TrustScore != 75.0 {
+		t.Fatalf("restored TrustScore = %v, want 75.0", *restored.TrustScore)
 	}
 }
 

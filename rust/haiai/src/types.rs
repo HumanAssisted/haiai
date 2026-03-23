@@ -434,6 +434,9 @@ pub struct EmailMessage {
     /// Labels/tags applied to this message
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
+    /// MUSUBI composite trust score (0-100). Higher = safer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_score: Option<f32>,
     /// Clean body text with quoted reply text removed (derived at response time)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_text_clean: Option<String>,

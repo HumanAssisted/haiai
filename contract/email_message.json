@@ -11,5 +11,8 @@
   "delivery_status": "delivered",
   "created_at": "2026-02-24T12:00:00Z",
   "read_at": null,
-  "jacs_verified": true
+  "jacs_verified": true,
+  "cc_addresses": [],
+  "labels": [],
+  "trust_score": 92.4
 }

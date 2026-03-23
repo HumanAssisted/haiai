@@ -354,6 +354,7 @@ type EmailMessage struct {
 	JacsVerified   *bool    `json:"jacs_verified"`
 	CcAddresses    []string `json:"cc_addresses,omitempty"`
 	Labels         []string `json:"labels,omitempty"`
+	TrustScore     *float64 `json:"trust_score,omitempty"`
 	Folder         string   `json:"folder,omitempty"`
 }
 
