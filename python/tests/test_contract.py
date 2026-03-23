@@ -35,22 +35,13 @@ def _load(name: str) -> dict:
 
 
 def _email_message_from_dict(m: dict) -> EmailMessage:
-    """Construct an EmailMessage the same way ``HaiClient.list_messages`` does."""
-    return EmailMessage(
-        id=m.get("id", ""),
-        from_address=m.get("from_address", m.get("from", "")),
-        to_address=m.get("to_address", m.get("to", "")),
-        subject=m.get("subject", ""),
-        body_text=m.get("body_text", ""),
-        created_at=m.get("created_at", ""),
-        direction=m.get("direction", ""),
-        message_id=m.get("message_id", ""),
-        in_reply_to=m.get("in_reply_to"),
-        is_read=m.get("is_read", False),
-        delivery_status=m.get("delivery_status", ""),
-        read_at=m.get("read_at"),
-        jacs_verified=m.get("jacs_verified"),
-    )
+    """Thin wrapper around ``EmailMessage.from_dict()`` for test helpers.
+
+    Previously this was a manual duplicate of ``from_dict()`` that diverged
+    over time (missing ``folder``, ``body_text_clean``, ``quoted_text``,
+    ``thread``).  Now delegates to the canonical implementation to stay DRY.
+    """
+    return EmailMessage.from_dict(m)
 
 
 def _email_status_from_dict(data: dict) -> EmailStatus:
@@ -115,6 +106,7 @@ class TestDeserializeEmailMessage:
         assert msg.delivery_status == "delivered"
         assert msg.created_at == "2026-02-24T12:00:00Z"
         assert msg.jacs_verified is True
+        assert msg.trust_score == 92.4
 
 
 class TestDeserializeListMessagesResponse:
@@ -127,7 +119,9 @@ class TestDeserializeListMessagesResponse:
         raw_messages = data if isinstance(data, list) else data.get("messages", [])
         messages = [_email_message_from_dict(m) for m in raw_messages]
 
-        assert len(messages) == 1
+        assert len(messages) == 2
+        assert data.get("total") == 2
+        assert data.get("unread") == 1
 
         msg = messages[0]
         assert msg.id == "550e8400-e29b-41d4-a716-446655440000"
@@ -140,6 +134,13 @@ class TestDeserializeListMessagesResponse:
         assert msg.delivery_status == "delivered"
         assert msg.created_at == "2026-02-24T12:00:00Z"
         assert msg.jacs_verified is True
+        assert msg.trust_score == 92.4
+
+        # Outbound message omits trust_score
+        outbound = messages[1]
+        assert outbound.id == "660e8400-e29b-41d4-a716-446655440001"
+        assert outbound.direction == "outbound"
+        assert outbound.trust_score is None
 
 
 class TestDeserializeEmailStatus:
@@ -265,3 +266,40 @@ class TestDeserializeKeyLookupVersionedResponse:
         assert info.public_key_raw_b64 != ""
         # Verify base64 fields are non-empty
         assert resp["public_key_b64"] != ""
+
+
+class TestTrustScoreDeserialization:
+    """Validate trust_score presence, absence, and round-trip."""
+
+    def test_trust_score_present(self) -> None:
+        data = _load("email_message.json")
+        msg = EmailMessage.from_dict(data)
+        assert msg.trust_score == 92.4
+
+    def test_trust_score_absent_defaults_to_none(self) -> None:
+        data = _load("list_messages_response.json")
+        raw_messages = data.get("messages", [])
+        outbound = EmailMessage.from_dict(raw_messages[1])
+        assert outbound.trust_score is None
+
+    def test_trust_score_round_trip(self) -> None:
+        msg = EmailMessage(
+            id="round-trip-id",
+            from_address="a@b.com",
+            to_address="c@d.com",
+            subject="RT",
+            body_text="body",
+            created_at="2026-01-01T00:00:00Z",
+            trust_score=75.0,
+        )
+        as_dict = {
+            "id": msg.id,
+            "from_address": msg.from_address,
+            "to_address": msg.to_address,
+            "subject": msg.subject,
+            "body_text": msg.body_text,
+            "created_at": msg.created_at,
+            "trust_score": msg.trust_score,
+        }
+        restored = EmailMessage.from_dict(as_dict)
+        assert restored.trust_score == 75.0

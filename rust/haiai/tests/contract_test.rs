@@ -68,6 +68,11 @@ fn contract_deserialize_email_message() {
     assert_eq!(msg.created_at, "2026-02-24T12:00:00Z");
     assert!(msg.read_at.is_none());
     assert_eq!(msg.jacs_verified, Some(true));
+    assert!(
+        (msg.trust_score.unwrap() - 92.4).abs() < 0.01,
+        "trust_score should be ~92.4, got {:?}",
+        msg.trust_score
+    );
 }
 
 #[test]
@@ -75,15 +80,25 @@ fn contract_deserialize_list_messages_response() {
     let resp: ListMessagesResponse = serde_json::from_str(LIST_MESSAGES_JSON)
         .expect("ListMessagesResponse deserialization failed");
 
-    assert_eq!(resp.messages.len(), 1);
-    assert_eq!(resp.total, 1);
+    assert_eq!(resp.messages.len(), 2);
+    assert_eq!(resp.total, 2);
     assert_eq!(resp.unread, 1);
 
-    // Spot-check the embedded message matches the standalone fixture.
+    // Spot-check the inbound message.
     let msg = &resp.messages[0];
     assert_eq!(msg.id, "550e8400-e29b-41d4-a716-446655440000");
     assert_eq!(msg.subject, "Test Subject");
     assert_eq!(msg.body_text, "Hello, this is a test email body.");
+    assert!(
+        (msg.trust_score.unwrap() - 92.4).abs() < 0.01,
+        "inbound trust_score should be ~92.4"
+    );
+
+    // Outbound message omits trust_score.
+    let outbound = &resp.messages[1];
+    assert_eq!(outbound.id, "660e8400-e29b-41d4-a716-446655440001");
+    assert_eq!(outbound.direction, "outbound");
+    assert!(outbound.trust_score.is_none(), "outbound trust_score should be None");
 }
 
 #[test]
@@ -205,5 +220,65 @@ fn contract_deserialize_key_lookup_versioned_response() {
     assert!(
         !info.public_key_raw_b64.is_empty(),
         "public_key_raw_b64 should not be empty"
+    );
+}
+
+#[test]
+fn contract_trust_score_present() {
+    let msg: EmailMessage =
+        serde_json::from_str(EMAIL_MESSAGE_JSON).expect("EmailMessage deserialization failed");
+    assert!(
+        (msg.trust_score.unwrap() - 92.4).abs() < 0.01,
+        "trust_score should be ~92.4, got {:?}",
+        msg.trust_score
+    );
+}
+
+#[test]
+fn contract_trust_score_absent() {
+    let resp: ListMessagesResponse = serde_json::from_str(LIST_MESSAGES_JSON)
+        .expect("ListMessagesResponse deserialization failed");
+    assert!(resp.messages.len() >= 2, "expected at least 2 messages");
+    let outbound = &resp.messages[1];
+    assert!(
+        outbound.trust_score.is_none(),
+        "outbound trust_score should be None"
+    );
+}
+
+#[test]
+fn contract_trust_score_round_trip() {
+    // Build a minimal EmailMessage with trust_score set
+    let json_with = r#"{"trust_score": 75.0}"#;
+    let msg: EmailMessage = serde_json::from_str(json_with).expect("deser with trust_score");
+    assert!(
+        (msg.trust_score.unwrap() - 75.0).abs() < 0.01,
+        "trust_score should be 75.0"
+    );
+
+    // Serialize and verify the key is present
+    let serialized = serde_json::to_string(&msg).expect("serialize");
+    assert!(
+        serialized.contains("\"trust_score\""),
+        "serialized JSON should contain trust_score key"
+    );
+
+    // Deserialize back
+    let restored: EmailMessage = serde_json::from_str(&serialized).expect("deser round-trip");
+    assert!(
+        (restored.trust_score.unwrap() - 75.0).abs() < 0.01,
+        "round-trip trust_score should be 75.0"
+    );
+
+    // Build a minimal EmailMessage without trust_score
+    let json_without = r#"{}"#;
+    let msg_none: EmailMessage = serde_json::from_str(json_without).expect("deser without trust_score");
+    assert!(msg_none.trust_score.is_none(), "absent trust_score should be None");
+
+    // Verify absent trust_score is not serialized
+    let serialized_none = serde_json::to_string(&msg_none).expect("serialize none");
+    assert!(
+        !serialized_none.contains("trust_score"),
+        "serialized JSON should not contain trust_score key when None"
     );
 }

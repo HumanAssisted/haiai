@@ -317,6 +317,7 @@ class EmailMessage:
     jacs_verified: Optional[bool] = None
     cc_addresses: list[str] = field(default_factory=list)
     labels: list[str] = field(default_factory=list)
+    trust_score: Optional[float] = None
     folder: str = "inbox"
     body_text_clean: Optional[str] = None
     quoted_text: Optional[str] = None
@@ -350,6 +351,7 @@ class EmailMessage:
             jacs_verified=m.get("jacs_verified"),
             cc_addresses=m.get("cc_addresses", []),
             labels=m.get("labels", []),
+            trust_score=m.get("trust_score"),
             folder=m.get("folder", "inbox"),
             body_text_clean=m.get("body_text_clean"),
             quoted_text=m.get("quoted_text"),

@@ -1847,6 +1847,7 @@ export class HaiClient {
       jacsVerified: (m.jacs_verified as boolean) ?? false,
       ccAddresses: (m.cc_addresses as string[]) || [],
       labels: (m.labels as string[]) || [],
+      trustScore: (m.trust_score as number) ?? undefined,
       folder: (m.folder as string) || 'inbox',
     };
   }

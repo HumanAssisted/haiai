@@ -154,6 +154,10 @@ function parseEmailMessage(m: Record<string, unknown>): EmailMessage {
     createdAt: (m.created_at as string) || '',
     readAt: (m.read_at as string | null) ?? null,
     jacsVerified: (m.jacs_verified as boolean) ?? false,
+    ccAddresses: (m.cc_addresses as string[]) || [],
+    labels: (m.labels as string[]) || [],
+    folder: (m.folder as string) || 'inbox',
+    trustScore: (m.trust_score as number) ?? undefined,
   };
 }
 
@@ -219,6 +223,7 @@ describe('contract: deserialize email message', () => {
     expect(msg.createdAt).toBe('2026-02-24T12:00:00Z');
     expect(msg.readAt).toBeNull();
     expect(msg.jacsVerified).toBe(true);
+    expect(msg.trustScore).toBe(92.4);
   });
 });
 
@@ -228,14 +233,20 @@ describe('contract: deserialize list messages response', () => {
     const messagesRaw = raw.messages as Array<Record<string, unknown>>;
     const messages = messagesRaw.map((m) => parseEmailMessage(m));
 
-    expect(messages).toHaveLength(1);
-    expect(raw.total).toBe(1);
+    expect(messages).toHaveLength(2);
+    expect(raw.total).toBe(2);
     expect(raw.unread).toBe(1);
 
-    // Verify the nested message was deserialized correctly
+    // Verify the nested inbound message was deserialized correctly
     expect(messages[0].id).toBe('550e8400-e29b-41d4-a716-446655440000');
     expect(messages[0].fromAddress).toBe('sender@hai.ai');
     expect(messages[0].jacsVerified).toBe(true);
+    expect(messages[0].trustScore).toBe(92.4);
+
+    // Outbound message omits trust_score
+    expect(messages[1].id).toBe('660e8400-e29b-41d4-a716-446655440001');
+    expect(messages[1].direction).toBe('outbound');
+    expect(messages[1].trustScore).toBeUndefined();
   });
 });
 
@@ -356,5 +367,64 @@ describe('contract: deserialize versioned key lookup response', () => {
     expect(info.publicKeyRawB64).toBeTruthy();
     // Verify base64 PEM field is present
     expect(resp.public_key_b64).toBeTruthy();
+  });
+});
+
+describe('contract: trust_score deserialization', () => {
+  it('trust_score present maps to trustScore', () => {
+    const raw = loadEmailContract('email_message.json');
+    const msg = parseEmailMessage(raw);
+    expect(msg.trustScore).toBe(92.4);
+  });
+
+  it('trust_score absent defaults to undefined', () => {
+    const raw = loadEmailContract('list_messages_response.json');
+    const messagesRaw = raw.messages as Array<Record<string, unknown>>;
+    const outbound = parseEmailMessage(messagesRaw[1]);
+    expect(outbound.trustScore).toBeUndefined();
+  });
+
+  it('round-trip JSON serialize/deserialize preserves trustScore', () => {
+    const original: EmailMessage = {
+      id: 'round-trip-id',
+      direction: 'inbound',
+      fromAddress: 'a@b.com',
+      toAddress: 'c@d.com',
+      subject: 'RT',
+      bodyText: 'body',
+      messageId: '',
+      inReplyTo: null,
+      isRead: false,
+      deliveryStatus: '',
+      createdAt: '2026-01-01T00:00:00Z',
+      readAt: null,
+      jacsVerified: false,
+      ccAddresses: [],
+      labels: [],
+      folder: 'inbox',
+      trustScore: 75.0,
+    };
+    // Simulate API round-trip: SDK object -> snake_case JSON -> SDK object
+    const asApi = {
+      id: original.id,
+      direction: original.direction,
+      from_address: original.fromAddress,
+      to_address: original.toAddress,
+      subject: original.subject,
+      body_text: original.bodyText,
+      message_id: original.messageId,
+      in_reply_to: original.inReplyTo,
+      is_read: original.isRead,
+      delivery_status: original.deliveryStatus,
+      created_at: original.createdAt,
+      read_at: original.readAt,
+      jacs_verified: original.jacsVerified,
+      cc_addresses: original.ccAddresses,
+      labels: original.labels,
+      folder: original.folder,
+      trust_score: original.trustScore,
+    };
+    const restored = parseEmailMessage(asApi as unknown as Record<string, unknown>);
+    expect(restored.trustScore).toBe(75.0);
   });
 });
