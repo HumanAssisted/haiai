@@ -909,9 +909,9 @@ pub struct UpdateEmailTemplateOptions {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ListEmailTemplatesOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub limit: Option<i64>,
+    pub limit: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub offset: Option<i64>,
+    pub offset: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub q: Option<String>,
 }
