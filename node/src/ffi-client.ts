@@ -187,17 +187,23 @@ export function mapFFIError(err: unknown): HaiError {
 export class FFIClientAdapter {
   private native: NativeHaiClient;
 
+  /**
+   * Create a new FFIClientAdapter synchronously from a JSON config string.
+   *
+   * Note: Client construction is synchronous and may briefly block the event loop
+   * while loading JACS config files and initializing cryptographic key material.
+   * For most use cases this is negligible (<10ms). If construction time is a
+   * concern, use {@link FFIClientAdapter.create} for an async alternative.
+   */
   constructor(configJson: string) {
     // Load haiinpm native addon. Native .node addons require require(), so
-    // use createRequire for ESM compatibility (the Node SDK ships as dual ESM/CJS).
-    // We detect the module system and use the appropriate reference URL.
+    // use createRequire (imported at module level from 'node:module') for ESM
+    // compatibility. The top-level import works in both CJS and ESM because
+    // 'node:module' is a built-in that TypeScript compiles correctly in both modes.
     let haiinpm: HaiinpmModule;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { createRequire } = require('node:module') as { createRequire: (url: string) => NodeRequire };
       // In ESM, __filename is undefined; use import.meta.url as fallback.
       // In CJS, __filename is always defined.
-      // NOTE: __dirname is also undefined in ESM, so we must NOT fall back to it.
       let refUrl: string;
       if (typeof __filename !== 'undefined') {
         refUrl = __filename;
@@ -220,6 +226,14 @@ export class FFIClientAdapter {
       );
     }
     this.native = new haiinpm.HaiClient(configJson);
+  }
+
+  /**
+   * Async factory method. Currently delegates to the synchronous constructor,
+   * but provides a migration path for future non-blocking initialization.
+   */
+  static async create(configJson: string): Promise<FFIClientAdapter> {
+    return new FFIClientAdapter(configJson);
   }
 
   // ---------------------------------------------------------------------------

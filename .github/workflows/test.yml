@@ -63,8 +63,16 @@ jobs:
           python -c "
           import haiipy
           print('haiipy module loaded OK')
-          print('HaiClient class:', hasattr(haiipy, 'HaiClient'))
           assert hasattr(haiipy, 'HaiClient'), 'HaiClient class not found in haiipy'
+
+          # Instantiate with StaticJacsProvider (no real JACS keys needed)
+          c = haiipy.HaiClient('{\"base_url\":\"https://test.hai.ai\",\"jacs_id\":\"smoke-test:1\"}')
+          print('HaiClient instantiated OK')
+
+          # Verify jacs_id accessor works (sync variant)
+          jid = c.jacs_id_sync()
+          assert jid == 'smoke-test:1', f'Expected jacs_id smoke-test:1, got {jid}'
+          print(f'jacs_id_sync() returned: {jid}')
           print('haiipy FFI smoke test PASSED')
           "
 
@@ -110,9 +118,21 @@ jobs:
           try {
             const binding = require('./haiinpm.linux-x64-gnu.node') || require('./haiinpm.linux-x64-musl.node');
             console.log('haiinpm native addon loaded OK');
-            console.log('HaiClient class:', typeof binding.HaiClient);
             if (typeof binding.HaiClient !== 'function') throw new Error('HaiClient not found');
-            console.log('haiinpm FFI smoke test PASSED');
+
+            // Instantiate with StaticJacsProvider (no real JACS keys needed)
+            const client = new binding.HaiClient(JSON.stringify({
+              base_url: 'https://test.hai.ai',
+              jacs_id: 'smoke-test:1'
+            }));
+            console.log('HaiClient instantiated OK');
+
+            // Verify jacs_id accessor works
+            client.jacsId().then(jid => {
+              if (jid !== 'smoke-test:1') throw new Error('Expected jacs_id smoke-test:1, got ' + jid);
+              console.log('jacsId() returned:', jid);
+              console.log('haiinpm FFI smoke test PASSED');
+            });
           } catch (e) {
             console.log('haiinpm smoke test skipped (addon not found for this platform):', e.message);
           }

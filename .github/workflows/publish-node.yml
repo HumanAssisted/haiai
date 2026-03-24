@@ -1,3 +1,12 @@
+# Publish Node Package
+#
+# Distribution strategy for haiinpm (native FFI binding):
+# - The build-native-addon job builds platform-specific .node files for each OS/arch
+# - Native addons are uploaded as artifacts and downloaded during the main publish job
+# - They are placed in node/native-addons/ and bundled into the haiai npm package
+# - Users import 'haiai' which optionally loads the haiinpm native addon at runtime
+# - haiinpm, haiipy, and haiigo are cdylib crates -- they are NOT published to crates.io
+# - The haiigo cdylib for Go consumers is distributed via GitHub Release assets
 name: Publish Node Package
 
 on:

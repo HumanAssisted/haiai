@@ -119,6 +119,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 )
 
@@ -163,10 +164,16 @@ func cString(s string) *C.char {
 }
 
 // Client wraps a Rust HaiClientWrapper handle via CGo.
+//
+// Thread safety: an atomic.Bool guards the closed state and a sync.RWMutex
+// protects the handle pointer. Method calls acquire a read lock; Close()
+// acquires a write lock. This prevents data races when Close() (or the GC
+// finalizer) fires concurrently with an in-flight method call.
 type Client struct {
+	mu        sync.RWMutex
 	handle    C.HaiClientHandle
 	closeOnce sync.Once
-	closed    bool
+	closed    atomic.Bool
 }
 
 // NewClient creates a new FFI client from a config JSON string.
@@ -197,17 +204,20 @@ func NewClient(configJSON string) (*Client, error) {
 // Close frees the underlying Rust client. Safe to call multiple times.
 func (c *Client) Close() {
 	c.closeOnce.Do(func() {
+		c.closed.Store(true)
+		c.mu.Lock()
+		defer c.mu.Unlock()
 		if c.handle != nil {
 			C.hai_client_free(c.handle)
 			c.handle = nil
-			c.closed = true
 		}
 	})
 }
 
 // checkClosed returns an error if the client has been closed.
+// Caller must hold c.mu.RLock() before calling.
 func (c *Client) checkClosed() error {
-	if c.closed || c.handle == nil {
+	if c.closed.Load() || c.handle == nil {
 		return fmt.Errorf("client is closed")
 	}
 	return nil
@@ -220,6 +230,8 @@ func (c *Client) checkClosed() error {
 // --- Registration & Identity ---
 
 func (c *Client) Hello(includeTest bool) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -228,6 +240,8 @@ func (c *Client) Hello(includeTest bool) (json.RawMessage, error) {
 }
 
 func (c *Client) CheckUsername(username string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -237,6 +251,8 @@ func (c *Client) CheckUsername(username string) (json.RawMessage, error) {
 }
 
 func (c *Client) Register(optionsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -246,6 +262,8 @@ func (c *Client) Register(optionsJSON string) (json.RawMessage, error) {
 }
 
 func (c *Client) RotateKeys(optionsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -255,6 +273,8 @@ func (c *Client) RotateKeys(optionsJSON string) (json.RawMessage, error) {
 }
 
 func (c *Client) UpdateAgent(agentData string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -264,6 +284,8 @@ func (c *Client) UpdateAgent(agentData string) (json.RawMessage, error) {
 }
 
 func (c *Client) SubmitResponse(paramsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -273,6 +295,8 @@ func (c *Client) SubmitResponse(paramsJSON string) (json.RawMessage, error) {
 }
 
 func (c *Client) VerifyStatus(agentID string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -284,6 +308,8 @@ func (c *Client) VerifyStatus(agentID string) (json.RawMessage, error) {
 // --- Username ---
 
 func (c *Client) ClaimUsername(agentID, username string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -295,6 +321,8 @@ func (c *Client) ClaimUsername(agentID, username string) (json.RawMessage, error
 }
 
 func (c *Client) UpdateUsername(agentID, username string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -306,6 +334,8 @@ func (c *Client) UpdateUsername(agentID, username string) (json.RawMessage, erro
 }
 
 func (c *Client) DeleteUsername(agentID string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -317,6 +347,8 @@ func (c *Client) DeleteUsername(agentID string) (json.RawMessage, error) {
 // --- Email Core ---
 
 func (c *Client) SendEmail(optionsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -326,6 +358,8 @@ func (c *Client) SendEmail(optionsJSON string) (json.RawMessage, error) {
 }
 
 func (c *Client) SendSignedEmail(optionsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -335,6 +369,8 @@ func (c *Client) SendSignedEmail(optionsJSON string) (json.RawMessage, error) {
 }
 
 func (c *Client) ListMessages(optionsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -344,6 +380,8 @@ func (c *Client) ListMessages(optionsJSON string) (json.RawMessage, error) {
 }
 
 func (c *Client) UpdateLabels(paramsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -353,6 +391,8 @@ func (c *Client) UpdateLabels(paramsJSON string) (json.RawMessage, error) {
 }
 
 func (c *Client) GetEmailStatus() (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -360,6 +400,8 @@ func (c *Client) GetEmailStatus() (json.RawMessage, error) {
 }
 
 func (c *Client) GetMessage(messageID string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -369,6 +411,8 @@ func (c *Client) GetMessage(messageID string) (json.RawMessage, error) {
 }
 
 func (c *Client) GetUnreadCount() (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -378,6 +422,8 @@ func (c *Client) GetUnreadCount() (json.RawMessage, error) {
 // --- Email Actions ---
 
 func (c *Client) MarkRead(messageID string) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return err
 	}
@@ -388,6 +434,8 @@ func (c *Client) MarkRead(messageID string) error {
 }
 
 func (c *Client) MarkUnread(messageID string) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return err
 	}
@@ -398,6 +446,8 @@ func (c *Client) MarkUnread(messageID string) error {
 }
 
 func (c *Client) DeleteMessage(messageID string) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return err
 	}
@@ -408,6 +458,8 @@ func (c *Client) DeleteMessage(messageID string) error {
 }
 
 func (c *Client) Archive(messageID string) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return err
 	}
@@ -418,6 +470,8 @@ func (c *Client) Archive(messageID string) error {
 }
 
 func (c *Client) Unarchive(messageID string) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return err
 	}
@@ -428,6 +482,8 @@ func (c *Client) Unarchive(messageID string) error {
 }
 
 func (c *Client) ReplyWithOptions(paramsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -437,6 +493,8 @@ func (c *Client) ReplyWithOptions(paramsJSON string) (json.RawMessage, error) {
 }
 
 func (c *Client) Forward(paramsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -448,6 +506,8 @@ func (c *Client) Forward(paramsJSON string) (json.RawMessage, error) {
 // --- Search & Contacts ---
 
 func (c *Client) SearchMessages(optionsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -457,6 +517,8 @@ func (c *Client) SearchMessages(optionsJSON string) (json.RawMessage, error) {
 }
 
 func (c *Client) Contacts() (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -466,6 +528,8 @@ func (c *Client) Contacts() (json.RawMessage, error) {
 // --- Key Operations ---
 
 func (c *Client) FetchRemoteKey(jacsID, version string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -477,6 +541,8 @@ func (c *Client) FetchRemoteKey(jacsID, version string) (json.RawMessage, error)
 }
 
 func (c *Client) FetchKeyByHash(hash string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -486,6 +552,8 @@ func (c *Client) FetchKeyByHash(hash string) (json.RawMessage, error) {
 }
 
 func (c *Client) FetchKeyByEmail(email string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -495,6 +563,8 @@ func (c *Client) FetchKeyByEmail(email string) (json.RawMessage, error) {
 }
 
 func (c *Client) FetchKeyByDomain(domain string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -504,6 +574,8 @@ func (c *Client) FetchKeyByDomain(domain string) (json.RawMessage, error) {
 }
 
 func (c *Client) FetchAllKeys(jacsID string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -515,6 +587,8 @@ func (c *Client) FetchAllKeys(jacsID string) (json.RawMessage, error) {
 // --- Verification ---
 
 func (c *Client) VerifyDocument(document string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -524,6 +598,8 @@ func (c *Client) VerifyDocument(document string) (json.RawMessage, error) {
 }
 
 func (c *Client) GetVerification(agentID string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -533,6 +609,8 @@ func (c *Client) GetVerification(agentID string) (json.RawMessage, error) {
 }
 
 func (c *Client) VerifyAgentDocument(requestJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -546,6 +624,8 @@ func (c *Client) VerifyAgentDocument(requestJSON string) (json.RawMessage, error
 // Benchmark starts a benchmark run. Pass empty string "" for name or tier to omit.
 // Whitespace-only strings are also treated as absent on the Rust side.
 func (c *Client) Benchmark(name, tier string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -557,6 +637,8 @@ func (c *Client) Benchmark(name, tier string) (json.RawMessage, error) {
 }
 
 func (c *Client) FreeRun(transport string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -566,6 +648,8 @@ func (c *Client) FreeRun(transport string) (json.RawMessage, error) {
 }
 
 func (c *Client) ProRun(optionsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -575,6 +659,8 @@ func (c *Client) ProRun(optionsJSON string) (json.RawMessage, error) {
 }
 
 func (c *Client) EnterpriseRun() error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return err
 	}
@@ -585,6 +671,8 @@ func (c *Client) EnterpriseRun() error {
 // --- JACS Delegation ---
 
 func (c *Client) BuildAuthHeader() (string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return "", err
 	}
@@ -600,6 +688,8 @@ func (c *Client) BuildAuthHeader() (string, error) {
 }
 
 func (c *Client) SignMessage(message string) (string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return "", err
 	}
@@ -617,6 +707,8 @@ func (c *Client) SignMessage(message string) (string, error) {
 }
 
 func (c *Client) CanonicalJSON(valueJSON string) (string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return "", err
 	}
@@ -634,6 +726,8 @@ func (c *Client) CanonicalJSON(valueJSON string) (string, error) {
 }
 
 func (c *Client) VerifyA2AArtifact(wrappedJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -643,6 +737,8 @@ func (c *Client) VerifyA2AArtifact(wrappedJSON string) (json.RawMessage, error) 
 }
 
 func (c *Client) ExportAgentJSON() (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return nil, err
 	}
@@ -653,6 +749,8 @@ func (c *Client) ExportAgentJSON() (json.RawMessage, error) {
 
 // JacsID returns the JACS identity ID of the client.
 func (c *Client) JacsID() (string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return "", err
 	}
@@ -670,6 +768,8 @@ func (c *Client) JacsID() (string, error) {
 // --- Client State (Mutating) ---
 
 func (c *Client) SetHaiAgentID(id string) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return err
 	}
@@ -680,6 +780,8 @@ func (c *Client) SetHaiAgentID(id string) error {
 }
 
 func (c *Client) SetAgentEmail(email string) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if err := c.checkClosed(); err != nil {
 		return err
 	}

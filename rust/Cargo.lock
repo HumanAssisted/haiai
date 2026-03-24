@@ -1309,11 +1309,9 @@ name = "haiinpm"
 version = "0.1.8"
 dependencies = [
  "hai-binding-core",
- "haiai",
  "napi",
  "napi-build",
  "napi-derive",
- "serde_json",
 ]
 
 [[package]]
@@ -1321,7 +1319,6 @@ name = "haiipy"
 version = "0.1.8"
 dependencies = [
  "hai-binding-core",
- "haiai",
  "pyo3",
  "pyo3-async-runtimes",
  "serde_json",

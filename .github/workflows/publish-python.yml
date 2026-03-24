@@ -1,3 +1,12 @@
+# Publish Python Package
+#
+# Distribution strategy for haiipy (native FFI binding):
+# - maturin builds platform-specific haiipy wheels into python/dist/
+# - These wheels are included alongside the haiai sdist/wheels
+# - The haiai package optionally imports haiipy at runtime for FFI delegation
+# - Users without a haiipy wheel for their platform fall back to the pure-Python
+#   HTTP client (httpx) until Issue 001 (full SDK migration) is complete
+# - Post Issue 001: haiipy becomes required and wheels must cover all platforms
 name: Publish Python Package
 
 on:

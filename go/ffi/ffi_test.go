@@ -7,17 +7,41 @@ import (
 	"testing"
 )
 
-// TestFFISmokeNewClient verifies that the FFI binding can create a client
-// (which will fail due to test config, but proves the cdylib loads and
-// the C ABI works).
+// TestFFISmokeNewClient verifies that the FFI binding can create a client.
+// With StaticJacsProvider (no jacs_config_path), construction should succeed.
 func TestFFISmokeNewClient(t *testing.T) {
-	// Attempt to create a client with minimal config.
-	// This should fail (no real JACS provider) but it exercises the FFI boundary.
-	_, err := NewClient(`{"base_url":"https://beta.hai.ai","jacs_id":"test-agent:1"}`)
+	client, err := NewClient(`{"base_url":"https://beta.hai.ai","jacs_id":"test-agent:1"}`)
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+	defer client.Close()
+	t.Log("Client created successfully with StaticJacsProvider")
+}
+
+// TestClientDoubleClose verifies that Close() is safe to call multiple times.
+func TestClientDoubleClose(t *testing.T) {
+	client, err := NewClient(`{"base_url":"https://beta.hai.ai","jacs_id":"test-close:1"}`)
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+	client.Close()
+	client.Close() // should not panic
+}
+
+// TestClientMethodAfterClose verifies that methods return an error after Close().
+func TestClientMethodAfterClose(t *testing.T) {
+	client, err := NewClient(`{"base_url":"https://beta.hai.ai","jacs_id":"test-after-close:1"}`)
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+	client.Close()
+
+	_, err = client.Hello(false)
 	if err == nil {
-		t.Log("Client created successfully (test JACS provider)")
-	} else {
-		t.Logf("Client creation returned error (expected in CI): %v", err)
+		t.Fatal("expected error after Close(), got nil")
+	}
+	if err.Error() != "client is closed" {
+		t.Errorf("expected 'client is closed', got: %v", err)
 	}
 }
 

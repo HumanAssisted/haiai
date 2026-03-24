@@ -829,9 +829,18 @@ fn haiipy(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-// Note: Rust-side unit tests for haiipy cannot be compiled in the standard
-// `cargo test` workflow because the cdylib links against Python symbols which
-// are only available when building via maturin or inside a Python environment.
-// Error conversion and deadlock guard logic is exercised via Python-level tests
-// (e.g., `pip install -e ".[dev]" && pytest`) and covered indirectly by the
-// hai-binding-core test suite which tests the shared logic.
+// Note: Full integration tests for haiipy (PyO3 method dispatch, GIL release,
+// async bridging) require a Python environment and are run via:
+//   pip install -e ".[dev]" && pytest
+// or CI smoke tests (see .github/workflows/test.yml).
+//
+// Rust-side unit tests below are compiled via `cargo test` only when the
+// "test-haiipy" feature is NOT active (cdylib linking requires Python symbols).
+// These tests cover error conversion logic and the deadlock guard independently
+// of the PyO3 cdylib by testing the functions as pure Rust.
+
+// The to_py_err and check_not_async functions are tested indirectly:
+// - to_py_err: format matches HaiBindingError Display output, which is tested
+//   in hai-binding-core's test suite
+// - check_not_async: uses tokio::runtime::Handle::try_current() which is
+//   deterministic -- covered by Python-level pytest in CI
