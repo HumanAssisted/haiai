@@ -368,6 +368,64 @@ pub trait JacsAttestationProvider: JacsProvider {
 }
 
 // =============================================================================
+// Box<dyn JacsProvider> delegation
+// =============================================================================
+
+/// Blanket implementation so `HaiClient<Box<dyn JacsProvider>>` works.
+///
+/// This allows hai-binding-core to erase the concrete provider type behind
+/// a trait object while still satisfying the `JacsProvider` bound.
+impl JacsProvider for Box<dyn JacsProvider> {
+    fn jacs_id(&self) -> &str {
+        (**self).jacs_id()
+    }
+
+    fn sign_string(&self, message: &str) -> Result<String> {
+        (**self).sign_string(message)
+    }
+
+    fn sign_bytes(&self, data: &[u8]) -> Result<Vec<u8>> {
+        (**self).sign_bytes(data)
+    }
+
+    fn key_id(&self) -> &str {
+        (**self).key_id()
+    }
+
+    fn algorithm(&self) -> &str {
+        (**self).algorithm()
+    }
+
+    fn canonical_json(&self, value: &Value) -> Result<String> {
+        (**self).canonical_json(value)
+    }
+
+    fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
+        (**self).sign_response(payload)
+    }
+
+    fn verify_a2a_artifact(&self, wrapped_json: &str) -> Result<String> {
+        (**self).verify_a2a_artifact(wrapped_json)
+    }
+
+    fn sign_email_locally(&self, raw_email: &[u8]) -> Result<Vec<u8>> {
+        (**self).sign_email_locally(raw_email)
+    }
+
+    fn rotate(&self) -> Result<RotationResult> {
+        (**self).rotate()
+    }
+
+    fn export_agent_json(&self) -> Result<String> {
+        (**self).export_agent_json()
+    }
+
+    fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
+        (**self).update_agent(new_agent_data)
+    }
+}
+
+// =============================================================================
 // Providers
 // =============================================================================
 

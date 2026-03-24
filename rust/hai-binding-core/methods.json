@@ -1,0 +1,478 @@
+{
+  "version": "0.1.8",
+  "description": "Complete method inventory for hai-binding-core FFI wrapper",
+  "generated": "2026-03-23",
+  "methods": [
+    {
+      "name": "hello",
+      "category": "async",
+      "group": "registration",
+      "params": { "include_test": "bool" },
+      "returns": "HelloResult",
+      "auth_required": true,
+      "notes": "Smoke test method. First method implemented in binding-core."
+    },
+    {
+      "name": "check_username",
+      "category": "async",
+      "group": "username",
+      "params": { "username": "string" },
+      "returns": "CheckUsernameResult",
+      "auth_required": false
+    },
+    {
+      "name": "register",
+      "category": "async",
+      "group": "registration",
+      "params": { "options_json": "RegisterAgentOptions (JSON)" },
+      "returns": "RegistrationResult",
+      "auth_required": false,
+      "notes": "Accepts RegisterAgentOptions as JSON. agent_json is a required field."
+    },
+    {
+      "name": "rotate_keys",
+      "category": "async",
+      "group": "registration",
+      "params": { "options_json": "RotateKeysOptions (JSON, manually constructed)" },
+      "returns": "RotationResult",
+      "auth_required": true,
+      "notes": "RotateKeysOptions lacks Deserialize. Manually construct from parsed JSON."
+    },
+    {
+      "name": "update_agent",
+      "category": "async",
+      "group": "registration",
+      "params": { "new_agent_data": "string (JSON)" },
+      "returns": "UpdateAgentResult",
+      "auth_required": true,
+      "notes": "Delegates to JacsProvider::update_agent, then re-registers with HAI."
+    },
+    {
+      "name": "submit_response",
+      "category": "async",
+      "group": "registration",
+      "params": {
+        "job_id": "string",
+        "message": "string",
+        "metadata": "Value (optional)",
+        "processing_time_ms": "u64"
+      },
+      "returns": "JobResponseResult",
+      "auth_required": true,
+      "notes": "Binding-core input: single JSON object {job_id, message, metadata, processing_time_ms}."
+    },
+    {
+      "name": "verify_status",
+      "category": "async",
+      "group": "registration",
+      "params": { "agent_id": "string (optional, defaults to self)" },
+      "returns": "VerifyAgentResult",
+      "auth_required": true
+    },
+    {
+      "name": "claim_username",
+      "category": "async",
+      "group": "username",
+      "params": { "agent_id": "string", "username": "string" },
+      "returns": "ClaimUsernameResult",
+      "auth_required": true,
+      "notes": "WRITE LOCK required (&mut self). Auto-stores email from response."
+    },
+    {
+      "name": "update_username",
+      "category": "async",
+      "group": "username",
+      "params": { "agent_id": "string", "username": "string" },
+      "returns": "UpdateUsernameResult",
+      "auth_required": true
+    },
+    {
+      "name": "delete_username",
+      "category": "async",
+      "group": "username",
+      "params": { "agent_id": "string" },
+      "returns": "DeleteUsernameResult",
+      "auth_required": true
+    },
+    {
+      "name": "send_email",
+      "category": "async",
+      "group": "email_core",
+      "params": { "options_json": "SendEmailOptions (JSON)" },
+      "returns": "SendEmailResult",
+      "auth_required": true,
+      "notes": "Requires agent_email to be set (call claim_username first)."
+    },
+    {
+      "name": "send_signed_email",
+      "category": "async",
+      "group": "email_core",
+      "params": { "options_json": "SendEmailOptions (JSON)" },
+      "returns": "SendEmailResult",
+      "auth_required": true,
+      "notes": "Builds RFC 5322 MIME locally, signs with agent JACS key. Higher complexity than standard template."
+    },
+    {
+      "name": "list_messages",
+      "category": "async",
+      "group": "email_core",
+      "params": { "options_json": "ListMessagesOptions (JSON)" },
+      "returns": "Vec<EmailMessage>",
+      "auth_required": true
+    },
+    {
+      "name": "update_labels",
+      "category": "async",
+      "group": "email_core",
+      "params": { "message_id": "string", "add_json": "[string]", "remove_json": "[string]" },
+      "returns": "Vec<String>",
+      "auth_required": true,
+      "notes": "Takes &[&str] slices. Binding-core must collect into Vec<String> first."
+    },
+    {
+      "name": "mark_read",
+      "category": "async",
+      "group": "email_actions",
+      "params": { "message_id": "string" },
+      "returns": "()",
+      "auth_required": true
+    },
+    {
+      "name": "get_email_status",
+      "category": "async",
+      "group": "email_core",
+      "params": {},
+      "returns": "EmailStatus",
+      "auth_required": true
+    },
+    {
+      "name": "get_message",
+      "category": "async",
+      "group": "email_core",
+      "params": { "message_id": "string" },
+      "returns": "EmailMessage",
+      "auth_required": true
+    },
+    {
+      "name": "delete_message",
+      "category": "async",
+      "group": "email_actions",
+      "params": { "message_id": "string" },
+      "returns": "()",
+      "auth_required": true
+    },
+    {
+      "name": "mark_unread",
+      "category": "async",
+      "group": "email_actions",
+      "params": { "message_id": "string" },
+      "returns": "()",
+      "auth_required": true
+    },
+    {
+      "name": "archive",
+      "category": "async",
+      "group": "email_actions",
+      "params": { "message_id": "string" },
+      "returns": "()",
+      "auth_required": true
+    },
+    {
+      "name": "unarchive",
+      "category": "async",
+      "group": "email_actions",
+      "params": { "message_id": "string" },
+      "returns": "()",
+      "auth_required": true
+    },
+    {
+      "name": "search_messages",
+      "category": "async",
+      "group": "search",
+      "params": { "options_json": "SearchOptions (JSON)" },
+      "returns": "Vec<EmailMessage>",
+      "auth_required": true
+    },
+    {
+      "name": "get_unread_count",
+      "category": "async",
+      "group": "email_core",
+      "params": {},
+      "returns": "u64",
+      "auth_required": true
+    },
+    {
+      "name": "reply_with_options",
+      "category": "async",
+      "group": "email_actions",
+      "params": {
+        "message_id": "string",
+        "body": "string",
+        "subject_override": "string (optional)",
+        "reply_type": "string (optional: sender|all|custom)",
+        "recipients": "[string] (optional)"
+      },
+      "returns": "SendEmailResult",
+      "auth_required": true,
+      "notes": "Canonical reply method. `reply()` is excluded as convenience wrapper."
+    },
+    {
+      "name": "forward",
+      "category": "async",
+      "group": "email_actions",
+      "params": { "message_id": "string", "to": "string", "comment": "string (optional)" },
+      "returns": "SendEmailResult",
+      "auth_required": true
+    },
+    {
+      "name": "contacts",
+      "category": "async",
+      "group": "search",
+      "params": {},
+      "returns": "Vec<Contact>",
+      "auth_required": true
+    },
+    {
+      "name": "fetch_remote_key",
+      "category": "async",
+      "group": "keys",
+      "params": { "jacs_id": "string", "version": "string" },
+      "returns": "PublicKeyInfo",
+      "auth_required": false
+    },
+    {
+      "name": "fetch_key_by_hash",
+      "category": "async",
+      "group": "keys",
+      "params": { "hash": "string" },
+      "returns": "PublicKeyInfo",
+      "auth_required": false
+    },
+    {
+      "name": "fetch_key_by_email",
+      "category": "async",
+      "group": "keys",
+      "params": { "email": "string" },
+      "returns": "PublicKeyInfo",
+      "auth_required": false
+    },
+    {
+      "name": "fetch_key_by_domain",
+      "category": "async",
+      "group": "keys",
+      "params": { "domain": "string" },
+      "returns": "PublicKeyInfo",
+      "auth_required": false
+    },
+    {
+      "name": "fetch_all_keys",
+      "category": "async",
+      "group": "keys",
+      "params": { "jacs_id": "string" },
+      "returns": "AgentKeyHistory",
+      "auth_required": false
+    },
+    {
+      "name": "verify_document",
+      "category": "async",
+      "group": "verification",
+      "params": { "document": "string (JSON)" },
+      "returns": "DocumentVerificationResult",
+      "auth_required": false
+    },
+    {
+      "name": "get_verification",
+      "category": "async",
+      "group": "verification",
+      "params": { "agent_id": "string" },
+      "returns": "AgentVerificationResult",
+      "auth_required": false
+    },
+    {
+      "name": "verify_agent_document",
+      "category": "async",
+      "group": "verification",
+      "params": { "request_json": "VerifyAgentDocumentRequest (JSON)" },
+      "returns": "AgentVerificationResult",
+      "auth_required": false
+    },
+    {
+      "name": "benchmark",
+      "category": "async",
+      "group": "benchmark",
+      "params": { "name": "string (optional)", "tier": "string (optional)" },
+      "returns": "Value (raw JSON pass-through)",
+      "auth_required": true,
+      "notes": "Returns serde_json::Value, not a typed struct. Pass through raw JSON."
+    },
+    {
+      "name": "free_run",
+      "category": "async",
+      "group": "benchmark",
+      "params": { "transport": "string (optional: sse|ws)" },
+      "returns": "FreeChaoticResult",
+      "auth_required": true
+    },
+    {
+      "name": "pro_run",
+      "category": "async",
+      "group": "benchmark",
+      "params": { "options_json": "ProRunOptions (JSON, manually constructed)" },
+      "returns": "ProRunResult",
+      "auth_required": true,
+      "notes": "ProRunOptions lacks Deserialize. Manually construct from JSON. Contains internal poll loop (up to 300s default timeout)."
+    },
+    {
+      "name": "enterprise_run",
+      "category": "async",
+      "group": "benchmark",
+      "params": {},
+      "returns": "()",
+      "auth_required": true,
+      "notes": "Currently returns an error (coming soon). Included for API completeness."
+    }
+  ],
+  "streaming": [
+    {
+      "name": "connect_sse",
+      "category": "streaming",
+      "group": "streaming",
+      "returns": "SseConnection (opaque handle)",
+      "auth_required": true,
+      "ffi_pattern": "connect_sse() -> handle, sse_next_event(handle) -> Option<String>, sse_close(handle)"
+    },
+    {
+      "name": "connect_ws",
+      "category": "streaming",
+      "group": "streaming",
+      "returns": "WsConnection (opaque handle)",
+      "auth_required": true,
+      "ffi_pattern": "connect_ws() -> handle, ws_next_event(handle) -> Option<String>, ws_close(handle)"
+    }
+  ],
+  "callback": [
+    {
+      "name": "on_benchmark_job",
+      "category": "callback",
+      "group": "benchmark",
+      "notes": "Accepts FnMut closure. Not wrappable via FFI in Phase 1."
+    },
+    {
+      "name": "on_benchmark_job_with_reconnect",
+      "category": "callback",
+      "group": "benchmark",
+      "notes": "Like on_benchmark_job but with configurable max reconnect attempts."
+    }
+  ],
+  "sync": [
+    {
+      "name": "new",
+      "category": "sync",
+      "group": "constructor",
+      "notes": "Constructor. Exposed via HaiClientWrapper::new() and from_config_json()."
+    },
+    {
+      "name": "jacs_id",
+      "category": "sync",
+      "group": "accessor",
+      "returns": "string"
+    },
+    {
+      "name": "base_url",
+      "category": "sync",
+      "group": "accessor",
+      "returns": "string"
+    },
+    {
+      "name": "hai_agent_id",
+      "category": "sync",
+      "group": "accessor",
+      "returns": "string"
+    },
+    {
+      "name": "agent_email",
+      "category": "sync",
+      "group": "accessor",
+      "returns": "Option<string>"
+    },
+    {
+      "name": "build_auth_header",
+      "category": "sync",
+      "group": "jacs_delegation",
+      "returns": "string",
+      "notes": "Delegates to JacsProvider for signing."
+    },
+    {
+      "name": "sign_message",
+      "category": "sync",
+      "group": "jacs_delegation",
+      "returns": "string"
+    },
+    {
+      "name": "canonical_json",
+      "category": "sync",
+      "group": "jacs_delegation",
+      "returns": "string"
+    },
+    {
+      "name": "verify_a2a_artifact",
+      "category": "sync",
+      "group": "jacs_delegation",
+      "returns": "string (JSON)"
+    },
+    {
+      "name": "export_agent_json",
+      "category": "sync",
+      "group": "jacs_delegation",
+      "returns": "string (JSON)"
+    }
+  ],
+  "mutating": [
+    {
+      "name": "set_hai_agent_id",
+      "category": "mutating",
+      "group": "state",
+      "params": { "id": "string" },
+      "notes": "WRITE LOCK required (&mut self on HaiClient)."
+    },
+    {
+      "name": "set_agent_email",
+      "category": "mutating",
+      "group": "state",
+      "params": { "email": "string" },
+      "notes": "WRITE LOCK required (&mut self on HaiClient)."
+    }
+  ],
+  "excluded": [
+    {
+      "name": "dns_certified_run",
+      "reason": "Deprecated alias for pro_run. #[deprecated] in source."
+    },
+    {
+      "name": "certified_run",
+      "reason": "Deprecated alias for enterprise_run. #[deprecated] in source."
+    },
+    {
+      "name": "reply",
+      "reason": "Convenience wrapper for reply_with_options. Exposes same functionality."
+    },
+    {
+      "name": "with_default_url",
+      "reason": "Constructor convenience. Handled by from_config_json with default base_url."
+    },
+    {
+      "name": "max_retries",
+      "reason": "Internal config accessor, not useful via FFI."
+    }
+  ],
+  "summary": {
+    "async_methods": 38,
+    "streaming_methods": 2,
+    "callback_methods": 2,
+    "sync_methods": 10,
+    "mutating_methods": 2,
+    "excluded_methods": 5,
+    "total_public_methods": 59,
+    "binding_core_scope": "38 async + 2 streaming + 10 sync + 2 mutating = 52 methods"
+  }
+}

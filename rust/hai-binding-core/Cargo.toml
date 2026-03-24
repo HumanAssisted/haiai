@@ -1,0 +1,19 @@
+[package]
+name = "hai-binding-core"
+version = "0.1.8"
+description = "Shared binding core for HAI SDK FFI (Python, Node, Go)"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+haiai = { path = "../haiai" }
+serde = { workspace = true }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

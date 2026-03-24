@@ -1,5 +1,5 @@
 [workspace]
-members = ["haiai", "hai-mcp", "haiai-cli"]
+members = ["haiai", "hai-mcp", "haiai-cli", "hai-binding-core", "haiinpm", "haiipy", "haiigo"]
 resolver = "2"
 
 [workspace.package]
