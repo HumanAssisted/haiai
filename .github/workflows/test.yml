@@ -87,16 +87,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust (for jacsgo build)
         uses: dtolnay/rust-toolchain@stable
+      - name: Clone JACS
+        run: |
+          rm -rf /tmp/JACS
+          git clone --depth 1 https://github.com/HumanAssisted/JACS.git /tmp/JACS
       - name: Cache jacsgo shared library
         id: cache-jacsgo
         uses: actions/cache@v4
         with:
           path: /tmp/JACS/jacsgo/build
           key: jacsgo-${{ runner.os }}-${{ hashFiles('.github/workflows/test.yml') }}
-      - name: Clone JACS
-        run: |
-          rm -rf /tmp/JACS
-          git clone --depth 1 https://github.com/HumanAssisted/JACS.git /tmp/JACS
       - name: Build jacsgo shared library
         if: steps.cache-jacsgo.outputs.cache-hit != 'true'
         run: cd /tmp/JACS/jacsgo && make build-rust

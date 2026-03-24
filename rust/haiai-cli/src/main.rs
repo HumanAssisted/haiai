@@ -505,10 +505,10 @@ fn print_message_table(messages: &[haiai::EmailMessage]) {
         return;
     }
     println!(
-        "{:<9} {:<28} {:<28} {:<40} {:<20} {:<5}",
-        "DIRECTION", "FROM", "TO", "SUBJECT", "DATE", "READ"
+        "{:<38} {:<9} {:<28} {:<28} {:<40} {:<20} {:<5}",
+        "ID", "DIRECTION", "FROM", "TO", "SUBJECT", "DATE", "READ"
     );
-    println!("{}", "-".repeat(130));
+    println!("{}", "-".repeat(170));
     for msg in messages {
         let subject = if msg.subject.len() > 38 {
             format!("{}...", &msg.subject[..35])
@@ -517,8 +517,8 @@ fn print_message_table(messages: &[haiai::EmailMessage]) {
         };
         let read = if msg.is_read { "yes" } else { "no" };
         println!(
-            "{:<9} {:<28} {:<28} {:<40} {:<20} {:<5}",
-            msg.direction, msg.from_address, msg.to_address, subject, msg.created_at, read,
+            "{:<38} {:<9} {:<28} {:<28} {:<40} {:<20} {:<5}",
+            msg.id, msg.direction, msg.from_address, msg.to_address, subject, msg.created_at, read,
         );
     }
 }
