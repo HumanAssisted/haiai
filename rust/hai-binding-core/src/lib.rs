@@ -14,9 +14,12 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio::sync::RwLock;
 
+use std::path::Path;
+
 use haiai::client::{HaiClient, HaiClientOptions};
 use haiai::error::HaiError;
-use haiai::jacs::JacsProvider;
+use haiai::jacs::{JacsProvider, StaticJacsProvider};
+use haiai::jacs_local::LocalJacsProvider;
 
 // =============================================================================
 // Static tokio runtime for FFI callers
@@ -234,6 +237,57 @@ impl HaiClientWrapper {
         };
 
         Self::new(jacs, options)
+    }
+
+    /// Create a new `HaiClientWrapper` from a JSON config string, automatically
+    /// selecting the appropriate JACS provider.
+    ///
+    /// If `jacs_config_path` is present in the config JSON, a real
+    /// `LocalJacsProvider` is loaded from that path, enabling actual JACS
+    /// cryptographic signing for authenticated API calls.
+    ///
+    /// If `jacs_config_path` is absent, falls back to `StaticJacsProvider`
+    /// (test-only: produces deterministic fake signatures).
+    ///
+    /// Expected JSON format:
+    /// ```json
+    /// {
+    ///   "base_url": "https://beta.hai.ai",
+    ///   "jacs_id": "...",
+    ///   "jacs_config_path": "/path/to/jacs.config.json",
+    ///   "timeout_secs": 30,
+    ///   "max_retries": 3
+    /// }
+    /// ```
+    pub fn from_config_json_auto(config_json: &str) -> HaiBindingResult<Self> {
+        let config: Value = serde_json::from_str(config_json)
+            .map_err(|e| HaiBindingError::new(ErrorKind::ConfigFailed, e.to_string()))?;
+
+        let jacs_config_path = config
+            .get("jacs_config_path")
+            .and_then(|v| v.as_str());
+
+        let jacs_id = config
+            .get("jacs_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let provider: Box<dyn JacsProvider> = if let Some(path) = jacs_config_path {
+            let local = LocalJacsProvider::from_config_path(
+                Some(Path::new(path)),
+                None,
+            ).map_err(|e| HaiBindingError::new(
+                ErrorKind::ConfigFailed,
+                format!("failed to load JACS config from {path}: {e}"),
+            ))?;
+            Box::new(local)
+        } else {
+            // Fallback to StaticJacsProvider (test-only, produces fake signatures)
+            Box::new(StaticJacsProvider::new(jacs_id))
+        };
+
+        Self::from_config_json(config_json, provider)
     }
 
     // =========================================================================
@@ -986,5 +1040,129 @@ mod tests {
         assert_eq!(sync_count, summary["sync_methods"].as_u64().unwrap() as usize, "sync count mismatch");
         assert_eq!(mutating_count, summary["mutating_methods"].as_u64().unwrap() as usize, "mutating count mismatch");
         assert_eq!(excluded_count, summary["excluded_methods"].as_u64().unwrap() as usize, "excluded count mismatch");
+    }
+
+    // =========================================================================
+    // from_config_json_auto tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn auto_config_without_jacs_path_uses_static_provider() {
+        let config = r#"{"base_url": "https://beta.hai.ai", "jacs_id": "auto-test-id"}"#;
+        let wrapper = HaiClientWrapper::from_config_json_auto(config);
+        assert!(wrapper.is_ok(), "from_config_json_auto should succeed without jacs_config_path");
+
+        let wrapper = wrapper.unwrap();
+        assert_eq!(wrapper.jacs_id().await, "auto-test-id");
+    }
+
+    #[test]
+    fn auto_config_invalid_json_returns_config_failed() {
+        let result = HaiClientWrapper::from_config_json_auto("not json");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, ErrorKind::ConfigFailed);
+    }
+
+    #[test]
+    fn auto_config_with_bad_jacs_path_returns_config_failed() {
+        let config = r#"{"jacs_config_path": "/nonexistent/jacs.config.json", "jacs_id": "test"}"#;
+        let result = HaiClientWrapper::from_config_json_auto(config);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::ConfigFailed);
+        assert!(err.message.contains("/nonexistent/jacs.config.json"), "error should mention the bad path");
+    }
+
+    #[tokio::test]
+    async fn auto_config_defaults_base_url() {
+        let config = r#"{"jacs_id": "default-test"}"#;
+        let wrapper = HaiClientWrapper::from_config_json_auto(config).unwrap();
+        assert_eq!(wrapper.base_url().await, "https://beta.hai.ai");
+    }
+
+    // =========================================================================
+    // JACS provider integration tests (using StaticJacsProvider)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn build_auth_header_uses_provider_signing() {
+        let config = r#"{"jacs_id": "sign-test-id"}"#;
+        let wrapper = HaiClientWrapper::from_config_json_auto(config).unwrap();
+
+        // StaticJacsProvider produces deterministic base64-encoded "sig:..." signatures.
+        // build_auth_header should return a JACS auth header string.
+        let result = wrapper.build_auth_header().await;
+        assert!(result.is_ok(), "build_auth_header should succeed with StaticJacsProvider");
+
+        let header = result.unwrap();
+        assert!(header.starts_with("JACS "), "auth header should start with 'JACS '");
+        assert!(header.contains("sign-test-id"), "auth header should contain the jacs_id");
+    }
+
+    #[tokio::test]
+    async fn sign_message_uses_provider() {
+        let config = r#"{"jacs_id": "sign-test"}"#;
+        let wrapper = HaiClientWrapper::from_config_json_auto(config).unwrap();
+
+        let result = wrapper.sign_message("hello world").await;
+        assert!(result.is_ok(), "sign_message should succeed with StaticJacsProvider");
+
+        // StaticJacsProvider returns base64("sig:message")
+        let sig = result.unwrap();
+        // The signature should be a non-empty string (JSON-encoded)
+        assert!(!sig.is_empty());
+    }
+
+    #[tokio::test]
+    async fn canonical_json_normalizes() {
+        let config = r#"{"jacs_id": "canon-test"}"#;
+        let wrapper = HaiClientWrapper::from_config_json_auto(config).unwrap();
+
+        let result = wrapper.canonical_json(r#"{"b": 2, "a": 1}"#).await;
+        assert!(result.is_ok(), "canonical_json should succeed");
+
+        let canonical = result.unwrap();
+        // RFC 8785 orders keys alphabetically
+        assert!(canonical.contains(r#""a""#));
+        assert!(canonical.contains(r#""b""#));
+    }
+
+    // =========================================================================
+    // Error kind Display tests
+    // =========================================================================
+
+    #[test]
+    fn error_kind_display_formats_correctly() {
+        assert_eq!(ErrorKind::ConfigFailed.to_string(), "ConfigFailed");
+        assert_eq!(ErrorKind::AuthFailed.to_string(), "AuthFailed");
+        assert_eq!(ErrorKind::RateLimited.to_string(), "RateLimited");
+        assert_eq!(ErrorKind::NotFound.to_string(), "NotFound");
+        assert_eq!(ErrorKind::ApiError.to_string(), "ApiError");
+        assert_eq!(ErrorKind::NetworkFailed.to_string(), "NetworkFailed");
+        assert_eq!(ErrorKind::SerializationFailed.to_string(), "SerializationFailed");
+        assert_eq!(ErrorKind::InvalidArgument.to_string(), "InvalidArgument");
+        assert_eq!(ErrorKind::ProviderError.to_string(), "ProviderError");
+        assert_eq!(ErrorKind::Generic.to_string(), "Generic");
+    }
+
+    #[test]
+    fn binding_error_display_shows_message() {
+        let err = HaiBindingError::new(ErrorKind::AuthFailed, "token expired");
+        assert_eq!(err.to_string(), "token expired");
+    }
+
+    #[test]
+    fn provider_error_maps_correctly() {
+        let hai_err = HaiError::Provider("jacs not loaded".to_string());
+        let binding_err: HaiBindingError = hai_err.into();
+        assert_eq!(binding_err.kind, ErrorKind::ProviderError);
+        assert!(binding_err.message.contains("jacs not loaded"));
+    }
+
+    #[test]
+    fn missing_jacs_id_maps_to_config_failed() {
+        let hai_err = HaiError::MissingJacsId;
+        let binding_err: HaiBindingError = hai_err.into();
+        assert_eq!(binding_err.kind, ErrorKind::ConfigFailed);
     }
 }

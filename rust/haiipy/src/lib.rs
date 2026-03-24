@@ -13,7 +13,6 @@
 use std::sync::Arc;
 
 use hai_binding_core::{HaiBindingError, HaiClientWrapper, RT};
-use haiai::jacs::StaticJacsProvider;
 use pyo3::prelude::*;
 
 // =============================================================================
@@ -52,18 +51,7 @@ impl HaiClient {
     /// Create a new HaiClient from a config JSON string.
     #[new]
     fn new(config_json: String) -> PyResult<Self> {
-        let config: serde_json::Value = serde_json::from_str(&config_json)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("invalid config JSON: {e}")))?;
-
-        let jacs_id = config
-            .get("jacs_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        let provider = StaticJacsProvider::new(jacs_id);
-
-        let wrapper = HaiClientWrapper::from_config_json(&config_json, Box::new(provider))
+        let wrapper = HaiClientWrapper::from_config_json_auto(&config_json)
             .map_err(to_py_err)?;
 
         Ok(Self {
@@ -85,7 +73,7 @@ impl HaiClient {
     fn hello_sync(&self, py: Python, include_test: bool) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.hello(include_test).await })
         }).map_err(to_py_err)
     }
@@ -100,7 +88,7 @@ impl HaiClient {
     fn check_username_sync(&self, py: Python, username: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.check_username(&username).await })
         }).map_err(to_py_err)
     }
@@ -115,7 +103,7 @@ impl HaiClient {
     fn register_sync(&self, py: Python, options_json: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.register(&options_json).await })
         }).map_err(to_py_err)
     }
@@ -130,7 +118,7 @@ impl HaiClient {
     fn rotate_keys_sync(&self, py: Python, options_json: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.rotate_keys(&options_json).await })
         }).map_err(to_py_err)
     }
@@ -145,7 +133,7 @@ impl HaiClient {
     fn update_agent_sync(&self, py: Python, new_agent_data: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.update_agent(&new_agent_data).await })
         }).map_err(to_py_err)
     }
@@ -160,7 +148,7 @@ impl HaiClient {
     fn submit_response_sync(&self, py: Python, params_json: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.submit_response(&params_json).await })
         }).map_err(to_py_err)
     }
@@ -177,7 +165,7 @@ impl HaiClient {
     fn verify_status_sync(&self, py: Python, agent_id: Option<String>) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.verify_status(agent_id.as_deref()).await })
         }).map_err(to_py_err)
     }
@@ -196,7 +184,7 @@ impl HaiClient {
     fn claim_username_sync(&self, py: Python, agent_id: String, username: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.claim_username(&agent_id, &username).await })
         }).map_err(to_py_err)
     }
@@ -211,7 +199,7 @@ impl HaiClient {
     fn update_username_sync(&self, py: Python, agent_id: String, username: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.update_username(&agent_id, &username).await })
         }).map_err(to_py_err)
     }
@@ -226,7 +214,7 @@ impl HaiClient {
     fn delete_username_sync(&self, py: Python, agent_id: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.delete_username(&agent_id).await })
         }).map_err(to_py_err)
     }
@@ -245,7 +233,7 @@ impl HaiClient {
     fn send_email_sync(&self, py: Python, options_json: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.send_email(&options_json).await })
         }).map_err(to_py_err)
     }
@@ -260,7 +248,7 @@ impl HaiClient {
     fn send_signed_email_sync(&self, py: Python, options_json: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.send_signed_email(&options_json).await })
         }).map_err(to_py_err)
     }
@@ -275,7 +263,7 @@ impl HaiClient {
     fn list_messages_sync(&self, py: Python, options_json: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.list_messages(&options_json).await })
         }).map_err(to_py_err)
     }
@@ -290,7 +278,7 @@ impl HaiClient {
     fn update_labels_sync(&self, py: Python, params_json: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.update_labels(&params_json).await })
         }).map_err(to_py_err)
     }
@@ -305,7 +293,7 @@ impl HaiClient {
     fn get_email_status_sync(&self, py: Python) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.get_email_status().await })
         }).map_err(to_py_err)
     }
@@ -320,7 +308,7 @@ impl HaiClient {
     fn get_message_sync(&self, py: Python, message_id: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.get_message(&message_id).await })
         }).map_err(to_py_err)
     }
@@ -335,7 +323,7 @@ impl HaiClient {
     fn get_unread_count_sync(&self, py: Python) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.get_unread_count().await })
         }).map_err(to_py_err)
     }
@@ -355,7 +343,7 @@ impl HaiClient {
     fn mark_read_sync(&self, py: Python, message_id: String) -> PyResult<()> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.mark_read(&message_id).await })
         }).map_err(to_py_err)
     }
@@ -371,7 +359,7 @@ impl HaiClient {
     fn mark_unread_sync(&self, py: Python, message_id: String) -> PyResult<()> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.mark_unread(&message_id).await })
         }).map_err(to_py_err)
     }
@@ -387,7 +375,7 @@ impl HaiClient {
     fn delete_message_sync(&self, py: Python, message_id: String) -> PyResult<()> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.delete_message(&message_id).await })
         }).map_err(to_py_err)
     }
@@ -403,7 +391,7 @@ impl HaiClient {
     fn archive_sync(&self, py: Python, message_id: String) -> PyResult<()> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.archive(&message_id).await })
         }).map_err(to_py_err)
     }
@@ -419,7 +407,7 @@ impl HaiClient {
     fn unarchive_sync(&self, py: Python, message_id: String) -> PyResult<()> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.unarchive(&message_id).await })
         }).map_err(to_py_err)
     }
@@ -434,7 +422,7 @@ impl HaiClient {
     fn reply_with_options_sync(&self, py: Python, params_json: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.reply_with_options(&params_json).await })
         }).map_err(to_py_err)
     }
@@ -449,7 +437,7 @@ impl HaiClient {
     fn forward_sync(&self, py: Python, params_json: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.forward(&params_json).await })
         }).map_err(to_py_err)
     }
@@ -468,7 +456,7 @@ impl HaiClient {
     fn search_messages_sync(&self, py: Python, options_json: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.search_messages(&options_json).await })
         }).map_err(to_py_err)
     }
@@ -483,7 +471,7 @@ impl HaiClient {
     fn contacts_sync(&self, py: Python) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.contacts().await })
         }).map_err(to_py_err)
     }
@@ -502,7 +490,7 @@ impl HaiClient {
     fn fetch_remote_key_sync(&self, py: Python, jacs_id: String, version: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.fetch_remote_key(&jacs_id, &version).await })
         }).map_err(to_py_err)
     }
@@ -517,7 +505,7 @@ impl HaiClient {
     fn fetch_key_by_hash_sync(&self, py: Python, hash: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.fetch_key_by_hash(&hash).await })
         }).map_err(to_py_err)
     }
@@ -532,7 +520,7 @@ impl HaiClient {
     fn fetch_key_by_email_sync(&self, py: Python, email: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.fetch_key_by_email(&email).await })
         }).map_err(to_py_err)
     }
@@ -547,7 +535,7 @@ impl HaiClient {
     fn fetch_key_by_domain_sync(&self, py: Python, domain: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.fetch_key_by_domain(&domain).await })
         }).map_err(to_py_err)
     }
@@ -562,7 +550,7 @@ impl HaiClient {
     fn fetch_all_keys_sync(&self, py: Python, jacs_id: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.fetch_all_keys(&jacs_id).await })
         }).map_err(to_py_err)
     }
@@ -581,7 +569,7 @@ impl HaiClient {
     fn verify_document_sync(&self, py: Python, document: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.verify_document(&document).await })
         }).map_err(to_py_err)
     }
@@ -596,7 +584,7 @@ impl HaiClient {
     fn get_verification_sync(&self, py: Python, agent_id: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.get_verification(&agent_id).await })
         }).map_err(to_py_err)
     }
@@ -611,7 +599,7 @@ impl HaiClient {
     fn verify_agent_document_sync(&self, py: Python, request_json: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.verify_agent_document(&request_json).await })
         }).map_err(to_py_err)
     }
@@ -632,7 +620,7 @@ impl HaiClient {
     fn benchmark_sync(&self, py: Python, name: Option<String>, tier: Option<String>) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.benchmark(name.as_deref(), tier.as_deref()).await })
         }).map_err(to_py_err)
     }
@@ -649,7 +637,7 @@ impl HaiClient {
     fn free_run_sync(&self, py: Python, transport: Option<String>) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.free_run(transport.as_deref()).await })
         }).map_err(to_py_err)
     }
@@ -664,7 +652,7 @@ impl HaiClient {
     fn pro_run_sync(&self, py: Python, options_json: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.pro_run(&options_json).await })
         }).map_err(to_py_err)
     }
@@ -680,7 +668,7 @@ impl HaiClient {
     fn enterprise_run_sync(&self, py: Python) -> PyResult<()> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.enterprise_run().await })
         }).map_err(to_py_err)
     }
@@ -699,7 +687,7 @@ impl HaiClient {
     fn build_auth_header_sync(&self, py: Python) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.build_auth_header().await })
         }).map_err(to_py_err)
     }
@@ -714,7 +702,7 @@ impl HaiClient {
     fn sign_message_sync(&self, py: Python, message: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.sign_message(&message).await })
         }).map_err(to_py_err)
     }
@@ -729,7 +717,7 @@ impl HaiClient {
     fn canonical_json_sync(&self, py: Python, value_json: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.canonical_json(&value_json).await })
         }).map_err(to_py_err)
     }
@@ -744,7 +732,7 @@ impl HaiClient {
     fn verify_a2a_artifact_sync(&self, py: Python, wrapped_json: String) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.verify_a2a_artifact(&wrapped_json).await })
         }).map_err(to_py_err)
     }
@@ -759,7 +747,7 @@ impl HaiClient {
     fn export_agent_json_sync(&self, py: Python) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.export_agent_json().await })
         }).map_err(to_py_err)
     }
@@ -771,7 +759,7 @@ impl HaiClient {
     fn jacs_id_sync(&self, py: Python) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();
-        Ok(py.allow_threads(|| {
+        Ok(py.detach(|| {
             RT.block_on(async { client.jacs_id().await })
         }))
     }
@@ -787,7 +775,7 @@ impl HaiClient {
     fn set_hai_agent_id_sync(&self, py: Python, id: String) -> PyResult<()> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.set_hai_agent_id(id).await })
         });
         Ok(())
@@ -804,7 +792,7 @@ impl HaiClient {
     fn set_agent_email_sync(&self, py: Python, email: String) -> PyResult<()> {
         check_not_async()?;
         let client = self.inner.clone();
-        py.allow_threads(|| {
+        py.detach(|| {
             RT.block_on(async { client.set_agent_email(email).await })
         });
         Ok(())
@@ -820,3 +808,10 @@ fn haiipy(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<HaiClient>()?;
     Ok(())
 }
+
+// Note: Rust-side unit tests for haiipy cannot be compiled in the standard
+// `cargo test` workflow because the cdylib links against Python symbols which
+// are only available when building via maturin or inside a Python environment.
+// Error conversion and deadlock guard logic is exercised via Python-level tests
+// (e.g., `pip install -e ".[dev]" && pytest`) and covered indirectly by the
+// hai-binding-core test suite which tests the shared logic.

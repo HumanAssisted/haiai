@@ -12,7 +12,6 @@
 use std::sync::Arc;
 
 use hai_binding_core::{HaiBindingError, HaiClientWrapper};
-use haiai::jacs::StaticJacsProvider;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
@@ -41,24 +40,13 @@ pub struct HaiClient {
 impl HaiClient {
     /// Create a new HaiClient from a config JSON string.
     ///
-    /// Config format: `{"base_url": "...", "jacs_id": "...", "timeout_secs": 30, "max_retries": 3}`
+    /// If `jacs_config_path` is provided, loads a real JACS agent for
+    /// cryptographic signing. Otherwise falls back to a test-only provider.
+    ///
+    /// Config format: `{"base_url": "...", "jacs_id": "...", "jacs_config_path": "/path/to/jacs.config.json", "timeout_secs": 30, "max_retries": 3}`
     #[napi(constructor)]
     pub fn new(config_json: String) -> Result<Self> {
-        // Parse config to extract jacs_id for the provider
-        let config: serde_json::Value = serde_json::from_str(&config_json)
-            .map_err(|e| Error::new(Status::InvalidArg, format!("invalid config JSON: {e}")))?;
-
-        let jacs_id = config
-            .get("jacs_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        // For now, use StaticJacsProvider. In production, this would be replaced
-        // with the real JACS binding provider passed from JavaScript.
-        let provider = StaticJacsProvider::new(jacs_id);
-
-        let wrapper = HaiClientWrapper::from_config_json(&config_json, Box::new(provider))
+        let wrapper = HaiClientWrapper::from_config_json_auto(&config_json)
             .map_err(to_napi_err)?;
 
         Ok(Self {
@@ -336,5 +324,47 @@ impl HaiClient {
     pub async fn set_agent_email(&self, email: String) -> Result<()> {
         self.inner.set_agent_email(email).await;
         Ok(())
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hai_binding_core::{ErrorKind, HaiBindingError};
+
+    #[test]
+    fn to_napi_err_formats_kind_and_message() {
+        let err = HaiBindingError::new(ErrorKind::AuthFailed, "token expired");
+        let napi_err = to_napi_err(err);
+        let msg = format!("{}", napi_err);
+        assert!(msg.contains("AuthFailed"));
+        assert!(msg.contains("token expired"));
+    }
+
+    #[test]
+    fn to_napi_err_handles_all_kinds() {
+        let kinds = vec![
+            ErrorKind::ConfigFailed,
+            ErrorKind::AuthFailed,
+            ErrorKind::RateLimited,
+            ErrorKind::NotFound,
+            ErrorKind::ApiError,
+            ErrorKind::NetworkFailed,
+            ErrorKind::SerializationFailed,
+            ErrorKind::InvalidArgument,
+            ErrorKind::ProviderError,
+            ErrorKind::Generic,
+        ];
+        for kind in kinds {
+            let err = HaiBindingError::new(kind, "test message");
+            let napi_err = to_napi_err(err);
+            // Should not panic for any error kind
+            let msg = format!("{}", napi_err);
+            assert!(msg.contains("test message"));
+        }
     }
 }

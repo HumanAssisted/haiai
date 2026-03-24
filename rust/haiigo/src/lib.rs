@@ -17,7 +17,6 @@ use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use hai_binding_core::{HaiClientWrapper, RT};
-use haiai::jacs::StaticJacsProvider;
 
 // =============================================================================
 // Helpers
@@ -81,19 +80,7 @@ type HaiClientHandle = *const Arc<HaiClientWrapper>;
 pub extern "C" fn hai_client_new(config_json: *const c_char) -> HaiClientHandle {
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let config = unsafe { c_str_to_string(config_json) };
-        let config_val: serde_json::Value = match serde_json::from_str(&config) {
-            Ok(v) => v,
-            Err(_) => return std::ptr::null(),
-        };
-
-        let jacs_id = config_val
-            .get("jacs_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        let provider = StaticJacsProvider::new(jacs_id);
-        match HaiClientWrapper::from_config_json(&config, Box::new(provider)) {
+        match HaiClientWrapper::from_config_json_auto(&config) {
             Ok(wrapper) => {
                 let arc = Arc::new(wrapper);
                 Box::into_raw(Box::new(arc)) as HaiClientHandle
@@ -440,4 +427,85 @@ pub extern "C" fn hai_set_agent_email(handle: HaiClientHandle, email: *const c_c
         to_c_string(result_unit_to_json(rx.recv().unwrap()))
     }));
     result.unwrap_or_else(|_| panic_json())
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hai_binding_core::{ErrorKind, HaiBindingError};
+
+    #[test]
+    fn result_to_json_ok_wraps_in_ok_envelope() {
+        let json = result_to_json(Ok(r#"{"hello":"world"}"#.to_string()));
+        assert!(json.starts_with(r#"{"ok":"#));
+        assert!(json.contains(r#"{"hello":"world"}"#));
+    }
+
+    #[test]
+    fn result_to_json_err_wraps_in_error_envelope() {
+        let err = HaiBindingError::new(ErrorKind::AuthFailed, "token expired");
+        let json = result_to_json(Err(err));
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed.get("error").is_some());
+        assert_eq!(parsed["error"]["kind"].as_str().unwrap(), "AuthFailed");
+        assert_eq!(parsed["error"]["message"].as_str().unwrap(), "token expired");
+    }
+
+    #[test]
+    fn result_unit_to_json_ok_returns_null() {
+        let json = result_unit_to_json(Ok(()));
+        assert_eq!(json, r#"{"ok":null}"#);
+    }
+
+    #[test]
+    fn result_unit_to_json_err_returns_error_envelope() {
+        let err = HaiBindingError::new(ErrorKind::NotFound, "resource missing");
+        let json = result_unit_to_json(Err(err));
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed.get("error").is_some());
+        assert_eq!(parsed["error"]["kind"].as_str().unwrap(), "NotFound");
+    }
+
+    #[test]
+    fn error_to_json_escapes_special_chars() {
+        // Verify that newlines, tabs, and quotes in error messages are properly escaped
+        let err = HaiBindingError::new(ErrorKind::Generic, "line1\nline2\ttab\"quote");
+        let json = error_to_json(&err);
+        // Should be valid JSON
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let msg = parsed["error"]["message"].as_str().unwrap();
+        assert!(msg.contains("line1\nline2\ttab\"quote"));
+    }
+
+    #[test]
+    fn panic_json_returns_valid_json() {
+        let ptr = panic_json();
+        assert!(!ptr.is_null());
+        let s = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_str().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(s).unwrap();
+        assert!(parsed.get("error").is_some());
+        assert_eq!(parsed["error"]["kind"].as_str().unwrap(), "Generic");
+        // Clean up
+        unsafe { drop(CString::from_raw(ptr)) };
+    }
+
+    #[test]
+    fn to_c_string_roundtrips() {
+        let original = "hello world";
+        let ptr = to_c_string(original.to_string());
+        assert!(!ptr.is_null());
+        let s = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_str().unwrap();
+        assert_eq!(s, original);
+        unsafe { drop(CString::from_raw(ptr)) };
+    }
+
+    #[test]
+    fn c_str_to_string_handles_null() {
+        let s = unsafe { c_str_to_string(std::ptr::null()) };
+        assert_eq!(s, "");
+    }
 }
