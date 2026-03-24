@@ -35,7 +35,7 @@ JACS_NODE := $(shell grep '@hai.ai/jacs' node/package.json | head -1 | sed 's/.*
 
 test: test-python test-node test-go test-rust
 
-test-python:
+test-python: build-python-ffi
 	cd python && pip install -e ".[dev,mcp]" && pytest
 
 test-node:

@@ -40,6 +40,10 @@ RUST_CARGO_FILES=(
   rust/haiai/Cargo.toml
   rust/haiai-cli/Cargo.toml
   rust/hai-mcp/Cargo.toml
+  rust/hai-binding-core/Cargo.toml
+  rust/haiinpm/Cargo.toml
+  rust/haiipy/Cargo.toml
+  rust/haiigo/Cargo.toml
 )
 
 for f in "${RUST_CARGO_FILES[@]}"; do
@@ -67,6 +71,7 @@ done
 echo ""
 echo "Python:"
 sed -i '' "s/^version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" python/pyproject.toml
+sed -i '' "s/\"haiipy>=.*\"/\"haiipy>=$NEW_VERSION\"/" python/pyproject.toml
 echo "  python/pyproject.toml"
 # Safety net: update __init__.py fallback version if it contains a hardcoded version string
 sed -i '' "s/__version__ = \"$CURRENT\"/__version__ = \"$NEW_VERSION\"/" python/src/haiai/__init__.py 2>/dev/null || true
