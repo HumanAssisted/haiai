@@ -1,6 +1,6 @@
 [package]
 name = "hai-binding-core"
-version = "0.1.8"
+version = "0.1.11"
 description = "Shared binding core for HAI SDK FFI (Python, Node, Go)"
 edition.workspace = true
 license.workspace = true
