@@ -1043,32 +1043,18 @@ func classifyEmailError(statusCode int, body []byte) error {
 // SignEmail sends a raw RFC 5322 email to the HAI server for JACS attachment signing.
 // The server signs the email and returns the signed email bytes (with JACS signature
 // attachment added).
-//
-// This method still uses HTTP directly because it sends raw bytes, not JSON.
 func (c *Client) SignEmail(ctx context.Context, rawEmail []byte) ([]byte, error) {
-	url := c.endpoint + "/api/v1/email/sign"
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(rawEmail))
+	b64 := base64.StdEncoding.EncodeToString(rawEmail)
+	raw, err := c.ffi.SignEmailRaw(b64)
 	if err != nil {
-		return nil, wrapError(ErrConnection, err, "failed to create sign email request")
+		return nil, mapFFIErr(err)
 	}
-	if err := c.setAuthHeaders(req); err != nil {
-		return nil, err
+	// raw is a JSON string containing the base64 result
+	var b64Result string
+	if err := json.Unmarshal(raw, &b64Result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode sign email response")
 	}
-	req.Header.Set("Content-Type", "message/rfc822")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, wrapError(ErrConnection, err, "sign email request failed")
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := limitedReadAll(resp.Body)
-		return nil, classifyHTTPError(resp.StatusCode, respBody)
-	}
-
-	return limitedReadAll(resp.Body)
+	return base64.StdEncoding.DecodeString(b64Result)
 }
 
 // SendSignedEmail builds an RFC 5322 MIME email and sends it.
@@ -1081,33 +1067,14 @@ func (c *Client) SendSignedEmail(ctx context.Context, opts SendEmailOptions) (*S
 
 // VerifyEmail sends a raw RFC 5322 email to the HAI server for JACS signature verification.
 // The server verifies the JACS attachment signature and returns a detailed result.
-//
-// This method still uses HTTP directly because it sends raw bytes, not JSON.
 func (c *Client) VerifyEmail(ctx context.Context, rawEmail []byte) (*EmailVerificationResultV2, error) {
-	url := c.endpoint + "/api/v1/email/verify"
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(rawEmail))
+	b64 := base64.StdEncoding.EncodeToString(rawEmail)
+	raw, err := c.ffi.VerifyEmailRaw(b64)
 	if err != nil {
-		return nil, wrapError(ErrConnection, err, "failed to create verify email request")
+		return nil, mapFFIErr(err)
 	}
-	if err := c.setAuthHeaders(req); err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "message/rfc822")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, wrapError(ErrConnection, err, "verify email request failed")
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := limitedReadAll(resp.Body)
-		return nil, classifyHTTPError(resp.StatusCode, respBody)
-	}
-
 	var result EmailVerificationResultV2
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, wrapError(ErrInvalidResponse, err, "failed to decode verify email response")
 	}
 	return &result, nil
@@ -1785,4 +1752,135 @@ func parseKeyHistoryJSON(raw json.RawMessage) (*AgentKeyHistory, error) {
 		Keys:   keys,
 		Total:  rawHist.Total,
 	}, nil
+}
+
+// CreateAttestation creates a signed attestation document for a registered agent.
+func (c *Client) CreateAttestation(ctx context.Context, agentID string, subject, claims interface{}, evidence interface{}) (json.RawMessage, error) {
+	params := map[string]interface{}{
+		"agent_id": agentID,
+		"subject":  subject,
+		"claims":   claims,
+		"evidence": evidence,
+	}
+	if evidence == nil {
+		params["evidence"] = []interface{}{}
+	}
+	paramsJSON, err := json.Marshal(params)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal create attestation params")
+	}
+	raw, err := c.ffi.CreateAttestation(string(paramsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	return raw, nil
+}
+
+// ListAttestations lists attestations for a registered agent.
+func (c *Client) ListAttestations(ctx context.Context, agentID string, limit, offset int) (json.RawMessage, error) {
+	params := map[string]interface{}{
+		"agent_id": agentID,
+		"limit":    limit,
+		"offset":   offset,
+	}
+	paramsJSON, err := json.Marshal(params)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal list attestations params")
+	}
+	raw, err := c.ffi.ListAttestations(string(paramsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	return raw, nil
+}
+
+// GetAttestation retrieves a specific attestation document.
+func (c *Client) GetAttestation(ctx context.Context, agentID, docID string) (json.RawMessage, error) {
+	raw, err := c.ffi.GetAttestation(agentID, docID)
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	return raw, nil
+}
+
+// VerifyAttestation verifies an attestation document via HAI.
+func (c *Client) VerifyAttestation(ctx context.Context, document string) (json.RawMessage, error) {
+	raw, err := c.ffi.VerifyAttestation(document)
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	return raw, nil
+}
+
+// CreateEmailTemplate creates a new email template.
+func (c *Client) CreateEmailTemplate(ctx context.Context, opts CreateEmailTemplateOptions) (*EmailTemplate, error) {
+	optsJSON, err := json.Marshal(opts)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal create email template options")
+	}
+	raw, err := c.ffi.CreateEmailTemplate(string(optsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	var tmpl EmailTemplate
+	if err := json.Unmarshal(raw, &tmpl); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode email template response")
+	}
+	return &tmpl, nil
+}
+
+// ListEmailTemplates lists or searches email templates.
+func (c *Client) ListEmailTemplates(ctx context.Context, opts ListEmailTemplatesOptions) (*ListEmailTemplatesResult, error) {
+	optsJSON, err := json.Marshal(opts)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal list email templates options")
+	}
+	raw, err := c.ffi.ListEmailTemplates(string(optsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	var result ListEmailTemplatesResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode list email templates response")
+	}
+	return &result, nil
+}
+
+// GetEmailTemplate retrieves a single email template by ID.
+func (c *Client) GetEmailTemplate(ctx context.Context, templateID string) (*EmailTemplate, error) {
+	raw, err := c.ffi.GetEmailTemplate(templateID)
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	var tmpl EmailTemplate
+	if err := json.Unmarshal(raw, &tmpl); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode email template response")
+	}
+	return &tmpl, nil
+}
+
+// UpdateEmailTemplate updates an email template.
+func (c *Client) UpdateEmailTemplate(ctx context.Context, templateID string, opts UpdateEmailTemplateOptions) (*EmailTemplate, error) {
+	optsJSON, err := json.Marshal(opts)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal update email template options")
+	}
+	raw, err := c.ffi.UpdateEmailTemplate(templateID, string(optsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	var tmpl EmailTemplate
+	if err := json.Unmarshal(raw, &tmpl); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode email template response")
+	}
+	return &tmpl, nil
+}
+
+// DeleteEmailTemplate deletes an email template (soft delete).
+func (c *Client) DeleteEmailTemplate(ctx context.Context, templateID string) error {
+	_, err := c.ffi.DeleteEmailTemplate(templateID)
+	if err != nil {
+		return mapFFIErr(err)
+	}
+	return nil
 }

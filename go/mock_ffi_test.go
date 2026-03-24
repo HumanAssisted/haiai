@@ -465,6 +465,75 @@ func (m *mockFFIClient) SetAgentEmail(email string) error {
 	return nil
 }
 
+// --- Server Keys ---
+
+func (m *mockFFIClient) FetchServerKeys() (json.RawMessage, error) {
+	return m.doGet("/api/v1/keys/server")
+}
+
+// --- Email Sign/Verify (raw, base64-encoded) ---
+
+func (m *mockFFIClient) SignEmailRaw(rawEmailB64 string) (json.RawMessage, error) {
+	return m.doPost("/api/v1/email/sign", map[string]string{"raw_email": rawEmailB64})
+}
+
+func (m *mockFFIClient) VerifyEmailRaw(rawEmailB64 string) (json.RawMessage, error) {
+	return m.doPost("/api/v1/email/verify", map[string]string{"raw_email": rawEmailB64})
+}
+
+// --- Attestations ---
+
+func (m *mockFFIClient) CreateAttestation(paramsJSON string) (json.RawMessage, error) {
+	return m.doPost("/api/v1/attestations", json.RawMessage(paramsJSON))
+}
+
+func (m *mockFFIClient) ListAttestations(paramsJSON string) (json.RawMessage, error) {
+	var params struct {
+		AgentID string `json:"agent_id"`
+		Limit   int    `json:"limit"`
+		Offset  int    `json:"offset"`
+	}
+	_ = json.Unmarshal([]byte(paramsJSON), &params)
+	path := fmt.Sprintf("/api/v1/agents/%s/attestations?limit=%d&offset=%d", urlEncode(params.AgentID), params.Limit, params.Offset)
+	return m.doGet(path)
+}
+
+func (m *mockFFIClient) GetAttestation(agentID, docID string) (json.RawMessage, error) {
+	path := fmt.Sprintf("/api/v1/agents/%s/attestations/%s", urlEncode(agentID), urlEncode(docID))
+	return m.doGet(path)
+}
+
+func (m *mockFFIClient) VerifyAttestation(document string) (json.RawMessage, error) {
+	return m.doPostNoAuth("/api/v1/attestations/verify", map[string]string{"document": document})
+}
+
+// --- Email Templates ---
+
+func (m *mockFFIClient) CreateEmailTemplate(optionsJSON string) (json.RawMessage, error) {
+	path := fmt.Sprintf("/api/agents/%s/email/templates", urlEncode(m.agentID))
+	return m.doPost(path, json.RawMessage(optionsJSON))
+}
+
+func (m *mockFFIClient) ListEmailTemplates(optionsJSON string) (json.RawMessage, error) {
+	path := fmt.Sprintf("/api/agents/%s/email/templates", urlEncode(m.agentID))
+	return m.doGet(path)
+}
+
+func (m *mockFFIClient) GetEmailTemplate(templateID string) (json.RawMessage, error) {
+	path := fmt.Sprintf("/api/agents/%s/email/templates/%s", urlEncode(m.agentID), urlEncode(templateID))
+	return m.doGet(path)
+}
+
+func (m *mockFFIClient) UpdateEmailTemplate(templateID, optionsJSON string) (json.RawMessage, error) {
+	path := fmt.Sprintf("/api/agents/%s/email/templates/%s", urlEncode(m.agentID), urlEncode(templateID))
+	return m.doPut(path, json.RawMessage(optionsJSON))
+}
+
+func (m *mockFFIClient) DeleteEmailTemplate(templateID string) (json.RawMessage, error) {
+	path := fmt.Sprintf("/api/agents/%s/email/templates/%s", urlEncode(m.agentID), urlEncode(templateID))
+	return m.doDelete(path)
+}
+
 // --- Helpers ---
 
 func urlEncode(s string) string {

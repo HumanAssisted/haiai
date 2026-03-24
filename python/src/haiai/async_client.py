@@ -404,28 +404,14 @@ class AsyncHaiClient:
         evidence: list | None = None,
     ) -> dict:
         """Create a signed attestation document for a registered agent."""
-        # TODO(DRY_FFI_PHASE2): migrate attestations to FFI when binding-core adds them
-        import httpx as _httpx
-
-        escaped = self._escape_path_segment(agent_id)
-        url = self._make_url(hai_url, f"/api/v1/agents/{escaped}/attestations")
-        headers = self._build_auth_headers()
-        headers["Content-Type"] = "application/json"
-
-        payload = {
+        ffi = self._get_ffi()
+        params = {
+            "agent_id": agent_id,
             "subject": subject,
             "claims": claims,
             "evidence": evidence or [],
         }
-
-        async with _httpx.AsyncClient(timeout=self._timeout) as http:
-            resp = await http.post(url, json=payload, headers=headers)
-            if resp.status_code == 404:
-                raise HaiError(f"Agent '{agent_id}' not registered with HAI")
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(f"Authentication failed: {resp.text}")
-            resp.raise_for_status()
-            return resp.json()
+        return await ffi.create_attestation(params)
 
     async def list_attestations(
         self,
@@ -435,19 +421,9 @@ class AsyncHaiClient:
         offset: int = 0,
     ) -> dict:
         """List attestations for a registered agent."""
-        # TODO(DRY_FFI_PHASE2): migrate attestations to FFI when binding-core adds them
-        import httpx as _httpx
-
-        escaped = self._escape_path_segment(agent_id)
-        url = self._make_url(
-            hai_url,
-            f"/api/v1/agents/{escaped}/attestations?limit={limit}&offset={offset}",
-        )
-        headers = self._build_auth_headers()
-        async with _httpx.AsyncClient(timeout=self._timeout) as http:
-            resp = await http.get(url, headers=headers)
-            resp.raise_for_status()
-            return resp.json()
+        ffi = self._get_ffi()
+        params = {"agent_id": agent_id, "limit": limit, "offset": offset}
+        return await ffi.list_attestations(params)
 
     async def get_attestation(
         self,
@@ -456,22 +432,8 @@ class AsyncHaiClient:
         doc_id: str,
     ) -> dict:
         """Get a specific attestation document."""
-        # TODO(DRY_FFI_PHASE2): migrate attestations to FFI when binding-core adds them
-        import httpx as _httpx
-
-        escaped_agent = self._escape_path_segment(agent_id)
-        escaped_doc = self._escape_path_segment(doc_id)
-        url = self._make_url(
-            hai_url,
-            f"/api/v1/agents/{escaped_agent}/attestations/{escaped_doc}",
-        )
-        headers = self._build_auth_headers()
-        async with _httpx.AsyncClient(timeout=self._timeout) as http:
-            resp = await http.get(url, headers=headers)
-            if resp.status_code == 404:
-                raise HaiError(f"Attestation '{doc_id}' not found for agent '{agent_id}'")
-            resp.raise_for_status()
-            return resp.json()
+        ffi = self._get_ffi()
+        return await ffi.get_attestation(agent_id, doc_id)
 
     async def verify_attestation(
         self,
@@ -479,21 +441,8 @@ class AsyncHaiClient:
         document: str,
     ) -> dict:
         """Verify an attestation document via HAI."""
-        # TODO(DRY_FFI_PHASE2): migrate attestations to FFI when binding-core adds them
-        import httpx as _httpx
-
-        url = self._make_url(hai_url, "/api/v1/attestations/verify")
-        headers = self._build_auth_headers()
-        headers["Content-Type"] = "application/json"
-
-        async with _httpx.AsyncClient(timeout=self._timeout) as http:
-            resp = await http.post(
-                url,
-                json={"document": document},
-                headers=headers,
-            )
-            resp.raise_for_status()
-            return resp.json()
+        ffi = self._get_ffi()
+        return await ffi.verify_attestation(document)
 
     # ------------------------------------------------------------------
     # benchmark
@@ -679,98 +628,55 @@ class AsyncHaiClient:
         )
 
     async def sign_email(self, hai_url: str, raw_email: bytes) -> bytes:
-        """Sign a raw RFC 5322 email with a JACS attachment via the HAI API.
-
-        This stays native as it sends raw bytes (not JSON).
-        """
-        # TODO(DRY_FFI_PHASE2): migrate to FFI binary support
-        import httpx as _httpx
+        """Sign a raw RFC 5822 email via the HAI server."""
         import email.message
         if isinstance(raw_email, email.message.EmailMessage):
             raw_email = raw_email.as_bytes()
 
-        url = self._make_url(hai_url, "/api/v1/email/sign")
-        headers = self._build_auth_headers()
-        headers["Content-Type"] = "message/rfc822"
-
-        async with _httpx.AsyncClient(timeout=self._timeout) as http:
-            try:
-                resp = await http.post(url, content=raw_email, headers=headers)
-                if resp.status_code not in (200, 201):
-                    raise HaiApiError(
-                        f"Email sign failed: HTTP {resp.status_code}",
-                        status_code=resp.status_code,
-                        body=resp.text,
-                    )
-                return resp.content
-            except (_httpx.ConnectError, _httpx.TimeoutException) as exc:
-                raise HaiConnectionError(f"Connection failed: {exc}")
-            except HaiError:
-                raise
-            except Exception as exc:
-                raise HaiError(f"Email sign failed: {exc}")
+        ffi = self._get_ffi()
+        b64_input = base64.b64encode(raw_email).decode("ascii")
+        b64_result = await ffi.sign_email_raw(b64_input)
+        return base64.b64decode(b64_result)
 
     async def verify_email(self, hai_url: str, raw_email: bytes) -> EmailVerificationResultV2:
-        """Verify a JACS-signed email via the HAI API.
-
-        This stays native as it sends raw bytes (not JSON).
-        """
-        # TODO(DRY_FFI_PHASE2): migrate to FFI binary support
-        import httpx as _httpx
+        """Verify a JACS-signed email via the HAI API."""
         import email.message
         if isinstance(raw_email, email.message.EmailMessage):
             raw_email = raw_email.as_bytes()
 
-        url = self._make_url(hai_url, "/api/v1/email/verify")
-        headers = self._build_auth_headers()
-        headers["Content-Type"] = "message/rfc822"
-
-        async with _httpx.AsyncClient(timeout=self._timeout) as http:
-            try:
-                resp = await http.post(url, content=raw_email, headers=headers)
-                if resp.status_code not in (200, 201):
-                    raise HaiApiError(
-                        f"Email verify failed: HTTP {resp.status_code}",
-                        status_code=resp.status_code,
-                        body=resp.text,
-                    )
-                data = resp.json()
-                return EmailVerificationResultV2(
-                    valid=data.get("valid", False),
-                    jacs_id=data.get("jacs_id", ""),
-                    algorithm=data.get("algorithm", ""),
-                    reputation_tier=data.get("reputation_tier", ""),
-                    dns_verified=data.get("dns_verified"),
-                    field_results=[
-                        FieldResult(
-                            field=fr.get("field", ""),
-                            status=FieldStatus(fr.get("status", "unverifiable")),
-                            original_hash=fr.get("original_hash"),
-                            current_hash=fr.get("current_hash"),
-                            original_value=fr.get("original_value"),
-                            current_value=fr.get("current_value"),
-                        )
-                        for fr in data.get("field_results", [])
-                    ],
-                    chain=[
-                        ChainEntry(
-                            signer=ce.get("signer", ""),
-                            jacs_id=ce.get("jacs_id", ""),
-                            valid=ce.get("valid", False),
-                            forwarded=ce.get("forwarded", False),
-                        )
-                        for ce in data.get("chain", [])
-                    ],
-                    error=data.get("error"),
-                    agent_status=data.get("agent_status"),
-                    benchmarks_completed=data.get("benchmarks_completed", []),
+        ffi = self._get_ffi()
+        b64_input = base64.b64encode(raw_email).decode("ascii")
+        data = await ffi.verify_email_raw(b64_input)
+        return EmailVerificationResultV2(
+            valid=data.get("valid", False),
+            jacs_id=data.get("jacs_id", ""),
+            algorithm=data.get("algorithm", ""),
+            reputation_tier=data.get("reputation_tier", ""),
+            dns_verified=data.get("dns_verified"),
+            field_results=[
+                FieldResult(
+                    field=fr.get("field", ""),
+                    status=FieldStatus(fr.get("status", "unverifiable")),
+                    original_hash=fr.get("original_hash"),
+                    current_hash=fr.get("current_hash"),
+                    original_value=fr.get("original_value"),
+                    current_value=fr.get("current_value"),
                 )
-            except (_httpx.ConnectError, _httpx.TimeoutException) as exc:
-                raise HaiConnectionError(f"Connection failed: {exc}")
-            except HaiError:
-                raise
-            except Exception as exc:
-                raise HaiError(f"Email verify failed: {exc}")
+                for fr in data.get("field_results", [])
+            ],
+            chain=[
+                ChainEntry(
+                    signer=ce.get("signer", ""),
+                    jacs_id=ce.get("jacs_id", ""),
+                    valid=ce.get("valid", False),
+                    forwarded=ce.get("forwarded", False),
+                )
+                for ce in data.get("chain", [])
+            ],
+            error=data.get("error"),
+            agent_status=data.get("agent_status"),
+            benchmarks_completed=data.get("benchmarks_completed", []),
+        )
 
     async def list_messages(
         self,
@@ -1019,6 +925,81 @@ class AsyncHaiClient:
             )
             for c in result_items
         ]
+
+    # ------------------------------------------------------------------
+    # email templates
+    # ------------------------------------------------------------------
+
+    async def create_email_template(
+        self,
+        hai_url: str,
+        name: str,
+        how_to_send: Optional[str] = None,
+        how_to_respond: Optional[str] = None,
+        goal: Optional[str] = None,
+        rules: Optional[str] = None,
+    ) -> dict:
+        """Create an email template."""
+        ffi = self._get_ffi()
+        options: dict[str, Any] = {"name": name}
+        if how_to_send is not None:
+            options["how_to_send"] = how_to_send
+        if how_to_respond is not None:
+            options["how_to_respond"] = how_to_respond
+        if goal is not None:
+            options["goal"] = goal
+        if rules is not None:
+            options["rules"] = rules
+        return await ffi.create_email_template(options)
+
+    async def list_email_templates(
+        self,
+        hai_url: str,
+        limit: int = 20,
+        offset: int = 0,
+        q: Optional[str] = None,
+    ) -> dict:
+        """List or search email templates."""
+        ffi = self._get_ffi()
+        options: dict[str, Any] = {"limit": limit, "offset": offset}
+        if q is not None:
+            options["q"] = q
+        return await ffi.list_email_templates(options)
+
+    async def get_email_template(self, hai_url: str, template_id: str) -> dict:
+        """Get a single email template by ID."""
+        ffi = self._get_ffi()
+        return await ffi.get_email_template(template_id)
+
+    async def update_email_template(
+        self,
+        hai_url: str,
+        template_id: str,
+        name: Optional[str] = None,
+        how_to_send: Optional[str] = None,
+        how_to_respond: Optional[str] = None,
+        goal: Optional[str] = None,
+        rules: Optional[str] = None,
+    ) -> dict:
+        """Update an email template."""
+        ffi = self._get_ffi()
+        options: dict[str, Any] = {}
+        if name is not None:
+            options["name"] = name
+        if how_to_send is not None:
+            options["how_to_send"] = how_to_send
+        if how_to_respond is not None:
+            options["how_to_respond"] = how_to_respond
+        if goal is not None:
+            options["goal"] = goal
+        if rules is not None:
+            options["rules"] = rules
+        return await ffi.update_email_template(template_id, options)
+
+    async def delete_email_template(self, hai_url: str, template_id: str) -> None:
+        """Delete an email template."""
+        ffi = self._get_ffi()
+        await ffi.delete_email_template(template_id)
 
     # ------------------------------------------------------------------
     # fetch_remote_key

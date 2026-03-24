@@ -506,6 +506,52 @@ type ContactsResponse struct {
 	Contacts []Contact `json:"contacts"`
 }
 
+// EmailTemplate represents an agent email template.
+type EmailTemplate struct {
+	ID           string  `json:"id"`
+	AgentID      string  `json:"agent_id"`
+	Name         string  `json:"name"`
+	HowToSend    *string `json:"how_to_send,omitempty"`
+	HowToRespond *string `json:"how_to_respond,omitempty"`
+	Goal         *string `json:"goal,omitempty"`
+	Rules        *string `json:"rules,omitempty"`
+	CreatedAt    string  `json:"created_at"`
+	UpdatedAt    string  `json:"updated_at"`
+}
+
+// CreateEmailTemplateOptions are the options for creating an email template.
+type CreateEmailTemplateOptions struct {
+	Name         string  `json:"name"`
+	HowToSend    *string `json:"how_to_send,omitempty"`
+	HowToRespond *string `json:"how_to_respond,omitempty"`
+	Goal         *string `json:"goal,omitempty"`
+	Rules        *string `json:"rules,omitempty"`
+}
+
+// UpdateEmailTemplateOptions are the options for updating an email template.
+type UpdateEmailTemplateOptions struct {
+	Name         *string `json:"name,omitempty"`
+	HowToSend    *string `json:"how_to_send,omitempty"`
+	HowToRespond *string `json:"how_to_respond,omitempty"`
+	Goal         *string `json:"goal,omitempty"`
+	Rules        *string `json:"rules,omitempty"`
+}
+
+// ListEmailTemplatesOptions are the options for listing email templates.
+type ListEmailTemplatesOptions struct {
+	Limit  *int    `json:"limit,omitempty"`
+	Offset *int    `json:"offset,omitempty"`
+	Q      *string `json:"q,omitempty"`
+}
+
+// ListEmailTemplatesResult is the response from listing email templates.
+type ListEmailTemplatesResult struct {
+	Templates []EmailTemplate `json:"templates"`
+	Total     int             `json:"total"`
+	Limit     int             `json:"limit"`
+	Offset    int             `json:"offset"`
+}
+
 // ForwardOptions configures a forward email request.
 type ForwardOptions struct {
 	MessageID string `json:"message_id"`

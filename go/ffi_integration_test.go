@@ -473,6 +473,54 @@ func (r *recordingFFIClient) SetAgentEmail(email string) error {
 	*r.calls = append(*r.calls, "SetAgentEmail")
 	return r.inner.SetAgentEmail(email)
 }
+func (r *recordingFFIClient) FetchServerKeys() (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "FetchServerKeys")
+	return r.inner.FetchServerKeys()
+}
+func (r *recordingFFIClient) SignEmailRaw(rawEmailB64 string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "SignEmailRaw")
+	return r.inner.SignEmailRaw(rawEmailB64)
+}
+func (r *recordingFFIClient) VerifyEmailRaw(rawEmailB64 string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "VerifyEmailRaw")
+	return r.inner.VerifyEmailRaw(rawEmailB64)
+}
+func (r *recordingFFIClient) CreateAttestation(paramsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "CreateAttestation")
+	return r.inner.CreateAttestation(paramsJSON)
+}
+func (r *recordingFFIClient) ListAttestations(paramsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "ListAttestations")
+	return r.inner.ListAttestations(paramsJSON)
+}
+func (r *recordingFFIClient) GetAttestation(agentID, docID string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "GetAttestation")
+	return r.inner.GetAttestation(agentID, docID)
+}
+func (r *recordingFFIClient) VerifyAttestation(document string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "VerifyAttestation")
+	return r.inner.VerifyAttestation(document)
+}
+func (r *recordingFFIClient) CreateEmailTemplate(optionsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "CreateEmailTemplate")
+	return r.inner.CreateEmailTemplate(optionsJSON)
+}
+func (r *recordingFFIClient) ListEmailTemplates(optionsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "ListEmailTemplates")
+	return r.inner.ListEmailTemplates(optionsJSON)
+}
+func (r *recordingFFIClient) GetEmailTemplate(templateID string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "GetEmailTemplate")
+	return r.inner.GetEmailTemplate(templateID)
+}
+func (r *recordingFFIClient) UpdateEmailTemplate(templateID, optionsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "UpdateEmailTemplate")
+	return r.inner.UpdateEmailTemplate(templateID, optionsJSON)
+}
+func (r *recordingFFIClient) DeleteEmailTemplate(templateID string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "DeleteEmailTemplate")
+	return r.inner.DeleteEmailTemplate(templateID)
+}
 
 // Compile-time check: recordingFFIClient satisfies FFIClient.
 var _ FFIClient = (*recordingFFIClient)(nil)

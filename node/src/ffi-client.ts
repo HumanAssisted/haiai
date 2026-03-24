@@ -85,6 +85,22 @@ interface NativeHaiClient {
   proRun(optionsJson: string): Promise<string>;
   enterpriseRun(): Promise<void>;
 
+  // Email Templates
+  createEmailTemplate(optionsJson: string): Promise<string>;
+  listEmailTemplates(optionsJson: string): Promise<string>;
+  getEmailTemplate(templateId: string): Promise<string>;
+  updateEmailTemplate(templateId: string, optionsJson: string): Promise<string>;
+  deleteEmailTemplate(templateId: string): Promise<void>;
+
+  // Attestations
+  createAttestation(paramsJson: string): Promise<string>;
+  listAttestations(paramsJson: string): Promise<string>;
+  getAttestation(agentId: string, docId: string): Promise<string>;
+  verifyAttestation(document: string): Promise<string>;
+
+  // Server Keys
+  fetchServerKeys(): Promise<string>;
+
   // JACS Delegation
   buildAuthHeader(): Promise<string>;
   signMessage(message: string): Promise<string>;
@@ -608,6 +624,98 @@ export class FFIClientAdapter {
   async enterpriseRun(): Promise<void> {
     try {
       await this.native.enterpriseRun();
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Email Templates
+  // ---------------------------------------------------------------------------
+
+  async createEmailTemplate(optionsJson: string): Promise<string> {
+    try {
+      return await this.native.createEmailTemplate(optionsJson);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async listEmailTemplates(optionsJson: string): Promise<string> {
+    try {
+      return await this.native.listEmailTemplates(optionsJson);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async getEmailTemplate(templateId: string): Promise<string> {
+    try {
+      return await this.native.getEmailTemplate(templateId);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async updateEmailTemplate(templateId: string, optionsJson: string): Promise<string> {
+    try {
+      return await this.native.updateEmailTemplate(templateId, optionsJson);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async deleteEmailTemplate(templateId: string): Promise<void> {
+    try {
+      await this.native.deleteEmailTemplate(templateId);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Attestations
+  // ---------------------------------------------------------------------------
+
+  async createAttestation(paramsJson: string): Promise<string> {
+    try {
+      return await this.native.createAttestation(paramsJson);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async listAttestations(paramsJson: string): Promise<string> {
+    try {
+      return await this.native.listAttestations(paramsJson);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async getAttestation(agentId: string, docId: string): Promise<string> {
+    try {
+      return await this.native.getAttestation(agentId, docId);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async verifyAttestation(document: string): Promise<string> {
+    try {
+      return await this.native.verifyAttestation(document);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Server Keys
+  // ---------------------------------------------------------------------------
+
+  async fetchServerKeys(): Promise<string> {
+    try {
+      return await this.native.fetchServerKeys();
     } catch (err) {
       throw mapFFIError(err);
     }

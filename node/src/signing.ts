@@ -30,15 +30,24 @@ let cacheExpiry = 0;
  * Fetch the server's public signing keys from the well-known endpoint.
  * Results are cached for 1 hour.
  */
-export async function getServerKeys(baseUrl: string): Promise<Record<string, string>> {
+export async function getServerKeys(baseUrl: string, ffi?: { fetchServerKeys(): Promise<string> }): Promise<Record<string, string>> {
   if (Date.now() < cacheExpiry && Object.keys(serverKeysCache).length > 0) {
     return serverKeysCache;
   }
-  const resp = await fetch(`${baseUrl.replace(/\/+$/, '')}/.well-known/hai-keys.json`);
-  if (!resp.ok) {
-    throw new Error(`Failed to fetch server keys (${resp.status})`);
+
+  let data: { keys?: Array<{ key_id: string; public_key: string }> };
+
+  if (ffi) {
+    const raw = await ffi.fetchServerKeys();
+    data = JSON.parse(raw);
+  } else {
+    const resp = await fetch(`${baseUrl.replace(/\/+$/, '')}/.well-known/hai-keys.json`);
+    if (!resp.ok) {
+      throw new Error(`Failed to fetch server keys (${resp.status})`);
+    }
+    data = (await resp.json()) as { keys?: Array<{ key_id: string; public_key: string }> };
   }
-  const data = (await resp.json()) as { keys?: Array<{ key_id: string; public_key: string }> };
+
   serverKeysCache = {};
   for (const key of data.keys ?? []) {
     serverKeysCache[key.key_id] = key.public_key;

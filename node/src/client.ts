@@ -1205,7 +1205,7 @@ export class HaiClient {
 
   /** Fetch and cache server public keys for signature verification. */
   async fetchServerKeys(): Promise<void> {
-    this.serverPublicKeys = await getServerKeys(this.baseUrl);
+    this.serverPublicKeys = await getServerKeys(this.baseUrl, this.ffi);
   }
 
   // ---------------------------------------------------------------------------
@@ -1593,6 +1593,71 @@ export class HaiClient {
   }
 
   // ---------------------------------------------------------------------------
+  // Attestations
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Create a new attestation for an agent.
+   *
+   * @param agentId - The agent ID to create the attestation for
+   * @param subject - The subject of the attestation
+   * @param claims - Array of claims to attest
+   * @param evidence - Optional array of supporting evidence
+   * @returns The created attestation
+   */
+  async createAttestation(agentId: string, subject: object, claims: object[], evidence?: object[]): Promise<object> {
+    const params = JSON.stringify({
+      agent_id: agentId,
+      subject,
+      claims,
+      evidence: evidence || [],
+    });
+    const raw = await this.ffi.createAttestation(params);
+    return JSON.parse(raw);
+  }
+
+  /**
+   * List attestations for an agent.
+   *
+   * @param agentId - The agent ID to list attestations for
+   * @param limit - Maximum number of results (default: 20)
+   * @param offset - Pagination offset (default: 0)
+   * @returns Paginated list of attestations
+   */
+  async listAttestations(agentId: string, limit: number = 20, offset: number = 0): Promise<object> {
+    const params = JSON.stringify({
+      agent_id: agentId,
+      limit,
+      offset,
+    });
+    const raw = await this.ffi.listAttestations(params);
+    return JSON.parse(raw);
+  }
+
+  /**
+   * Get a specific attestation by ID.
+   *
+   * @param agentId - The agent ID that owns the attestation
+   * @param docId - The attestation document ID
+   * @returns The attestation document
+   */
+  async getAttestation(agentId: string, docId: string): Promise<object> {
+    const raw = await this.ffi.getAttestation(agentId, docId);
+    return JSON.parse(raw);
+  }
+
+  /**
+   * Verify an attestation document's signatures and integrity.
+   *
+   * @param document - The attestation document as a JSON string
+   * @returns Verification result
+   */
+  async verifyAttestation(document: string): Promise<object> {
+    const raw = await this.ffi.verifyAttestation(document);
+    return JSON.parse(raw);
+  }
+
+  // ---------------------------------------------------------------------------
   // Email Templates
   // ---------------------------------------------------------------------------
 
@@ -1603,22 +1668,13 @@ export class HaiClient {
    * @returns The created email template
    */
   async createEmailTemplate(options: CreateEmailTemplateOptions): Promise<EmailTemplate> {
-    const safeAgentId = this.encodePathSegment(this.haiAgentId);
-    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/templates`);
-
     const payload: Record<string, unknown> = { name: options.name };
     if (options.howToSend != null) payload.how_to_send = options.howToSend;
     if (options.howToRespond != null) payload.how_to_respond = options.howToRespond;
     if (options.goal != null) payload.goal = options.goal;
     if (options.rules != null) payload.rules = options.rules;
-
-    const response = await this.fetchWithRetry(url, {
-      method: 'POST',
-      headers: this.buildAuthHeaders(),
-      body: JSON.stringify(payload),
-    });
-
-    const data = await response.json() as Record<string, unknown>;
+    const raw = await this.ffi.createEmailTemplate(JSON.stringify(payload));
+    const data = JSON.parse(raw);
     return this.parseEmailTemplate(data);
   }
 
@@ -1632,21 +1688,12 @@ export class HaiClient {
    * @returns List of templates with total count
    */
   async listEmailTemplates(options?: ListEmailTemplatesOptions): Promise<ListEmailTemplatesResult> {
-    const params = new URLSearchParams();
-    if (options?.limit != null) params.set('limit', String(options.limit));
-    if (options?.offset != null) params.set('offset', String(options.offset));
-    if (options?.q) params.set('q', options.q);
-
-    const qs = params.toString();
-    const safeAgentId = this.encodePathSegment(this.haiAgentId);
-    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/templates${qs ? `?${qs}` : ''}`);
-
-    const response = await this.fetchWithRetry(url, {
-      method: 'GET',
-      headers: this.buildAuthHeaders(),
-    });
-
-    const data = await response.json() as Record<string, unknown>;
+    const payload: Record<string, unknown> = {};
+    if (options?.limit != null) payload.limit = options.limit;
+    if (options?.offset != null) payload.offset = options.offset;
+    if (options?.q) payload.q = options.q;
+    const raw = await this.ffi.listEmailTemplates(JSON.stringify(payload));
+    const data = JSON.parse(raw) as Record<string, unknown>;
     const rawTemplates = (data.templates as Array<Record<string, unknown>>) || [];
     return {
       templates: rawTemplates.map((t) => this.parseEmailTemplate(t)),
@@ -1663,16 +1710,8 @@ export class HaiClient {
    * @returns The email template
    */
   async getEmailTemplate(templateId: string): Promise<EmailTemplate> {
-    const safeAgentId = this.encodePathSegment(this.haiAgentId);
-    const safeTemplateId = this.encodePathSegment(templateId);
-    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/templates/${safeTemplateId}`);
-
-    const response = await this.fetchWithRetry(url, {
-      method: 'GET',
-      headers: this.buildAuthHeaders(),
-    });
-
-    const data = await response.json() as Record<string, unknown>;
+    const raw = await this.ffi.getEmailTemplate(templateId);
+    const data = JSON.parse(raw) as Record<string, unknown>;
     return this.parseEmailTemplate(data);
   }
 
@@ -1684,25 +1723,14 @@ export class HaiClient {
    * @returns The updated email template
    */
   async updateEmailTemplate(templateId: string, options: UpdateEmailTemplateOptions): Promise<EmailTemplate> {
-    const safeAgentId = this.encodePathSegment(this.haiAgentId);
-    const safeTemplateId = this.encodePathSegment(templateId);
-    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/templates/${safeTemplateId}`);
-
     const payload: Record<string, unknown> = {};
     if (options.name !== undefined) payload.name = options.name;
-    // For nullable fields: undefined = omit (don't update), null = send null (clear), string = set value
     if (options.howToSend !== undefined) payload.how_to_send = options.howToSend;
     if (options.howToRespond !== undefined) payload.how_to_respond = options.howToRespond;
     if (options.goal !== undefined) payload.goal = options.goal;
     if (options.rules !== undefined) payload.rules = options.rules;
-
-    const response = await this.fetchWithRetry(url, {
-      method: 'PUT',
-      headers: this.buildAuthHeaders(),
-      body: JSON.stringify(payload),
-    });
-
-    const data = await response.json() as Record<string, unknown>;
+    const raw = await this.ffi.updateEmailTemplate(templateId, JSON.stringify(payload));
+    const data = JSON.parse(raw) as Record<string, unknown>;
     return this.parseEmailTemplate(data);
   }
 
@@ -1712,14 +1740,7 @@ export class HaiClient {
    * @param templateId - The template ID to delete
    */
   async deleteEmailTemplate(templateId: string): Promise<void> {
-    const safeAgentId = this.encodePathSegment(this.haiAgentId);
-    const safeTemplateId = this.encodePathSegment(templateId);
-    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/templates/${safeTemplateId}`);
-
-    await this.fetchWithRetry(url, {
-      method: 'DELETE',
-      headers: this.buildAuthHeaders(),
-    });
+    await this.ffi.deleteEmailTemplate(templateId);
   }
 
   private parseEmailTemplate(data: Record<string, unknown>): EmailTemplate {

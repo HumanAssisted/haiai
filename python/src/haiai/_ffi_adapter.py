@@ -295,6 +295,96 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
+    # --- Server Keys ---
+
+    def fetch_server_keys(self) -> dict[str, Any]:
+        try:
+            raw = self._native.fetch_server_keys_sync()
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # --- Email Sign/Verify (raw) ---
+
+    def sign_email_raw(self, raw_email_b64: str) -> str:
+        try:
+            return self._native.sign_email_raw_sync(raw_email_b64)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def verify_email_raw(self, raw_email_b64: str) -> dict[str, Any]:
+        try:
+            raw = self._native.verify_email_raw_sync(raw_email_b64)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # --- Attestations ---
+
+    def create_attestation(self, params: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.create_attestation_sync(json.dumps(params))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def list_attestations(self, params: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.list_attestations_sync(json.dumps(params))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def get_attestation(self, agent_id: str, doc_id: str) -> dict[str, Any]:
+        try:
+            raw = self._native.get_attestation_sync(agent_id, doc_id)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def verify_attestation(self, document: str) -> dict[str, Any]:
+        try:
+            raw = self._native.verify_attestation_sync(document)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # --- Email Templates ---
+
+    def create_email_template(self, options: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.create_email_template_sync(json.dumps(options))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def list_email_templates(self, options: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.list_email_templates_sync(json.dumps(options))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def get_email_template(self, template_id: str) -> dict[str, Any]:
+        try:
+            raw = self._native.get_email_template_sync(template_id)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def update_email_template(self, template_id: str, options: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.update_email_template_sync(template_id, json.dumps(options))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def delete_email_template(self, template_id: str) -> None:
+        try:
+            self._native.delete_email_template_sync(template_id)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
     # --- Key Operations ---
 
     def fetch_remote_key(self, jacs_id: str, version: str = "latest") -> dict[str, Any]:
@@ -655,6 +745,96 @@ class AsyncFFIAdapter:
         try:
             raw = await self._native.contacts()
             return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # --- Server Keys ---
+
+    async def fetch_server_keys(self) -> dict[str, Any]:
+        try:
+            raw = await self._native.fetch_server_keys()
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # --- Email Sign/Verify (raw) ---
+
+    async def sign_email_raw(self, raw_email_b64: str) -> str:
+        try:
+            return await self._native.sign_email_raw(raw_email_b64)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def verify_email_raw(self, raw_email_b64: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.verify_email_raw(raw_email_b64)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # --- Attestations ---
+
+    async def create_attestation(self, params: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.create_attestation(json.dumps(params))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def list_attestations(self, params: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.list_attestations(json.dumps(params))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def get_attestation(self, agent_id: str, doc_id: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.get_attestation(agent_id, doc_id)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def verify_attestation(self, document: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.verify_attestation(document)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # --- Email Templates ---
+
+    async def create_email_template(self, options: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.create_email_template(json.dumps(options))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def list_email_templates(self, options: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.list_email_templates(json.dumps(options))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def get_email_template(self, template_id: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.get_email_template(template_id)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def update_email_template(self, template_id: str, options: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.update_email_template(template_id, json.dumps(options))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def delete_email_template(self, template_id: str) -> None:
+        try:
+            await self._native.delete_email_template(template_id)
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 

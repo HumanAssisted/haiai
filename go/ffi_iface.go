@@ -73,4 +73,24 @@ type FFIClient interface {
 	JacsID() (string, error)
 	SetHaiAgentID(id string) error
 	SetAgentEmail(email string) error
+
+	// Server Keys
+	FetchServerKeys() (json.RawMessage, error)
+
+	// Email Sign/Verify (raw, base64-encoded)
+	SignEmailRaw(rawEmailB64 string) (json.RawMessage, error)
+	VerifyEmailRaw(rawEmailB64 string) (json.RawMessage, error)
+
+	// Attestations
+	CreateAttestation(paramsJSON string) (json.RawMessage, error)
+	ListAttestations(paramsJSON string) (json.RawMessage, error)
+	GetAttestation(agentID, docID string) (json.RawMessage, error)
+	VerifyAttestation(document string) (json.RawMessage, error)
+
+	// Email Templates
+	CreateEmailTemplate(optionsJSON string) (json.RawMessage, error)
+	ListEmailTemplates(optionsJSON string) (json.RawMessage, error)
+	GetEmailTemplate(templateID string) (json.RawMessage, error)
+	UpdateEmailTemplate(templateID, optionsJSON string) (json.RawMessage, error)
+	DeleteEmailTemplate(templateID string) (json.RawMessage, error)
 }
