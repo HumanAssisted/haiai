@@ -1,6 +1,6 @@
 [package]
 name = "hai-mcp"
-version = "0.1.9"
+version = "0.1.10"
 description = "HAIAI MCP server: extends jacs-mcp with HAI.AI platform tools"
 readme = "README.md"
 keywords = ["hai", "mcp", "agent", "sdk"]
@@ -12,7 +12,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-haiai = { version = "=0.1.9", path = "../haiai" }
+haiai = { version = "=0.1.10", path = "../haiai" }
 jacs = { version = "=0.9.11", features = ["a2a"] }
 jacs-binding-core = "=0.9.11"
 jacs-mcp = { version = "=0.9.11", features = ["mcp", "full-tools"] }
