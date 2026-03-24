@@ -121,35 +121,35 @@ class FFIAdapter:
         try:
             raw = self._native.register_sync(json.dumps(options))
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def rotate_keys(self, options: dict[str, Any]) -> dict[str, Any]:
         try:
             raw = self._native.rotate_keys_sync(json.dumps(options))
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def update_agent(self, agent_data: str) -> dict[str, Any]:
         try:
             raw = self._native.update_agent_sync(agent_data)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def submit_response(self, params: dict[str, Any]) -> dict[str, Any]:
         try:
             raw = self._native.submit_response_sync(json.dumps(params))
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def verify_status(self, agent_id: Optional[str] = None) -> dict[str, Any]:
         try:
             raw = self._native.verify_status_sync(agent_id)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     # --- Username ---
@@ -158,21 +158,21 @@ class FFIAdapter:
         try:
             raw = self._native.claim_username_sync(agent_id, username)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def update_username(self, agent_id: str, username: str) -> dict[str, Any]:
         try:
             raw = self._native.update_username_sync(agent_id, username)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def delete_username(self, agent_id: str) -> dict[str, Any]:
         try:
             raw = self._native.delete_username_sync(agent_id)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     # --- Email Core ---
@@ -181,35 +181,35 @@ class FFIAdapter:
         try:
             raw = self._native.send_email_sync(json.dumps(options))
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def send_signed_email(self, options: dict[str, Any]) -> dict[str, Any]:
         try:
             raw = self._native.send_signed_email_sync(json.dumps(options))
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def list_messages(self, options: dict[str, Any]) -> list[Any]:
         try:
             raw = self._native.list_messages_sync(json.dumps(options))
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def update_labels(self, params: dict[str, Any]) -> dict[str, Any]:
         try:
             raw = self._native.update_labels_sync(json.dumps(params))
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def get_email_status(self) -> dict[str, Any]:
         try:
             raw = self._native.get_email_status_sync()
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def get_message(self, message_id: str) -> dict[str, Any]:
@@ -230,7 +230,7 @@ class FFIAdapter:
             if isinstance(data, dict):
                 return data.get("count", 0)
             return 0
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     # --- Email Actions ---
@@ -244,39 +244,39 @@ class FFIAdapter:
     def mark_unread(self, message_id: str) -> None:
         try:
             self._native.mark_unread_sync(message_id)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def delete_message(self, message_id: str) -> None:
         try:
             self._native.delete_message_sync(message_id)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def archive(self, message_id: str) -> None:
         try:
             self._native.archive_sync(message_id)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def unarchive(self, message_id: str) -> None:
         try:
             self._native.unarchive_sync(message_id)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def reply_with_options(self, params: dict[str, Any]) -> dict[str, Any]:
         try:
             raw = self._native.reply_with_options_sync(json.dumps(params))
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def forward(self, params: dict[str, Any]) -> dict[str, Any]:
         try:
             raw = self._native.forward_sync(json.dumps(params))
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     # --- Search & Contacts ---
@@ -285,14 +285,14 @@ class FFIAdapter:
         try:
             raw = self._native.search_messages_sync(json.dumps(options))
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def contacts(self) -> list[Any]:
         try:
             raw = self._native.contacts_sync()
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     # --- Key Operations ---
@@ -301,35 +301,35 @@ class FFIAdapter:
         try:
             raw = self._native.fetch_remote_key_sync(jacs_id, version)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def fetch_key_by_hash(self, hash_val: str) -> dict[str, Any]:
         try:
             raw = self._native.fetch_key_by_hash_sync(hash_val)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def fetch_key_by_email(self, email: str) -> dict[str, Any]:
         try:
             raw = self._native.fetch_key_by_email_sync(email)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def fetch_key_by_domain(self, domain: str) -> dict[str, Any]:
         try:
             raw = self._native.fetch_key_by_domain_sync(domain)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def fetch_all_keys(self, jacs_id: str) -> dict[str, Any]:
         try:
             raw = self._native.fetch_all_keys_sync(jacs_id)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     # --- Verification ---
@@ -338,21 +338,21 @@ class FFIAdapter:
         try:
             raw = self._native.verify_document_sync(document)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def get_verification(self, agent_id: str) -> dict[str, Any]:
         try:
             raw = self._native.get_verification_sync(agent_id)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def verify_agent_document(self, request_json: str) -> dict[str, Any]:
         try:
             raw = self._native.verify_agent_document_sync(request_json)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     # --- Benchmarks ---
@@ -361,27 +361,27 @@ class FFIAdapter:
         try:
             raw = self._native.benchmark_sync(name, tier)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def free_run(self, transport: Optional[str] = None) -> dict[str, Any]:
         try:
             raw = self._native.free_run_sync(transport)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def pro_run(self, options: dict[str, Any]) -> dict[str, Any]:
         try:
             raw = self._native.pro_run_sync(json.dumps(options))
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def enterprise_run(self) -> None:
         try:
             self._native.enterprise_run_sync()
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     # --- JACS Delegation ---
@@ -395,27 +395,27 @@ class FFIAdapter:
     def sign_message(self, message: str) -> str:
         try:
             return self._native.sign_message_sync(message)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def canonical_json(self, value_json: str) -> str:
         try:
             return self._native.canonical_json_sync(value_json)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def verify_a2a_artifact(self, wrapped_json: str) -> dict[str, Any]:
         try:
             raw = self._native.verify_a2a_artifact_sync(wrapped_json)
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def export_agent_json(self) -> dict[str, Any]:
         try:
             raw = self._native.export_agent_json_sync()
             return json.loads(raw)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     # --- Client State ---
@@ -423,19 +423,19 @@ class FFIAdapter:
     def jacs_id(self) -> str:
         try:
             return self._native.jacs_id_sync()
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def set_hai_agent_id(self, agent_id: str) -> None:
         try:
             self._native.set_hai_agent_id_sync(agent_id)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
     def set_agent_email(self, email: str) -> None:
         try:
             self._native.set_agent_email_sync(email)
-        except (RuntimeError, AttributeError) as err:
+        except RuntimeError as err:
             raise map_ffi_error(err) from err
 
 

@@ -12,8 +12,21 @@
 
 use std::sync::Arc;
 
-use hai_binding_core::{HaiBindingError, HaiClientWrapper, RT};
+use hai_binding_core::{HaiBindingError, HaiClientWrapper};
 use pyo3::prelude::*;
+
+/// Own static tokio runtime for haiipy sync methods (`_sync` variants).
+/// Each FFI binding manages its own runtime:
+/// - haiinpm: napi-rs built-in async runtime
+/// - haiigo: own static RT for spawn+channel pattern
+/// - haiipy: this RT for `block_on()` in sync wrappers
+static RT: std::sync::LazyLock<tokio::runtime::Runtime> =
+    std::sync::LazyLock::new(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create haiipy tokio runtime")
+    });
 
 // =============================================================================
 // Error Conversion

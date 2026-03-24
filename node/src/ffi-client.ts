@@ -191,12 +191,24 @@ export class FFIClientAdapter {
     // We detect the module system and use the appropriate reference URL.
     let haiinpm: HaiinpmModule;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const nodeModule = require('node:module') as { createRequire: (url: string) => NodeRequire };
-      // In ESM, __filename is undefined; use import.meta.url via a fallback.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { createRequire } = require('node:module') as { createRequire: (url: string) => NodeRequire };
+      // In ESM, __filename is undefined; use import.meta.url as fallback.
       // In CJS, __filename is always defined.
-      const refPath = typeof __filename !== 'undefined' ? __filename : __dirname + '/ffi-client.js';
-      const dynamicRequire = nodeModule.createRequire(refPath);
+      // NOTE: __dirname is also undefined in ESM, so we must NOT fall back to it.
+      let refUrl: string;
+      if (typeof __filename !== 'undefined') {
+        refUrl = __filename;
+      } else {
+        // ESM context: import.meta.url is always available
+        try {
+          refUrl = (import.meta as { url: string }).url;
+        } catch {
+          // Last resort fallback for environments where import.meta is unavailable
+          refUrl = process.cwd() + '/ffi-client.js';
+        }
+      }
+      const dynamicRequire = createRequire(refUrl);
       haiinpm = dynamicRequire('haiinpm') as HaiinpmModule;
     } catch (err) {
       const cause = err instanceof Error ? err.message : String(err);

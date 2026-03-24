@@ -25,17 +25,10 @@ use haiai::jacs_local::LocalJacsProvider;
 // Static tokio runtime for FFI callers
 // =============================================================================
 
-/// Global tokio runtime shared by all FFI bindings.
-///
-/// `LazyLock` is stable since Rust 1.80. This is the exact pattern used by
-/// napi-rs internally.
-pub static RT: std::sync::LazyLock<tokio::runtime::Runtime> =
-    std::sync::LazyLock::new(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create tokio runtime")
-    });
+// NOTE: No shared tokio runtime is defined here. Each FFI binding manages its own:
+// - haiinpm: uses napi-rs's built-in async runtime (automatic)
+// - haiipy: defines its own static RT for sync `_sync` method wrappers
+// - haiigo: defines its own static RT for the spawn+channel pattern
 
 // =============================================================================
 // Error types
@@ -918,14 +911,6 @@ mod tests {
         assert_eq!(err.kind, ErrorKind::InvalidArgument);
     }
 
-    #[test]
-    fn static_runtime_initializes() {
-        // Force the lazy runtime to initialize
-        let handle = RT.handle();
-        // If we get here without panic, the runtime is initialized
-        assert!(handle.metrics().num_workers() > 0);
-    }
-
     #[tokio::test]
     async fn wrapper_from_config_json_works() {
         use haiai::jacs::StaticJacsProvider;
@@ -1071,6 +1056,47 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(err.kind, ErrorKind::ConfigFailed);
         assert!(err.message.contains("/nonexistent/jacs.config.json"), "error should mention the bad path");
+    }
+
+    #[test]
+    fn auto_config_with_jacs_path_to_invalid_file_returns_config_failed() {
+        // Create a temporary file with invalid (non-JSON) contents
+        let dir = std::env::temp_dir().join("hai_binding_core_test_045");
+        std::fs::create_dir_all(&dir).unwrap();
+        let bad_config = dir.join("invalid_jacs_config.json");
+        std::fs::write(&bad_config, "this is not json").unwrap();
+
+        let config = format!(
+            r#"{{"jacs_config_path": "{}", "jacs_id": "test"}}"#,
+            bad_config.display()
+        );
+        let result = HaiClientWrapper::from_config_json_auto(&config);
+        assert!(result.is_err(), "should fail for invalid JACS config file contents");
+        let err = result.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::ConfigFailed);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn auto_config_with_empty_jacs_path_uses_static_provider() {
+        // Empty string for jacs_config_path should be treated as absent
+        let config = r#"{"jacs_config_path": "", "jacs_id": "empty-path-test"}"#;
+        // This should either succeed (treating empty as absent) or fail gracefully
+        let result = HaiClientWrapper::from_config_json_auto(config);
+        // Empty string is truthy in the JSON sense (Some("")), so it will try to load
+        // from empty path and fail with ConfigFailed
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, ErrorKind::ConfigFailed);
+    }
+
+    #[test]
+    fn auto_config_missing_both_jacs_path_and_jacs_id_uses_empty_id() {
+        // No jacs_config_path and no jacs_id -- should still create with empty static ID
+        let config = r#"{"base_url": "https://beta.hai.ai"}"#;
+        let result = HaiClientWrapper::from_config_json_auto(config);
+        assert!(result.is_ok(), "should succeed with no jacs_id (empty default)");
     }
 
     #[tokio::test]

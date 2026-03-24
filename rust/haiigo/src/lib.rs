@@ -65,7 +65,16 @@ fn error_to_json(e: &hai_binding_core::HaiBindingError) -> String {
 }
 
 fn to_c_string(s: String) -> *mut c_char {
-    CString::new(s).unwrap_or_default().into_raw()
+    match CString::new(s) {
+        Ok(cs) => cs.into_raw(),
+        Err(_) => {
+            // Interior NUL byte in response -- return error envelope instead
+            // of silently returning an empty string.
+            CString::new(r#"{"error":{"kind":"Generic","message":"response contained interior NUL byte"}}"#)
+                .unwrap()
+                .into_raw()
+        }
+    }
 }
 
 fn panic_json() -> *mut c_char {
@@ -476,6 +485,31 @@ pub extern "C" fn hai_build_auth_header(handle: HaiClientHandle) -> *mut c_char 
 ffi_method_noarg!(hai_export_agent_json, export_agent_json);
 
 // =============================================================================
+// FFI Methods — Client State (Read)
+// =============================================================================
+
+/// Get the JACS ID of the client.
+/// Returns a JSON envelope: `{"ok":"<jacs_id>"}` or `{"error":...}`.
+#[no_mangle]
+pub extern "C" fn hai_jacs_id(handle: HaiClientHandle) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let client = unsafe { &*handle }.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let id = client.jacs_id().await;
+            let _ = tx.send(id);
+        });
+        let id = rx.recv().unwrap();
+        let json = serde_json::to_string(&id).unwrap_or_else(|_| format!("\"{}\"", id));
+        to_c_string(format!(r#"{{"ok":{json}}}"#))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+// =============================================================================
 // FFI Methods — Client State (Mutating)
 // =============================================================================
 
@@ -590,6 +624,23 @@ mod tests {
     }
 
     #[test]
+    fn to_c_string_handles_interior_nul_byte() {
+        // String with an interior NUL byte should return an error envelope,
+        // not an empty string.
+        let bad = "hello\0world".to_string();
+        let ptr = to_c_string(bad);
+        assert!(!ptr.is_null());
+        let s = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_str().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(s).unwrap();
+        assert!(parsed.get("error").is_some(), "Expected error envelope for NUL byte input");
+        assert!(
+            parsed["error"]["message"].as_str().unwrap().contains("NUL"),
+            "Error message should mention NUL byte"
+        );
+        unsafe { drop(CString::from_raw(ptr)) };
+    }
+
+    #[test]
     fn c_str_to_string_handles_null() {
         let s = unsafe { c_str_to_string(std::ptr::null()) };
         assert_eq!(s, "");
@@ -622,5 +673,16 @@ mod tests {
     fn hai_client_free_handles_null() {
         // Should not panic or crash
         hai_client_free(std::ptr::null());
+    }
+
+    #[test]
+    fn hai_jacs_id_returns_error_for_null_handle() {
+        let ptr = hai_jacs_id(std::ptr::null());
+        assert!(!ptr.is_null());
+        let s = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(s).unwrap();
+        assert!(parsed.get("error").is_some(), "Expected error for null handle");
+        assert_eq!(parsed["error"]["message"].as_str().unwrap(), "null client handle");
+        unsafe { drop(CString::from_raw(ptr)) };
     }
 }

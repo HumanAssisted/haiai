@@ -1,3 +1,5 @@
+//go:build cgo
+
 // Package ffi provides a Go wrapper around the haiigo Rust cdylib (libhaiigo).
 //
 // Every exported function loads the Rust shared library via CGo and calls the
@@ -99,6 +101,9 @@ extern char* hai_canonical_json(HaiClientHandle handle, const char* value_json);
 extern char* hai_verify_a2a_artifact(HaiClientHandle handle, const char* wrapped_json);
 extern char* hai_build_auth_header(HaiClientHandle handle);
 extern char* hai_export_agent_json(HaiClientHandle handle);
+
+// Client State (Read)
+extern char* hai_jacs_id(HaiClientHandle handle);
 
 // Client State (Mutating)
 extern char* hai_set_hai_agent_id(HaiClientHandle handle, const char* id);
@@ -471,6 +476,21 @@ func (c *Client) VerifyA2AArtifact(wrappedJSON string) (json.RawMessage, error) 
 
 func (c *Client) ExportAgentJSON() (json.RawMessage, error) {
 	return c.callNoArg(C.hai_export_agent_json)
+}
+
+// --- Client State (Read) ---
+
+// JacsID returns the JACS identity ID of the client.
+func (c *Client) JacsID() (string, error) {
+	raw, err := c.callNoArg(C.hai_jacs_id)
+	if err != nil {
+		return "", err
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", fmt.Errorf("failed to parse jacs id: %w", err)
+	}
+	return s, nil
 }
 
 // --- Client State (Mutating) ---
