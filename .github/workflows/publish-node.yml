@@ -98,8 +98,48 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+  build-native-addon:
+    needs: extract-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            node_platform: darwin-arm64
+          - os: macos-14
+            target: x86_64-apple-darwin
+            node_platform: darwin-x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            node_platform: linux-x64-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            node_platform: win32-x64-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build haiinpm native addon
+        run: |
+          cd rust/haiinpm
+          npm install @napi-rs/cli
+          npx napi build --release --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: haiinpm-${{ matrix.node_platform }}
+          path: rust/haiinpm/*.node
+
   publish:
-    needs: [extract-version, publish-platform-packages]
+    needs: [extract-version, publish-platform-packages, build-native-addon]
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.extract-version.outputs.version }}
@@ -109,6 +149,16 @@ jobs:
         with:
           node-version: 20
           registry-url: "https://registry.npmjs.org"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: haiinpm-*
+          path: node/native-addons
+          merge-multiple: true
+
+      - name: List native addons
+        run: ls -la node/native-addons/ || echo "No native addons downloaded"
+
       - name: Sync version from git tag
         run: |
           cd node

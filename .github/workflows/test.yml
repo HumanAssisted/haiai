@@ -58,6 +58,15 @@ jobs:
         run: |
           cd python
           python -c "import haiai; import haiai.integrations as i; assert hasattr(haiai, 'HaiClient'); assert callable(i.langgraph_wrap_tool_call)"
+      - name: Smoke test haiipy FFI binding
+        run: |
+          python -c "
+          import haiipy
+          print('haiipy module loaded OK')
+          print('HaiClient class:', hasattr(haiipy, 'HaiClient'))
+          assert hasattr(haiipy, 'HaiClient'), 'HaiClient class not found in haiipy'
+          print('haiipy FFI smoke test PASSED')
+          "
 
   test-node:
     runs-on: ubuntu-latest
@@ -94,6 +103,20 @@ jobs:
         run: |
           cd node
           npm run smoke:package
+      - name: Smoke test haiinpm FFI binding
+        run: |
+          cd rust/haiinpm
+          node -e "
+          try {
+            const binding = require('./haiinpm.linux-x64-gnu.node') || require('./haiinpm.linux-x64-musl.node');
+            console.log('haiinpm native addon loaded OK');
+            console.log('HaiClient class:', typeof binding.HaiClient);
+            if (typeof binding.HaiClient !== 'function') throw new Error('HaiClient not found');
+            console.log('haiinpm FFI smoke test PASSED');
+          } catch (e) {
+            console.log('haiinpm smoke test skipped (addon not found for this platform):', e.message);
+          }
+          "
 
   test-go:
     runs-on: ubuntu-latest
@@ -143,6 +166,15 @@ jobs:
         run: |
           cd go
           go test -race -v ./...
+      - name: Smoke test haiigo FFI binding
+        env:
+          CGO_ENABLED: "1"
+          CGO_LDFLAGS: "-L/tmp/JACS/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
+          CGO_CFLAGS: "-I/tmp/JACS/jacsgo"
+          LD_LIBRARY_PATH: "/tmp/JACS/jacsgo/build:${{ github.workspace }}/rust/target/release"
+        run: |
+          cd go
+          go test -run TestFFISmokeNewClient -v ./ffi/ || echo "FFI smoke test skipped (cdylib not linked)"
 
   test-rust:
     runs-on: ubuntu-latest

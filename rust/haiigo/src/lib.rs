@@ -16,7 +16,18 @@ use std::os::raw::c_char;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
-use hai_binding_core::{HaiClientWrapper, RT};
+use hai_binding_core::HaiClientWrapper;
+
+// Own static tokio runtime for this cdylib. Do not reuse hai-binding-core's RT --
+// LazyLock<Runtime> in a cdylib loaded via dlopen may have initialization ordering
+// issues with its dependencies on some platforms.
+static RT: std::sync::LazyLock<tokio::runtime::Runtime> =
+    std::sync::LazyLock::new(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("Failed to create haiigo tokio runtime")
+    });
 
 // =============================================================================
 // Helpers
@@ -74,8 +85,31 @@ unsafe fn c_str_to_string(ptr: *const c_char) -> String {
 
 type HaiClientHandle = *const Arc<HaiClientWrapper>;
 
+// Thread-local storage for the last error from hai_client_new.
+// Used because hai_client_new returns a handle (pointer), not a JSON string,
+// so it cannot return error details inline. Call hai_last_error() after a null
+// return to retrieve the error details.
+std::thread_local! {
+    static LAST_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Retrieve the last error from `hai_client_new` as a JSON string.
+/// Returns null if no error is stored. Caller must free the returned string
+/// with `hai_free_string`.
+#[no_mangle]
+pub extern "C" fn hai_last_error() -> *mut c_char {
+    LAST_ERROR.with(|e| {
+        let err = e.borrow_mut().take();
+        match err {
+            Some(s) => to_c_string(s),
+            None => std::ptr::null_mut(),
+        }
+    })
+}
+
 /// Create a new HAI client from a config JSON string.
 /// Returns an opaque handle. Caller must call `hai_client_free` when done.
+/// On failure, returns null. Call `hai_last_error()` to get error details.
 #[no_mangle]
 pub extern "C" fn hai_client_new(config_json: *const c_char) -> HaiClientHandle {
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
@@ -85,7 +119,12 @@ pub extern "C" fn hai_client_new(config_json: *const c_char) -> HaiClientHandle 
                 let arc = Arc::new(wrapper);
                 Box::into_raw(Box::new(arc)) as HaiClientHandle
             }
-            Err(_) => std::ptr::null(),
+            Err(e) => {
+                LAST_ERROR.with(|le| {
+                    *le.borrow_mut() = Some(error_to_json(&e));
+                });
+                std::ptr::null()
+            }
         }
     }));
 
@@ -121,6 +160,9 @@ macro_rules! ffi_method_str {
     ($fn_name:ident, $method:ident) => {
         #[no_mangle]
         pub extern "C" fn $fn_name(handle: HaiClientHandle, arg: *const c_char) -> *mut c_char {
+            if handle.is_null() {
+                return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+            }
             let client = unsafe { &*handle }.clone();
             let arg = unsafe { c_str_to_string(arg) };
             let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
@@ -141,6 +183,9 @@ macro_rules! ffi_method_noarg {
     ($fn_name:ident, $method:ident) => {
         #[no_mangle]
         pub extern "C" fn $fn_name(handle: HaiClientHandle) -> *mut c_char {
+            if handle.is_null() {
+                return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+            }
             let client = unsafe { &*handle }.clone();
             let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
                 let (tx, rx) = std::sync::mpsc::channel();
@@ -160,6 +205,9 @@ macro_rules! ffi_method_void {
     ($fn_name:ident, $method:ident) => {
         #[no_mangle]
         pub extern "C" fn $fn_name(handle: HaiClientHandle, arg: *const c_char) -> *mut c_char {
+            if handle.is_null() {
+                return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+            }
             let client = unsafe { &*handle }.clone();
             let arg = unsafe { c_str_to_string(arg) };
             let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
@@ -181,6 +229,9 @@ macro_rules! ffi_method_void {
 
 #[no_mangle]
 pub extern "C" fn hai_hello(handle: HaiClientHandle, include_test: bool) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let client = unsafe { &*handle }.clone();
         let (tx, rx) = std::sync::mpsc::channel();
@@ -201,6 +252,9 @@ ffi_method_str!(hai_submit_response, submit_response);
 
 #[no_mangle]
 pub extern "C" fn hai_verify_status(handle: HaiClientHandle, agent_id: *const c_char) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let client = unsafe { &*handle }.clone();
         let agent_id = unsafe { c_str_to_string(agent_id) };
@@ -221,6 +275,9 @@ pub extern "C" fn hai_verify_status(handle: HaiClientHandle, agent_id: *const c_
 
 #[no_mangle]
 pub extern "C" fn hai_claim_username(handle: HaiClientHandle, agent_id: *const c_char, username: *const c_char) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let client = unsafe { &*handle }.clone();
         let agent_id = unsafe { c_str_to_string(agent_id) };
@@ -237,6 +294,9 @@ pub extern "C" fn hai_claim_username(handle: HaiClientHandle, agent_id: *const c
 
 #[no_mangle]
 pub extern "C" fn hai_update_username(handle: HaiClientHandle, agent_id: *const c_char, username: *const c_char) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let client = unsafe { &*handle }.clone();
         let agent_id = unsafe { c_str_to_string(agent_id) };
@@ -290,6 +350,9 @@ ffi_method_noarg!(hai_contacts, contacts);
 
 #[no_mangle]
 pub extern "C" fn hai_fetch_remote_key(handle: HaiClientHandle, jacs_id: *const c_char, version: *const c_char) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let client = unsafe { &*handle }.clone();
         let jacs_id = unsafe { c_str_to_string(jacs_id) };
@@ -323,10 +386,17 @@ ffi_method_str!(hai_verify_agent_document, verify_agent_document);
 
 #[no_mangle]
 pub extern "C" fn hai_benchmark(handle: HaiClientHandle, name: *const c_char, tier: *const c_char) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let client = unsafe { &*handle }.clone();
         let name = unsafe { c_str_to_string(name) };
         let tier = unsafe { c_str_to_string(tier) };
+        // Trim whitespace before checking for empty -- Go callers pass "" for None,
+        // but whitespace-only strings should also be treated as absent.
+        let name = name.trim().to_string();
+        let tier = tier.trim().to_string();
         let name_opt = if name.is_empty() { None } else { Some(name) };
         let tier_opt = if tier.is_empty() { None } else { Some(tier) };
         let (tx, rx) = std::sync::mpsc::channel();
@@ -341,9 +411,13 @@ pub extern "C" fn hai_benchmark(handle: HaiClientHandle, name: *const c_char, ti
 
 #[no_mangle]
 pub extern "C" fn hai_free_run(handle: HaiClientHandle, transport: *const c_char) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let client = unsafe { &*handle }.clone();
         let transport = unsafe { c_str_to_string(transport) };
+        let transport = transport.trim().to_string();
         let transport_opt = if transport.is_empty() { None } else { Some(transport) };
         let (tx, rx) = std::sync::mpsc::channel();
         RT.spawn(async move {
@@ -359,6 +433,9 @@ ffi_method_str!(hai_pro_run, pro_run);
 
 #[no_mangle]
 pub extern "C" fn hai_enterprise_run(handle: HaiClientHandle) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let client = unsafe { &*handle }.clone();
         let (tx, rx) = std::sync::mpsc::channel();
@@ -381,6 +458,9 @@ ffi_method_str!(hai_verify_a2a_artifact, verify_a2a_artifact);
 
 #[no_mangle]
 pub extern "C" fn hai_build_auth_header(handle: HaiClientHandle) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let client = unsafe { &*handle }.clone();
         let (tx, rx) = std::sync::mpsc::channel();
@@ -401,6 +481,9 @@ ffi_method_noarg!(hai_export_agent_json, export_agent_json);
 
 #[no_mangle]
 pub extern "C" fn hai_set_hai_agent_id(handle: HaiClientHandle, id: *const c_char) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let client = unsafe { &*handle }.clone();
         let id = unsafe { c_str_to_string(id) };
@@ -416,6 +499,9 @@ pub extern "C" fn hai_set_hai_agent_id(handle: HaiClientHandle, id: *const c_cha
 
 #[no_mangle]
 pub extern "C" fn hai_set_agent_email(handle: HaiClientHandle, email: *const c_char) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let client = unsafe { &*handle }.clone();
         let email = unsafe { c_str_to_string(email) };
@@ -507,5 +593,34 @@ mod tests {
     fn c_str_to_string_handles_null() {
         let s = unsafe { c_str_to_string(std::ptr::null()) };
         assert_eq!(s, "");
+    }
+
+    #[test]
+    fn hai_client_new_returns_null_for_invalid_config() {
+        let config = CString::new("invalid json").unwrap();
+        let handle = hai_client_new(config.as_ptr());
+        assert!(handle.is_null(), "Expected null handle for invalid config");
+        // Verify hai_last_error returns error details
+        let err_ptr = hai_last_error();
+        if !err_ptr.is_null() {
+            let err_str = unsafe { CStr::from_ptr(err_ptr) }.to_str().unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(err_str).unwrap();
+            assert!(parsed.get("error").is_some(), "Expected error envelope from hai_last_error");
+            unsafe { drop(CString::from_raw(err_ptr)) };
+        }
+    }
+
+    #[test]
+    fn hai_last_error_returns_null_when_no_error() {
+        // Clear any stale error first
+        let _ = hai_last_error();
+        let ptr = hai_last_error();
+        assert!(ptr.is_null(), "Expected null when no error stored");
+    }
+
+    #[test]
+    fn hai_client_free_handles_null() {
+        // Should not panic or crash
+        hai_client_free(std::ptr::null());
     }
 }

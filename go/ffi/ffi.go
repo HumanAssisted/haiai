@@ -103,11 +103,15 @@ extern char* hai_export_agent_json(HaiClientHandle handle);
 // Client State (Mutating)
 extern char* hai_set_hai_agent_id(HaiClientHandle handle, const char* id);
 extern char* hai_set_agent_email(HaiClientHandle handle, const char* email);
+
+// Error retrieval for hai_client_new
+extern char* hai_last_error();
 */
 import "C"
 import (
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"unsafe"
@@ -167,9 +171,22 @@ func NewClient(configJSON string) (*Client, error) {
 
 	handle := C.hai_client_new(cs)
 	if handle == nil {
+		// Retrieve detailed error from hai_last_error()
+		errPtr := C.hai_last_error()
+		if errPtr != nil {
+			errJSON := goString(errPtr)
+			_, parseErr := parseEnvelope(errJSON)
+			if parseErr != nil {
+				return nil, fmt.Errorf("failed to create HAI client: %w", parseErr)
+			}
+			return nil, fmt.Errorf("failed to create HAI client from config")
+		}
 		return nil, fmt.Errorf("failed to create HAI client from config")
 	}
-	return &Client{handle: handle}, nil
+	c := &Client{handle: handle}
+	// Safety net: free the Rust handle if the Go consumer forgets to call Close().
+	runtime.SetFinalizer(c, (*Client).Close)
+	return c, nil
 }
 
 // Close frees the underlying Rust client. Safe to call multiple times.
@@ -385,6 +402,8 @@ func (c *Client) VerifyAgentDocument(requestJSON string) (json.RawMessage, error
 
 // --- Benchmarks ---
 
+// Benchmark starts a benchmark run. Pass empty string "" for name or tier to omit.
+// Whitespace-only strings are also treated as absent on the Rust side.
 func (c *Client) Benchmark(name, tier string) (json.RawMessage, error) {
 	return c.callTwoStr(C.hai_benchmark, name, tier)
 }

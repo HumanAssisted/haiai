@@ -188,15 +188,20 @@ export class FFIClientAdapter {
   constructor(configJson: string) {
     // Load haiinpm native addon. Native .node addons require require(), so
     // use createRequire for ESM compatibility (the Node SDK ships as dual ESM/CJS).
+    // We detect the module system and use the appropriate reference URL.
     let haiinpm: HaiinpmModule;
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { createRequire } = require('node:module') as { createRequire: (url: string) => NodeRequire };
-      const dynamicRequire = createRequire(__filename);
+      const nodeModule = require('node:module') as { createRequire: (url: string) => NodeRequire };
+      // In ESM, __filename is undefined; use import.meta.url via a fallback.
+      // In CJS, __filename is always defined.
+      const refPath = typeof __filename !== 'undefined' ? __filename : __dirname + '/ffi-client.js';
+      const dynamicRequire = nodeModule.createRequire(refPath);
       haiinpm = dynamicRequire('haiinpm') as HaiinpmModule;
-    } catch {
+    } catch (err) {
+      const cause = err instanceof Error ? err.message : String(err);
       throw new HaiError(
-        'Failed to load haiinpm native binding. ' +
+        `Failed to load haiinpm native binding: ${cause}. ` +
         'Ensure the haiinpm package is installed and the native addon is built.',
       );
     }

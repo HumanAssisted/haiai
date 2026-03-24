@@ -756,6 +756,13 @@ impl HaiClient {
     // Client State
     // =========================================================================
 
+    fn jacs_id<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            Ok(client.jacs_id().await)
+        })
+    }
+
     fn jacs_id_sync(&self, py: Python) -> PyResult<String> {
         check_not_async()?;
         let client = self.inner.clone();

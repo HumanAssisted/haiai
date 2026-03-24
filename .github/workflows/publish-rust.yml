@@ -25,7 +25,7 @@ jobs:
       - name: Check Cargo.toml versions match tag
         run: |
           TAG_VERSION="${{ steps.extract.outputs.version }}"
-          for dir in rust/haiai rust/hai-mcp rust/haiai-cli; do
+          for dir in rust/haiai rust/hai-binding-core rust/hai-mcp rust/haiai-cli; do
             CARGO_VERSION=$(grep '^version = ' $dir/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
             echo "$dir version: $CARGO_VERSION, tag: $TAG_VERSION"
             if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
@@ -77,6 +77,13 @@ jobs:
             fi
             sleep 5
           done
+
+      - name: Publish hai-binding-core to crates.io
+        working-directory: rust/hai-binding-core
+        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }} || echo "Already published (safe to ignore)"
+
+      - name: Wait for crates.io index update
+        run: sleep 30
 
       - name: Publish hai-mcp to crates.io
         working-directory: rust/hai-mcp
