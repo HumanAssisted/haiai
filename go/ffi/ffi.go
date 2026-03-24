@@ -7,6 +7,26 @@
 //
 // Memory management: every *C.char returned by hai_* functions MUST be freed
 // with hai_free_string after use.
+//
+// ## Why CGo instead of purego
+//
+// The PRD (DRY_FFI.md Decision 5) required evaluating purego as an alternative
+// to CGo. CGo was chosen for the following reasons:
+//
+// 1. **Memory management ergonomics.** Every FFI method returns a `char*` JSON
+//    string that must be freed. CGo provides `C.GoString()` + `defer C.free()`
+//    which is safe and idiomatic. purego requires manual `uintptr` return,
+//    unsafe pointer cast to read the string, and explicit free — more error-prone.
+//
+// 2. **Stability.** purego remains beta with open issues (e.g., #399, #407 as
+//    of March 2026). CGo is battle-tested and matches the existing JACS jacsgo
+//    pattern.
+//
+// 3. **Build simplicity.** The haiigo Rust crate already builds as a cdylib for
+//    CGo. purego would need the same cdylib but adds runtime dlopen complexity.
+//
+// purego may be reconsidered when it reaches v1.0 stable, particularly if
+// `CGO_ENABLED=0` builds become a requirement.
 package ffi
 
 /*
@@ -173,6 +193,9 @@ func (c *Client) checkClosed() error {
 
 // callStr calls an FFI function that takes one string arg and returns JSON envelope.
 func (c *Client) callStr(fn func(C.HaiClientHandle, *C.char) *C.char, arg string) (json.RawMessage, error) {
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
 	cs := cString(arg)
 	defer C.free(unsafe.Pointer(cs))
 	result := goString(fn(c.handle, cs))
@@ -181,12 +204,18 @@ func (c *Client) callStr(fn func(C.HaiClientHandle, *C.char) *C.char, arg string
 
 // callNoArg calls an FFI function that takes no args and returns JSON envelope.
 func (c *Client) callNoArg(fn func(C.HaiClientHandle) *C.char) (json.RawMessage, error) {
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
 	result := goString(fn(c.handle))
 	return parseEnvelope(result)
 }
 
 // callTwoStr calls an FFI function that takes two string args and returns JSON envelope.
 func (c *Client) callTwoStr(fn func(C.HaiClientHandle, *C.char, *C.char) *C.char, arg1, arg2 string) (json.RawMessage, error) {
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
 	cs1 := cString(arg1)
 	defer C.free(unsafe.Pointer(cs1))
 	cs2 := cString(arg2)
@@ -198,6 +227,9 @@ func (c *Client) callTwoStr(fn func(C.HaiClientHandle, *C.char, *C.char) *C.char
 // --- Registration & Identity ---
 
 func (c *Client) Hello(includeTest bool) (json.RawMessage, error) {
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
 	result := goString(C.hai_hello(c.handle, C._Bool(includeTest)))
 	return parseEnvelope(result)
 }
@@ -358,6 +390,9 @@ func (c *Client) Benchmark(name, tier string) (json.RawMessage, error) {
 }
 
 func (c *Client) FreeRun(transport string) (json.RawMessage, error) {
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
 	cs := cString(transport)
 	defer C.free(unsafe.Pointer(cs))
 	result := goString(C.hai_free_run(c.handle, cs))

@@ -24,26 +24,34 @@ use haiai::jacs::StaticJacsProvider;
 // =============================================================================
 
 /// Convert a HaiBindingResult to a JSON error envelope string.
+///
+/// Uses serde_json for error serialization to properly escape all control
+/// characters (newlines, tabs, etc.) per RFC 8259.
 fn result_to_json(result: Result<String, hai_binding_core::HaiBindingError>) -> String {
     match result {
         Ok(json) => format!(r#"{{"ok":{json}}}"#),
-        Err(e) => {
-            let kind = e.kind.to_string();
-            let msg = e.message.replace('\\', "\\\\").replace('"', "\\\"");
-            format!(r#"{{"error":{{"kind":"{kind}","message":"{msg}"}}}}"#)
-        }
+        Err(e) => error_to_json(&e),
     }
 }
 
 fn result_unit_to_json(result: Result<(), hai_binding_core::HaiBindingError>) -> String {
     match result {
         Ok(()) => r#"{"ok":null}"#.to_string(),
-        Err(e) => {
-            let kind = e.kind.to_string();
-            let msg = e.message.replace('\\', "\\\\").replace('"', "\\\"");
-            format!(r#"{{"error":{{"kind":"{kind}","message":"{msg}"}}}}"#)
-        }
+        Err(e) => error_to_json(&e),
     }
+}
+
+/// Serialize an error to a JSON envelope using serde_json for proper escaping.
+fn error_to_json(e: &hai_binding_core::HaiBindingError) -> String {
+    let err = serde_json::json!({
+        "error": {
+            "kind": e.kind.to_string(),
+            "message": e.message,
+        }
+    });
+    serde_json::to_string(&err).unwrap_or_else(|_|
+        r#"{"error":{"kind":"Generic","message":"serialization failed"}}"#.to_string()
+    )
 }
 
 fn to_c_string(s: String) -> *mut c_char {

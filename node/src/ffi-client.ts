@@ -81,12 +81,16 @@ interface NativeHaiClient {
   benchmark(name?: string | null, tier?: string | null): Promise<string>;
   freeRun(transport?: string | null): Promise<string>;
   proRun(optionsJson: string): Promise<string>;
+  enterpriseRun(): Promise<void>;
 
   // JACS Delegation
   buildAuthHeader(): Promise<string>;
   signMessage(message: string): Promise<string>;
   canonicalJson(valueJson: string): Promise<string>;
   verifyA2aArtifact(wrappedJson: string): Promise<string>;
+
+  // JACS Export
+  exportAgentJson(): Promise<string>;
 
   // Client State
   jacsId(): Promise<string>;
@@ -568,6 +572,14 @@ export class FFIClientAdapter {
     }
   }
 
+  async enterpriseRun(): Promise<void> {
+    try {
+      await this.native.enterpriseRun();
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // JACS Delegation
   // ---------------------------------------------------------------------------
@@ -599,6 +611,15 @@ export class FFIClientAdapter {
   async verifyA2aArtifact(wrappedJson: string): Promise<Record<string, unknown>> {
     try {
       const json = await this.native.verifyA2aArtifact(wrappedJson);
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async exportAgentJson(): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.exportAgentJson();
       return JSON.parse(json) as Record<string, unknown>;
     } catch (err) {
       throw mapFFIError(err);

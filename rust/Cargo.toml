@@ -25,7 +25,7 @@ sha2 = "0.10"
 
 # Local development: uncomment to build against ../JACS instead of crates.io.
 # CI/publish: this MUST be commented out. JACS must be published first.
-[patch.crates-io]
-jacs = { path = "../../JACS/jacs" }
-jacs-binding-core = { path = "../../JACS/binding-core" }
-jacs-mcp = { path = "../../JACS/jacs-mcp" }
+# [patch.crates-io]
+# jacs = { path = "../../JACS/jacs" }
+# jacs-binding-core = { path = "../../JACS/binding-core" }
+# jacs-mcp = { path = "../../JACS/jacs-mcp" }
