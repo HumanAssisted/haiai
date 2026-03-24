@@ -1197,4 +1197,86 @@ mod tests {
         let binding_err: HaiBindingError = hai_err.into();
         assert_eq!(binding_err.kind, ErrorKind::ConfigFailed);
     }
+
+    // =========================================================================
+    // Issue 064: methods.json ↔ HaiClientWrapper parity validation
+    // =========================================================================
+
+    /// Validates that every method listed in methods.json (async, sync, mutating)
+    /// actually exists as a public method on HaiClientWrapper.
+    ///
+    /// This catches drift: if someone adds a method to HaiClient but forgets
+    /// methods.json (or vice versa), this test fails.
+    #[test]
+    fn methods_json_matches_wrapper_impl() {
+        let json_str = include_str!("../methods.json");
+        let val: Value = serde_json::from_str(json_str).unwrap();
+
+        // Collect all method names that should be on HaiClientWrapper
+        let mut expected: Vec<String> = Vec::new();
+
+        // async methods (the main surface area)
+        for m in val["methods"].as_array().unwrap() {
+            expected.push(m["name"].as_str().unwrap().to_string());
+        }
+        // sync methods (accessors + jacs delegation), excluding "new" (constructor)
+        for m in val["sync"].as_array().unwrap() {
+            let name = m["name"].as_str().unwrap();
+            if name != "new" {
+                expected.push(name.to_string());
+            }
+        }
+        // mutating methods
+        for m in val["mutating"].as_array().unwrap() {
+            expected.push(m["name"].as_str().unwrap().to_string());
+        }
+
+        // Read the source file and find all `pub async fn <name>` and `pub fn <name>` on HaiClientWrapper
+        let source = include_str!("lib.rs");
+        let mut impl_methods: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // We're inside `impl HaiClientWrapper { ... }` — find pub methods
+        // Match patterns: `pub async fn <name>(` and `pub fn <name>(`
+        let re_async = regex::Regex::new(r"pub async fn (\w+)\s*\(").unwrap();
+        let re_sync = regex::Regex::new(r"pub fn (\w+)\s*\(").unwrap();
+
+        for cap in re_async.captures_iter(source) {
+            impl_methods.insert(cap[1].to_string());
+        }
+        for cap in re_sync.captures_iter(source) {
+            impl_methods.insert(cap[1].to_string());
+        }
+
+        // Verify every expected method exists in the impl
+        let mut missing: Vec<&str> = Vec::new();
+        for name in &expected {
+            if !impl_methods.contains(name.as_str()) {
+                missing.push(name);
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "methods.json lists methods not found on HaiClientWrapper: {:?}",
+            missing
+        );
+
+        // Verify no impl methods are missing from methods.json
+        // (exclude constructors and test helpers)
+        let excluded_from_check: std::collections::HashSet<&str> = [
+            "new", "from_config_json", "from_config_json_auto",
+        ].into_iter().collect();
+
+        let expected_set: std::collections::HashSet<&str> = expected.iter().map(|s| s.as_str()).collect();
+        let mut undocumented: Vec<&str> = Vec::new();
+        for name in &impl_methods {
+            if !expected_set.contains(name.as_str()) && !excluded_from_check.contains(name.as_str()) {
+                undocumented.push(name);
+            }
+        }
+        assert!(
+            undocumented.is_empty(),
+            "HaiClientWrapper has methods not listed in methods.json: {:?}",
+            undocumented
+        );
+    }
 }
