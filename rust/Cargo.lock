@@ -1299,7 +1299,6 @@ name = "haiigo"
 version = "0.1.8"
 dependencies = [
  "hai-binding-core",
- "haiai",
  "serde_json",
  "tokio",
 ]
