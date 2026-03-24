@@ -52,4 +52,4 @@ scripts/ci/              # CI enforcement (crypto policy denylist)
 - **Path segments must be URL-escaped** in all API paths.
 - **Auth header:** `JACS {jacsId}:{timestamp}:{signature_base64}`.
 - **FFI build requirements.** All language SDKs now require a Rust toolchain to build from source. CI installs Rust for Python (maturin), Node (napi-rs), and Go (cargo build cdylib).
-- **Streaming (SSE/WS) is NOT yet migrated to FFI.** Native SSE/WS implementations remain in each SDK temporarily. This is Phase 2 of the FFI migration.
+- **Streaming (SSE/WS) is migrated to FFI.** SSE and WebSocket connections use an opaque handle pattern through binding-core. SDKs call connect/poll/close via FFI.

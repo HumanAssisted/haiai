@@ -6,6 +6,7 @@
       {"name": "hello", "args": ["include_test:bool"], "returns": "json"},
       {"name": "check_username", "args": ["username:string"], "returns": "json"},
       {"name": "register", "args": ["options_json:string"], "returns": "json"},
+      {"name": "register_new_agent", "args": ["options_json:string"], "returns": "json"},
       {"name": "rotate_keys", "args": ["options_json:string"], "returns": "json"},
       {"name": "update_agent", "args": ["agent_data:string"], "returns": "json"},
       {"name": "submit_response", "args": ["params_json:string"], "returns": "json"},
@@ -19,6 +20,8 @@
     "email_core": [
       {"name": "send_email", "args": ["options_json:string"], "returns": "json"},
       {"name": "send_signed_email", "args": ["options_json:string"], "returns": "json"},
+      {"name": "sign_email_raw", "args": ["raw_email_b64:string"], "returns": "json"},
+      {"name": "verify_email_raw", "args": ["raw_email_b64:string"], "returns": "json"},
       {"name": "list_messages", "args": ["options_json:string"], "returns": "json"},
       {"name": "update_labels", "args": ["params_json:string"], "returns": "json"},
       {"name": "get_email_status", "args": [], "returns": "json"},
@@ -34,6 +37,13 @@
       {"name": "reply_with_options", "args": ["params_json:string"], "returns": "json"},
       {"name": "forward", "args": ["params_json:string"], "returns": "json"}
     ],
+    "email_templates": [
+      {"name": "create_email_template", "args": ["options_json:string"], "returns": "json"},
+      {"name": "list_email_templates", "args": ["options_json:string"], "returns": "json"},
+      {"name": "get_email_template", "args": ["template_id:string"], "returns": "json"},
+      {"name": "update_email_template", "args": ["template_id:string", "options_json:string"], "returns": "json"},
+      {"name": "delete_email_template", "args": ["template_id:string"], "returns": "void"}
+    ],
     "search_and_contacts": [
       {"name": "search_messages", "args": ["options_json:string"], "returns": "json"},
       {"name": "contacts", "args": [], "returns": "json"}
@@ -43,18 +53,33 @@
       {"name": "fetch_key_by_hash", "args": ["hash:string"], "returns": "json"},
       {"name": "fetch_key_by_email", "args": ["email:string"], "returns": "json"},
       {"name": "fetch_key_by_domain", "args": ["domain:string"], "returns": "json"},
-      {"name": "fetch_all_keys", "args": ["jacs_id:string"], "returns": "json"}
+      {"name": "fetch_all_keys", "args": ["jacs_id:string"], "returns": "json"},
+      {"name": "fetch_server_keys", "args": [], "returns": "json"}
     ],
     "verification": [
       {"name": "verify_document", "args": ["document:string"], "returns": "json"},
       {"name": "get_verification", "args": ["agent_id:string"], "returns": "json"},
       {"name": "verify_agent_document", "args": ["request_json:string"], "returns": "json"}
     ],
+    "attestations": [
+      {"name": "create_attestation", "args": ["params_json:string"], "returns": "json"},
+      {"name": "list_attestations", "args": ["params_json:string"], "returns": "json"},
+      {"name": "get_attestation", "args": ["agent_id:string", "doc_id:string"], "returns": "json"},
+      {"name": "verify_attestation", "args": ["document:string"], "returns": "json"}
+    ],
     "benchmarks": [
       {"name": "benchmark", "args": ["name:string?", "tier:string?"], "returns": "json"},
       {"name": "free_run", "args": ["transport:string?"], "returns": "json"},
       {"name": "pro_run", "args": ["options_json:string"], "returns": "json"},
       {"name": "enterprise_run", "args": [], "returns": "void"}
+    ],
+    "streaming": [
+      {"name": "connect_sse", "args": [], "returns": "u64"},
+      {"name": "sse_next_event", "args": ["handle_id:u64"], "returns": "json?"},
+      {"name": "sse_close", "args": ["handle_id:u64"], "returns": "void"},
+      {"name": "connect_ws", "args": [], "returns": "u64"},
+      {"name": "ws_next_event", "args": ["handle_id:u64"], "returns": "json?"},
+      {"name": "ws_close", "args": ["handle_id:u64"], "returns": "void"}
     ],
     "jacs_delegation": [
       {"name": "build_auth_header", "args": [], "returns": "string"},
@@ -81,5 +106,5 @@
     "ProviderError"
   ],
   "error_format": "{ErrorKind}: {message}",
-  "total_method_count": 46
+  "total_method_count": 65
 }

@@ -35,18 +35,12 @@ export async function getServerKeys(baseUrl: string, ffi?: { fetchServerKeys(): 
     return serverKeysCache;
   }
 
-  let data: { keys?: Array<{ key_id: string; public_key: string }> };
-
-  if (ffi) {
-    const raw = await ffi.fetchServerKeys();
-    data = JSON.parse(raw);
-  } else {
-    const resp = await fetch(`${baseUrl.replace(/\/+$/, '')}/.well-known/hai-keys.json`);
-    if (!resp.ok) {
-      throw new Error(`Failed to fetch server keys (${resp.status})`);
-    }
-    data = (await resp.json()) as { keys?: Array<{ key_id: string; public_key: string }> };
+  if (!ffi) {
+    throw new Error('FFI client required for getServerKeys (no native HTTP fallback)');
   }
+
+  const raw = await ffi.fetchServerKeys();
+  const data = JSON.parse(raw) as { keys?: Array<{ key_id: string; public_key: string }> };
 
   serverKeysCache = {};
   for (const key of data.keys ?? []) {

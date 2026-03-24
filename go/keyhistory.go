@@ -2,13 +2,7 @@ package haiai
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
-	"os"
-	"strings"
-	"time"
 )
 
 // rawKeyEntry is an intermediate struct for JSON deserialization of key entries
@@ -33,83 +27,17 @@ type AgentKeyHistory struct {
 }
 
 // FetchAllKeys fetches all key versions for an agent.
-// If a Client is provided, delegates to its FFI-backed method.
-// Otherwise falls back to direct HTTP.
+// Delegates to the Client's FFI-backed method.
 func FetchAllKeys(ctx context.Context, client *Client, jacsID string) (*AgentKeyHistory, error) {
 	if client != nil {
 		return client.FetchAllKeys(ctx, jacsID)
 	}
-	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
-	if baseURL == "" {
-		baseURL = DefaultEndpoint
-	}
-	return fetchAllKeysHTTP(ctx, baseURL, jacsID)
+	return nil, fmt.Errorf("haiai: Client required for FetchAllKeys (no native HTTP fallback)")
 }
 
-// FetchAllKeysFromURL fetches all key versions for an agent from a specific URL.
+// FetchAllKeysFromURL is deprecated. Use Client.FetchAllKeys instead.
+//
 // Deprecated: Use Client.FetchAllKeys instead.
-func FetchAllKeysFromURL(ctx context.Context, httpClient *http.Client, baseURL, jacsID string) (*AgentKeyHistory, error) {
-	return fetchAllKeysHTTP(ctx, baseURL, jacsID)
-}
-
-// fetchAllKeysHTTP is the direct HTTP implementation (no FFI).
-func fetchAllKeysHTTP(ctx context.Context, baseURL, jacsID string) (*AgentKeyHistory, error) {
-	baseURL = strings.TrimRight(baseURL, "/")
-	apiURL := fmt.Sprintf("%s/api/agents/keys/%s/all", baseURL, url.PathEscape(jacsID))
-
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
-	if err != nil {
-		return nil, wrapError(ErrConnection, err, "failed to create fetch-all-keys request")
-	}
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, wrapError(ErrConnection, err, "failed to fetch all keys")
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, newError(ErrKeyNotFound, "agent not found: '%s'", jacsID)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := limitedReadAll(resp.Body)
-		return nil, newError(ErrConnection, "status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var raw struct {
-		JacsID string        `json:"jacs_id"`
-		Keys   []rawKeyEntry `json:"keys"`
-		Total  int           `json:"total"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return nil, wrapError(ErrInvalidResponse, err, "failed to decode key history response")
-	}
-
-	keys := make([]PublicKeyInfo, 0, len(raw.Keys))
-	for _, k := range raw.Keys {
-		publicKey, err := decodePublicKey(k.PublicKeyRawB64, k.PublicKey)
-		if err != nil {
-			return nil, wrapError(ErrInvalidResponse, err, "invalid public key encoding in key history")
-		}
-		agentID := k.AgentID
-		if agentID == "" {
-			agentID = k.JacsID
-		}
-		keys = append(keys, PublicKeyInfo{
-			PublicKey:     publicKey,
-			Algorithm:     k.Algorithm,
-			PublicKeyHash: k.PublicKeyHash,
-			AgentID:       agentID,
-			Version:       k.Version,
-		})
-	}
-
-	return &AgentKeyHistory{
-		JacsID: raw.JacsID,
-		Keys:   keys,
-		Total:  raw.Total,
-	}, nil
+func FetchAllKeysFromURL(ctx context.Context, _ interface{}, baseURL, jacsID string) (*AgentKeyHistory, error) {
+	return nil, fmt.Errorf("haiai: FetchAllKeysFromURL is deprecated; use Client.FetchAllKeys instead")
 }

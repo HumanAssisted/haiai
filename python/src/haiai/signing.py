@@ -241,14 +241,9 @@ def fetch_server_keys(hai_url: str, ffi=None) -> list[_CachedKey]:
             return _key_cache.keys
 
     try:
-        if ffi is not None:
-            data = ffi.fetch_server_keys()
-        else:
-            import httpx as _httpx
-            url = f"{hai_url.rstrip('/')}/.well-known/hai-keys.json"
-            resp = _httpx.get(url, timeout=10.0)
-            resp.raise_for_status()
-            data = resp.json()
+        if ffi is None:
+            raise RuntimeError("FFI client required for fetch_server_keys (no native HTTP fallback)")
+        data = ffi.fetch_server_keys()
     except Exception as exc:
         logger.warning("Failed to fetch HAI signing keys: %s", exc)
         with _key_cache_lock:

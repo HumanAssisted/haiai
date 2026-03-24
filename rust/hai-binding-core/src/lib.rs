@@ -1584,6 +1584,11 @@ mod tests {
         // (exclude constructors and test helpers)
         let excluded_from_check: std::collections::HashSet<&str> = [
             "new", "from_config_json", "from_config_json_auto",
+            // Streaming functions are listed in the "streaming" section of methods.json,
+            // not the "methods" section. connect_sse/connect_ws are on HaiClientWrapper,
+            // while sse_next_event/sse_close/ws_next_event/ws_close are standalone fns.
+            "connect_sse", "sse_next_event", "sse_close",
+            "connect_ws", "ws_next_event", "ws_close",
         ].into_iter().collect();
 
         let expected_set: std::collections::HashSet<&str> = expected.iter().map(|s| s.as_str()).collect();

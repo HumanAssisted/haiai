@@ -351,48 +351,24 @@ func TestFetchKeyByDomainFromURL_UsesAPIAgentsKeysPath(t *testing.T) {
 	}
 }
 
-func TestFetchKeyByHashFromURL_UsesAPIAgentsKeysPath(t *testing.T) {
-	var gotPath string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.EscapedPath()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"public_key":"Zm9v",
-			"algorithm":"Ed25519",
-			"public_key_hash":"sha256:abcdef",
-			"agent_id":"agent-abc",
-			"version":"v1"
-		}`))
-	}))
-	defer srv.Close()
-
-	_, err := FetchKeyByHashFromURL(context.Background(), nil, srv.URL, "sha256:abcdef")
-	if err != nil {
-		t.Fatalf("FetchKeyByHashFromURL: %v", err)
+func TestFetchKeyByHashFromURL_ReturnsDeprecatedError(t *testing.T) {
+	// FetchKeyByHashFromURL is deprecated -- native HTTP fallback removed.
+	_, err := FetchKeyByHashFromURL(context.Background(), nil, "http://unused", "sha256:abcdef")
+	if err == nil {
+		t.Fatal("expected error from deprecated FetchKeyByHashFromURL")
 	}
-	expected := "/api/agents/keys/hash/sha256:abcdef"
-	if gotPath != expected {
-		t.Fatalf("expected %q, got %q", expected, gotPath)
+	if !strings.Contains(err.Error(), "deprecated") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestFetchAllKeysFromURL_UsesAPIAgentsKeysPath(t *testing.T) {
-	var gotPath string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.EscapedPath()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(keyHistoryResponseJSON()))
-	}))
-	defer srv.Close()
-
-	_, err := FetchAllKeysFromURL(context.Background(), nil, srv.URL, "agent-abc")
-	if err != nil {
-		t.Fatalf("FetchAllKeysFromURL: %v", err)
+func TestFetchAllKeysFromURL_ReturnsDeprecatedError(t *testing.T) {
+	// FetchAllKeysFromURL is deprecated -- native HTTP fallback removed.
+	_, err := FetchAllKeysFromURL(context.Background(), nil, "http://unused", "agent-abc")
+	if err == nil {
+		t.Fatal("expected error from deprecated FetchAllKeysFromURL")
 	}
-	expected := "/api/agents/keys/agent-abc/all"
-	if gotPath != expected {
-		t.Fatalf("expected %q, got %q", expected, gotPath)
+	if !strings.Contains(err.Error(), "deprecated") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
