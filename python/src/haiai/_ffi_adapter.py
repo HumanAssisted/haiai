@@ -535,6 +535,52 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
+    # --- SSE Streaming ---
+
+    def connect_sse(self) -> int:
+        try:
+            return self._native.connect_sse_sync()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def sse_next_event(self, handle: int) -> Optional[dict[str, Any]]:
+        try:
+            raw = self._native.sse_next_event_sync(handle)
+            if raw is None:
+                return None
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def sse_close(self, handle: int) -> None:
+        try:
+            self._native.sse_close_sync(handle)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # --- WS Streaming ---
+
+    def connect_ws(self) -> int:
+        try:
+            return self._native.connect_ws_sync()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def ws_next_event(self, handle: int) -> Optional[dict[str, Any]]:
+        try:
+            raw = self._native.ws_next_event_sync(handle)
+            if raw is None:
+                return None
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def ws_close(self, handle: int) -> None:
+        try:
+            self._native.ws_close_sync(handle)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
 
 # =============================================================================
 # Async FFI Adapter
@@ -992,5 +1038,51 @@ class AsyncFFIAdapter:
     async def set_agent_email(self, email: str) -> None:
         try:
             await self._native.set_agent_email(email)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # --- SSE Streaming ---
+
+    async def connect_sse(self) -> int:
+        try:
+            return await self._native.connect_sse()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def sse_next_event(self, handle: int) -> Optional[dict[str, Any]]:
+        try:
+            raw = await self._native.sse_next_event(handle)
+            if raw is None:
+                return None
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def sse_close(self, handle: int) -> None:
+        try:
+            await self._native.sse_close(handle)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # --- WS Streaming ---
+
+    async def connect_ws(self) -> int:
+        try:
+            return await self._native.connect_ws()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def ws_next_event(self, handle: int) -> Optional[dict[str, Any]]:
+        try:
+            raw = await self._native.ws_next_event(handle)
+            if raw is None:
+                return None
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def ws_close(self, handle: int) -> None:
+        try:
+            await self._native.ws_close(handle)
         except RuntimeError as err:
             raise map_ffi_error(err) from err

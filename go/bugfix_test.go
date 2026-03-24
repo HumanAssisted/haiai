@@ -182,16 +182,22 @@ func TestLimitedReadAllExceedsLimit(t *testing.T) {
 }
 
 // ===========================================================================
-// MEDIUM #15: SSE http.Client has ResponseHeaderTimeout
+// MEDIUM #15: SSE connection via FFI (transport config moved to Rust)
 // ===========================================================================
 
-func TestSSEClientHasResponseHeaderTimeout(t *testing.T) {
-	// We can't easily test the internals of ConnectSSE without a real server,
-	// but we can verify the transport configuration function exists and
-	// returns the right config.
-	transport := newSSETransport()
-	if transport.ResponseHeaderTimeout != 30*time.Second {
-		t.Fatalf("expected ResponseHeaderTimeout of 30s, got %v", transport.ResponseHeaderTimeout)
+func TestSSEConnectionViaFFI(t *testing.T) {
+	// SSE transport configuration (timeouts, headers) is now handled by the
+	// Rust FFI layer. Verify that ConnectSSE delegates to FFI.
+	mock := newMockFFIClient("http://localhost", "test-jacs-id", "JACS test:123:sig")
+	cl := &Client{ffi: mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	// The default mock returns an error for ConnectSSE, confirming delegation.
+	_, err := cl.ConnectSSE(ctx)
+	if err == nil {
+		t.Fatal("expected error from mock ConnectSSE")
 	}
 }
 

@@ -406,6 +406,46 @@ impl HaiClient {
         self.inner.set_agent_email(email).await;
         Ok(())
     }
+
+    // =========================================================================
+    // SSE Streaming
+    // =========================================================================
+
+    #[napi]
+    pub async fn connect_sse(&self) -> Result<f64> {
+        let handle = self.inner.connect_sse().await.map_err(to_napi_err)?;
+        Ok(handle as f64)
+    }
+
+    #[napi]
+    pub async fn sse_next_event(&self, handle: f64) -> Result<Option<String>> {
+        hai_binding_core::sse_next_event(handle as u64).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn sse_close(&self, handle: f64) -> Result<()> {
+        hai_binding_core::sse_close(handle as u64).await.map_err(to_napi_err)
+    }
+
+    // =========================================================================
+    // WebSocket Streaming
+    // =========================================================================
+
+    #[napi]
+    pub async fn connect_ws(&self) -> Result<f64> {
+        let handle = self.inner.connect_ws().await.map_err(to_napi_err)?;
+        Ok(handle as f64)
+    }
+
+    #[napi]
+    pub async fn ws_next_event(&self, handle: f64) -> Result<Option<String>> {
+        hai_binding_core::ws_next_event(handle as u64).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn ws_close(&self, handle: f64) -> Result<()> {
+        hai_binding_core::ws_close(handle as u64).await.map_err(to_napi_err)
+    }
 }
 
 // =============================================================================

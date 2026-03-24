@@ -1029,6 +1029,98 @@ impl HaiClient {
         });
         Ok(())
     }
+
+    // =========================================================================
+    // SSE Streaming
+    // =========================================================================
+
+    fn connect_sse<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.connect_sse().await.map_err(to_py_err)
+        })
+    }
+
+    fn connect_sse_sync(&self, py: Python) -> PyResult<u64> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.connect_sse().await })
+        }).map_err(to_py_err)
+    }
+
+    fn sse_next_event<'py>(&self, py: Python<'py>, handle: u64) -> PyResult<Bound<'py, PyAny>> {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            hai_binding_core::sse_next_event(handle).await.map_err(to_py_err)
+        })
+    }
+
+    fn sse_next_event_sync(&self, py: Python, handle: u64) -> PyResult<Option<String>> {
+        check_not_async()?;
+        py.detach(|| {
+            RT.block_on(async { hai_binding_core::sse_next_event(handle).await })
+        }).map_err(to_py_err)
+    }
+
+    fn sse_close<'py>(&self, py: Python<'py>, handle: u64) -> PyResult<Bound<'py, PyAny>> {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            hai_binding_core::sse_close(handle).await.map_err(to_py_err)?;
+            Ok(())
+        })
+    }
+
+    fn sse_close_sync(&self, py: Python, handle: u64) -> PyResult<()> {
+        check_not_async()?;
+        py.detach(|| {
+            RT.block_on(async { hai_binding_core::sse_close(handle).await })
+        }).map_err(to_py_err)
+    }
+
+    // =========================================================================
+    // WebSocket Streaming
+    // =========================================================================
+
+    fn connect_ws<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.connect_ws().await.map_err(to_py_err)
+        })
+    }
+
+    fn connect_ws_sync(&self, py: Python) -> PyResult<u64> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.connect_ws().await })
+        }).map_err(to_py_err)
+    }
+
+    fn ws_next_event<'py>(&self, py: Python<'py>, handle: u64) -> PyResult<Bound<'py, PyAny>> {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            hai_binding_core::ws_next_event(handle).await.map_err(to_py_err)
+        })
+    }
+
+    fn ws_next_event_sync(&self, py: Python, handle: u64) -> PyResult<Option<String>> {
+        check_not_async()?;
+        py.detach(|| {
+            RT.block_on(async { hai_binding_core::ws_next_event(handle).await })
+        }).map_err(to_py_err)
+    }
+
+    fn ws_close<'py>(&self, py: Python<'py>, handle: u64) -> PyResult<Bound<'py, PyAny>> {
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            hai_binding_core::ws_close(handle).await.map_err(to_py_err)?;
+            Ok(())
+        })
+    }
+
+    fn ws_close_sync(&self, py: Python, handle: u64) -> PyResult<()> {
+        check_not_async()?;
+        py.detach(|| {
+            RT.block_on(async { hai_binding_core::ws_close(handle).await })
+        }).map_err(to_py_err)
+    }
 }
 
 // =============================================================================

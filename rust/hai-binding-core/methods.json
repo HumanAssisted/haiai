@@ -445,21 +445,61 @@
       "name": "connect_sse",
       "category": "streaming",
       "group": "streaming",
-      "status": "phase2_deferred",
-      "returns": "SseConnection (opaque handle)",
+      "status": "implemented",
+      "returns": "u64 (opaque handle ID)",
       "auth_required": true,
       "ffi_pattern": "connect_sse() -> handle, sse_next_event(handle) -> Option<String>, sse_close(handle)",
-      "notes": "Phase 2: Not yet implemented in binding-core. Native SSE implementations remain in each SDK."
+      "notes": "Returns opaque handle. Use sse_next_event/sse_close to poll and close."
+    },
+    {
+      "name": "sse_next_event",
+      "category": "streaming",
+      "group": "streaming",
+      "status": "implemented",
+      "params": { "handle_id": "u64" },
+      "returns": "Option<String> (JSON HaiEvent or null if closed)",
+      "auth_required": false,
+      "notes": "Standalone function (not on HaiClientWrapper). Releases mutex lock during await."
+    },
+    {
+      "name": "sse_close",
+      "category": "streaming",
+      "group": "streaming",
+      "status": "implemented",
+      "params": { "handle_id": "u64" },
+      "returns": "()",
+      "auth_required": false,
+      "notes": "Standalone function. Safe to call with invalid handle (no-op)."
     },
     {
       "name": "connect_ws",
       "category": "streaming",
       "group": "streaming",
-      "status": "phase2_deferred",
-      "returns": "WsConnection (opaque handle)",
+      "status": "implemented",
+      "returns": "u64 (opaque handle ID)",
       "auth_required": true,
       "ffi_pattern": "connect_ws() -> handle, ws_next_event(handle) -> Option<String>, ws_close(handle)",
-      "notes": "Phase 2: Not yet implemented in binding-core. Native WebSocket implementations remain in each SDK."
+      "notes": "Returns opaque handle. Use ws_next_event/ws_close to poll and close."
+    },
+    {
+      "name": "ws_next_event",
+      "category": "streaming",
+      "group": "streaming",
+      "status": "implemented",
+      "params": { "handle_id": "u64" },
+      "returns": "Option<String> (JSON HaiEvent or null if closed)",
+      "auth_required": false,
+      "notes": "Standalone function (not on HaiClientWrapper). Releases mutex lock during await."
+    },
+    {
+      "name": "ws_close",
+      "category": "streaming",
+      "group": "streaming",
+      "status": "implemented",
+      "params": { "handle_id": "u64" },
+      "returns": "()",
+      "auth_required": false,
+      "notes": "Standalone function. Safe to call with invalid handle (no-op)."
     }
   ],
   "callback": [
@@ -579,12 +619,12 @@
   ],
   "summary": {
     "async_methods": 51,
-    "streaming_methods": 2,
+    "streaming_methods": 6,
     "callback_methods": 2,
     "sync_methods": 10,
     "mutating_methods": 2,
     "excluded_methods": 5,
-    "total_public_methods": 72,
-    "binding_core_scope": "51 async + 2 streaming + 10 sync + 2 mutating = 65 methods"
+    "total_public_methods": 76,
+    "binding_core_scope": "51 async + 6 streaming + 10 sync + 2 mutating = 69 methods"
   }
 }

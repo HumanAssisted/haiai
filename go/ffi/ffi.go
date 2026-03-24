@@ -130,6 +130,16 @@ extern char* hai_jacs_id(HaiClientHandle handle);
 extern char* hai_set_hai_agent_id(HaiClientHandle handle, const char* id);
 extern char* hai_set_agent_email(HaiClientHandle handle, const char* email);
 
+// SSE Streaming
+extern unsigned long long hai_connect_sse(HaiClientHandle handle);
+extern char* hai_sse_next_event(unsigned long long handle_id);
+extern void hai_sse_close(unsigned long long handle_id);
+
+// WebSocket Streaming
+extern unsigned long long hai_connect_ws(HaiClientHandle handle);
+extern char* hai_ws_next_event(unsigned long long handle_id);
+extern void hai_ws_close(unsigned long long handle_id);
+
 // Error retrieval for hai_client_new
 extern char* hai_last_error();
 */
@@ -971,6 +981,69 @@ func (c *Client) SetAgentEmail(email string) error {
 	defer C.free(unsafe.Pointer(cs))
 	_, err := parseEnvelope(goString(C.hai_set_agent_email(c.handle, cs)))
 	return err
+}
+
+// --- SSE Streaming ---
+
+func (c *Client) ConnectSSE() (uint64, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return 0, err
+	}
+	handle := uint64(C.hai_connect_sse(c.handle))
+	if handle == 0 {
+		return 0, fmt.Errorf("failed to connect SSE")
+	}
+	return handle, nil
+}
+
+func (c *Client) SSENextEvent(handleID uint64) (json.RawMessage, error) {
+	result := goString(C.hai_sse_next_event(C.ulonglong(handleID)))
+	raw, err := parseEnvelope(result)
+	if err != nil {
+		return nil, err
+	}
+	// null means connection closed
+	if string(raw) == "null" {
+		return nil, nil
+	}
+	return raw, nil
+}
+
+func (c *Client) SSEClose(handleID uint64) {
+	C.hai_sse_close(C.ulonglong(handleID))
+}
+
+// --- WebSocket Streaming ---
+
+func (c *Client) ConnectWS() (uint64, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return 0, err
+	}
+	handle := uint64(C.hai_connect_ws(c.handle))
+	if handle == 0 {
+		return 0, fmt.Errorf("failed to connect WebSocket")
+	}
+	return handle, nil
+}
+
+func (c *Client) WSNextEvent(handleID uint64) (json.RawMessage, error) {
+	result := goString(C.hai_ws_next_event(C.ulonglong(handleID)))
+	raw, err := parseEnvelope(result)
+	if err != nil {
+		return nil, err
+	}
+	if string(raw) == "null" {
+		return nil, nil
+	}
+	return raw, nil
+}
+
+func (c *Client) WSClose(handleID uint64) {
+	C.hai_ws_close(C.ulonglong(handleID))
 }
 
 // MapFFIError converts an FFI error to the appropriate haiai error type.

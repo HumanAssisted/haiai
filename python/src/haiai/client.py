@@ -1785,7 +1785,7 @@ class HaiClient:
         return ffi.fetch_all_keys(jacs_id)
 
     # ------------------------------------------------------------------
-    # connect (SSE + WS) -- stays native for Phase 2
+    # connect (SSE + WS) -- via FFI opaque handles
     # ------------------------------------------------------------------
 
     def connect(
@@ -1803,7 +1803,6 @@ class HaiClient:
         Yields:
             HaiEvent instances.
         """
-        # TODO(DRY_FFI_PHASE2): migrate to FFI streaming
         if transport not in ("sse", "ws"):
             raise ValueError(f"transport must be 'sse' or 'ws', got '{transport}'")
 
@@ -1817,173 +1816,101 @@ class HaiClient:
             yield from self._connect_sse(hai_url)
 
     def _connect_sse(self, hai_url: str) -> Iterator[HaiEvent]:
-        """Stream events from ``GET /api/v1/agents/connect`` via SSE."""
-        # TODO(DRY_FFI_PHASE2): migrate to FFI streaming
-        import httpx as _httpx
-        from haiai._retry import RETRY_MAX_ATTEMPTS, backoff, should_retry
-
-        url = self._make_url(hai_url, "/api/v1/agents/connect")
-        headers = self._build_auth_headers()
-        headers["Accept"] = "text/event-stream"
-
-        attempt = 0
-        while not self._should_disconnect:
-            try:
-                if self._last_event_id:
-                    headers["Last-Event-ID"] = self._last_event_id
-
-                with _httpx.stream(
-                    "GET",
-                    url,
-                    headers=headers,
-                    timeout=_httpx.Timeout(
-                        connect=10.0, read=90.0, write=10.0, pool=10.0
-                    ),
-                ) as response:
-                    if response.status_code in (401, 403):
-                        raise HaiAuthError(
-                            f"Authentication failed: {response.status_code}",
-                            status_code=response.status_code,
-                        )
-                    if (
-                        should_retry(response.status_code)
-                        and attempt < RETRY_MAX_ATTEMPTS
-                    ):
-                        delay = backoff(attempt)
-                        logger.warning(
-                            "SSE connect got %d, retrying in %.1fs",
-                            response.status_code,
-                            delay,
-                        )
-                        time.sleep(delay)
-                        attempt += 1
-                        continue
-                    response.raise_for_status()
-
-                    self._connected = True
-                    self._sse_connection = response
-                    attempt = 0
-
-                    buf: list[str] = []
-                    for raw_line in response.iter_lines():
-                        if self._should_disconnect:
-                            break
-                        line = raw_line.rstrip("\n").rstrip("\r")
-
-                        if line == "":
-                            parsed = parse_sse_lines(buf)
-                            buf = []
-                            if parsed is None:
-                                continue
-                            event_type, data_str = parsed
-                            event = self._make_event(event_type, data_str)
-                            if event is not None:
-                                yield event
-                        else:
-                            buf.append(line)
-
-            except (
-                _httpx.ReadTimeout,
-                _httpx.RemoteProtocolError,
-                _httpx.ReadError,
-            ) as exc:
-                self._connected = False
-                if self._should_disconnect:
-                    break
-                if not self._connected and attempt == 0:
-                    raise HaiConnectionError(f"SSE connection failed: {exc}") from exc
-                if attempt >= RETRY_MAX_ATTEMPTS:
-                    raise HaiConnectionError(
-                        f"SSE connection lost after {RETRY_MAX_ATTEMPTS} retries"
-                    ) from exc
-                delay = backoff(attempt)
-                logger.warning(
-                    "SSE connection lost (%s), reconnecting in %.1fs",
-                    exc,
-                    delay,
-                )
-                time.sleep(delay)
-                attempt += 1
-                headers = self._build_auth_headers()
-                headers["Accept"] = "text/event-stream"
-                continue
-            except _httpx.HTTPStatusError as exc:
-                self._connected = False
-                raise HaiApiError(
-                    f"SSE connect failed: {exc.response.status_code}",
-                    status_code=exc.response.status_code,
-                    body=exc.response.text,
-                ) from exc
-
-            break
-
-        self._connected = False
-
-    def _connect_ws(self, hai_url: str) -> Iterator[HaiEvent]:
-        """Stream events via ``/ws/agent/connect``."""
-        # TODO(DRY_FFI_PHASE2): migrate to FFI streaming
-        import websockets.sync.client as ws_sync
+        """Stream events via SSE using FFI opaque handles."""
         from haiai._retry import RETRY_MAX_ATTEMPTS, backoff
 
-        base = hai_url.rstrip("/")
-        if base.startswith("https://"):
-            ws_url = "wss://" + base[len("https://"):]
-        elif base.startswith("http://"):
-            ws_url = "ws://" + base[len("http://"):]
-        else:
-            ws_url = base
-        ws_url += "/ws/agent/connect"
-
-        headers = self._build_auth_headers()
-
+        ffi = self._get_ffi()
         attempt = 0
         while not self._should_disconnect:
+            handle = None
             try:
-                with ws_sync.connect(
-                    ws_url, additional_headers=headers, close_timeout=5,
-                ) as ws:
-                    self._ws = ws
-                    self._connected = True
-                    attempt = 0
+                handle = ffi.connect_sse()
+                self._connected = True
+                attempt = 0  # Reset on successful connect
 
-                    for raw_msg in ws:
-                        if self._should_disconnect:
-                            break
-                        if isinstance(raw_msg, bytes):
-                            raw_msg = raw_msg.decode("utf-8", errors="replace")
+                while not self._should_disconnect:
+                    event_data = ffi.sse_next_event(handle)
+                    if event_data is None:
+                        # Connection closed
+                        break
 
-                        try:
-                            data = json.loads(raw_msg)
-                        except json.JSONDecodeError:
-                            logger.warning("Non-JSON WS message: %s", raw_msg[:200])
-                            continue
+                    event = HaiEvent(
+                        event_type=event_data.get("event_type", ""),
+                        data=event_data.get("data", {}),
+                        id=event_data.get("id"),
+                        raw=event_data.get("raw", ""),
+                    )
+                    if event.id:
+                        self._last_event_id = event.id
+                    yield event
 
-                        event = self._make_event_from_ws(data)
-                        if event is not None:
-                            yield event
-
+            except HaiAuthError:
+                raise
             except Exception as exc:
-                self._connected = False
-                if self._should_disconnect:
-                    break
                 if attempt >= RETRY_MAX_ATTEMPTS:
                     raise HaiConnectionError(
-                        f"WebSocket lost after {RETRY_MAX_ATTEMPTS} retries: {exc}"
-                    ) from exc
+                        f"SSE connection failed after {attempt} attempts: {exc}"
+                    )
                 delay = backoff(attempt)
                 logger.warning(
-                    "WebSocket lost (%s), reconnecting in %.1fs",
-                    exc,
-                    delay,
+                    "SSE connection lost, retrying in %.1fs: %s", delay, exc
                 )
                 time.sleep(delay)
                 attempt += 1
-                headers = self._build_auth_headers()
-                continue
+            finally:
+                self._connected = False
+                if handle is not None:
+                    try:
+                        ffi.sse_close(handle)
+                    except Exception:
+                        pass
 
-            break
+    def _connect_ws(self, hai_url: str) -> Iterator[HaiEvent]:
+        """Stream events via WebSocket using FFI opaque handles."""
+        from haiai._retry import RETRY_MAX_ATTEMPTS, backoff
 
-        self._connected = False
+        ffi = self._get_ffi()
+        attempt = 0
+        while not self._should_disconnect:
+            handle = None
+            try:
+                handle = ffi.connect_ws()
+                self._connected = True
+                attempt = 0
+
+                while not self._should_disconnect:
+                    event_data = ffi.ws_next_event(handle)
+                    if event_data is None:
+                        break
+
+                    event = HaiEvent(
+                        event_type=event_data.get("event_type", ""),
+                        data=event_data.get("data", {}),
+                        id=event_data.get("id"),
+                        raw=event_data.get("raw", ""),
+                    )
+                    yield event
+
+            except HaiAuthError:
+                raise
+            except Exception as exc:
+                if attempt >= RETRY_MAX_ATTEMPTS:
+                    raise HaiConnectionError(
+                        f"WS connection failed after {attempt} attempts: {exc}"
+                    )
+                delay = backoff(attempt)
+                logger.warning(
+                    "WS connection lost, retrying in %.1fs: %s", delay, exc
+                )
+                time.sleep(delay)
+                attempt += 1
+            finally:
+                self._connected = False
+                if handle is not None:
+                    try:
+                        ffi.ws_close(handle)
+                    except Exception:
+                        pass
 
     # ------------------------------------------------------------------
     # Event construction helpers

@@ -114,6 +114,14 @@ interface NativeHaiClient {
   jacsId(): Promise<string>;
   setHaiAgentId(id: string): Promise<void>;
   setAgentEmail(email: string): Promise<void>;
+
+  // Streaming (SSE / WebSocket)
+  connectSse(): Promise<number>;
+  sseNextEvent(handle: number): Promise<string | null>;
+  sseClose(handle: number): Promise<void>;
+  connectWs(): Promise<number>;
+  wsNextEvent(handle: number): Promise<string | null>;
+  wsClose(handle: number): Promise<void>;
 }
 
 interface NativeHaiClientConstructor {
@@ -790,6 +798,62 @@ export class FFIClientAdapter {
   async setAgentEmail(email: string): Promise<void> {
     try {
       await this.native.setAgentEmail(email);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Streaming (SSE / WebSocket)
+  // ---------------------------------------------------------------------------
+
+  async connectSse(): Promise<number> {
+    try {
+      return await this.native.connectSse();
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async sseNextEvent(handle: number): Promise<Record<string, unknown> | null> {
+    try {
+      const raw = await this.native.sseNextEvent(handle);
+      if (raw === null || raw === undefined) return null;
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async sseClose(handle: number): Promise<void> {
+    try {
+      await this.native.sseClose(handle);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async connectWs(): Promise<number> {
+    try {
+      return await this.native.connectWs();
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async wsNextEvent(handle: number): Promise<Record<string, unknown> | null> {
+    try {
+      const raw = await this.native.wsNextEvent(handle);
+      if (raw === null || raw === undefined) return null;
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async wsClose(handle: number): Promise<void> {
+    try {
+      await this.native.wsClose(handle);
     } catch (err) {
       throw mapFFIError(err);
     }

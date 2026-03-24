@@ -26,7 +26,7 @@ from typing import Any, AsyncIterator, Optional, Union
 from urllib.parse import quote
 
 from haiai._ffi_adapter import AsyncFFIAdapter
-from haiai._sse import flatten_benchmark_job, parse_sse_lines
+from haiai._sse import flatten_benchmark_job  # noqa: F401
 from haiai.signing import canonicalize_json, create_agent_document  # noqa: F401
 from haiai.errors import (
     BenchmarkError,
@@ -1069,68 +1069,57 @@ class AsyncHaiClient:
         return await ffi.verify_agent_document(json.dumps(request))
 
     # ------------------------------------------------------------------
-    # connect (SSE async streaming) -- stays native for Phase 2
+    # connect (SSE + WS async streaming) -- via FFI opaque handles
     # ------------------------------------------------------------------
 
     async def connect(
         self, hai_url: str, *, transport: str = "sse",
     ) -> AsyncIterator[HaiEvent]:
-        """Connect to HAI and yield events asynchronously."""
-        # TODO(DRY_FFI_PHASE2): migrate to FFI streaming
-        import httpx as _httpx
-
-        if transport != "sse":
-            raise ValueError(f"Async client only supports 'sse' transport, got '{transport}'")
+        """Connect to HAI and yield events asynchronously via FFI."""
+        if transport not in ("sse", "ws"):
+            raise ValueError(f"transport must be 'sse' or 'ws', got '{transport}'")
 
         self._hai_url = hai_url
         self._should_disconnect = False
         self._connected = False
 
-        url = self._make_url(hai_url, "/api/v1/agents/connect")
-        headers = self._build_auth_headers()
-        headers["Accept"] = "text/event-stream"
+        ffi = self._get_ffi()
+        handle = None
+        try:
+            if transport == "ws":
+                handle = await ffi.connect_ws()
+            else:
+                handle = await ffi.connect_sse()
 
-        async with _httpx.AsyncClient() as http:
-            async with http.stream(
-                "GET", url, headers=headers,
-                timeout=_httpx.Timeout(connect=10.0, read=90.0, write=10.0, pool=10.0),
-            ) as response:
-                if response.status_code in (401, 403):
-                    raise HaiAuthError(
-                        f"Authentication failed: {response.status_code}",
-                        status_code=response.status_code,
-                    )
-                response.raise_for_status()
-                self._connected = True
+            self._connected = True
 
-                buf: list[str] = []
-                async for raw_line in response.aiter_lines():
-                    if self._should_disconnect:
-                        break
-                    line = raw_line.rstrip("\n").rstrip("\r")
-                    if line == "":
-                        parsed = parse_sse_lines(buf)
-                        buf = []
-                        if parsed is None:
-                            continue
-                        event_type, data_str = parsed
-                        try:
-                            data: Any = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            data = data_str
-                        if isinstance(data, dict) and is_signed_event(data):
-                            payload, _ = unwrap_signed_event(
-                                data, hai_url=self._hai_url,
-                                verify=self._verify_server_signatures,
-                            )
-                            data = payload
-                        if event_type == "benchmark_job" and isinstance(data, dict):
-                            data = flatten_benchmark_job(data)
-                        yield HaiEvent(event_type=event_type, data=data, raw=data_str)
-                    else:
-                        buf.append(line)
+            while not self._should_disconnect:
+                if transport == "ws":
+                    event_data = await ffi.ws_next_event(handle)
+                else:
+                    event_data = await ffi.sse_next_event(handle)
 
+                if event_data is None:
+                    break
+
+                event = HaiEvent(
+                    event_type=event_data.get("event_type", ""),
+                    data=event_data.get("data", {}),
+                    id=event_data.get("id"),
+                    raw=event_data.get("raw", ""),
+                )
+                yield event
+
+        finally:
             self._connected = False
+            if handle is not None:
+                try:
+                    if transport == "ws":
+                        await ffi.ws_close(handle)
+                    else:
+                        await ffi.sse_close(handle)
+                except Exception:
+                    pass
 
     def disconnect(self) -> None:
         """Signal the SSE loop to stop."""

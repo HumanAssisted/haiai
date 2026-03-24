@@ -94,4 +94,14 @@ type FFIClient interface {
 	GetEmailTemplate(templateID string) (json.RawMessage, error)
 	UpdateEmailTemplate(templateID, optionsJSON string) (json.RawMessage, error)
 	DeleteEmailTemplate(templateID string) (json.RawMessage, error)
+
+	// SSE Streaming
+	ConnectSSE() (uint64, error)
+	SSENextEvent(handleID uint64) (json.RawMessage, error)
+	SSEClose(handleID uint64)
+
+	// WebSocket Streaming
+	ConnectWS() (uint64, error)
+	WSNextEvent(handleID uint64) (json.RawMessage, error)
+	WSClose(handleID uint64)
 }

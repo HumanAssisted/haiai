@@ -4,23 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"strings"
-	"sync"
-	"time"
-
-	"github.com/gorilla/websocket"
+	"log"
 )
 
-// WSConnection represents an active WebSocket connection to HAI.
+// WSConnection represents an active WebSocket connection to HAI via FFI.
 type WSConnection struct {
-	client *Client
-	conn   *websocket.Conn
-	events chan AgentEvent
-	done   chan struct{}
-	cancel context.CancelFunc
-
-	mu sync.Mutex // protects conn writes
+	client   *Client
+	handleID uint64
+	events   chan AgentEvent
+	done     chan struct{}
+	cancel   context.CancelFunc
 }
 
 // Events returns the channel that receives AgentEvent values from the server.
@@ -31,116 +24,35 @@ func (ws *WSConnection) Events() <-chan AgentEvent {
 // Close terminates the WebSocket connection.
 func (ws *WSConnection) Close() {
 	ws.cancel()
-
-	ws.mu.Lock()
-	if ws.conn != nil {
-		ws.conn.WriteMessage(
-			websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
-		)
-	}
-	ws.mu.Unlock()
-
+	ws.client.ffi.WSClose(ws.handleID)
 	<-ws.done
 }
 
 // SendJobResponse sends a job response directly over the WebSocket.
-// This is an alternative to using the HTTP POST endpoint.
+// TODO: Bidirectional WS send is not yet supported via FFI. Use client.SubmitResponse() instead.
 func (ws *WSConnection) SendJobResponse(jobID string, response ModerationResponse) error {
-	msg := struct {
-		Type     string             `json:"type"`
-		JobID    string             `json:"job_id"`
-		Response ModerationResponse `json:"response"`
-	}{
-		Type:     "job_response",
-		JobID:    jobID,
-		Response: response,
-	}
-
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return wrapError(ErrTransport, err, "failed to marshal job response")
-	}
-
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
-
-	if ws.conn == nil {
-		return newError(ErrTransport, "WebSocket connection closed")
-	}
-
-	return ws.conn.WriteMessage(websocket.TextMessage, data)
+	return newError(ErrTransport, "SendJobResponse is not supported via FFI; use client.SubmitResponse() instead")
 }
 
-// SendPong sends a pong response to a heartbeat ping.
-func (ws *WSConnection) sendPong(timestamp int64) error {
-	msg := struct {
-		Type      string `json:"type"`
-		Timestamp int64  `json:"timestamp"`
-	}{
-		Type:      "pong",
-		Timestamp: timestamp,
-	}
-
-	data, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
-
-	if ws.conn == nil {
-		return newError(ErrTransport, "WebSocket connection closed")
-	}
-
-	return ws.conn.WriteMessage(websocket.TextMessage, data)
-}
-
-// ConnectWS establishes a WebSocket connection to HAI for real-time communication.
+// ConnectWS establishes a WebSocket connection to HAI via FFI.
 //
-// JACS authentication is handled via HTTP upgrade headers (Authorization header).
-// No post-connection handshake message is required — this matches the Python SDK
-// behavior and the server's resolve_agent_for_connection() which extracts JACS
-// credentials from the upgrade request headers.
+// The returned WSConnection provides an Events() channel that emits AgentEvent values.
+// Call Close() to terminate the connection.
 //
 // Uses endpoint: GET /ws/agent/connect (upgraded to WebSocket).
 func (c *Client) ConnectWS(ctx context.Context) (*WSConnection, error) {
+	handleID, err := c.ffi.ConnectWS()
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
-
-	// Build WebSocket URL (http -> ws, https -> wss)
-	wsURL := c.endpoint + "/ws/agent/connect"
-	wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
-	wsURL = strings.Replace(wsURL, "http://", "ws://", 1)
-
-	// Build auth headers via CryptoBackend
-	authHeader, err := c.buildAuthHeader()
-	if err != nil {
-		cancel()
-		return nil, wrapError(ErrTransport, err, "failed to authenticate WebSocket request")
-	}
-	requestHeader := http.Header{}
-	requestHeader.Set("Authorization", authHeader)
-
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
-	}
-
-	wsConn, resp, err := dialer.DialContext(ctx, wsURL, requestHeader)
-	if err != nil {
-		cancel()
-		if resp != nil {
-			return nil, newError(ErrTransport, "WebSocket upgrade failed with status %d", resp.StatusCode)
-		}
-		return nil, wrapError(ErrTransport, err, "WebSocket connection failed")
-	}
-
 	conn := &WSConnection{
-		client: c,
-		conn:   wsConn,
-		events: make(chan AgentEvent, 16),
-		done:   make(chan struct{}),
-		cancel: cancel,
+		client:   c,
+		handleID: handleID,
+		events:   make(chan AgentEvent, 16),
+		done:     make(chan struct{}),
+		cancel:   cancel,
 	}
 
 	go conn.readLoop(ctx)
@@ -148,18 +60,9 @@ func (c *Client) ConnectWS(ctx context.Context) (*WSConnection, error) {
 	return conn, nil
 }
 
-// readLoop reads messages from the WebSocket connection.
 func (ws *WSConnection) readLoop(ctx context.Context) {
 	defer close(ws.done)
 	defer close(ws.events)
-	defer func() {
-		ws.mu.Lock()
-		if ws.conn != nil {
-			ws.conn.Close()
-			ws.conn = nil
-		}
-		ws.mu.Unlock()
-	}()
 
 	for {
 		select {
@@ -168,29 +71,28 @@ func (ws *WSConnection) readLoop(ctx context.Context) {
 		default:
 		}
 
-		_, message, err := ws.conn.ReadMessage()
+		raw, err := ws.client.ffi.WSNextEvent(ws.handleID)
 		if err != nil {
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				return
-			}
-			// Context cancelled or other error
+			log.Printf("[haiai] WS event error: %v", err)
+			return
+		}
+		if raw == nil {
+			// Connection closed by server
 			return
 		}
 
 		var event AgentEvent
-		if err := json.Unmarshal(message, &event); err != nil {
+		if err := json.Unmarshal(raw, &event); err != nil {
+			log.Printf("[haiai] WS unmarshal error: %v", err)
 			continue
-		}
-
-		// Auto-reply to heartbeats
-		if event.Type == "heartbeat" {
-			ws.sendPong(event.Timestamp)
 		}
 
 		select {
 		case ws.events <- event:
+		case <-ctx.Done():
+			return
 		default:
-			// Channel full, drop event
+			log.Printf("[haiai] WARNING: WS event dropped (channel full, buffer=%d): type=%s", cap(ws.events), event.Type)
 		}
 	}
 }

@@ -526,6 +526,36 @@ func (r *recordingFFIClient) DeleteEmailTemplate(templateID string) (json.RawMes
 	return r.inner.DeleteEmailTemplate(templateID)
 }
 
+// --- SSE Streaming ---
+
+func (r *recordingFFIClient) ConnectSSE() (uint64, error) {
+	*r.calls = append(*r.calls, "ConnectSSE")
+	return r.inner.ConnectSSE()
+}
+func (r *recordingFFIClient) SSENextEvent(handleID uint64) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "SSENextEvent")
+	return r.inner.SSENextEvent(handleID)
+}
+func (r *recordingFFIClient) SSEClose(handleID uint64) {
+	*r.calls = append(*r.calls, "SSEClose")
+	r.inner.SSEClose(handleID)
+}
+
+// --- WebSocket Streaming ---
+
+func (r *recordingFFIClient) ConnectWS() (uint64, error) {
+	*r.calls = append(*r.calls, "ConnectWS")
+	return r.inner.ConnectWS()
+}
+func (r *recordingFFIClient) WSNextEvent(handleID uint64) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "WSNextEvent")
+	return r.inner.WSNextEvent(handleID)
+}
+func (r *recordingFFIClient) WSClose(handleID uint64) {
+	*r.calls = append(*r.calls, "WSClose")
+	r.inner.WSClose(handleID)
+}
+
 // Compile-time check: recordingFFIClient satisfies FFIClient.
 var _ FFIClient = (*recordingFFIClient)(nil)
 

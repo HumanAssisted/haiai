@@ -625,6 +625,112 @@ pub extern "C" fn hai_set_agent_email(handle: HaiClientHandle, email: *const c_c
 }
 
 // =============================================================================
+// FFI Methods — SSE Streaming
+// =============================================================================
+
+#[no_mangle]
+pub extern "C" fn hai_connect_sse(handle: HaiClientHandle) -> u64 {
+    if handle.is_null() {
+        return 0;
+    }
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let client = unsafe { &*handle }.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.connect_sse().await;
+            let _ = tx.send(r);
+        });
+        match rx.recv().unwrap() {
+            Ok(h) => h,
+            Err(_) => 0,
+        }
+    }));
+    result.unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn hai_sse_next_event(handle_id: u64) -> *mut c_char {
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = hai_binding_core::sse_next_event(handle_id).await;
+            let _ = tx.send(r);
+        });
+        match rx.recv().unwrap() {
+            Ok(Some(json)) => to_c_string(format!(r#"{{"ok":{json}}}"#)),
+            Ok(None) => to_c_string(r#"{"ok":null}"#.to_string()),
+            Err(e) => to_c_string(error_to_json(&e)),
+        }
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+#[no_mangle]
+pub extern "C" fn hai_sse_close(handle_id: u64) {
+    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let _ = hai_binding_core::sse_close(handle_id).await;
+            let _ = tx.send(());
+        });
+        let _ = rx.recv();
+    }));
+}
+
+// =============================================================================
+// FFI Methods — WebSocket Streaming
+// =============================================================================
+
+#[no_mangle]
+pub extern "C" fn hai_connect_ws(handle: HaiClientHandle) -> u64 {
+    if handle.is_null() {
+        return 0;
+    }
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let client = unsafe { &*handle }.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.connect_ws().await;
+            let _ = tx.send(r);
+        });
+        match rx.recv().unwrap() {
+            Ok(h) => h,
+            Err(_) => 0,
+        }
+    }));
+    result.unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn hai_ws_next_event(handle_id: u64) -> *mut c_char {
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = hai_binding_core::ws_next_event(handle_id).await;
+            let _ = tx.send(r);
+        });
+        match rx.recv().unwrap() {
+            Ok(Some(json)) => to_c_string(format!(r#"{{"ok":{json}}}"#)),
+            Ok(None) => to_c_string(r#"{"ok":null}"#.to_string()),
+            Err(e) => to_c_string(error_to_json(&e)),
+        }
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+#[no_mangle]
+pub extern "C" fn hai_ws_close(handle_id: u64) {
+    let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let _ = hai_binding_core::ws_close(handle_id).await;
+            let _ = tx.send(());
+        });
+        let _ = rx.recv();
+    }));
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 

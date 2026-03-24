@@ -538,6 +538,30 @@ func (m *mockFFIClient) DeleteEmailTemplate(templateID string) (json.RawMessage,
 	return m.doDelete(path)
 }
 
+// --- SSE Streaming ---
+
+func (m *mockFFIClient) ConnectSSE() (uint64, error) {
+	return 0, fmt.Errorf("mock: ConnectSSE not implemented")
+}
+
+func (m *mockFFIClient) SSENextEvent(handleID uint64) (json.RawMessage, error) {
+	return nil, fmt.Errorf("mock: SSENextEvent not implemented")
+}
+
+func (m *mockFFIClient) SSEClose(handleID uint64) {}
+
+// --- WebSocket Streaming ---
+
+func (m *mockFFIClient) ConnectWS() (uint64, error) {
+	return 0, fmt.Errorf("mock: ConnectWS not implemented")
+}
+
+func (m *mockFFIClient) WSNextEvent(handleID uint64) (json.RawMessage, error) {
+	return nil, fmt.Errorf("mock: WSNextEvent not implemented")
+}
+
+func (m *mockFFIClient) WSClose(handleID uint64) {}
+
 // --- Helpers ---
 
 func urlEncode(s string) string {

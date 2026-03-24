@@ -50,19 +50,18 @@ import {
   AuthenticationError,
   HaiConnectionError,
 } from './errors.js';
-import { signResponse, canonicalJson, getServerKeys, unwrapSignedEvent } from './signing.js';
+import { signResponse, canonicalJson, getServerKeys } from './signing.js';
 import { loadConfig } from './config.js';
 import { JacsAgent } from '@hai.ai/jacs';
-import { parseSseStream } from './sse.js';
-import { openWebSocket, wsEventStream } from './ws.js';
+// SSE/WS helpers retained in sse.ts and ws.ts for cleanup in Task 012.
+// Streaming now uses FFI handles (connectSse/connectWs).
 import { FFIClientAdapter } from './ffi-client.js';
 
 /**
  * HAI platform client.
  *
  * Zero-config: `new HaiClient()` auto-discovers jacs.config.json.
- * All HTTP calls delegate to the Rust binding-core via FFI (haiinpm).
- * Streaming (SSE/WS) remains native Node.js.
+ * All HTTP calls and streaming (SSE/WS) delegate to the Rust binding-core via FFI (haiinpm).
  *
  * @example
  * ```typescript
@@ -1006,159 +1005,97 @@ export class HaiClient {
   }
 
   // ---------------------------------------------------------------------------
-  // SSE transport (internal, stays native)
-  // TODO(DRY_FFI_PHASE2): migrate to FFI streaming
+  // SSE transport (via FFI opaque handles)
   // ---------------------------------------------------------------------------
 
   private async *connectSse(
     onEvent?: (event: HaiEvent) => void,
   ): AsyncGenerator<HaiEvent> {
-    const url = `${this.baseUrl}/api/v1/agents/connect`;
-    let reconnectDelay = 1000;
-    const maxReconnectDelay = 60000;
-    let reconnectAttempts = 0;
+    let attempt = 0;
 
     while (!this._shouldDisconnect) {
+      let handle: number | null = null;
       try {
-        const headers: Record<string, string> = {
-          'Authorization': this.buildAuthHeader(),
-          'Content-Type': 'application/json',
-          'Accept': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-        };
-        if (this._lastEventId) {
-          headers['Last-Event-ID'] = this._lastEventId;
-        }
-
-        const response = await fetch(url, { headers });
-
-        if (response.status === 401) {
-          throw new AuthenticationError('JACS signature rejected by HAI', 401);
-        }
-        if (!response.ok) {
-          throw new HaiConnectionError(`SSE connection failed with status ${response.status}`);
-        }
-        if (!response.body) {
-          throw new HaiConnectionError('SSE response has no body');
-        }
-
+        handle = await this.ffi.connectSse();
         this._connected = true;
-        reconnectDelay = 1000;
+        attempt = 0;
 
-        for await (const event of parseSseStream(response.body)) {
-          if (this._shouldDisconnect) break;
+        while (!this._shouldDisconnect) {
+          const eventData = await this.ffi.sseNextEvent(handle);
+          if (eventData === null) break; // Connection closed
+
+          const event: HaiEvent = {
+            eventType: (eventData as Record<string, unknown>).event_type as string || '',
+            data: (eventData as Record<string, unknown>).data || {},
+            id: (eventData as Record<string, unknown>).id as string | undefined,
+            raw: (eventData as Record<string, unknown>).raw as string || '',
+          };
+
           if (event.id) this._lastEventId = event.id;
-
-          // Unwrap signed events if we have server keys
-          if (typeof event.data === 'object' && event.data !== null) {
-            event.data = unwrapSignedEvent(
-              event.data as Record<string, unknown>,
-              this.serverPublicKeys,
-            );
-          }
-
           if (onEvent) onEvent(event);
           yield event;
         }
-      } catch (e) {
+      } catch (err) {
+        if (err instanceof HaiError && (err as HaiError & { statusCode?: number }).statusCode === 401) throw err;
+        if (attempt >= this.maxReconnectAttempts) throw err;
+        const delay = Math.min(1000 * Math.pow(2, attempt), 60000);
+        await new Promise(r => setTimeout(r, delay));
+        attempt++;
+      } finally {
         this._connected = false;
-        if (this._shouldDisconnect) break;
-        if (e instanceof HaiError) throw e;
-
-        reconnectAttempts++;
-        if (reconnectAttempts >= this.maxReconnectAttempts) {
-          throw new HaiConnectionError(
-            `SSE connection failed after ${reconnectAttempts} reconnect attempts`,
-          );
+        if (handle !== null) {
+          try { await this.ffi.sseClose(handle); } catch { /* ignore */ }
         }
-
-        await new Promise(resolve => setTimeout(resolve, reconnectDelay));
-        reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
       }
     }
-
-    this._connected = false;
   }
 
   // ---------------------------------------------------------------------------
-  // WebSocket transport (internal, stays native)
-  // TODO(DRY_FFI_PHASE2): migrate to FFI streaming
+  // WebSocket transport (via FFI opaque handles)
   // ---------------------------------------------------------------------------
 
   private async *connectWs(
     onEvent?: (event: HaiEvent) => void,
   ): AsyncGenerator<HaiEvent> {
-    const wsUrl = this.baseUrl
-      .replace(/^https:/, 'wss:')
-      .replace(/^http:/, 'ws:')
-      + '/ws/agent/connect';
-
-    let reconnectDelay = 1000;
-    const maxReconnectDelay = 60000;
-    let reconnectAttempts = 0;
+    let attempt = 0;
 
     while (!this._shouldDisconnect) {
+      let handle: number | null = null;
       try {
-        const headers: Record<string, string> = {
-          Authorization: this.buildAuthHeader(),
-        };
-        if (this._lastEventId) {
-          headers['Last-Event-ID'] = this._lastEventId;
-        }
+        handle = await this.ffi.connectWs();
+        this._connected = true;
+        this._wsConnection = handle;
+        attempt = 0;
 
-        const ws = await openWebSocket(wsUrl, headers, this.timeout);
-        this._wsConnection = ws;
+        while (!this._shouldDisconnect) {
+          const eventData = await this.ffi.wsNextEvent(handle);
+          if (eventData === null) break; // Connection closed
 
-        try {
-          this._connected = true;
-          reconnectDelay = 1000;
-
-          // Yield connected event
-          const connEvent: HaiEvent = {
-            eventType: 'connected',
-            data: null,
-            raw: '',
+          const event: HaiEvent = {
+            eventType: (eventData as Record<string, unknown>).event_type as string || '',
+            data: (eventData as Record<string, unknown>).data || {},
+            id: (eventData as Record<string, unknown>).id as string | undefined,
+            raw: (eventData as Record<string, unknown>).raw as string || '',
           };
-          if (onEvent) onEvent(connEvent);
-          yield connEvent;
 
-          // Yield all subsequent messages
-          for await (const event of wsEventStream(ws)) {
-            if (this._shouldDisconnect) break;
-            if (event.id) this._lastEventId = event.id;
-
-            // Auto-pong on heartbeat
-            if (event.eventType === 'heartbeat') {
-              const data = event.data as Record<string, unknown>;
-              const timestamp = (data.timestamp as number) ?? Math.floor(Date.now() / 1000);
-              ws.send(JSON.stringify({ type: 'pong', timestamp }));
-            }
-
-            if (onEvent) onEvent(event);
-            yield event;
-          }
-        } finally {
-          try { ws.close(); } catch { /* ignore */ }
-          this._wsConnection = null;
+          if (event.id) this._lastEventId = event.id;
+          if (onEvent) onEvent(event);
+          yield event;
         }
-      } catch (e) {
+      } catch (err) {
+        if (err instanceof HaiError && (err as HaiError & { statusCode?: number }).statusCode === 401) throw err;
+        if (attempt >= this.maxReconnectAttempts) throw err;
+        const delay = Math.min(1000 * Math.pow(2, attempt), 60000);
+        await new Promise(r => setTimeout(r, delay));
+        attempt++;
+      } finally {
         this._connected = false;
-        if (this._shouldDisconnect) break;
-        if (e instanceof HaiError) throw e;
-
-        reconnectAttempts++;
-        if (reconnectAttempts >= this.maxReconnectAttempts) {
-          throw new HaiConnectionError(
-            `WebSocket connection failed after ${reconnectAttempts} reconnect attempts`,
-          );
+        this._wsConnection = null;
+        if (handle !== null) {
+          try { await this.ffi.wsClose(handle); } catch { /* ignore */ }
         }
-
-        await new Promise(resolve => setTimeout(resolve, reconnectDelay));
-        reconnectDelay = Math.min(reconnectDelay * 2, maxReconnectDelay);
       }
     }
-
-    this._connected = false;
   }
 
   // ---------------------------------------------------------------------------

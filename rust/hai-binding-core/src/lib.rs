@@ -8,15 +8,17 @@
 //!
 //! Follows the same pattern as JACS's `jacs-binding-core` crate.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
 use tokio::sync::RwLock;
 
 use std::path::Path;
 
-use haiai::client::{HaiClient, HaiClientOptions};
+use haiai::client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
 use haiai::error::HaiError;
 use haiai::jacs::{JacsProvider, StaticJacsProvider};
 use haiai::jacs_local::LocalJacsProvider;
@@ -29,6 +31,18 @@ use haiai::jacs_local::LocalJacsProvider;
 // - haiinpm: uses napi-rs's built-in async runtime (automatic)
 // - haiipy: defines its own static RT for sync `_sync` method wrappers
 // - haiigo: defines its own static RT for the spawn+channel pattern
+
+// =============================================================================
+// Streaming handle management (opaque handle pattern for SSE/WS connections)
+// =============================================================================
+
+static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
+
+static SSE_CONNECTIONS: std::sync::LazyLock<tokio::sync::Mutex<HashMap<u64, SseConnection>>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(HashMap::new()));
+
+static WS_CONNECTIONS: std::sync::LazyLock<tokio::sync::Mutex<HashMap<u64, WsConnection>>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(HashMap::new()));
 
 // =============================================================================
 // Error types
@@ -971,6 +985,103 @@ impl HaiClientWrapper {
         client.enterprise_run().await?;
         Ok(())
     }
+
+    // =========================================================================
+    // SSE Streaming (opaque handle pattern)
+    // =========================================================================
+
+    /// Connect to SSE and return an opaque handle ID.
+    pub async fn connect_sse(&self) -> HaiBindingResult<u64> {
+        let client = self.inner.read().await;
+        let conn = client.connect_sse().await?;
+        let handle = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
+        SSE_CONNECTIONS.lock().await.insert(handle, conn);
+        Ok(handle)
+    }
+
+    // =========================================================================
+    // WebSocket Streaming (opaque handle pattern)
+    // =========================================================================
+
+    /// Connect to WebSocket and return an opaque handle ID.
+    pub async fn connect_ws(&self) -> HaiBindingResult<u64> {
+        let client = self.inner.read().await;
+        let conn = client.connect_ws().await?;
+        let handle = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
+        WS_CONNECTIONS.lock().await.insert(handle, conn);
+        Ok(handle)
+    }
+}
+
+// =============================================================================
+// SSE streaming standalone functions (global handle access)
+// =============================================================================
+
+/// Poll next SSE event. Returns JSON string or None if connection closed.
+pub async fn sse_next_event(handle_id: u64) -> HaiBindingResult<Option<String>> {
+    // Take the connection out of the map to release the lock during await
+    let mut conn = {
+        let mut connections = SSE_CONNECTIONS.lock().await;
+        connections.remove(&handle_id)
+            .ok_or_else(|| HaiBindingError::new(ErrorKind::InvalidArgument, format!("invalid SSE handle: {handle_id}")))?
+    };
+
+    let event = conn.next_event().await;
+
+    match event {
+        Some(evt) => {
+            // Put connection back
+            SSE_CONNECTIONS.lock().await.insert(handle_id, conn);
+            Ok(Some(serde_json::to_string(&evt)?))
+        }
+        None => {
+            // Connection closed, don't put back
+            Ok(None)
+        }
+    }
+}
+
+/// Close an SSE connection and release the handle.
+pub async fn sse_close(handle_id: u64) -> HaiBindingResult<()> {
+    let mut connections = SSE_CONNECTIONS.lock().await;
+    if let Some(mut conn) = connections.remove(&handle_id) {
+        conn.close().await;
+    }
+    Ok(())
+}
+
+// =============================================================================
+// WebSocket streaming standalone functions (global handle access)
+// =============================================================================
+
+/// Poll next WebSocket event. Returns JSON string or None if connection closed.
+pub async fn ws_next_event(handle_id: u64) -> HaiBindingResult<Option<String>> {
+    // Take the connection out of the map to release the lock during await
+    let mut conn = {
+        let mut connections = WS_CONNECTIONS.lock().await;
+        connections.remove(&handle_id)
+            .ok_or_else(|| HaiBindingError::new(ErrorKind::InvalidArgument, format!("invalid WS handle: {handle_id}")))?
+    };
+
+    let event = conn.next_event().await;
+
+    match event {
+        Some(evt) => {
+            // Put connection back
+            WS_CONNECTIONS.lock().await.insert(handle_id, conn);
+            Ok(Some(serde_json::to_string(&evt)?))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Close a WebSocket connection and release the handle.
+pub async fn ws_close(handle_id: u64) -> HaiBindingResult<()> {
+    let mut connections = WS_CONNECTIONS.lock().await;
+    if let Some(mut conn) = connections.remove(&handle_id) {
+        conn.close().await;
+    }
+    Ok(())
 }
 
 // =============================================================================
