@@ -330,6 +330,105 @@
       "returns": "()",
       "auth_required": true,
       "notes": "Currently returns an error (coming soon). Included for API completeness."
+    },
+    {
+      "name": "fetch_server_keys",
+      "category": "async",
+      "group": "keys",
+      "params": {},
+      "returns": "Value (JSON)",
+      "auth_required": false,
+      "notes": "Unauthenticated GET to /.well-known/hai-keys.json. Caching is done in SDKs."
+    },
+    {
+      "name": "sign_email_raw",
+      "category": "async",
+      "group": "email_core",
+      "params": { "raw_email_b64": "string (base64-encoded RFC 5822 bytes)" },
+      "returns": "string (base64-encoded signed email bytes)",
+      "auth_required": true,
+      "notes": "Base64 encoding/decoding crosses FFI boundary. Content-Type: message/rfc822."
+    },
+    {
+      "name": "verify_email_raw",
+      "category": "async",
+      "group": "email_core",
+      "params": { "raw_email_b64": "string (base64-encoded RFC 5822 bytes)" },
+      "returns": "Value (JSON verification result)",
+      "auth_required": true,
+      "notes": "Base64 encoding/decoding crosses FFI boundary. Content-Type: message/rfc822."
+    },
+    {
+      "name": "create_attestation",
+      "category": "async",
+      "group": "attestations",
+      "params": { "params_json": "{agent_id, subject, claims, evidence?} (JSON)" },
+      "returns": "Value (JSON attestation)",
+      "auth_required": true
+    },
+    {
+      "name": "list_attestations",
+      "category": "async",
+      "group": "attestations",
+      "params": { "params_json": "{agent_id, limit?, offset?} (JSON)" },
+      "returns": "Value (JSON attestation list)",
+      "auth_required": true
+    },
+    {
+      "name": "get_attestation",
+      "category": "async",
+      "group": "attestations",
+      "params": { "agent_id": "string", "doc_id": "string" },
+      "returns": "Value (JSON attestation)",
+      "auth_required": true
+    },
+    {
+      "name": "verify_attestation",
+      "category": "async",
+      "group": "attestations",
+      "params": { "document": "string" },
+      "returns": "Value (JSON verification result)",
+      "auth_required": true
+    },
+    {
+      "name": "create_email_template",
+      "category": "async",
+      "group": "email_templates",
+      "params": { "options_json": "CreateEmailTemplateOptions (JSON)" },
+      "returns": "EmailTemplate",
+      "auth_required": true
+    },
+    {
+      "name": "list_email_templates",
+      "category": "async",
+      "group": "email_templates",
+      "params": { "options_json": "ListEmailTemplatesOptions (JSON)" },
+      "returns": "ListEmailTemplatesResult",
+      "auth_required": true
+    },
+    {
+      "name": "get_email_template",
+      "category": "async",
+      "group": "email_templates",
+      "params": { "template_id": "string" },
+      "returns": "EmailTemplate",
+      "auth_required": true
+    },
+    {
+      "name": "update_email_template",
+      "category": "async",
+      "group": "email_templates",
+      "params": { "template_id": "string", "options_json": "UpdateEmailTemplateOptions (JSON)" },
+      "returns": "EmailTemplate",
+      "auth_required": true
+    },
+    {
+      "name": "delete_email_template",
+      "category": "async",
+      "group": "email_templates",
+      "params": { "template_id": "string" },
+      "returns": "()",
+      "auth_required": true
     }
   ],
   "streaming": [
@@ -470,13 +569,13 @@
     }
   ],
   "summary": {
-    "async_methods": 38,
+    "async_methods": 50,
     "streaming_methods": 2,
     "callback_methods": 2,
     "sync_methods": 10,
     "mutating_methods": 2,
     "excluded_methods": 5,
-    "total_public_methods": 59,
-    "binding_core_scope": "38 async + 2 streaming + 10 sync + 2 mutating = 52 methods"
+    "total_public_methods": 71,
+    "binding_core_scope": "50 async + 2 streaming + 10 sync + 2 mutating = 64 methods"
   }
 }

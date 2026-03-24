@@ -1244,6 +1244,178 @@ impl<P: JacsProvider> HaiClient<P> {
         }
     }
 
+    // =========================================================================
+    // Server Keys (unauthenticated)
+    // =========================================================================
+
+    /// Fetch the HAI server's public keys from the well-known endpoint.
+    ///
+    /// This is an unauthenticated GET to `/.well-known/hai-keys.json`.
+    pub async fn fetch_server_keys(&self) -> Result<Value> {
+        let url = self.url("/.well-known/hai-keys.json");
+        let response = self.http.get(url).send().await?;
+        let data = response_json(response).await?;
+        Ok(data)
+    }
+
+    // =========================================================================
+    // Raw Email Sign/Verify (base64-encoded for FFI boundary)
+    // =========================================================================
+
+    /// Sign a raw RFC 5822 email via the HAI server.
+    ///
+    /// Input: base64-encoded email bytes. Output: base64-encoded signed email bytes.
+    /// The raw bytes are decoded, POSTed with `Content-Type: message/rfc822`,
+    /// and the response bytes are base64-encoded for return through the FFI boundary.
+    pub async fn sign_email_raw(&self, raw_email_b64: &str) -> Result<String> {
+        let raw_bytes = base64::engine::general_purpose::STANDARD
+            .decode(raw_email_b64)
+            .map_err(|e| HaiError::Validation {
+                field: "raw_email_b64".into(),
+                message: e.to_string(),
+            })?;
+        let url = self.url("/api/v1/email/sign");
+        let auth = self.build_auth_header()?;
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", &auth)
+            .header("Content-Type", "message/rfc822")
+            .body(raw_bytes)
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(HaiError::Api {
+                status: status.as_u16(),
+                message: body,
+            });
+        }
+        let response_bytes = response.bytes().await?;
+        Ok(base64::engine::general_purpose::STANDARD.encode(&response_bytes))
+    }
+
+    /// Verify a raw RFC 5822 email via the HAI server.
+    ///
+    /// Input: base64-encoded email bytes. Output: JSON verification result.
+    pub async fn verify_email_raw(&self, raw_email_b64: &str) -> Result<Value> {
+        let raw_bytes = base64::engine::general_purpose::STANDARD
+            .decode(raw_email_b64)
+            .map_err(|e| HaiError::Validation {
+                field: "raw_email_b64".into(),
+                message: e.to_string(),
+            })?;
+        let url = self.url("/api/v1/email/verify");
+        let auth = self.build_auth_header()?;
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", &auth)
+            .header("Content-Type", "message/rfc822")
+            .body(raw_bytes)
+            .send()
+            .await?;
+        response_json(response).await
+    }
+
+    // =========================================================================
+    // Attestation Methods
+    // =========================================================================
+
+    /// Create an attestation for an agent.
+    pub async fn create_attestation(
+        &self,
+        agent_id: &str,
+        subject: &Value,
+        claims: &Value,
+        evidence: Option<&Value>,
+    ) -> Result<Value> {
+        let safe_agent_id = encode_path_segment(agent_id);
+        let url = self.url(&format!(
+            "/api/v1/agents/{safe_agent_id}/attestations"
+        ));
+
+        let mut payload = json!({
+            "subject": subject,
+            "claims": claims,
+        });
+        if let Some(ev) = evidence {
+            payload["evidence"] = ev.clone();
+        }
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await?;
+
+        response_json(response).await
+    }
+
+    /// List attestations for an agent.
+    pub async fn list_attestations(
+        &self,
+        agent_id: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Value> {
+        let safe_agent_id = encode_path_segment(agent_id);
+        let url = self.url(&format!(
+            "/api/v1/agents/{safe_agent_id}/attestations"
+        ));
+
+        let response = self
+            .http
+            .get(url)
+            .header("Authorization", self.build_auth_header()?)
+            .query(&[("limit", &limit.to_string()), ("offset", &offset.to_string())])
+            .send()
+            .await?;
+
+        response_json(response).await
+    }
+
+    /// Get a single attestation by document ID.
+    pub async fn get_attestation(
+        &self,
+        agent_id: &str,
+        doc_id: &str,
+    ) -> Result<Value> {
+        let safe_agent_id = encode_path_segment(agent_id);
+        let safe_doc_id = encode_path_segment(doc_id);
+        let url = self.url(&format!(
+            "/api/v1/agents/{safe_agent_id}/attestations/{safe_doc_id}"
+        ));
+
+        let response = self
+            .http
+            .get(url)
+            .header("Authorization", self.build_auth_header()?)
+            .send()
+            .await?;
+
+        response_json(response).await
+    }
+
+    /// Verify an attestation document.
+    pub async fn verify_attestation(&self, document: &str) -> Result<Value> {
+        let url = self.url("/api/v1/attestations/verify");
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .header("Content-Type", "application/json")
+            .json(&json!({ "document": document }))
+            .send()
+            .await?;
+
+        response_json(response).await
+    }
+
     pub async fn fetch_remote_key(&self, jacs_id: &str, version: &str) -> Result<PublicKeyInfo> {
         let safe_jacs_id = encode_path_segment(jacs_id);
         let safe_version = encode_path_segment(version);

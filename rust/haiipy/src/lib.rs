@@ -490,6 +490,203 @@ impl HaiClient {
     }
 
     // =========================================================================
+    // Server Keys
+    // =========================================================================
+
+    fn fetch_server_keys<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.fetch_server_keys().await.map_err(to_py_err)
+        })
+    }
+
+    fn fetch_server_keys_sync(&self, py: Python) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.fetch_server_keys().await })
+        }).map_err(to_py_err)
+    }
+
+    // =========================================================================
+    // Raw Email Sign/Verify
+    // =========================================================================
+
+    fn sign_email_raw<'py>(&self, py: Python<'py>, raw_email_b64: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.sign_email_raw(&raw_email_b64).await.map_err(to_py_err)
+        })
+    }
+
+    fn sign_email_raw_sync(&self, py: Python, raw_email_b64: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.sign_email_raw(&raw_email_b64).await })
+        }).map_err(to_py_err)
+    }
+
+    fn verify_email_raw<'py>(&self, py: Python<'py>, raw_email_b64: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.verify_email_raw(&raw_email_b64).await.map_err(to_py_err)
+        })
+    }
+
+    fn verify_email_raw_sync(&self, py: Python, raw_email_b64: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.verify_email_raw(&raw_email_b64).await })
+        }).map_err(to_py_err)
+    }
+
+    // =========================================================================
+    // Attestations
+    // =========================================================================
+
+    fn create_attestation<'py>(&self, py: Python<'py>, params_json: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.create_attestation(&params_json).await.map_err(to_py_err)
+        })
+    }
+
+    fn create_attestation_sync(&self, py: Python, params_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.create_attestation(&params_json).await })
+        }).map_err(to_py_err)
+    }
+
+    fn list_attestations<'py>(&self, py: Python<'py>, params_json: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.list_attestations(&params_json).await.map_err(to_py_err)
+        })
+    }
+
+    fn list_attestations_sync(&self, py: Python, params_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.list_attestations(&params_json).await })
+        }).map_err(to_py_err)
+    }
+
+    fn get_attestation<'py>(&self, py: Python<'py>, agent_id: String, doc_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.get_attestation(&agent_id, &doc_id).await.map_err(to_py_err)
+        })
+    }
+
+    fn get_attestation_sync(&self, py: Python, agent_id: String, doc_id: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.get_attestation(&agent_id, &doc_id).await })
+        }).map_err(to_py_err)
+    }
+
+    fn verify_attestation<'py>(&self, py: Python<'py>, document: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.verify_attestation(&document).await.map_err(to_py_err)
+        })
+    }
+
+    fn verify_attestation_sync(&self, py: Python, document: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.verify_attestation(&document).await })
+        }).map_err(to_py_err)
+    }
+
+    // =========================================================================
+    // Email Templates
+    // =========================================================================
+
+    fn create_email_template<'py>(&self, py: Python<'py>, options_json: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.create_email_template(&options_json).await.map_err(to_py_err)
+        })
+    }
+
+    fn create_email_template_sync(&self, py: Python, options_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.create_email_template(&options_json).await })
+        }).map_err(to_py_err)
+    }
+
+    fn list_email_templates<'py>(&self, py: Python<'py>, options_json: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.list_email_templates(&options_json).await.map_err(to_py_err)
+        })
+    }
+
+    fn list_email_templates_sync(&self, py: Python, options_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.list_email_templates(&options_json).await })
+        }).map_err(to_py_err)
+    }
+
+    fn get_email_template<'py>(&self, py: Python<'py>, template_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.get_email_template(&template_id).await.map_err(to_py_err)
+        })
+    }
+
+    fn get_email_template_sync(&self, py: Python, template_id: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.get_email_template(&template_id).await })
+        }).map_err(to_py_err)
+    }
+
+    fn update_email_template<'py>(&self, py: Python<'py>, template_id: String, options_json: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.update_email_template(&template_id, &options_json).await.map_err(to_py_err)
+        })
+    }
+
+    fn update_email_template_sync(&self, py: Python, template_id: String, options_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.update_email_template(&template_id, &options_json).await })
+        }).map_err(to_py_err)
+    }
+
+    fn delete_email_template<'py>(&self, py: Python<'py>, template_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.delete_email_template(&template_id).await.map_err(to_py_err)?;
+            Ok(())
+        })
+    }
+
+    fn delete_email_template_sync(&self, py: Python, template_id: String) -> PyResult<()> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.delete_email_template(&template_id).await })
+        }).map_err(to_py_err)
+    }
+
+    // =========================================================================
     // Key Operations
     // =========================================================================
 

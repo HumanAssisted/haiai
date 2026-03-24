@@ -641,6 +641,129 @@ impl HaiClientWrapper {
     }
 
     // =========================================================================
+    // Server Keys
+    // =========================================================================
+
+    /// Fetch the HAI server's public keys (unauthenticated).
+    pub async fn fetch_server_keys(&self) -> HaiBindingResult<String> {
+        let client = self.inner.read().await;
+        let result = client.fetch_server_keys().await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    // =========================================================================
+    // Raw Email Sign/Verify
+    // =========================================================================
+
+    /// Sign a raw RFC 5822 email (base64-encoded) via the HAI server.
+    pub async fn sign_email_raw(&self, raw_email_b64: &str) -> HaiBindingResult<String> {
+        let client = self.inner.read().await;
+        Ok(client.sign_email_raw(raw_email_b64).await?)
+    }
+
+    /// Verify a raw RFC 5822 email (base64-encoded) via the HAI server.
+    pub async fn verify_email_raw(&self, raw_email_b64: &str) -> HaiBindingResult<String> {
+        let client = self.inner.read().await;
+        let result = client.verify_email_raw(raw_email_b64).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    // =========================================================================
+    // Attestations
+    // =========================================================================
+
+    /// Create an attestation for an agent.
+    ///
+    /// Accepts JSON: `{"agent_id": "...", "subject": {...}, "claims": [...], "evidence": [...]}`
+    pub async fn create_attestation(&self, params_json: &str) -> HaiBindingResult<String> {
+        let v: Value = serde_json::from_str(params_json)?;
+        let agent_id = v.get("agent_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| HaiBindingError::new(ErrorKind::InvalidArgument, "missing agent_id"))?;
+        let subject = v.get("subject")
+            .ok_or_else(|| HaiBindingError::new(ErrorKind::InvalidArgument, "missing subject"))?;
+        let claims = v.get("claims")
+            .ok_or_else(|| HaiBindingError::new(ErrorKind::InvalidArgument, "missing claims"))?;
+        let evidence = v.get("evidence");
+
+        let client = self.inner.read().await;
+        let result = client.create_attestation(agent_id, subject, claims, evidence).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    /// List attestations for an agent.
+    ///
+    /// Accepts JSON: `{"agent_id": "...", "limit": 20, "offset": 0}`
+    pub async fn list_attestations(&self, params_json: &str) -> HaiBindingResult<String> {
+        let v: Value = serde_json::from_str(params_json)?;
+        let agent_id = v.get("agent_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| HaiBindingError::new(ErrorKind::InvalidArgument, "missing agent_id"))?;
+        let limit = v.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as u32;
+        let offset = v.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+        let client = self.inner.read().await;
+        let result = client.list_attestations(agent_id, limit, offset).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    /// Get a single attestation by document ID.
+    pub async fn get_attestation(&self, agent_id: &str, doc_id: &str) -> HaiBindingResult<String> {
+        let client = self.inner.read().await;
+        let result = client.get_attestation(agent_id, doc_id).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    /// Verify an attestation document.
+    pub async fn verify_attestation(&self, document: &str) -> HaiBindingResult<String> {
+        let client = self.inner.read().await;
+        let result = client.verify_attestation(document).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    // =========================================================================
+    // Email Templates
+    // =========================================================================
+
+    /// Create an email template.
+    pub async fn create_email_template(&self, options_json: &str) -> HaiBindingResult<String> {
+        let options: haiai::types::CreateEmailTemplateOptions = serde_json::from_str(options_json)?;
+        let client = self.inner.read().await;
+        let result = client.create_email_template(&options).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    /// List/search email templates.
+    pub async fn list_email_templates(&self, options_json: &str) -> HaiBindingResult<String> {
+        let options: haiai::types::ListEmailTemplatesOptions = serde_json::from_str(options_json)?;
+        let client = self.inner.read().await;
+        let result = client.list_email_templates(&options).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    /// Get a single email template by ID.
+    pub async fn get_email_template(&self, template_id: &str) -> HaiBindingResult<String> {
+        let client = self.inner.read().await;
+        let result = client.get_email_template(template_id).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    /// Update an email template.
+    pub async fn update_email_template(&self, template_id: &str, options_json: &str) -> HaiBindingResult<String> {
+        let options: haiai::types::UpdateEmailTemplateOptions = serde_json::from_str(options_json)?;
+        let client = self.inner.read().await;
+        let result = client.update_email_template(template_id, &options).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    /// Delete an email template.
+    pub async fn delete_email_template(&self, template_id: &str) -> HaiBindingResult<()> {
+        let client = self.inner.read().await;
+        client.delete_email_template(template_id).await?;
+        Ok(())
+    }
+
+    // =========================================================================
     // Key Operations
     // =========================================================================
 

@@ -77,6 +77,26 @@ extern char* hai_forward(HaiClientHandle handle, const char* params_json);
 extern char* hai_search_messages(HaiClientHandle handle, const char* options_json);
 extern char* hai_contacts(HaiClientHandle handle);
 
+// Server Keys
+extern char* hai_fetch_server_keys(HaiClientHandle handle);
+
+// Raw Email Sign/Verify
+extern char* hai_sign_email_raw(HaiClientHandle handle, const char* raw_email_b64);
+extern char* hai_verify_email_raw(HaiClientHandle handle, const char* raw_email_b64);
+
+// Attestations
+extern char* hai_create_attestation(HaiClientHandle handle, const char* params_json);
+extern char* hai_list_attestations(HaiClientHandle handle, const char* params_json);
+extern char* hai_get_attestation(HaiClientHandle handle, const char* agent_id, const char* doc_id);
+extern char* hai_verify_attestation(HaiClientHandle handle, const char* document);
+
+// Email Templates
+extern char* hai_create_email_template(HaiClientHandle handle, const char* options_json);
+extern char* hai_list_email_templates(HaiClientHandle handle, const char* options_json);
+extern char* hai_get_email_template(HaiClientHandle handle, const char* template_id);
+extern char* hai_update_email_template(HaiClientHandle handle, const char* template_id, const char* options_json);
+extern char* hai_delete_email_template(HaiClientHandle handle, const char* template_id);
+
 // Key Operations
 extern char* hai_fetch_remote_key(HaiClientHandle handle, const char* jacs_id, const char* version);
 extern char* hai_fetch_key_by_hash(HaiClientHandle handle, const char* hash);
@@ -531,6 +551,148 @@ func (c *Client) Contacts() (json.RawMessage, error) {
 		return nil, err
 	}
 	return parseEnvelope(goString(C.hai_contacts(c.handle)))
+}
+
+// --- Server Keys ---
+
+func (c *Client) FetchServerKeys() (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	return parseEnvelope(goString(C.hai_fetch_server_keys(c.handle)))
+}
+
+// --- Raw Email Sign/Verify ---
+
+func (c *Client) SignEmailRaw(rawEmailB64 string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(rawEmailB64)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_sign_email_raw(c.handle, cs)))
+}
+
+func (c *Client) VerifyEmailRaw(rawEmailB64 string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(rawEmailB64)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_verify_email_raw(c.handle, cs)))
+}
+
+// --- Attestations ---
+
+func (c *Client) CreateAttestation(paramsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(paramsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_create_attestation(c.handle, cs)))
+}
+
+func (c *Client) ListAttestations(paramsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(paramsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_list_attestations(c.handle, cs)))
+}
+
+func (c *Client) GetAttestation(agentID, docID string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs1 := cString(agentID)
+	defer C.free(unsafe.Pointer(cs1))
+	cs2 := cString(docID)
+	defer C.free(unsafe.Pointer(cs2))
+	return parseEnvelope(goString(C.hai_get_attestation(c.handle, cs1, cs2)))
+}
+
+func (c *Client) VerifyAttestation(document string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(document)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_verify_attestation(c.handle, cs)))
+}
+
+// --- Email Templates ---
+
+func (c *Client) CreateEmailTemplate(optionsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(optionsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_create_email_template(c.handle, cs)))
+}
+
+func (c *Client) ListEmailTemplates(optionsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(optionsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_list_email_templates(c.handle, cs)))
+}
+
+func (c *Client) GetEmailTemplate(templateID string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(templateID)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_get_email_template(c.handle, cs)))
+}
+
+func (c *Client) UpdateEmailTemplate(templateID, optionsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs1 := cString(templateID)
+	defer C.free(unsafe.Pointer(cs1))
+	cs2 := cString(optionsJSON)
+	defer C.free(unsafe.Pointer(cs2))
+	return parseEnvelope(goString(C.hai_update_email_template(c.handle, cs1, cs2)))
+}
+
+func (c *Client) DeleteEmailTemplate(templateID string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(templateID)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_delete_email_template(c.handle, cs)))
 }
 
 // --- Key Operations ---

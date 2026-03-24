@@ -354,6 +354,80 @@ ffi_method_str!(hai_search_messages, search_messages);
 ffi_method_noarg!(hai_contacts, contacts);
 
 // =============================================================================
+// FFI Methods — Server Keys
+// =============================================================================
+
+ffi_method_noarg!(hai_fetch_server_keys, fetch_server_keys);
+
+// =============================================================================
+// FFI Methods — Raw Email Sign/Verify
+// =============================================================================
+
+ffi_method_str!(hai_sign_email_raw, sign_email_raw);
+ffi_method_str!(hai_verify_email_raw, verify_email_raw);
+
+// =============================================================================
+// FFI Methods — Attestations
+// =============================================================================
+
+ffi_method_str!(hai_create_attestation, create_attestation);
+ffi_method_str!(hai_list_attestations, list_attestations);
+
+#[no_mangle]
+pub extern "C" fn hai_get_attestation(handle: HaiClientHandle, agent_id: *const c_char, doc_id: *const c_char) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let client = unsafe { &*handle }.clone();
+        let agent_id = unsafe { c_str_to_string(agent_id) };
+        let doc_id = unsafe { c_str_to_string(doc_id) };
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.get_attestation(&agent_id, &doc_id).await;
+            let _ = tx.send(r);
+        });
+        to_c_string(result_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+ffi_method_str!(hai_verify_attestation, verify_attestation);
+
+// =============================================================================
+// FFI Methods — Email Templates
+// =============================================================================
+
+ffi_method_str!(hai_create_email_template, create_email_template);
+ffi_method_str!(hai_list_email_templates, list_email_templates);
+ffi_method_str!(hai_get_email_template, get_email_template);
+
+#[no_mangle]
+pub extern "C" fn hai_update_email_template(
+    handle: HaiClientHandle,
+    template_id: *const c_char,
+    options_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let client = unsafe { &*handle }.clone();
+        let template_id = unsafe { c_str_to_string(template_id) };
+        let options_json = unsafe { c_str_to_string(options_json) };
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.update_email_template(&template_id, &options_json).await;
+            let _ = tx.send(r);
+        });
+        to_c_string(result_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+ffi_method_void!(hai_delete_email_template, delete_email_template);
+
+// =============================================================================
 // FFI Methods — Keys
 // =============================================================================
 

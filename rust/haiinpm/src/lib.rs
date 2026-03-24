@@ -205,6 +205,82 @@ impl HaiClient {
     }
 
     // =========================================================================
+    // Server Keys
+    // =========================================================================
+
+    #[napi]
+    pub async fn fetch_server_keys(&self) -> Result<String> {
+        self.inner.fetch_server_keys().await.map_err(to_napi_err)
+    }
+
+    // =========================================================================
+    // Raw Email Sign/Verify
+    // =========================================================================
+
+    #[napi]
+    pub async fn sign_email_raw(&self, raw_email_b64: String) -> Result<String> {
+        self.inner.sign_email_raw(&raw_email_b64).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn verify_email_raw(&self, raw_email_b64: String) -> Result<String> {
+        self.inner.verify_email_raw(&raw_email_b64).await.map_err(to_napi_err)
+    }
+
+    // =========================================================================
+    // Attestations
+    // =========================================================================
+
+    #[napi]
+    pub async fn create_attestation(&self, params_json: String) -> Result<String> {
+        self.inner.create_attestation(&params_json).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn list_attestations(&self, params_json: String) -> Result<String> {
+        self.inner.list_attestations(&params_json).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn get_attestation(&self, agent_id: String, doc_id: String) -> Result<String> {
+        self.inner.get_attestation(&agent_id, &doc_id).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn verify_attestation(&self, document: String) -> Result<String> {
+        self.inner.verify_attestation(&document).await.map_err(to_napi_err)
+    }
+
+    // =========================================================================
+    // Email Templates
+    // =========================================================================
+
+    #[napi]
+    pub async fn create_email_template(&self, options_json: String) -> Result<String> {
+        self.inner.create_email_template(&options_json).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn list_email_templates(&self, options_json: String) -> Result<String> {
+        self.inner.list_email_templates(&options_json).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn get_email_template(&self, template_id: String) -> Result<String> {
+        self.inner.get_email_template(&template_id).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn update_email_template(&self, template_id: String, options_json: String) -> Result<String> {
+        self.inner.update_email_template(&template_id, &options_json).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn delete_email_template(&self, template_id: String) -> Result<()> {
+        self.inner.delete_email_template(&template_id).await.map_err(to_napi_err)
+    }
+
+    // =========================================================================
     // Key Operations
     // =========================================================================
 
