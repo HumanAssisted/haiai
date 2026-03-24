@@ -378,6 +378,12 @@ class FFIAdapter:
         except (RuntimeError, AttributeError) as err:
             raise map_ffi_error(err) from err
 
+    def enterprise_run(self) -> None:
+        try:
+            self._native.enterprise_run_sync()
+        except (RuntimeError, AttributeError) as err:
+            raise map_ffi_error(err) from err
+
     # --- JACS Delegation ---
 
     def build_auth_header(self) -> str:
@@ -401,6 +407,13 @@ class FFIAdapter:
     def verify_a2a_artifact(self, wrapped_json: str) -> dict[str, Any]:
         try:
             raw = self._native.verify_a2a_artifact_sync(wrapped_json)
+            return json.loads(raw)
+        except (RuntimeError, AttributeError) as err:
+            raise map_ffi_error(err) from err
+
+    def export_agent_json(self) -> dict[str, Any]:
+        try:
+            raw = self._native.export_agent_json_sync()
             return json.loads(raw)
         except (RuntimeError, AttributeError) as err:
             raise map_ffi_error(err) from err
@@ -728,6 +741,12 @@ class AsyncFFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
+    async def enterprise_run(self) -> None:
+        try:
+            await self._native.enterprise_run()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
     # --- JACS Delegation ---
 
     async def build_auth_header(self) -> str:
@@ -755,11 +774,18 @@ class AsyncFFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
+    async def export_agent_json(self) -> dict[str, Any]:
+        try:
+            raw = await self._native.export_agent_json()
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
     # --- Client State ---
 
     async def jacs_id(self) -> str:
         try:
-            return self._native.jacs_id_sync()  # jacs_id is cheap, use sync
+            return await self._native.jacs_id()
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
