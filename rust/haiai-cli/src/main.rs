@@ -1236,6 +1236,109 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
+        Commands::Template { command } => {
+            let client = load_client()?;
+            match command {
+                TemplateCommands::Create {
+                    name,
+                    how_to_send,
+                    how_to_respond,
+                    goal,
+                    rules,
+                } => {
+                    let result = client
+                        .create_email_template(&CreateEmailTemplateOptions {
+                            name,
+                            how_to_send,
+                            how_to_respond,
+                            goal,
+                            rules,
+                        })
+                        .await
+                        .context("create template failed")?;
+                    println!("Created template:");
+                    println!("  ID:   {}", result.id);
+                    println!("  Name: {}", result.name);
+                }
+                TemplateCommands::List {
+                    query,
+                    limit,
+                    offset,
+                } => {
+                    let result = client
+                        .list_email_templates(&ListEmailTemplatesOptions {
+                            q: query,
+                            limit: Some(limit),
+                            offset: Some(offset),
+                        })
+                        .await
+                        .context("list templates failed")?;
+                    println!(
+                        "Templates ({} of {}):",
+                        result.templates.len(),
+                        result.total
+                    );
+                    for t in &result.templates {
+                        println!("  {} — {}", t.id, t.name);
+                    }
+                }
+                TemplateCommands::Get { template_id } => {
+                    let result = client
+                        .get_email_template(&template_id)
+                        .await
+                        .context("get template failed")?;
+                    println!("Template: {}", result.name);
+                    println!("  ID:             {}", result.id);
+                    if let Some(ref v) = result.how_to_send {
+                        println!("  How to send:    {v}");
+                    }
+                    if let Some(ref v) = result.how_to_respond {
+                        println!("  How to respond: {v}");
+                    }
+                    if let Some(ref v) = result.goal {
+                        println!("  Goal:           {v}");
+                    }
+                    if let Some(ref v) = result.rules {
+                        println!("  Rules:          {v}");
+                    }
+                    println!("  Created:        {}", result.created_at);
+                    println!("  Updated:        {}", result.updated_at);
+                }
+                TemplateCommands::Update {
+                    template_id,
+                    name,
+                    how_to_send,
+                    how_to_respond,
+                    goal,
+                    rules,
+                } => {
+                    let result = client
+                        .update_email_template(
+                            &template_id,
+                            &UpdateEmailTemplateOptions {
+                                name,
+                                how_to_send: how_to_send.map(Some),
+                                how_to_respond: how_to_respond.map(Some),
+                                goal: goal.map(Some),
+                                rules: rules.map(Some),
+                            },
+                        )
+                        .await
+                        .context("update template failed")?;
+                    println!("Updated template:");
+                    println!("  ID:   {}", result.id);
+                    println!("  Name: {}", result.name);
+                }
+                TemplateCommands::Delete { template_id } => {
+                    client
+                        .delete_email_template(&template_id)
+                        .await
+                        .context("delete template failed")?;
+                    println!("Deleted template {template_id}");
+                }
+            }
+        }
+
         Commands::Keychain { agent_id, action } => {
             use jacs::keystore::keychain;
 
