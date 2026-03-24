@@ -213,38 +213,9 @@ func (c *Client) checkClosed() error {
 	return nil
 }
 
-// callStr calls an FFI function that takes one string arg and returns JSON envelope.
-func (c *Client) callStr(fn func(C.HaiClientHandle, *C.char) *C.char, arg string) (json.RawMessage, error) {
-	if err := c.checkClosed(); err != nil {
-		return nil, err
-	}
-	cs := cString(arg)
-	defer C.free(unsafe.Pointer(cs))
-	result := goString(fn(c.handle, cs))
-	return parseEnvelope(result)
-}
-
-// callNoArg calls an FFI function that takes no args and returns JSON envelope.
-func (c *Client) callNoArg(fn func(C.HaiClientHandle) *C.char) (json.RawMessage, error) {
-	if err := c.checkClosed(); err != nil {
-		return nil, err
-	}
-	result := goString(fn(c.handle))
-	return parseEnvelope(result)
-}
-
-// callTwoStr calls an FFI function that takes two string args and returns JSON envelope.
-func (c *Client) callTwoStr(fn func(C.HaiClientHandle, *C.char, *C.char) *C.char, arg1, arg2 string) (json.RawMessage, error) {
-	if err := c.checkClosed(); err != nil {
-		return nil, err
-	}
-	cs1 := cString(arg1)
-	defer C.free(unsafe.Pointer(cs1))
-	cs2 := cString(arg2)
-	defer C.free(unsafe.Pointer(cs2))
-	result := goString(fn(c.handle, cs1, cs2))
-	return parseEnvelope(result)
-}
+// callOneStr is a helper that calls a C function taking (handle, *C.char) -> *C.char.
+// CGo does not allow passing C function pointers as Go function values, so each
+// method inlines the C call directly. This helper exists only as documentation.
 
 // --- Registration & Identity ---
 
@@ -257,152 +228,317 @@ func (c *Client) Hello(includeTest bool) (json.RawMessage, error) {
 }
 
 func (c *Client) CheckUsername(username string) (json.RawMessage, error) {
-	return c.callStr(C.hai_check_username, username)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(username)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_check_username(c.handle, cs)))
 }
 
 func (c *Client) Register(optionsJSON string) (json.RawMessage, error) {
-	return c.callStr(C.hai_register, optionsJSON)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(optionsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_register(c.handle, cs)))
 }
 
 func (c *Client) RotateKeys(optionsJSON string) (json.RawMessage, error) {
-	return c.callStr(C.hai_rotate_keys, optionsJSON)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(optionsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_rotate_keys(c.handle, cs)))
 }
 
 func (c *Client) UpdateAgent(agentData string) (json.RawMessage, error) {
-	return c.callStr(C.hai_update_agent, agentData)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(agentData)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_update_agent(c.handle, cs)))
 }
 
 func (c *Client) SubmitResponse(paramsJSON string) (json.RawMessage, error) {
-	return c.callStr(C.hai_submit_response, paramsJSON)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(paramsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_submit_response(c.handle, cs)))
 }
 
 func (c *Client) VerifyStatus(agentID string) (json.RawMessage, error) {
-	return c.callStr(C.hai_verify_status, agentID)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(agentID)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_verify_status(c.handle, cs)))
 }
 
 // --- Username ---
 
 func (c *Client) ClaimUsername(agentID, username string) (json.RawMessage, error) {
-	return c.callTwoStr(C.hai_claim_username, agentID, username)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs1 := cString(agentID)
+	defer C.free(unsafe.Pointer(cs1))
+	cs2 := cString(username)
+	defer C.free(unsafe.Pointer(cs2))
+	return parseEnvelope(goString(C.hai_claim_username(c.handle, cs1, cs2)))
 }
 
 func (c *Client) UpdateUsername(agentID, username string) (json.RawMessage, error) {
-	return c.callTwoStr(C.hai_update_username, agentID, username)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs1 := cString(agentID)
+	defer C.free(unsafe.Pointer(cs1))
+	cs2 := cString(username)
+	defer C.free(unsafe.Pointer(cs2))
+	return parseEnvelope(goString(C.hai_update_username(c.handle, cs1, cs2)))
 }
 
 func (c *Client) DeleteUsername(agentID string) (json.RawMessage, error) {
-	return c.callStr(C.hai_delete_username, agentID)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(agentID)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_delete_username(c.handle, cs)))
 }
 
 // --- Email Core ---
 
 func (c *Client) SendEmail(optionsJSON string) (json.RawMessage, error) {
-	return c.callStr(C.hai_send_email, optionsJSON)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(optionsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_send_email(c.handle, cs)))
 }
 
 func (c *Client) SendSignedEmail(optionsJSON string) (json.RawMessage, error) {
-	return c.callStr(C.hai_send_signed_email, optionsJSON)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(optionsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_send_signed_email(c.handle, cs)))
 }
 
 func (c *Client) ListMessages(optionsJSON string) (json.RawMessage, error) {
-	return c.callStr(C.hai_list_messages, optionsJSON)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(optionsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_list_messages(c.handle, cs)))
 }
 
 func (c *Client) UpdateLabels(paramsJSON string) (json.RawMessage, error) {
-	return c.callStr(C.hai_update_labels, paramsJSON)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(paramsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_update_labels(c.handle, cs)))
 }
 
 func (c *Client) GetEmailStatus() (json.RawMessage, error) {
-	return c.callNoArg(C.hai_get_email_status)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	return parseEnvelope(goString(C.hai_get_email_status(c.handle)))
 }
 
 func (c *Client) GetMessage(messageID string) (json.RawMessage, error) {
-	return c.callStr(C.hai_get_message, messageID)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(messageID)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_get_message(c.handle, cs)))
 }
 
 func (c *Client) GetUnreadCount() (json.RawMessage, error) {
-	return c.callNoArg(C.hai_get_unread_count)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	return parseEnvelope(goString(C.hai_get_unread_count(c.handle)))
 }
 
 // --- Email Actions ---
 
 func (c *Client) MarkRead(messageID string) error {
-	_, err := c.callStr(C.hai_mark_read, messageID)
+	if err := c.checkClosed(); err != nil {
+		return err
+	}
+	cs := cString(messageID)
+	defer C.free(unsafe.Pointer(cs))
+	_, err := parseEnvelope(goString(C.hai_mark_read(c.handle, cs)))
 	return err
 }
 
 func (c *Client) MarkUnread(messageID string) error {
-	_, err := c.callStr(C.hai_mark_unread, messageID)
+	if err := c.checkClosed(); err != nil {
+		return err
+	}
+	cs := cString(messageID)
+	defer C.free(unsafe.Pointer(cs))
+	_, err := parseEnvelope(goString(C.hai_mark_unread(c.handle, cs)))
 	return err
 }
 
 func (c *Client) DeleteMessage(messageID string) error {
-	_, err := c.callStr(C.hai_delete_message, messageID)
+	if err := c.checkClosed(); err != nil {
+		return err
+	}
+	cs := cString(messageID)
+	defer C.free(unsafe.Pointer(cs))
+	_, err := parseEnvelope(goString(C.hai_delete_message(c.handle, cs)))
 	return err
 }
 
 func (c *Client) Archive(messageID string) error {
-	_, err := c.callStr(C.hai_archive, messageID)
+	if err := c.checkClosed(); err != nil {
+		return err
+	}
+	cs := cString(messageID)
+	defer C.free(unsafe.Pointer(cs))
+	_, err := parseEnvelope(goString(C.hai_archive(c.handle, cs)))
 	return err
 }
 
 func (c *Client) Unarchive(messageID string) error {
-	_, err := c.callStr(C.hai_unarchive, messageID)
+	if err := c.checkClosed(); err != nil {
+		return err
+	}
+	cs := cString(messageID)
+	defer C.free(unsafe.Pointer(cs))
+	_, err := parseEnvelope(goString(C.hai_unarchive(c.handle, cs)))
 	return err
 }
 
 func (c *Client) ReplyWithOptions(paramsJSON string) (json.RawMessage, error) {
-	return c.callStr(C.hai_reply_with_options, paramsJSON)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(paramsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_reply_with_options(c.handle, cs)))
 }
 
 func (c *Client) Forward(paramsJSON string) (json.RawMessage, error) {
-	return c.callStr(C.hai_forward, paramsJSON)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(paramsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_forward(c.handle, cs)))
 }
 
 // --- Search & Contacts ---
 
 func (c *Client) SearchMessages(optionsJSON string) (json.RawMessage, error) {
-	return c.callStr(C.hai_search_messages, optionsJSON)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(optionsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_search_messages(c.handle, cs)))
 }
 
 func (c *Client) Contacts() (json.RawMessage, error) {
-	return c.callNoArg(C.hai_contacts)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	return parseEnvelope(goString(C.hai_contacts(c.handle)))
 }
 
 // --- Key Operations ---
 
 func (c *Client) FetchRemoteKey(jacsID, version string) (json.RawMessage, error) {
-	return c.callTwoStr(C.hai_fetch_remote_key, jacsID, version)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs1 := cString(jacsID)
+	defer C.free(unsafe.Pointer(cs1))
+	cs2 := cString(version)
+	defer C.free(unsafe.Pointer(cs2))
+	return parseEnvelope(goString(C.hai_fetch_remote_key(c.handle, cs1, cs2)))
 }
 
 func (c *Client) FetchKeyByHash(hash string) (json.RawMessage, error) {
-	return c.callStr(C.hai_fetch_key_by_hash, hash)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(hash)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_fetch_key_by_hash(c.handle, cs)))
 }
 
 func (c *Client) FetchKeyByEmail(email string) (json.RawMessage, error) {
-	return c.callStr(C.hai_fetch_key_by_email, email)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(email)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_fetch_key_by_email(c.handle, cs)))
 }
 
 func (c *Client) FetchKeyByDomain(domain string) (json.RawMessage, error) {
-	return c.callStr(C.hai_fetch_key_by_domain, domain)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(domain)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_fetch_key_by_domain(c.handle, cs)))
 }
 
 func (c *Client) FetchAllKeys(jacsID string) (json.RawMessage, error) {
-	return c.callStr(C.hai_fetch_all_keys, jacsID)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(jacsID)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_fetch_all_keys(c.handle, cs)))
 }
 
 // --- Verification ---
 
 func (c *Client) VerifyDocument(document string) (json.RawMessage, error) {
-	return c.callStr(C.hai_verify_document, document)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(document)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_verify_document(c.handle, cs)))
 }
 
 func (c *Client) GetVerification(agentID string) (json.RawMessage, error) {
-	return c.callStr(C.hai_get_verification, agentID)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(agentID)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_get_verification(c.handle, cs)))
 }
 
 func (c *Client) VerifyAgentDocument(requestJSON string) (json.RawMessage, error) {
-	return c.callStr(C.hai_verify_agent_document, requestJSON)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(requestJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_verify_agent_document(c.handle, cs)))
 }
 
 // --- Benchmarks ---
@@ -410,7 +546,14 @@ func (c *Client) VerifyAgentDocument(requestJSON string) (json.RawMessage, error
 // Benchmark starts a benchmark run. Pass empty string "" for name or tier to omit.
 // Whitespace-only strings are also treated as absent on the Rust side.
 func (c *Client) Benchmark(name, tier string) (json.RawMessage, error) {
-	return c.callTwoStr(C.hai_benchmark, name, tier)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs1 := cString(name)
+	defer C.free(unsafe.Pointer(cs1))
+	cs2 := cString(tier)
+	defer C.free(unsafe.Pointer(cs2))
+	return parseEnvelope(goString(C.hai_benchmark(c.handle, cs1, cs2)))
 }
 
 func (c *Client) FreeRun(transport string) (json.RawMessage, error) {
@@ -419,23 +562,33 @@ func (c *Client) FreeRun(transport string) (json.RawMessage, error) {
 	}
 	cs := cString(transport)
 	defer C.free(unsafe.Pointer(cs))
-	result := goString(C.hai_free_run(c.handle, cs))
-	return parseEnvelope(result)
+	return parseEnvelope(goString(C.hai_free_run(c.handle, cs)))
 }
 
 func (c *Client) ProRun(optionsJSON string) (json.RawMessage, error) {
-	return c.callStr(C.hai_pro_run, optionsJSON)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(optionsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_pro_run(c.handle, cs)))
 }
 
 func (c *Client) EnterpriseRun() error {
-	_, err := c.callNoArg(C.hai_enterprise_run)
+	if err := c.checkClosed(); err != nil {
+		return err
+	}
+	_, err := parseEnvelope(goString(C.hai_enterprise_run(c.handle)))
 	return err
 }
 
 // --- JACS Delegation ---
 
 func (c *Client) BuildAuthHeader() (string, error) {
-	raw, err := c.callNoArg(C.hai_build_auth_header)
+	if err := c.checkClosed(); err != nil {
+		return "", err
+	}
+	raw, err := parseEnvelope(goString(C.hai_build_auth_header(c.handle)))
 	if err != nil {
 		return "", err
 	}
@@ -447,7 +600,12 @@ func (c *Client) BuildAuthHeader() (string, error) {
 }
 
 func (c *Client) SignMessage(message string) (string, error) {
-	raw, err := c.callStr(C.hai_sign_message, message)
+	if err := c.checkClosed(); err != nil {
+		return "", err
+	}
+	cs := cString(message)
+	defer C.free(unsafe.Pointer(cs))
+	raw, err := parseEnvelope(goString(C.hai_sign_message(c.handle, cs)))
 	if err != nil {
 		return "", err
 	}
@@ -459,7 +617,12 @@ func (c *Client) SignMessage(message string) (string, error) {
 }
 
 func (c *Client) CanonicalJSON(valueJSON string) (string, error) {
-	raw, err := c.callStr(C.hai_canonical_json, valueJSON)
+	if err := c.checkClosed(); err != nil {
+		return "", err
+	}
+	cs := cString(valueJSON)
+	defer C.free(unsafe.Pointer(cs))
+	raw, err := parseEnvelope(goString(C.hai_canonical_json(c.handle, cs)))
 	if err != nil {
 		return "", err
 	}
@@ -471,18 +634,29 @@ func (c *Client) CanonicalJSON(valueJSON string) (string, error) {
 }
 
 func (c *Client) VerifyA2AArtifact(wrappedJSON string) (json.RawMessage, error) {
-	return c.callStr(C.hai_verify_a2a_artifact, wrappedJSON)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(wrappedJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_verify_a2a_artifact(c.handle, cs)))
 }
 
 func (c *Client) ExportAgentJSON() (json.RawMessage, error) {
-	return c.callNoArg(C.hai_export_agent_json)
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	return parseEnvelope(goString(C.hai_export_agent_json(c.handle)))
 }
 
 // --- Client State (Read) ---
 
 // JacsID returns the JACS identity ID of the client.
 func (c *Client) JacsID() (string, error) {
-	raw, err := c.callNoArg(C.hai_jacs_id)
+	if err := c.checkClosed(); err != nil {
+		return "", err
+	}
+	raw, err := parseEnvelope(goString(C.hai_jacs_id(c.handle)))
 	if err != nil {
 		return "", err
 	}
@@ -496,12 +670,22 @@ func (c *Client) JacsID() (string, error) {
 // --- Client State (Mutating) ---
 
 func (c *Client) SetHaiAgentID(id string) error {
-	_, err := c.callStr(C.hai_set_hai_agent_id, id)
+	if err := c.checkClosed(); err != nil {
+		return err
+	}
+	cs := cString(id)
+	defer C.free(unsafe.Pointer(cs))
+	_, err := parseEnvelope(goString(C.hai_set_hai_agent_id(c.handle, cs)))
 	return err
 }
 
 func (c *Client) SetAgentEmail(email string) error {
-	_, err := c.callStr(C.hai_set_agent_email, email)
+	if err := c.checkClosed(); err != nil {
+		return err
+	}
+	cs := cString(email)
+	defer C.free(unsafe.Pointer(cs))
+	_, err := parseEnvelope(goString(C.hai_set_agent_email(c.handle, cs)))
 	return err
 }
 

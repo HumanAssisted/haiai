@@ -1,10 +1,7 @@
 """HaiClient -- full-featured client for the HAI benchmark platform.
 
-Ports every public method from the JACS monolith (jacs.hai) with:
-  - JACS-only authentication (no API key / Bearer fallback)
-  - All signing via JACS binding-core (zero local crypto)
-  - SSE and WebSocket transports
-  - Retry with exponential backoff
+All HTTP-based API calls delegate to the FFI adapter (haiipy binding-core).
+SSE/WS streaming, key rotation, and local signing remain native Python.
 """
 
 from __future__ import annotations
@@ -20,9 +17,7 @@ from pathlib import Path
 from typing import Any, Generator, Iterator, Optional, Union
 from urllib.parse import quote
 
-import httpx
-
-from haiai._retry import RETRY_MAX_ATTEMPTS, backoff, should_retry
+from haiai._ffi_adapter import FFIAdapter, map_ffi_error
 from haiai._sse import flatten_benchmark_job, parse_sse_lines
 from haiai.signing import canonicalize_json, create_agent_document
 from haiai.errors import (
@@ -162,6 +157,31 @@ def _verify_hai_message_impl(
         return False
 
 
+def _build_ffi_config() -> str:
+    """Build the JSON config string for the FFI adapter from loaded JACS config."""
+    from haiai.config import get_config, is_loaded
+
+    config: dict[str, Any] = {}
+
+    if is_loaded():
+        cfg = get_config()
+        if cfg.jacs_id:
+            config["jacs_id"] = cfg.jacs_id
+        config["agent_name"] = cfg.name
+        config["agent_version"] = cfg.version
+        config["key_dir"] = cfg.key_dir
+
+    # Pick up base URL from env
+    base_url = os.environ.get("HAI_URL") or os.environ.get("HAI_API_URL") or DEFAULT_BASE_URL
+    config["base_url"] = base_url
+
+    # Pick up config path from env
+    config_path = os.environ.get("JACS_CONFIG_PATH", "./jacs.config.json")
+    config["config_path"] = config_path
+
+    return json.dumps(config)
+
+
 # ---------------------------------------------------------------------------
 # HaiClient
 # ---------------------------------------------------------------------------
@@ -206,6 +226,13 @@ class HaiClient:
         # Agent key cache: maps cache_key -> (PublicKeyInfo, cached_at_monotonic)
         self._key_cache: dict[str, tuple[Any, float]] = {}
         self._KEY_CACHE_TTL: float = 300.0  # 5 minutes
+        self._ffi: Optional[FFIAdapter] = None
+
+    def _get_ffi(self) -> FFIAdapter:
+        """Lazily create the FFI adapter."""
+        if self._ffi is None:
+            self._ffi = FFIAdapter(_build_ffi_config())
+        return self._ffi
 
     # ------------------------------------------------------------------
     # Properties
@@ -351,6 +378,80 @@ class HaiClient:
             for msg in raw_messages
         ]
 
+    @staticmethod
+    def _parse_public_key_info(data: dict[str, Any], **defaults: Any) -> PublicKeyInfo:
+        """Parse a PublicKeyInfo from an FFI response dict."""
+        return PublicKeyInfo(
+            jacs_id=data.get("jacs_id", defaults.get("jacs_id", "")),
+            version=data.get("version", defaults.get("version", "")),
+            public_key=data.get("public_key", ""),
+            public_key_raw_b64=data.get("public_key_raw_b64", ""),
+            algorithm=data.get("algorithm", ""),
+            public_key_hash=data.get("public_key_hash", ""),
+            status=data.get("status", ""),
+            dns_verified=data.get("dns_verified", False),
+            created_at=data.get("created_at", ""),
+        )
+
+    @staticmethod
+    def _parse_email_status(data: dict) -> EmailStatus:
+        """Parse an EmailStatus from a JSON dict, including nested fields."""
+        volume_data = data.get("volume")
+        volume = (
+            EmailVolumeInfo(
+                sent_total=int(volume_data.get("sent_total", 0)),
+                received_total=int(volume_data.get("received_total", 0)),
+                sent_24h=int(volume_data.get("sent_24h", 0)),
+            )
+            if volume_data
+            else None
+        )
+
+        delivery_data = data.get("delivery")
+        delivery = (
+            EmailDeliveryInfo(
+                bounce_count=int(delivery_data.get("bounce_count", 0)),
+                spam_report_count=int(delivery_data.get("spam_report_count", 0)),
+                delivery_rate=float(delivery_data.get("delivery_rate", 0.0)),
+            )
+            if delivery_data
+            else None
+        )
+
+        reputation_data = data.get("reputation")
+        reputation = (
+            EmailReputationInfo(
+                score=float(reputation_data.get("score", 0.0)),
+                tier=reputation_data.get("tier", ""),
+                email_score=float(reputation_data.get("email_score", 0.0)),
+                hai_score=(
+                    float(reputation_data["hai_score"])
+                    if reputation_data.get("hai_score") is not None
+                    else None
+                ),
+            )
+            if reputation_data
+            else None
+        )
+
+        return EmailStatus(
+            email=data.get("email", ""),
+            status=data.get("status", ""),
+            tier=data.get("tier", ""),
+            billing_tier=data.get("billing_tier", ""),
+            messages_sent_24h=int(data.get("messages_sent_24h", 0)),
+            daily_limit=int(data.get("daily_limit", 0)),
+            daily_used=int(data.get("daily_used", 0)),
+            resets_at=data.get("resets_at", ""),
+            messages_sent_total=int(data.get("messages_sent_total", 0)),
+            external_enabled=bool(data.get("external_enabled", False)),
+            external_sends_today=int(data.get("external_sends_today", 0)),
+            last_tier_change=data.get("last_tier_change"),
+            volume=volume,
+            delivery=delivery,
+            reputation=reputation,
+        )
+
     # ------------------------------------------------------------------
     # testconnection
     # ------------------------------------------------------------------
@@ -366,12 +467,16 @@ class HaiClient:
         Returns:
             True if the server is reachable.
         """
+        # testconnection is a simple health check -- keep native httpx for now
+        # since FFI adapter doesn't expose a raw health-check method.
+        import httpx as _httpx
+
         endpoints = ["/api/v1/health", "/health", "/api/health", "/"]
 
         for endpoint in endpoints:
             try:
                 url = self._make_url(hai_url, endpoint)
-                resp = httpx.get(
+                resp = _httpx.get(
                     url,
                     timeout=min(self._timeout, 10.0),
                     follow_redirects=True,
@@ -406,44 +511,10 @@ class HaiClient:
             HaiAuthError: If JACS config is not loaded.
             HaiApiError: On any non-2xx response.
         """
-        url = self._make_url(hai_url, "/api/v1/agents/hello")
-        headers = self._build_auth_headers()
-        headers["Content-Type"] = "application/json"
-
-        payload: dict[str, Any] = {"agent_id": self._get_jacs_id()}
-        if include_test:
-            payload["include_test"] = True
-
-        try:
-            resp = httpx.post(url, json=payload, headers=headers, timeout=self._timeout)
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-
-        if resp.status_code in (401, 403):
-            raise HaiAuthError(
-                f"Hello auth failed: {resp.status_code}",
-                status_code=resp.status_code,
-                body=resp.text,
-            )
-
-        if resp.status_code == 429:
-            raise HaiError(
-                "Rate limited -- too many hello requests",
-                status_code=429,
-            )
-
-        if resp.status_code not in (200, 201):
-            raise HaiApiError(
-                f"Hello request failed: {resp.status_code}",
-                status_code=resp.status_code,
-                body=resp.text,
-            )
-
-        data = resp.json()
+        ffi = self._get_ffi()
+        data = ffi.hello(include_test)
 
         # Verify HAI's signature on the ACK
-        # API returns: hai_signed_ack (not hai_ack_signature)
-        #              hai_public_key_fingerprint (not hai_public_key)
         hai_sig_valid = False
         hai_ack_sig = data.get("hai_signed_ack", "")
         if hai_ack_sig:
@@ -511,17 +582,6 @@ class HaiClient:
     ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
         """Register a JACS agent with HAI.
 
-        This replaces the legacy ``jacs.simple.register_with_hai()`` from the
-        JACS monolith.  Key differences: uses JACS-signature authentication
-        (not API keys), auto-builds the agent document from config, and
-        supports preview mode and retry.
-
-        Sends ``POST /api/v1/agents/register`` with
-        ``{agent_json, public_key}``.
-
-        If *agent_json* is not provided, a self-signed agent document is
-        built from the loaded config and keypair automatically.
-
         Args:
             hai_url: Base URL of the HAI server.
             agent_json: Signed JACS agent document as a JSON string.
@@ -575,65 +635,21 @@ class HaiClient:
                 headers={"Content-Type": "application/json", "Authorization": "JACS ***"},
             )
 
-        headers = self._build_auth_headers()
-        headers["Content-Type"] = "application/json"
+        ffi = self._get_ffi()
+        data = ffi.register(payload)
 
-        last_error: Optional[Exception] = None
-        for attempt in range(self._max_retries):
-            try:
-                resp = httpx.post(
-                    url, json=payload, headers=headers, timeout=self._timeout,
-                )
-
-                if resp.status_code in (200, 201):
-                    data = resp.json()
-                    # RegisterAgentResponse fields:
-                    # agent_id, jacs_id, jacs_version, registrations,
-                    # dns_verified, registered_at, a2a_detected, a2a_skills_count
-                    agent_id = data.get("agent_id", "")
-                    if agent_id:
-                        self._hai_agent_id = agent_id
-                    return HaiRegistrationResult(
-                        success=True,
-                        agent_id=agent_id,
-                        hai_signature="",
-                        registration_id="",
-                        registered_at=data.get("registered_at", ""),
-                        capabilities=[],
-                        raw_response=data,
-                    )
-
-                if resp.status_code in (401, 403):
-                    raise HaiAuthError(
-                        "Registration auth failed",
-                        status_code=resp.status_code,
-                        body=resp.text,
-                    )
-
-                if resp.status_code == 409:
-                    raise RegistrationError(
-                        "Agent is already registered",
-                        status_code=resp.status_code,
-                    )
-
-                last_error = RegistrationError(
-                    f"Registration failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                )
-
-            except (httpx.ConnectError, httpx.TimeoutException) as exc:
-                last_error = HaiConnectionError(f"Connection failed: {exc}")
-
-            except HaiError:
-                raise
-
-            except Exception as exc:
-                last_error = RegistrationError(f"Unexpected error: {exc}")
-
-            if attempt < self._max_retries - 1:
-                time.sleep(2**attempt)
-
-        raise last_error or RegistrationError("Registration failed after all retries")
+        agent_id = data.get("agent_id", "")
+        if agent_id:
+            self._hai_agent_id = agent_id
+        return HaiRegistrationResult(
+            success=True,
+            agent_id=agent_id,
+            hai_signature="",
+            registration_id="",
+            registered_at=data.get("registered_at", ""),
+            capabilities=[],
+            raw_response=data,
+        )
 
     # ------------------------------------------------------------------
     # key rotation
@@ -676,6 +692,8 @@ class HaiClient:
                 ``register_with_hai=True``, but the local rotation is
                 still preserved.
         """
+        # rotate_keys stays native -- it involves file I/O, JACS agent creation,
+        # and key archival that are inherently local operations.
         import hashlib
         import shutil
         import tempfile
@@ -698,7 +716,6 @@ class HaiClient:
         key_dir = Path(cfg.key_dir)
 
         # 1. Determine archive paths
-        # Look for the private key file (same search order as config.load)
         priv_candidates = [
             key_dir / "agent_private_key.pem",
             key_dir / "jacs.private.pem.enc",
@@ -719,10 +736,8 @@ class HaiClient:
 
         archive_priv = priv_path.with_suffix(f".{old_version}.pem")
 
-        # Find matching public key
         pub_path = key_dir / priv_path.name.replace("private", "public")
         if not pub_path.is_file():
-            # Try common alternatives
             for name in ["agent_public_key.pem", "jacs.public.pem", f"{cfg.name}.public.pem", "public_key.pem"]:
                 alt = key_dir / name
                 if alt.is_file():
@@ -732,7 +747,6 @@ class HaiClient:
         archive_pub = pub_path.with_suffix(f".{old_version}.pem") if pub_path.is_file() else None
 
         # 2. Pre-sign auth header with old agent BEFORE archiving keys
-        #    (chain of trust: old key vouches for new key during re-registration)
         old_auth_header = None
         if register_with_hai and hai_url is not None:
             try:
@@ -770,7 +784,6 @@ class HaiClient:
                 tmp_data_dir.mkdir()
                 tmp_config = tmp_path / "jacs.config.json"
 
-                # Generate new agent with keys via JACS
                 _new_agent, new_info = _SimpleAgent.create_agent(
                     name=cfg.name,
                     password=password_str,
@@ -783,7 +796,6 @@ class HaiClient:
                     default_storage="fs",
                 )
 
-                # Copy new key files to original locations
                 new_priv_src = Path(new_info.get("private_key_path", ""))
                 new_pub_src = Path(new_info.get("public_key_path", ""))
 
@@ -795,7 +807,6 @@ class HaiClient:
                     os.chmod(str(pub_path), 0o644)
 
         except Exception as exc:
-            # Rollback: restore archived keys
             logger.error("Key generation failed, rolling back: %s", exc)
             shutil.move(str(archive_priv), str(priv_path))
             if archive_pub is not None and archive_pub.is_file():
@@ -809,14 +820,12 @@ class HaiClient:
             "JACS_CONFIG_PATH", "./jacs.config.json"
         )
 
-        # Wrap the new agent for JacsAgent API compatibility
         try:
             from jacs.simple import _EphemeralAgentAdapter
             new_agent = _EphemeralAgentAdapter(_new_agent)
         except ImportError:
             new_agent = _new_agent
 
-        # Update module state with new agent and config
         config_mod._config = AgentConfig(
             name=cfg.name,
             version=new_version,
@@ -850,7 +859,7 @@ class HaiClient:
             old_version, new_version, jacs_id,
         )
 
-        # 8. Optionally re-register with HAI using the pre-signed OLD auth header
+        # 8. Optionally re-register with HAI using FFI
         registered = False
         if register_with_hai:
             if hai_url is None:
@@ -859,33 +868,19 @@ class HaiClient:
                 )
             else:
                 try:
-                    url = self._make_url(hai_url, "/api/v1/agents/register")
-                    payload: dict[str, Any] = {
+                    # Reset FFI adapter to pick up new keys
+                    self._ffi = None
+                    ffi = self._get_ffi()
+                    reg_payload: dict[str, Any] = {
                         "agent_json": signed_agent_json,
                     }
                     if pub_pem_str:
-                        payload["public_key"] = base64.b64encode(
+                        reg_payload["public_key"] = base64.b64encode(
                             pub_pem_str.encode("utf-8")
                         ).decode("utf-8")
-                    headers = {"Content-Type": "application/json"}
-                    if old_auth_header is not None:
-                        headers["Authorization"] = old_auth_header
-                    else:
-                        logger.warning(
-                            "Proceeding with rotation registration without old-key "
-                            "Authorization header because pre-signing was unavailable"
-                        )
-                    resp = httpx.post(
-                        url, json=payload, headers=headers, timeout=self._timeout,
-                    )
-                    if resp.status_code in (200, 201):
-                        registered = True
-                        logger.info("Re-registered with HAI after rotation")
-                    else:
-                        logger.warning(
-                            "HAI re-registration returned HTTP %d (local rotation preserved)",
-                            resp.status_code,
-                        )
+                    ffi.register(reg_payload)
+                    registered = True
+                    logger.info("Re-registered with HAI after rotation")
                 except Exception as exc:
                     logger.warning(
                         "HAI re-registration failed (local rotation preserved): %s",
@@ -908,72 +903,34 @@ class HaiClient:
     def status(self, hai_url: str) -> HaiStatusResult:
         """Check registration/verification status of the current agent.
 
-        Calls ``GET /api/v1/agents/{jacs_id}/verify``.
-
         Args:
             hai_url: Base URL of the HAI server.
 
         Returns:
             HaiStatusResult with verification details.
         """
+        ffi = self._get_ffi()
         jacs_id = self._get_jacs_id()
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        url = self._make_url(hai_url, f"/api/v1/agents/{safe_jacs_id}/verify")
-        headers = self._build_auth_headers()
+        data = ffi.verify_status(jacs_id)
 
-        last_error: Optional[Exception] = None
-        for attempt in range(self._max_retries):
-            try:
-                resp = httpx.get(url, headers=headers, timeout=self._timeout)
+        if not data.get("registered", True) and not data.get("jacs_id"):
+            return HaiStatusResult(
+                registered=False,
+                agent_id=jacs_id,
+                raw_response=data,
+            )
 
-                if resp.status_code == 200:
-                    data = resp.json()
-                    # VerifyAgentResponse fields:
-                    # jacs_id, registered, registrations, dns_verified, registered_at
-                    registrations = data.get("registrations", [])
-                    return HaiStatusResult(
-                        registered=data.get("registered", True),
-                        agent_id=data.get("jacs_id", jacs_id),
-                        registration_id="",
-                        registered_at=data.get("registered_at", ""),
-                        hai_signatures=[
-                            r.get("algorithm", "") for r in registrations
-                        ],
-                        raw_response=data,
-                    )
-
-                if resp.status_code == 404:
-                    return HaiStatusResult(
-                        registered=False,
-                        agent_id=jacs_id,
-                        raw_response=resp.json() if resp.text else {},
-                    )
-
-                if resp.status_code in (401, 403):
-                    raise HaiAuthError(
-                        "Status check auth failed",
-                        status_code=resp.status_code,
-                        body=resp.text,
-                    )
-
-                last_error = HaiError(
-                    f"Status check failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                )
-
-            except (httpx.ConnectError, httpx.TimeoutException) as exc:
-                last_error = HaiConnectionError(f"Connection failed: {exc}")
-
-            except HaiError:
-                raise
-
-            except Exception as exc:
-                last_error = HaiError(f"Unexpected error: {exc}")
-
-            if attempt < self._max_retries - 1:
-                time.sleep(2**attempt)
-
-        raise last_error or HaiError("Status check failed after all retries")
+        registrations = data.get("registrations", [])
+        return HaiStatusResult(
+            registered=data.get("registered", True),
+            agent_id=data.get("jacs_id", jacs_id),
+            registration_id="",
+            registered_at=data.get("registered_at", ""),
+            hai_signatures=[
+                r.get("algorithm", "") for r in registrations
+            ],
+            raw_response=data,
+        )
 
     # ------------------------------------------------------------------
     # get_agent_attestation
@@ -986,9 +943,6 @@ class HaiClient:
     ) -> HaiStatusResult:
         """Get HAI attestation status for any agent by ID.
 
-        Unlike ``status()`` which checks the current agent, this queries any
-        agent by its JACS ID.
-
         Args:
             hai_url: Base URL of the HAI server.
             agent_id: JACS agent ID to check.
@@ -996,43 +950,27 @@ class HaiClient:
         Returns:
             HaiStatusResult with registration details.
         """
-        safe_agent_id = self._escape_path_segment(agent_id)
-        url = self._make_url(hai_url, f"/api/v1/agents/{safe_agent_id}/verify")
-        headers = self._build_auth_headers()
+        ffi = self._get_ffi()
+        data = ffi.get_verification(agent_id)
 
-        try:
-            resp = httpx.get(url, headers=headers, timeout=self._timeout)
-
-            if resp.status_code == 200:
-                data = resp.json()
-                registrations = data.get("registrations", [])
-                return HaiStatusResult(
-                    registered=data.get("registered", True),
-                    agent_id=data.get("jacs_id", agent_id),
-                    registration_id="",
-                    registered_at=data.get("registered_at", ""),
-                    hai_signatures=[
-                        r.get("algorithm", "") for r in registrations
-                    ],
-                    raw_response=data,
-                )
-
-            if resp.status_code == 404:
-                return HaiStatusResult(
-                    registered=False,
-                    agent_id=agent_id,
-                    raw_response=resp.json() if resp.text else {},
-                )
-
-            raise HaiApiError(
-                f"Attestation check failed: HTTP {resp.status_code}",
-                status_code=resp.status_code,
-                body=resp.text,
+        if not data.get("registered", True) and not data.get("jacs_id"):
+            return HaiStatusResult(
+                registered=False,
+                agent_id=agent_id,
+                raw_response=data,
             )
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Failed to get attestation: {exc}")
+
+        registrations = data.get("registrations", [])
+        return HaiStatusResult(
+            registered=data.get("registered", True),
+            agent_id=data.get("jacs_id", agent_id),
+            registration_id="",
+            registered_at=data.get("registered_at", ""),
+            hai_signatures=[
+                r.get("algorithm", "") for r in registrations
+            ],
+            raw_response=data,
+        )
 
     # ------------------------------------------------------------------
     # check_username / claim_username
@@ -1040,8 +978,6 @@ class HaiClient:
 
     def check_username(self, hai_url: str, username: str) -> dict[str, Any]:
         """Check if a username is available for @hai.ai email.
-
-        ``GET /api/v1/agents/username/check?username={name}``
 
         Args:
             hai_url: Base URL of the HAI server.
@@ -1051,38 +987,13 @@ class HaiClient:
             Dict with ``available`` (bool), ``username`` (str), and
             optional ``reason`` (str).
         """
-        url = self._make_url(hai_url, "/api/v1/agents/username/check")
-
-        try:
-            resp = httpx.get(
-                url,
-                params={"username": username},
-                timeout=self._timeout,
-            )
-
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Username check failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            return resp.json()
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Username check failed: {exc}")
+        ffi = self._get_ffi()
+        return ffi.check_username(username)
 
     def claim_username(
         self, hai_url: str, agent_id: str, username: str
     ) -> dict[str, Any]:
         """Claim a username for an agent, getting ``{username}@hai.ai`` email.
-
-        ``POST /api/v1/agents/{agent_id}/username`` with body
-        ``{username}``.  Requires JACS auth.
 
         Args:
             hai_url: Base URL of the HAI server.
@@ -1092,184 +1003,41 @@ class HaiClient:
         Returns:
             Dict with ``username``, ``email``, and ``agent_id``.
         """
-        safe_agent_id = self._escape_path_segment(agent_id)
-        url = self._make_url(hai_url, f"/api/v1/agents/{safe_agent_id}/username")
-        headers = self._build_auth_headers()
-        headers["Content-Type"] = "application/json"
-
-        try:
-            resp = httpx.post(
-                url,
-                json={"username": username},
-                headers=headers,
-                timeout=self._timeout,
-            )
-
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Username claim auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Username claim failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            data = resp.json()
-            self._agent_email = data.get("email")
-            return data
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Username claim failed: {exc}")
+        ffi = self._get_ffi()
+        data = ffi.claim_username(agent_id, username)
+        self._agent_email = data.get("email")
+        return data
 
     def update_username(
         self, hai_url: str, agent_id: str, username: str
     ) -> dict[str, Any]:
-        """Update (rename) a claimed username for an agent.
-
-        ``PUT /api/v1/agents/{agent_id}/username`` with body ``{username}``.
-        Requires JACS auth.
-        """
-        safe_agent_id = self._escape_path_segment(agent_id)
-        url = self._make_url(hai_url, f"/api/v1/agents/{safe_agent_id}/username")
-        headers = self._build_auth_headers()
-
-        try:
-            resp = httpx.put(
-                url,
-                headers=headers,
-                json={"username": username},
-                timeout=self._timeout,
-            )
-
-            if resp.status_code == 401:
-                raise HaiAuthError(
-                    "Username update auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Username update failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            return resp.json()
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Username update failed: {exc}")
+        """Update (rename) a claimed username for an agent."""
+        ffi = self._get_ffi()
+        return ffi.update_username(agent_id, username)
 
     def delete_username(self, hai_url: str, agent_id: str) -> dict[str, Any]:
-        """Delete a claimed username for an agent.
-
-        ``DELETE /api/v1/agents/{agent_id}/username``.
-        Requires JACS auth.
-        """
-        safe_agent_id = self._escape_path_segment(agent_id)
-        url = self._make_url(hai_url, f"/api/v1/agents/{safe_agent_id}/username")
-        headers = self._build_auth_headers()
-
-        try:
-            resp = httpx.delete(
-                url,
-                headers=headers,
-                timeout=self._timeout,
-            )
-
-            if resp.status_code == 401:
-                raise HaiAuthError(
-                    "Username delete auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Username delete failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            return resp.json()
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Username delete failed: {exc}")
+        """Delete a claimed username for an agent."""
+        ffi = self._get_ffi()
+        return ffi.delete_username(agent_id)
 
     def verify_document(
         self,
         hai_url: str,
         document: Union[str, dict[str, Any]],
     ) -> dict[str, Any]:
-        """Verify a signed JACS document via HAI's public verify endpoint.
-
-        ``POST /api/jacs/verify`` with body ``{"document": "<json string>"}``.
-        This endpoint is public and does not require authentication.
-        """
-        url = self._make_url(hai_url, "/api/jacs/verify")
+        """Verify a signed JACS document via HAI's public verify endpoint."""
+        ffi = self._get_ffi()
         raw_document = document if isinstance(document, str) else json.dumps(document)
-
-        try:
-            resp = httpx.post(
-                url,
-                json={"document": raw_document},
-                timeout=self._timeout,
-            )
-
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Document verification failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            return resp.json()
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Document verification failed: {exc}")
+        return ffi.verify_document(raw_document)
 
     def get_verification(
         self,
         hai_url: str,
         agent_id: str,
     ) -> dict[str, Any]:
-        """Get advanced 3-level verification status for an agent.
-
-        ``GET /api/v1/agents/{agent_id}/verification``.
-        This endpoint is public and does not require authentication.
-        """
-        safe_agent_id = self._escape_path_segment(agent_id)
-        url = self._make_url(hai_url, f"/api/v1/agents/{safe_agent_id}/verification")
-
-        try:
-            resp = httpx.get(url, timeout=self._timeout)
-
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Advanced verification failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            return resp.json()
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Advanced verification failed: {exc}")
+        """Get advanced 3-level verification status for an agent."""
+        ffi = self._get_ffi()
+        return ffi.get_verification(agent_id)
 
     def verify_agent_document(
         self,
@@ -1279,40 +1047,16 @@ class HaiClient:
         public_key: Optional[str] = None,
         domain: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Verify an agent document via HAI's advanced verification endpoint.
-
-        ``POST /api/v1/agents/verify`` with ``{agent_json, public_key?, domain?}``.
-        This endpoint is public and does not require authentication.
-        """
-        url = self._make_url(hai_url, "/api/v1/agents/verify")
-        payload: dict[str, Any] = {
+        """Verify an agent document via HAI's advanced verification endpoint."""
+        ffi = self._get_ffi()
+        request: dict[str, Any] = {
             "agent_json": agent_json if isinstance(agent_json, str) else json.dumps(agent_json),
         }
         if public_key is not None:
-            payload["public_key"] = public_key
+            request["public_key"] = public_key
         if domain is not None:
-            payload["domain"] = domain
-
-        try:
-            resp = httpx.post(
-                url,
-                json=payload,
-                timeout=self._timeout,
-            )
-
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Agent document verification failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            return resp.json()
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Agent document verification failed: {exc}")
+            request["domain"] = domain
+        return ffi.verify_agent_document(json.dumps(request))
 
     # ------------------------------------------------------------------
     # attestation
@@ -1340,6 +1084,9 @@ class HaiClient:
         Returns:
             Dict with attestation, hai_signature, and doc_id.
         """
+        # TODO(DRY_FFI_PHASE2): migrate attestations to FFI when binding-core adds them
+        import httpx as _httpx
+
         escaped = self._escape_path_segment(agent_id)
         url = self._make_url(hai_url, f"/api/v1/agents/{escaped}/attestations")
         headers = self._build_auth_headers()
@@ -1352,7 +1099,7 @@ class HaiClient:
         }
 
         try:
-            resp = httpx.post(
+            resp = _httpx.post(
                 url, json=payload, headers=headers, timeout=self._timeout,
             )
             if resp.status_code == 404:
@@ -1373,17 +1120,10 @@ class HaiClient:
         limit: int = 20,
         offset: int = 0,
     ) -> dict:
-        """List attestations for a registered agent.
+        """List attestations for a registered agent."""
+        # TODO(DRY_FFI_PHASE2): migrate attestations to FFI when binding-core adds them
+        import httpx as _httpx
 
-        Args:
-            hai_url: Base URL of the HAI server.
-            agent_id: The agent's JACS ID.
-            limit: Max number of results (default 20).
-            offset: Pagination offset.
-
-        Returns:
-            Dict with attestations array and total count.
-        """
         escaped = self._escape_path_segment(agent_id)
         url = self._make_url(
             hai_url,
@@ -1392,7 +1132,7 @@ class HaiClient:
         headers = self._build_auth_headers()
 
         try:
-            resp = httpx.get(url, headers=headers, timeout=self._timeout)
+            resp = _httpx.get(url, headers=headers, timeout=self._timeout)
             resp.raise_for_status()
             return resp.json()
         except HaiError:
@@ -1406,16 +1146,10 @@ class HaiClient:
         agent_id: str,
         doc_id: str,
     ) -> dict:
-        """Get a specific attestation document.
+        """Get a specific attestation document."""
+        # TODO(DRY_FFI_PHASE2): migrate attestations to FFI when binding-core adds them
+        import httpx as _httpx
 
-        Args:
-            hai_url: Base URL of the HAI server.
-            agent_id: The agent's JACS ID.
-            doc_id: The attestation document ID.
-
-        Returns:
-            Dict with attestation, hai_signature, and verification.
-        """
         escaped_agent = self._escape_path_segment(agent_id)
         escaped_doc = self._escape_path_segment(doc_id)
         url = self._make_url(
@@ -1425,7 +1159,7 @@ class HaiClient:
         headers = self._build_auth_headers()
 
         try:
-            resp = httpx.get(url, headers=headers, timeout=self._timeout)
+            resp = _httpx.get(url, headers=headers, timeout=self._timeout)
             if resp.status_code == 404:
                 raise HaiError(
                     f"Attestation '{doc_id}' not found for agent '{agent_id}'"
@@ -1442,24 +1176,16 @@ class HaiClient:
         hai_url: str,
         document: str,
     ) -> dict:
-        """Verify an attestation document via HAI.
+        """Verify an attestation document via HAI."""
+        # TODO(DRY_FFI_PHASE2): migrate attestations to FFI when binding-core adds them
+        import httpx as _httpx
 
-        Checks cryptographic validity and whether HAI has co-signed the
-        attestation.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            document: The attestation JSON document as a string.
-
-        Returns:
-            Dict with crypto_valid, evidence_valid, hai_signed, badge_level.
-        """
         url = self._make_url(hai_url, "/api/v1/attestations/verify")
         headers = self._build_auth_headers()
         headers["Content-Type"] = "application/json"
 
         try:
-            resp = httpx.post(
+            resp = _httpx.post(
                 url,
                 json={"document": document},
                 headers=headers,
@@ -1485,8 +1211,6 @@ class HaiClient:
     ) -> BenchmarkResult:
         """Run a benchmark via HAI.
 
-        Sends ``POST /api/benchmark/run`` with ``{name, tier}``.
-
         Args:
             hai_url: Base URL of the HAI server.
             name: Benchmark scenario name (default: "mediator").
@@ -1496,112 +1220,20 @@ class HaiClient:
         Returns:
             BenchmarkResult with scores and detailed test results.
         """
-        url = self._make_url(hai_url, "/api/benchmark/run")
-        headers = self._build_auth_headers()
-        headers["Content-Type"] = "application/json"
+        ffi = self._get_ffi()
+        data = ffi.benchmark(name, tier)
 
-        payload = {"name": name, "tier": tier, "transport": "sse"}
-        request_timeout = timeout or max(self._timeout, 120.0)
-
-        try:
-            resp = httpx.post(
-                url, json=payload, headers=headers, timeout=request_timeout,
-            )
-
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Benchmark auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            if resp.status_code not in (200, 201):
-                raise BenchmarkError(
-                    f"Benchmark request failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                )
-
-            data = resp.json()
-
-            # Async job: poll for result
-            job_id = data.get("job_id") or data.get("jobId")
-            if job_id:
-                return self._poll_benchmark_result(hai_url, job_id, request_timeout)
-
-            return BenchmarkResult(
-                success=data.get("success", True),
-                suite=name,
-                score=float(data.get("score", 0)),
-                passed=int(data.get("passed", 0)),
-                failed=int(data.get("failed", 0)),
-                total=int(data.get("total", 0)),
-                duration_ms=int(data.get("duration_ms", data.get("durationMs", 0))),
-                results=data.get("results", []),
-                raw_response=data,
-            )
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise BenchmarkError(f"Benchmark execution failed: {exc}")
-
-    def _poll_benchmark_result(
-        self,
-        hai_url: str,
-        job_id: str,
-        timeout: float,
-    ) -> BenchmarkResult:
-        """Poll for an async benchmark result."""
-        safe_job_id = self._escape_path_segment(job_id)
-        url = self._make_url(hai_url, f"/api/benchmark/jobs/{safe_job_id}")
-        headers = self._build_auth_headers()
-
-        start_time = time.time()
-        poll_interval = 2.0
-
-        while (time.time() - start_time) < timeout:
-            try:
-                resp = httpx.get(url, headers=headers, timeout=30.0)
-
-                if resp.status_code != 200:
-                    raise BenchmarkError(
-                        f"Poll failed: HTTP {resp.status_code}",
-                        status_code=resp.status_code,
-                    )
-
-                data = resp.json()
-                status = data.get("status", "").lower()
-
-                if status == "completed":
-                    return BenchmarkResult(
-                        success=True,
-                        suite=data.get("suite", ""),
-                        score=float(data.get("score", 0)),
-                        passed=int(data.get("passed", 0)),
-                        failed=int(data.get("failed", 0)),
-                        total=int(data.get("total", 0)),
-                        duration_ms=int(data.get("duration_ms", 0)),
-                        results=data.get("results", []),
-                        raw_response=data,
-                    )
-
-                if status in ("failed", "error"):
-                    raise BenchmarkError(
-                        data.get("error", "Benchmark job failed"),
-                        response_data=data,
-                    )
-
-                time.sleep(poll_interval)
-                poll_interval = min(poll_interval * 1.5, 10.0)
-
-            except HaiError:
-                raise
-            except Exception as exc:
-                raise BenchmarkError(f"Failed to poll benchmark status: {exc}")
-
-        raise BenchmarkError(f"Benchmark timed out after {timeout}s")
+        return BenchmarkResult(
+            success=data.get("success", True),
+            suite=name,
+            score=float(data.get("score", 0)),
+            passed=int(data.get("passed", 0)),
+            failed=int(data.get("failed", 0)),
+            total=int(data.get("total", 0)),
+            duration_ms=int(data.get("duration_ms", data.get("durationMs", 0))),
+            results=data.get("results", []),
+            raw_response=data,
+        )
 
     # ------------------------------------------------------------------
     # free_run
@@ -1614,12 +1246,6 @@ class HaiClient:
     ) -> FreeChaoticResult:
         """Run a free benchmark.
 
-        Connects to HAI and runs the canonical scenario with a cheap model.
-        No judge evaluation, no scoring.  Returns the raw conversation
-        transcript with structural annotations.
-
-        Rate limited to 3 runs per JACS keypair per 24 hours.
-
         Args:
             hai_url: Base URL of the HAI server.
             transport: Transport protocol: "sse" (default) or "ws".
@@ -1627,64 +1253,19 @@ class HaiClient:
         Returns:
             FreeChaoticResult with transcript and annotations.
         """
-        jacs_id = self._get_jacs_id()
-        url = self._make_url(hai_url, "/api/benchmark/run")
-        headers = self._build_auth_headers()
-        headers["Content-Type"] = "application/json"
+        ffi = self._get_ffi()
+        data = ffi.free_run(transport)
 
-        payload: dict[str, Any] = {
-            "name": f"Free Run - {jacs_id[:8]}",
-            "tier": "free",
-            "transport": transport,
-        }
-
-        try:
-            resp = httpx.post(
-                url, json=payload, headers=headers, timeout=max(self._timeout, 120.0),
-            )
-
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Authentication failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            if resp.status_code == 429:
-                raise HaiError(
-                    "Rate limited -- maximum 3 free chaotic runs per 24 hours",
-                    status_code=429,
-                )
-
-            if resp.status_code == 402:
-                raise HaiError("Payment required for this tier", status_code=402)
-
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Free chaotic run failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            data = resp.json()
-            transcript = self._parse_transcript(data.get("transcript", []))
-
-            return FreeChaoticResult(
-                success=True,
-                run_id=data.get("run_id", data.get("runId", "")),
-                transcript=transcript,
-                upsell_message=data.get(
-                    "upsell_message", data.get("upsellMessage", "")
-                ),
-                raw_response=data,
-            )
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Free chaotic run failed: {exc}")
+        transcript = self._parse_transcript(data.get("transcript", []))
+        return FreeChaoticResult(
+            success=True,
+            run_id=data.get("run_id", data.get("runId", "")),
+            transcript=transcript,
+            upsell_message=data.get(
+                "upsell_message", data.get("upsellMessage", "")
+            ),
+            raw_response=data,
+        )
 
     # ------------------------------------------------------------------
     # pro_run
@@ -1700,23 +1281,12 @@ class HaiClient:
     ) -> BaselineRunResult:
         """Run a pro tier benchmark ($20/month).
 
-        Flow:
-        1. Creates a Stripe Checkout session via the API.
-        2. Opens the checkout URL in the user's browser.
-        3. Polls for payment confirmation.
-        4. Runs the benchmark with quality models and judge evaluation.
-        5. Returns the single aggregate score.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            transport: Transport protocol: "sse" or "ws".
-            open_browser: Whether to auto-open Stripe checkout.
-            payment_poll_interval: Seconds between payment status checks.
-            payment_poll_timeout: Max seconds to wait for payment.
-
-        Returns:
-            BaselineRunResult with score and transcript.
+        This method stays native because it involves browser interaction
+        and payment polling that are inherently local operations.
         """
+        # TODO(DRY_FFI_PHASE2): migrate pro_run payment flow to FFI
+        import httpx as _httpx
+
         jacs_id = self._get_jacs_id()
 
         # Step 1: Create Stripe Checkout session
@@ -1727,7 +1297,7 @@ class HaiClient:
         purchase_payload = {"tier": "pro", "agent_id": jacs_id}
 
         try:
-            resp = httpx.post(
+            resp = _httpx.post(
                 purchase_url,
                 json=purchase_payload,
                 headers=headers,
@@ -1752,7 +1322,7 @@ class HaiClient:
             if not checkout_url:
                 raise BenchmarkError("No checkout URL returned from API")
 
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+        except (_httpx.ConnectError, _httpx.TimeoutException) as exc:
             raise HaiConnectionError(f"Connection failed: {exc}")
         except HaiError:
             raise
@@ -1772,7 +1342,7 @@ class HaiClient:
 
         while (time.time() - start_time) < payment_poll_timeout:
             try:
-                status_resp = httpx.get(
+                status_resp = _httpx.get(
                     payment_status_url, headers=headers, timeout=self._timeout,
                 )
                 if status_resp.status_code == 200:
@@ -1798,52 +1368,26 @@ class HaiClient:
                 "Complete payment in your browser and retry."
             )
 
-        # Step 4: Run the benchmark
-        run_url = self._make_url(hai_url, "/api/benchmark/run")
-        # Refresh auth headers with fresh timestamp
-        run_headers = self._build_auth_headers()
-        run_headers["Content-Type"] = "application/json"
-
-        run_payload: dict[str, Any] = {
+        # Step 4: Run the benchmark via FFI
+        ffi = self._get_ffi()
+        data = ffi.pro_run({
             "name": f"Pro Run - {jacs_id[:8]}",
             "tier": "pro",
             "payment_id": payment_id,
             "transport": transport,
-        }
+        })
 
-        try:
-            run_resp = httpx.post(
-                run_url,
-                json=run_payload,
-                headers=run_headers,
-                timeout=max(self._timeout, 300.0),
-            )
+        transcript = self._parse_transcript(data.get("transcript", []))
+        score = float(data.get("score", 0.0))
 
-            if run_resp.status_code not in (200, 201):
-                raise BenchmarkError(
-                    f"Baseline run failed: HTTP {run_resp.status_code}",
-                    status_code=run_resp.status_code,
-                )
-
-            data = run_resp.json()
-            transcript = self._parse_transcript(data.get("transcript", []))
-            score = float(data.get("score", 0.0))
-
-            return BaselineRunResult(
-                success=True,
-                run_id=data.get("run_id", data.get("runId", "")),
-                score=score,
-                transcript=transcript,
-                payment_id=payment_id,
-                raw_response=data,
-            )
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise BenchmarkError(f"Baseline run failed: {exc}")
+        return BaselineRunResult(
+            success=True,
+            run_id=data.get("run_id", data.get("runId", "")),
+            score=score,
+            transcript=transcript,
+            payment_id=payment_id,
+            raw_response=data,
+        )
 
     # ------------------------------------------------------------------
     # enterprise_run
@@ -1878,102 +1422,25 @@ class HaiClient:
     ) -> JobResponseResult:
         """Submit a benchmark job response.
 
-        POST /api/v1/agents/jobs/{job_id}/response
-
         The response is wrapped as a JACS-signed document.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            job_id: The job ID from the benchmark_job event.
-            message: The mediator's response message.
-            metadata: Optional metadata dict.
-            processing_time_ms: Processing time in milliseconds.
-
-        Returns:
-            JobResponseResult with acknowledgment.
         """
-        from haiai.config import get_config, get_agent
-
-        headers = self._build_auth_headers()
-        headers["Content-Type"] = "application/json"
-
+        ffi = self._get_ffi()
         response_body: dict[str, Any] = {"message": message}
         if metadata is not None:
             response_body["metadata"] = metadata
         response_body["processing_time_ms"] = processing_time_ms
 
-        job_response_payload = {"response": response_body}
+        data = ffi.submit_response({
+            "job_id": job_id,
+            "response": response_body,
+        })
 
-        # Always wrap as signed JACS document (signing via JACS binding-core)
-        cfg = get_config()
-        payload: dict[str, Any] = sign_response(
-            job_response_payload, get_agent(), cfg.jacs_id or "",
+        return JobResponseResult(
+            success=data.get("success", True),
+            job_id=data.get("job_id", data.get("jobId", job_id)),
+            message=data.get("message", "Response accepted"),
+            raw_response=data,
         )
-
-        safe_job_id = self._escape_path_segment(job_id)
-        url = self._make_url(hai_url, f"/api/v1/agents/jobs/{safe_job_id}/response")
-
-        last_exc: Optional[Exception] = None
-        for attempt in range(RETRY_MAX_ATTEMPTS):
-            try:
-                resp = httpx.post(url, json=payload, headers=headers, timeout=30.0)
-
-                if resp.status_code in (401, 403):
-                    raise HaiAuthError(
-                        f"Auth failed submitting response: {resp.status_code}",
-                        status_code=resp.status_code,
-                        body=resp.text,
-                    )
-
-                if resp.status_code == 404:
-                    raise BenchmarkError(
-                        f"Job not found: {job_id}",
-                        status_code=404,
-                    )
-
-                if should_retry(resp.status_code):
-                    delay = backoff(attempt)
-                    logger.warning(
-                        "submit_benchmark_response got %d, retrying in %.1fs",
-                        resp.status_code,
-                        delay,
-                    )
-                    time.sleep(delay)
-                    headers = self._build_auth_headers()
-                    headers["Content-Type"] = "application/json"
-                    continue
-
-                resp.raise_for_status()
-
-                data = resp.json()
-                return JobResponseResult(
-                    success=data.get("success", True),
-                    job_id=data.get("job_id", data.get("jobId", job_id)),
-                    message=data.get("message", "Response accepted"),
-                    raw_response=data,
-                )
-
-            except httpx.HTTPStatusError as exc:
-                raise HaiApiError(
-                    f"Failed to submit response: {exc.response.status_code}",
-                    status_code=exc.response.status_code,
-                    body=exc.response.text,
-                ) from exc
-            except (httpx.ConnectError, httpx.ReadTimeout) as exc:
-                last_exc = exc
-                delay = backoff(attempt)
-                logger.warning(
-                    "submit_benchmark_response connection error (%s), retrying",
-                    exc,
-                )
-                time.sleep(delay)
-                headers = self._build_auth_headers()
-                headers["Content-Type"] = "application/json"
-                continue
-
-        raise HaiConnectionError(
-            f"Failed to submit response after {RETRY_MAX_ATTEMPTS} attempts"
-        ) from last_exc
 
     # ------------------------------------------------------------------
     # sign_benchmark_result
@@ -1990,16 +1457,7 @@ class HaiClient:
         """Sign a benchmark result for independent verification.
 
         Creates a JACS-signed document containing the benchmark result.
-
-        Args:
-            run_id: The benchmark run ID from HAI.
-            score: The benchmark score (0-100), if available.
-            tier: Benchmark tier ("free", "pro", "enterprise").
-            transcript: Optional transcript messages to include.
-            metadata: Optional additional metadata.
-
-        Returns:
-            Dict with ``signed_document`` (JSON string) and ``agent_jacs_id``.
+        This stays native as it uses local JACS signing.
         """
         from haiai.config import get_config, get_agent
 
@@ -2037,51 +1495,26 @@ class HaiClient:
         bcc: Optional[list[str]] = None,
         labels: Optional[list[str]] = None,
     ) -> SendEmailResult:
-        """Send an email from this agent's @hai.ai address.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            to: Recipient address (must be @hai.ai for MVP).
-            subject: Email subject line.
-            body: Plain text email body.
-            in_reply_to: Optional Message-ID for threading.
-            attachments: Optional list of attachment dicts, each with keys
-                ``filename`` (str), ``content_type`` (str), and ``data``
-                (bytes).  Included in the content hash and sent as
-                base64-encoded payloads.
-            cc: Optional list of CC recipient addresses.
-            bcc: Optional list of BCC recipient addresses.
-            labels: Optional list of labels/tags to apply.
-
-        Returns:
-            SendEmailResult with message_id and status.
-        """
+        """Send an email from this agent's @hai.ai address."""
         if self._agent_email is None:
             raise HaiError("agent email not set -- call claim_username first")
 
-        jacs_id = self._get_hai_agent_id()
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/send")
-        headers = self._build_auth_headers()
-        headers["Content-Type"] = "application/json"
-
-        # Server handles JACS attachment signing (TASK_014/017).
-        # Client only sends content fields.
-        payload: dict[str, Any] = {
+        ffi = self._get_ffi()
+        options: dict[str, Any] = {
             "to": to,
             "subject": subject,
             "body": body,
         }
         if in_reply_to is not None:
-            payload["in_reply_to"] = in_reply_to
+            options["in_reply_to"] = in_reply_to
         if cc:
-            payload["cc"] = cc
+            options["cc"] = cc
         if bcc:
-            payload["bcc"] = bcc
+            options["bcc"] = bcc
         if labels:
-            payload["labels"] = labels
+            options["labels"] = labels
         if attachments:
-            payload["attachments"] = [
+            options["attachments"] = [
                 {
                     "filename": a["filename"],
                     "content_type": a["content_type"],
@@ -2090,110 +1523,19 @@ class HaiClient:
                 for a in attachments
             ]
 
-        try:
-            resp = httpx.post(url, json=payload, headers=headers, timeout=self._timeout)
-
-            # Parse structured error code if available
-            try:
-                err_data = resp.json()
-                err_code = err_data.get("error_code", "")
-            except (ValueError, KeyError):
-                err_data = {}
-                err_code = ""
-
-            if resp.status_code == 403 and (err_code == "EMAIL_NOT_ACTIVE" or "allocated" in resp.text.lower()):
-                raise EmailNotActive(
-                    err_data.get("message", "Agent email is not active (status: allocated)"),
-                    status_code=403,
-                    body=resp.text,
-                )
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Email send auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code == 400 and (err_code == "RECIPIENT_NOT_FOUND" or "Invalid recipient" in resp.text):
-                raise RecipientNotFound(
-                    err_data.get("message", "Recipient not found"),
-                    status_code=400,
-                    body=resp.text,
-                )
-            if resp.status_code == 400 and err_code == "SUBJECT_TOO_LONG":
-                raise SubjectTooLong(
-                    err_data.get("message", "Subject too long"),
-                    status_code=400,
-                    body=resp.text,
-                )
-            if resp.status_code == 400 and err_code == "BODY_TOO_LARGE":
-                raise BodyTooLarge(
-                    err_data.get("message", "Body too large"),
-                    status_code=400,
-                    body=resp.text,
-                )
-            if resp.status_code == 429:
-                raise RateLimited(
-                    err_data.get("message", "Rate limited"),
-                    status_code=429,
-                    body=resp.text,
-                    resets_at=err_data.get("resets_at", ""),
-                )
-            if resp.status_code == 400:
-                body_lower = resp.text.lower()
-                if "recipient" in body_lower:
-                    raise RecipientNotFound(
-                        f"Recipient not found: {resp.text}",
-                        status_code=400,
-                        body=resp.text,
-                    )
-                if "subject" in body_lower:
-                    raise SubjectTooLong(
-                        f"Subject too long: {resp.text}",
-                        status_code=400,
-                        body=resp.text,
-                    )
-                if "body" in body_lower:
-                    raise BodyTooLarge(
-                        f"Body too large: {resp.text}",
-                        status_code=400,
-                        body=resp.text,
-                    )
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Email send failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            data = resp.json()
-            return SendEmailResult(
-                message_id=data.get("message_id", ""),
-                status=data.get("status", "sent"),
-            )
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Email send failed: {exc}")
+        data = ffi.send_email(options)
+        return SendEmailResult(
+            message_id=data.get("message_id", ""),
+            status=data.get("status", "sent"),
+        )
 
     def sign_email(self, hai_url: str, raw_email: bytes) -> bytes:
         """Sign a raw RFC 5322 email with a JACS attachment via the HAI API.
 
-        The server adds a ``jacs-signature.json`` MIME attachment containing
-        the detached JACS signature. The returned bytes are the signed email.
-
-        Also accepts ``email.message.EmailMessage`` objects -- they are
-        automatically converted to bytes via ``as_bytes()``.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            raw_email: Raw RFC 5322 email bytes (or EmailMessage).
-
-        Returns:
-            Signed email bytes with the JACS attachment added.
+        This stays native as it sends raw bytes (not JSON).
         """
+        # TODO(DRY_FFI_PHASE2): migrate to FFI streaming/binary support
+        import httpx as _httpx
         import email.message
         if isinstance(raw_email, email.message.EmailMessage):
             raw_email = raw_email.as_bytes()
@@ -2203,7 +1545,7 @@ class HaiClient:
         headers["Content-Type"] = "message/rfc822"
 
         try:
-            resp = httpx.post(url, content=raw_email, headers=headers, timeout=self._timeout)
+            resp = _httpx.post(url, content=raw_email, headers=headers, timeout=self._timeout)
             if resp.status_code not in (200, 201):
                 raise HaiApiError(
                     f"Email sign failed: HTTP {resp.status_code}",
@@ -2211,7 +1553,7 @@ class HaiClient:
                     body=resp.text,
                 )
             return resp.content
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+        except (_httpx.ConnectError, _httpx.TimeoutException) as exc:
             raise HaiConnectionError(f"Connection failed: {exc}")
         except HaiError:
             raise
@@ -2233,28 +1575,9 @@ class HaiClient:
         """Send an agent-signed email.
 
         .. deprecated::
-            send_signed_email currently delegates to send_email. The previous
-            implementation called /api/v1/email/sign (HAI authority key) then
-            POSTed to send-signed, which rejects because the signer ID does
-            not match the authenticated agent. True agent-key local signing
-            will be available when the Rust SDK core (DevEx TASK_017) ships.
-            Use send_email directly.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            to: Recipient address.
-            subject: Email subject line.
-            body: Plain text email body.
-            in_reply_to: Optional Message-ID for threading.
-            attachments: Optional list of attachment dicts, each with keys
-                ``filename`` (str), ``content_type`` (str), and ``data``
-                (bytes).
-
-        Returns:
-            SendEmailResult with message_id and status.
+            send_signed_email currently delegates to send_email. Use
+            send_email directly.
         """
-        # Deprecated: delegates to send_email until local agent-key signing
-        # is available (DevEx TASK_017). Use send_email directly.
         return self.send_email(
             hai_url,
             to,
@@ -2270,20 +1593,10 @@ class HaiClient:
     def verify_email(self, hai_url: str, raw_email: bytes) -> EmailVerificationResultV2:
         """Verify a JACS-signed email via the HAI API.
 
-        The server extracts the ``jacs-signature.json`` attachment, validates
-        the cryptographic signature and content hashes, and returns a
-        detailed verification result.
-
-        Also accepts ``email.message.EmailMessage`` objects -- they are
-        automatically converted to bytes via ``as_bytes()``.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            raw_email: Raw RFC 5322 email bytes (or EmailMessage).
-
-        Returns:
-            EmailVerificationResultV2 with field-level verification results.
+        This stays native as it sends raw bytes (not JSON).
         """
+        # TODO(DRY_FFI_PHASE2): migrate to FFI binary support
+        import httpx as _httpx
         import email.message
         if isinstance(raw_email, email.message.EmailMessage):
             raw_email = raw_email.as_bytes()
@@ -2293,7 +1606,7 @@ class HaiClient:
         headers["Content-Type"] = "message/rfc822"
 
         try:
-            resp = httpx.post(url, content=raw_email, headers=headers, timeout=self._timeout)
+            resp = _httpx.post(url, content=raw_email, headers=headers, timeout=self._timeout)
             if resp.status_code not in (200, 201):
                 raise HaiApiError(
                     f"Email verify failed: HTTP {resp.status_code}",
@@ -2331,7 +1644,7 @@ class HaiClient:
                 agent_status=data.get("agent_status"),
                 benchmarks_completed=data.get("benchmarks_completed", []),
             )
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+        except (_httpx.ConnectError, _httpx.TimeoutException) as exc:
             raise HaiConnectionError(f"Connection failed: {exc}")
         except HaiError:
             raise
@@ -2351,360 +1664,57 @@ class HaiClient:
         since: Optional[str] = None,
         until: Optional[str] = None,
     ) -> list[EmailMessage]:
-        """List email messages for this agent.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            limit: Max messages to return.
-            offset: Pagination offset.
-            direction: Filter by direction ("inbound" or "outbound").
-            is_read: Filter by read status.
-            folder: Filter by folder (e.g. "inbox", "archive").
-            label: Filter by label/tag.
-            has_attachments: Filter by attachment presence.
-            since: ISO 8601 start date filter.
-            until: ISO 8601 end date filter.
-
-        Returns:
-            List of EmailMessage objects.
-        """
-        jacs_id = self._get_hai_agent_id()
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/messages")
-        headers = self._build_auth_headers()
-
-        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        """List email messages for this agent."""
+        ffi = self._get_ffi()
+        options: dict[str, Any] = {"limit": limit, "offset": offset}
         if direction is not None:
-            params["direction"] = direction
+            options["direction"] = direction
         if is_read is not None:
-            params["is_read"] = str(is_read).lower()
+            options["is_read"] = is_read
         if folder is not None:
-            params["folder"] = folder
+            options["folder"] = folder
         if label is not None:
-            params["label"] = label
+            options["label"] = label
         if has_attachments is not None:
-            params["has_attachments"] = str(has_attachments).lower()
+            options["has_attachments"] = has_attachments
         if since is not None:
-            params["since"] = since
+            options["since"] = since
         if until is not None:
-            params["until"] = until
+            options["until"] = until
 
-        try:
-            resp = httpx.get(
-                url,
-                params=params,
-                headers=headers,
-                timeout=self._timeout,
-            )
-
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Email list auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Email list failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            data = resp.json()
-            messages = data if isinstance(data, list) else data.get("messages", [])
-            return [EmailMessage.from_dict(m) for m in messages]
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Email list failed: {exc}")
+        items = ffi.list_messages(options)
+        messages = items if isinstance(items, list) else items.get("messages", [])
+        return [EmailMessage.from_dict(m) for m in messages]
 
     def mark_read(self, hai_url: str, message_id: str) -> bool:
-        """Mark an email message as read.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            message_id: ID of the message to mark as read.
-
-        Returns:
-            True if successful.
-        """
-        jacs_id = self._get_hai_agent_id()
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        safe_message_id = self._escape_path_segment(message_id)
-        url = self._make_url(
-            hai_url,
-            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/read",
-        )
-        headers = self._build_auth_headers()
-
-        try:
-            resp = httpx.post(url, headers=headers, timeout=self._timeout)
-
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Email mark_read auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 201, 204):
-                raise HaiApiError(
-                    f"Email mark_read failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            return True
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Email mark_read failed: {exc}")
+        """Mark an email message as read."""
+        ffi = self._get_ffi()
+        ffi.mark_read(message_id)
+        return True
 
     def get_email_status(self, hai_url: str) -> EmailStatus:
-        """Get email rate-limit and reputation status.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-
-        Returns:
-            EmailStatus with daily limits and tier info.
-        """
-        jacs_id = self._get_hai_agent_id()
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/status")
-        headers = self._build_auth_headers()
-
-        try:
-            resp = httpx.get(url, headers=headers, timeout=self._timeout)
-
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Email status auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Email status failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            data = resp.json()
-            return self._parse_email_status(data)
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Email status failed: {exc}")
-
-    @staticmethod
-    def _parse_email_status(data: dict) -> EmailStatus:
-        """Parse an EmailStatus from a JSON dict, including nested fields."""
-        volume_data = data.get("volume")
-        volume = (
-            EmailVolumeInfo(
-                sent_total=int(volume_data.get("sent_total", 0)),
-                received_total=int(volume_data.get("received_total", 0)),
-                sent_24h=int(volume_data.get("sent_24h", 0)),
-            )
-            if volume_data
-            else None
-        )
-
-        delivery_data = data.get("delivery")
-        delivery = (
-            EmailDeliveryInfo(
-                bounce_count=int(delivery_data.get("bounce_count", 0)),
-                spam_report_count=int(delivery_data.get("spam_report_count", 0)),
-                delivery_rate=float(delivery_data.get("delivery_rate", 0.0)),
-            )
-            if delivery_data
-            else None
-        )
-
-        reputation_data = data.get("reputation")
-        reputation = (
-            EmailReputationInfo(
-                score=float(reputation_data.get("score", 0.0)),
-                tier=reputation_data.get("tier", ""),
-                email_score=float(reputation_data.get("email_score", 0.0)),
-                hai_score=(
-                    float(reputation_data["hai_score"])
-                    if reputation_data.get("hai_score") is not None
-                    else None
-                ),
-            )
-            if reputation_data
-            else None
-        )
-
-        return EmailStatus(
-            email=data.get("email", ""),
-            status=data.get("status", ""),
-            tier=data.get("tier", ""),
-            billing_tier=data.get("billing_tier", ""),
-            messages_sent_24h=int(data.get("messages_sent_24h", 0)),
-            daily_limit=int(data.get("daily_limit", 0)),
-            daily_used=int(data.get("daily_used", 0)),
-            resets_at=data.get("resets_at", ""),
-            messages_sent_total=int(data.get("messages_sent_total", 0)),
-            external_enabled=bool(data.get("external_enabled", False)),
-            external_sends_today=int(data.get("external_sends_today", 0)),
-            last_tier_change=data.get("last_tier_change"),
-            volume=volume,
-            delivery=delivery,
-            reputation=reputation,
-        )
+        """Get email rate-limit and reputation status."""
+        ffi = self._get_ffi()
+        data = ffi.get_email_status()
+        return self._parse_email_status(data)
 
     def get_message(self, hai_url: str, message_id: str) -> EmailMessage:
-        """Get a single email message by ID.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            message_id: ID of the message to retrieve.
-
-        Returns:
-            EmailMessage object.
-        """
-        jacs_id = self._get_hai_agent_id()
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        safe_message_id = self._escape_path_segment(message_id)
-        url = self._make_url(
-            hai_url,
-            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}",
-        )
-        headers = self._build_auth_headers()
-
-        try:
-            resp = httpx.get(url, headers=headers, timeout=self._timeout)
-
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Email get_message auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code == 404:
-                raise HaiApiError(
-                    f"Message not found: {message_id}",
-                    status_code=404,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Email get_message failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            m = resp.json()
-            return EmailMessage.from_dict(m)
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Email get_message failed: {exc}")
+        """Get a single email message by ID."""
+        ffi = self._get_ffi()
+        m = ffi.get_message(message_id)
+        return EmailMessage.from_dict(m)
 
     def delete_message(self, hai_url: str, message_id: str) -> bool:
-        """Delete an email message.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            message_id: ID of the message to delete.
-
-        Returns:
-            True if successful (204).
-        """
-        jacs_id = self._get_hai_agent_id()
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        safe_message_id = self._escape_path_segment(message_id)
-        url = self._make_url(
-            hai_url,
-            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}",
-        )
-        headers = self._build_auth_headers()
-
-        try:
-            resp = httpx.delete(url, headers=headers, timeout=self._timeout)
-
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Email delete_message auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code == 404:
-                raise HaiApiError(
-                    f"Message not found: {message_id}",
-                    status_code=404,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 204):
-                raise HaiApiError(
-                    f"Email delete_message failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            return True
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Email delete_message failed: {exc}")
+        """Delete an email message."""
+        ffi = self._get_ffi()
+        ffi.delete_message(message_id)
+        return True
 
     def mark_unread(self, hai_url: str, message_id: str) -> bool:
-        """Mark an email message as unread.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            message_id: ID of the message to mark as unread.
-
-        Returns:
-            True if successful.
-        """
-        jacs_id = self._get_hai_agent_id()
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        safe_message_id = self._escape_path_segment(message_id)
-        url = self._make_url(
-            hai_url,
-            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/unread",
-        )
-        headers = self._build_auth_headers()
-
-        try:
-            resp = httpx.post(url, headers=headers, timeout=self._timeout)
-
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Email mark_unread auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 201, 204):
-                raise HaiApiError(
-                    f"Email mark_unread failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            return True
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Email mark_unread failed: {exc}")
+        """Mark an email message as unread."""
+        ffi = self._get_ffi()
+        ffi.mark_unread(message_id)
+        return True
 
     def search_messages(
         self,
@@ -2723,124 +1733,40 @@ class HaiClient:
         limit: int = 20,
         offset: int = 0,
     ) -> list[EmailMessage]:
-        """Search email messages.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            q: Free-text search query.
-            direction: Filter by direction ("inbound" or "outbound").
-            from_address: Filter by sender address.
-            to_address: Filter by recipient address.
-            since: ISO 8601 start date filter.
-            until: ISO 8601 end date filter.
-            is_read: Filter by read status.
-            jacs_verified: Filter by JACS verification status.
-            folder: Filter by folder.
-            label: Filter by label/tag.
-            has_attachments: Filter by attachment presence.
-            limit: Max messages to return.
-            offset: Pagination offset.
-
-        Returns:
-            List of matching EmailMessage objects.
-        """
-        jacs_id = self._get_hai_agent_id()
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/search")
-        headers = self._build_auth_headers()
-
-        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        """Search email messages."""
+        ffi = self._get_ffi()
+        options: dict[str, Any] = {"limit": limit, "offset": offset}
         if q is not None:
-            params["q"] = q
+            options["q"] = q
         if direction is not None:
-            params["direction"] = direction
+            options["direction"] = direction
         if from_address is not None:
-            params["from_address"] = from_address
+            options["from_address"] = from_address
         if to_address is not None:
-            params["to_address"] = to_address
+            options["to_address"] = to_address
         if since is not None:
-            params["since"] = since
+            options["since"] = since
         if until is not None:
-            params["until"] = until
+            options["until"] = until
         if is_read is not None:
-            params["is_read"] = str(is_read).lower()
+            options["is_read"] = is_read
         if jacs_verified is not None:
-            params["jacs_verified"] = str(jacs_verified).lower()
+            options["jacs_verified"] = jacs_verified
         if folder is not None:
-            params["folder"] = folder
+            options["folder"] = folder
         if label is not None:
-            params["label"] = label
+            options["label"] = label
         if has_attachments is not None:
-            params["has_attachments"] = str(has_attachments).lower()
+            options["has_attachments"] = has_attachments
 
-        try:
-            resp = httpx.get(
-                url, params=params, headers=headers, timeout=self._timeout,
-            )
-
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Email search auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Email search failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            data = resp.json()
-            messages = data if isinstance(data, list) else data.get("messages", [])
-            return [EmailMessage.from_dict(m) for m in messages]
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Email search failed: {exc}")
+        items = ffi.search_messages(options)
+        messages = items if isinstance(items, list) else items.get("messages", [])
+        return [EmailMessage.from_dict(m) for m in messages]
 
     def get_unread_count(self, hai_url: str) -> int:
-        """Get the number of unread email messages.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-
-        Returns:
-            Number of unread messages.
-        """
-        jacs_id = self._get_hai_agent_id()
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/unread-count")
-        headers = self._build_auth_headers()
-
-        try:
-            resp = httpx.get(url, headers=headers, timeout=self._timeout)
-
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Email unread_count auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Email unread_count failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            data = resp.json()
-            return int(data.get("count", 0))
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Email unread_count failed: {exc}")
+        """Get the number of unread email messages."""
+        ffi = self._get_ffi()
+        return ffi.get_unread_count()
 
     def reply(
         self,
@@ -2849,20 +1775,7 @@ class HaiClient:
         body: str,
         subject: Optional[str] = None,
     ) -> SendEmailResult:
-        """Reply to an email message.
-
-        Fetches the original message, then sends a reply with appropriate
-        threading headers.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            message_id: ID of the message to reply to.
-            body: Reply body text.
-            subject: Override subject (defaults to "Re: <original subject>").
-
-        Returns:
-            SendEmailResult with message_id and status.
-        """
+        """Reply to an email message."""
         original = self.get_message(hai_url, message_id)
         reply_subject = subject if subject is not None else f"Re: {original.subject}"
         return self.send_email(
@@ -2880,140 +1793,32 @@ class HaiClient:
         to: str,
         comment: Optional[str] = None,
     ) -> SendEmailResult:
-        """Forward an email message to another recipient.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            message_id: ID of the message to forward.
-            to: Recipient email address.
-            comment: Optional comment to include above the forwarded message.
-
-        Returns:
-            SendEmailResult with message_id and status.
-        """
-        if self._agent_email is None:
-            raise HaiError("agent email not set -- call claim_username first")
-
-        jacs_id = self._get_hai_agent_id()
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/forward")
-        headers = self._build_auth_headers()
-        headers["Content-Type"] = "application/json"
-
-        payload: dict[str, Any] = {
+        """Forward an email message to another recipient."""
+        ffi = self._get_ffi()
+        params: dict[str, Any] = {
             "message_id": message_id,
             "to": to,
         }
         if comment is not None:
-            payload["comment"] = comment
+            params["comment"] = comment
 
-        try:
-            resp = httpx.post(url, json=payload, headers=headers, timeout=self._timeout)
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Email forward auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Email forward failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            data = resp.json()
-            return SendEmailResult(
-                message_id=data.get("message_id", ""),
-                status=data.get("status", ""),
-            )
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Email forward failed: {exc}")
+        data = ffi.forward(params)
+        return SendEmailResult(
+            message_id=data.get("message_id", ""),
+            status=data.get("status", ""),
+        )
 
     def archive(self, hai_url: str, message_id: str) -> bool:
-        """Archive an email message.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            message_id: ID of the message to archive.
-
-        Returns:
-            True if successful.
-        """
-        jacs_id = self._get_hai_agent_id()
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        safe_message_id = self._escape_path_segment(message_id)
-        url = self._make_url(
-            hai_url,
-            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/archive",
-        )
-        headers = self._build_auth_headers()
-
-        try:
-            resp = httpx.post(url, headers=headers, timeout=self._timeout)
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Email archive auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 201, 204):
-                raise HaiApiError(
-                    f"Email archive failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            return True
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Email archive failed: {exc}")
+        """Archive an email message."""
+        ffi = self._get_ffi()
+        ffi.archive(message_id)
+        return True
 
     def unarchive(self, hai_url: str, message_id: str) -> bool:
-        """Unarchive an email message.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            message_id: ID of the message to unarchive.
-
-        Returns:
-            True if successful.
-        """
-        jacs_id = self._get_hai_agent_id()
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        safe_message_id = self._escape_path_segment(message_id)
-        url = self._make_url(
-            hai_url,
-            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/unarchive",
-        )
-        headers = self._build_auth_headers()
-
-        try:
-            resp = httpx.post(url, headers=headers, timeout=self._timeout)
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Email unarchive auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 201, 204):
-                raise HaiApiError(
-                    f"Email unarchive failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            return True
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Email unarchive failed: {exc}")
+        """Unarchive an email message."""
+        ffi = self._get_ffi()
+        ffi.unarchive(message_id)
+        return True
 
     def update_labels(
         self,
@@ -3022,103 +1827,30 @@ class HaiClient:
         add: Optional[list[str]] = None,
         remove: Optional[list[str]] = None,
     ) -> list[str]:
-        """Update labels on an email message.
-
-        Adds and removes labels atomically.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            message_id: ID of the message to update.
-            add: Labels to add.
-            remove: Labels to remove.
-
-        Returns:
-            The resulting list of labels on the message.
-        """
-        jacs_id = self._get_hai_agent_id()
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        safe_message_id = self._escape_path_segment(message_id)
-        url = self._make_url(
-            hai_url,
-            f"/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/labels",
-        )
-        headers = self._build_auth_headers()
-        body = {
+        """Update labels on an email message."""
+        ffi = self._get_ffi()
+        data = ffi.update_labels({
+            "message_id": message_id,
             "add": add or [],
             "remove": remove or [],
-        }
-
-        try:
-            resp = httpx.post(
-                url, headers=headers, json=body, timeout=self._timeout,
-            )
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Update labels auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Update labels failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            data = resp.json()
-            return data.get("labels", [])
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Update labels failed: {exc}")
+        })
+        return data.get("labels", [])
 
     def contacts(self, hai_url: str) -> list["Contact"]:
-        """List contacts derived from email message history.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-
-        Returns:
-            List of Contact objects.
-        """
-        jacs_id = self._get_hai_agent_id()
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        url = self._make_url(hai_url, f"/api/agents/{safe_jacs_id}/email/contacts")
-        headers = self._build_auth_headers()
-
-        try:
-            resp = httpx.get(url, headers=headers, timeout=self._timeout)
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Email contacts auth failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Email contacts failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            data = resp.json()
-            items = data if isinstance(data, list) else data.get("contacts", [])
-            return [
-                Contact(
-                    email=c.get("email", ""),
-                    display_name=c.get("display_name"),
-                    last_contact=c.get("last_contact", ""),
-                    jacs_verified=c.get("jacs_verified", False),
-                    reputation_tier=c.get("reputation_tier"),
-                )
-                for c in items
-            ]
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Email contacts failed: {exc}")
+        """List contacts derived from email message history."""
+        ffi = self._get_ffi()
+        items = ffi.contacts()
+        result_items = items if isinstance(items, list) else items.get("contacts", [])
+        return [
+            Contact(
+                email=c.get("email", ""),
+                display_name=c.get("display_name"),
+                last_contact=c.get("last_contact", ""),
+                jacs_verified=c.get("jacs_verified", False),
+                reputation_tier=c.get("reputation_tier"),
+            )
+            for c in result_items
+        ]
 
     # ------------------------------------------------------------------
     # fetch_remote_key
@@ -3130,321 +1862,80 @@ class HaiClient:
         jacs_id: str,
         version: str = "latest",
     ) -> PublicKeyInfo:
-        """Fetch another agent's public key from HAI.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            jacs_id: The target agent's JACS ID.
-            version: Key version ("latest" or a specific version string).
-
-        Returns:
-            PublicKeyInfo with the agent's public key and metadata.
-
-        Raises:
-            HaiApiError: If the agent or key is not found (404).
-        """
+        """Fetch another agent's public key from HAI."""
         cache_key = f"remote:{jacs_id}:{version}"
         cached = self._get_cached_key(cache_key)
         if cached is not None:
             return cached
 
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        safe_version = self._escape_path_segment(version)
-        url = self._make_url(
-            hai_url, f"/jacs/v1/agents/{safe_jacs_id}/keys/{safe_version}"
-        )
-
-        try:
-            resp = httpx.get(url, timeout=self._timeout)
-
-            if resp.status_code == 404:
-                raise HaiApiError(
-                    f"No public key found for agent {jacs_id} version {version}",
-                    status_code=404,
-                    body=resp.text,
-                )
-
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Key lookup failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            warning = resp.headers.get("Warning")
-            if warning:
-                logger.warning("HAI key service: %s", warning)
-
-            data = resp.json()
-            result = PublicKeyInfo(
-                jacs_id=data.get("jacs_id", jacs_id),
-                version=data.get("version", version),
-                public_key=data.get("public_key", ""),
-                public_key_raw_b64=data.get("public_key_raw_b64", ""),
-                algorithm=data.get("algorithm", ""),
-                public_key_hash=data.get("public_key_hash", ""),
-                status=data.get("status", ""),
-                dns_verified=data.get("dns_verified", False),
-                created_at=data.get("created_at", ""),
-            )
-            self._set_cached_key(cache_key, result)
-            return result
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Key lookup failed: {exc}")
-
-    # ------------------------------------------------------------------
-    # fetch_key_by_hash / fetch_key_by_email / fetch_key_by_domain / fetch_all_keys
-    # ------------------------------------------------------------------
+        ffi = self._get_ffi()
+        data = ffi.fetch_remote_key(jacs_id, version)
+        result = self._parse_public_key_info(data, jacs_id=jacs_id, version=version)
+        self._set_cached_key(cache_key, result)
+        return result
 
     def fetch_key_by_hash(
         self,
         hai_url: str,
         public_key_hash: str,
     ) -> PublicKeyInfo:
-        """Fetch an agent's public key by its SHA-256 hash.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            public_key_hash: SHA-256 hash in ``sha256:<hex>`` format.
-
-        Returns:
-            PublicKeyInfo with the agent's public key and metadata.
-
-        Raises:
-            HaiApiError: If no key is found for the hash (404).
-        """
+        """Fetch an agent's public key by its SHA-256 hash."""
         cache_key = f"hash:{public_key_hash}"
         cached = self._get_cached_key(cache_key)
         if cached is not None:
             return cached
 
-        safe_hash = self._escape_path_segment(public_key_hash)
-        url = self._make_url(hai_url, f"/jacs/v1/keys/by-hash/{safe_hash}")
-
-        try:
-            resp = httpx.get(url, timeout=self._timeout)
-
-            if resp.status_code == 404:
-                raise HaiApiError(
-                    f"No key found for hash: {public_key_hash}",
-                    status_code=404,
-                    body=resp.text,
-                )
-
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Key lookup failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            data = resp.json()
-            result = PublicKeyInfo(
-                jacs_id=data.get("jacs_id", ""),
-                version=data.get("version", ""),
-                public_key=data.get("public_key", ""),
-                public_key_raw_b64=data.get("public_key_raw_b64", ""),
-                algorithm=data.get("algorithm", ""),
-                public_key_hash=data.get("public_key_hash", ""),
-                status=data.get("status", ""),
-                dns_verified=data.get("dns_verified", False),
-                created_at=data.get("created_at", ""),
-            )
-            self._set_cached_key(cache_key, result)
-            return result
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Key lookup failed: {exc}")
+        ffi = self._get_ffi()
+        data = ffi.fetch_key_by_hash(public_key_hash)
+        result = self._parse_public_key_info(data)
+        self._set_cached_key(cache_key, result)
+        return result
 
     def fetch_key_by_email(
         self,
         hai_url: str,
         email: str,
     ) -> PublicKeyInfo:
-        """Fetch an agent's public key by their ``@hai.ai`` email address.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            email: The agent's email address (e.g., ``alice@hai.ai``).
-
-        Returns:
-            PublicKeyInfo with the agent's public key and metadata.
-
-        Raises:
-            HaiApiError: If no agent is found for the email (404).
-        """
+        """Fetch an agent's public key by their ``@hai.ai`` email address."""
         cache_key = f"email:{email}"
         cached = self._get_cached_key(cache_key)
         if cached is not None:
             return cached
 
-        safe_email = self._escape_path_segment(email)
-        url = self._make_url(hai_url, f"/api/agents/keys/{safe_email}")
-
-        try:
-            resp = httpx.get(url, timeout=self._timeout)
-
-            if resp.status_code == 404:
-                raise HaiApiError(
-                    f"No key found for email: {email}",
-                    status_code=404,
-                    body=resp.text,
-                )
-
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Key lookup failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            data = resp.json()
-            result = PublicKeyInfo(
-                jacs_id=data.get("jacs_id", ""),
-                version=data.get("version", ""),
-                public_key=data.get("public_key", ""),
-                public_key_raw_b64=data.get("public_key_raw_b64", ""),
-                algorithm=data.get("algorithm", ""),
-                public_key_hash=data.get("public_key_hash", ""),
-                status=data.get("status", ""),
-                dns_verified=data.get("dns_verified", False),
-                created_at=data.get("created_at", ""),
-            )
-            self._set_cached_key(cache_key, result)
-            return result
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Key lookup failed: {exc}")
+        ffi = self._get_ffi()
+        data = ffi.fetch_key_by_email(email)
+        result = self._parse_public_key_info(data)
+        self._set_cached_key(cache_key, result)
+        return result
 
     def fetch_key_by_domain(
         self,
         hai_url: str,
         domain: str,
     ) -> PublicKeyInfo:
-        """Fetch the latest DNS-verified agent key for a domain.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            domain: DNS domain (e.g., ``example.com``).
-
-        Returns:
-            PublicKeyInfo with the agent's public key and metadata.
-
-        Raises:
-            HaiApiError: If no DNS-verified agent is found for the domain (404).
-        """
+        """Fetch the latest DNS-verified agent key for a domain."""
         cache_key = f"domain:{domain}"
         cached = self._get_cached_key(cache_key)
         if cached is not None:
             return cached
 
-        safe_domain = self._escape_path_segment(domain)
-        url = self._make_url(
-            hai_url, f"/jacs/v1/agents/by-domain/{safe_domain}"
-        )
-
-        try:
-            resp = httpx.get(url, timeout=self._timeout)
-
-            if resp.status_code == 404:
-                raise HaiApiError(
-                    f"No verified agent for domain: {domain}",
-                    status_code=404,
-                    body=resp.text,
-                )
-
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Key lookup failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            data = resp.json()
-            result = PublicKeyInfo(
-                jacs_id=data.get("jacs_id", ""),
-                version=data.get("version", ""),
-                public_key=data.get("public_key", ""),
-                public_key_raw_b64=data.get("public_key_raw_b64", ""),
-                algorithm=data.get("algorithm", ""),
-                public_key_hash=data.get("public_key_hash", ""),
-                status=data.get("status", ""),
-                dns_verified=data.get("dns_verified", False),
-                created_at=data.get("created_at", ""),
-            )
-            self._set_cached_key(cache_key, result)
-            return result
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Key lookup failed: {exc}")
+        ffi = self._get_ffi()
+        data = ffi.fetch_key_by_domain(domain)
+        result = self._parse_public_key_info(data)
+        self._set_cached_key(cache_key, result)
+        return result
 
     def fetch_all_keys(
         self,
         hai_url: str,
         jacs_id: str,
     ) -> dict:
-        """Fetch all key versions for an agent.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            jacs_id: The target agent's JACS ID.
-
-        Returns:
-            Dict with ``jacs_id``, ``keys`` (list of key entries), and ``total``.
-
-        Raises:
-            HaiApiError: If the agent is not found (404).
-        """
-        safe_jacs_id = self._escape_path_segment(jacs_id)
-        url = self._make_url(
-            hai_url, f"/jacs/v1/agents/{safe_jacs_id}/keys"
-        )
-
-        try:
-            resp = httpx.get(url, timeout=self._timeout)
-
-            if resp.status_code == 404:
-                raise HaiApiError(
-                    f"Agent not found: {jacs_id}",
-                    status_code=404,
-                    body=resp.text,
-                )
-
-            if resp.status_code not in (200, 201):
-                raise HaiApiError(
-                    f"Key history lookup failed: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-
-            return resp.json()
-
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise HaiError(f"Key history lookup failed: {exc}")
+        """Fetch all key versions for an agent."""
+        ffi = self._get_ffi()
+        return ffi.fetch_all_keys(jacs_id)
 
     # ------------------------------------------------------------------
-    # connect (SSE + WS)
+    # connect (SSE + WS) -- stays native for Phase 2
     # ------------------------------------------------------------------
 
     def connect(
@@ -3462,6 +1953,7 @@ class HaiClient:
         Yields:
             HaiEvent instances.
         """
+        # TODO(DRY_FFI_PHASE2): migrate to FFI streaming
         if transport not in ("sse", "ws"):
             raise ValueError(f"transport must be 'sse' or 'ws', got '{transport}'")
 
@@ -3476,6 +1968,10 @@ class HaiClient:
 
     def _connect_sse(self, hai_url: str) -> Iterator[HaiEvent]:
         """Stream events from ``GET /api/v1/agents/connect`` via SSE."""
+        # TODO(DRY_FFI_PHASE2): migrate to FFI streaming
+        import httpx as _httpx
+        from haiai._retry import RETRY_MAX_ATTEMPTS, backoff, should_retry
+
         url = self._make_url(hai_url, "/api/v1/agents/connect")
         headers = self._build_auth_headers()
         headers["Accept"] = "text/event-stream"
@@ -3486,11 +1982,11 @@ class HaiClient:
                 if self._last_event_id:
                     headers["Last-Event-ID"] = self._last_event_id
 
-                with httpx.stream(
+                with _httpx.stream(
                     "GET",
                     url,
                     headers=headers,
-                    timeout=httpx.Timeout(
+                    timeout=_httpx.Timeout(
                         connect=10.0, read=90.0, write=10.0, pool=10.0
                     ),
                 ) as response:
@@ -3537,9 +2033,9 @@ class HaiClient:
                             buf.append(line)
 
             except (
-                httpx.ReadTimeout,
-                httpx.RemoteProtocolError,
-                httpx.ReadError,
+                _httpx.ReadTimeout,
+                _httpx.RemoteProtocolError,
+                _httpx.ReadError,
             ) as exc:
                 self._connected = False
                 if self._should_disconnect:
@@ -3561,7 +2057,7 @@ class HaiClient:
                 headers = self._build_auth_headers()
                 headers["Accept"] = "text/event-stream"
                 continue
-            except httpx.HTTPStatusError as exc:
+            except _httpx.HTTPStatusError as exc:
                 self._connected = False
                 raise HaiApiError(
                     f"SSE connect failed: {exc.response.status_code}",
@@ -3575,7 +2071,9 @@ class HaiClient:
 
     def _connect_ws(self, hai_url: str) -> Iterator[HaiEvent]:
         """Stream events via ``/ws/agent/connect``."""
+        # TODO(DRY_FFI_PHASE2): migrate to FFI streaming
         import websockets.sync.client as ws_sync
+        from haiai._retry import RETRY_MAX_ATTEMPTS, backoff
 
         base = hai_url.rstrip("/")
         if base.startswith("https://"):
@@ -4104,15 +2602,7 @@ def verify_agent_document(
 
 
 def _encode_verify_payload(document: str) -> str:
-    """URL-safe base64 encoding for verification payloads.
-
-    Delegates to JACS binding-core when available so the encoding is
-    identical to the Rust implementation.  Falls back to Python's
-    ``base64.urlsafe_b64encode`` when the loaded JACS agent does not
-    expose the method.
-
-    Raises :class:`~haiai.errors.HaiError` if no JACS agent is loaded.
-    """
+    """URL-safe base64 encoding for verification payloads."""
     from haiai.config import is_loaded, get_agent
 
     if not is_loaded():
@@ -4126,7 +2616,6 @@ def _encode_verify_payload(document: str) -> str:
     if hasattr(agent, "encode_verify_payload"):
         return agent.encode_verify_payload(document)
 
-    # Local base64url encoding (no padding) -- consistent with JACS Rust
     return base64.urlsafe_b64encode(
         document.encode("utf-8")
     ).rstrip(b"=").decode("ascii")
@@ -4137,29 +2626,7 @@ def generate_verify_link(
     base_url: str = DEFAULT_BASE_URL,
     hosted: Optional[bool] = None,
 ) -> str:
-    """Build a verification URL for a signed JACS document.
-
-    Supports two modes:
-
-    - **Inline** (default): Encodes the full document in the URL as base64:
-      ``{base_url}/jacs/verify?s={base64url(document)}``
-    - **Hosted** (opt-in): Uses the document ID to reference a server-stored
-      copy: ``{base_url}/verify/{document_id}``
-
-    Args:
-        document: The full signed JACS document string (JSON).
-        base_url: Base URL of the verifier (no trailing slash).
-            Default ``"https://beta.hai.ai"``.
-        hosted: Force hosted mode (``True``) or inline mode (``False``).
-            ``None`` defaults to inline mode.
-
-    Returns:
-        Full verification URL.
-
-    Raises:
-        ValueError: If inline mode is used but the document exceeds URL
-            limits, or if hosted mode is used but no document ID is found.
-    """
+    """Build a verification URL for a signed JACS document."""
     base = base_url.rstrip("/")
 
     if hosted is None:
@@ -4216,37 +2683,19 @@ def register_new_agent(
 ) -> RegistrationResult:
     """Generate a keypair, self-sign, register with HAI, and save config.
 
-    This is the one-call setup for a new agent.  It:
-    1. Generates a keypair via JACS and writes key files to *key_dir*.
-    2. Creates a self-signed JACS agent document.
-    3. POSTs the document to ``/api/v1/agents/register``.
-    4. Saves ``jacs.config.json`` with the returned ``jacsId``.
-    5. Loads the config so the SDK is immediately usable.
-
-    Args:
-        name: Agent display name (ASCII-only).
-        owner_email: Owner's email for linking agent to a HAI user account.
-        version: Agent version string.
-        hai_url: HAI server base URL.
-        key_dir: Directory to write key files into. Defaults to ``~/.jacs/keys``.
-        config_path: Path for the generated ``jacs.config.json``.
-        domain: Optional domain for DNS verification.
-        description: Optional agent description.
-        quiet: Suppress post-registration messaging.
-        algorithm: Signing algorithm (default ``"pq2025"``).
-            Pass ``"ring-Ed25519"`` for Ed25519.
-
-    Returns:
-        RegistrationResult with ``agent_id``, ``jacs_id``.
-
-    Raises:
-        ValueError: If *owner_email* is empty.
+    This stays native as it involves JACS agent creation, key generation,
+    and file I/O that are inherently local operations.
     """
+    # register_new_agent uses httpx directly for the initial registration
+    # because the FFI adapter needs a loaded config, but we're creating
+    # the config here.
+    import httpx as _httpx
+    import shutil
+
     if not owner_email:
         raise ValueError(
             "owner_email is required -- agents must be associated with a verified HAI user"
         )
-    import shutil
 
     from haiai import config as hai_config
 
@@ -4292,8 +2741,6 @@ def register_new_agent(
     except OSError:
         pass
 
-    # Get public key PEM from the agent. JACS may store keys as raw bytes, so
-    # fall back to PEM armoring the on-disk key material when needed.
     public_pem = ""
     try:
         public_pem = _new_agent.get_public_key_pem()
@@ -4302,7 +2749,6 @@ def register_new_agent(
         if pub_src.is_file():
             public_pem = _normalize_public_key_pem(pub_src.read_bytes())
 
-    # Also write the public key in PEM format at the expected path
     pub_key_path = kd / "agent_public_key.pem"
     if not pub_key_path.is_file() and public_pem:
         pub_key_path.write_text(public_pem, encoding="utf-8")
@@ -4314,18 +2760,17 @@ def register_new_agent(
     )
 
     # 2. Set up module state directly from the created agent
-    # (Avoids JacsAgent.load() which needs pre-existing agent data files)
     try:
         from jacs.simple import _EphemeralAgentAdapter
         wrapped_agent = _EphemeralAgentAdapter(_new_agent)
     except ImportError:
-        wrapped_agent = _new_agent  # Fallback if adapter not available
+        wrapped_agent = _new_agent
 
     hai_config._config = hai_config.AgentConfig(
         name=name,
         version=version,
         key_dir=str(kd.resolve()),
-        jacs_id=None,  # Will be set after registration
+        jacs_id=None,
     )
     hai_config._agent = wrapped_agent
     agent = wrapped_agent
@@ -4353,7 +2798,7 @@ def register_new_agent(
     if description:
         payload["description"] = description
 
-    resp = httpx.post(
+    resp = _httpx.post(
         url, json=payload, headers={"Content-Type": "application/json"}, timeout=30.0,
     )
     if resp.status_code in (401, 403):
@@ -4388,7 +2833,6 @@ def register_new_agent(
         key_dir=str(kd.resolve()),
         jacs_id=jacs_id,
     )
-    # _agent was already set above; keep it
     global _client
     _client = None
 
@@ -4427,11 +2871,7 @@ def _compute_public_key_hash(pem: str) -> str:
 
 
 def _verify_dns(domain: str, public_key_pem: str) -> tuple[bool, str]:
-    """Verify DNS TXT record for Level 2 domain verification.
-
-    Returns:
-        (valid, message) tuple.
-    """
+    """Verify DNS TXT record for Level 2 domain verification."""
     try:
         import dns.resolver
     except ImportError:
@@ -4510,7 +2950,6 @@ def verify_agent(
     jacs_sig = doc.get("jacsSignature")
     pub_key_pem = doc.get("jacsPublicKey", "")
 
-    # Extract the base64 signature from either structured or bare format
     if isinstance(jacs_sig, dict):
         sig_b64 = jacs_sig.get("signature", "")
     elif isinstance(jacs_sig, str):
@@ -4520,7 +2959,6 @@ def verify_agent(
 
     if sig_b64 and pub_key_pem:
         try:
-            # Reconstruct canonical form: include jacsSignature minus .signature
             import copy
             signing_doc = copy.deepcopy(doc)
             if isinstance(signing_doc.get("jacsSignature"), dict):
@@ -4528,7 +2966,6 @@ def verify_agent(
             else:
                 del signing_doc["jacsSignature"]
             canonical = canonicalize_json(signing_doc)
-            # Delegate verification to JACS binding-core
             jacs_valid = _verify_string(canonical, sig_b64, pub_key_pem)
             if not jacs_valid:
                 errors.append("JACS signature invalid")

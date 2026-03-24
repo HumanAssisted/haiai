@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
 import { generateTestKeypair as generateKeypair } from './setup.js';
+import { createMockFFI } from './ffi-mock.js';
 
 async function makeClient(jacsId: string = 'agent/with/slash'): Promise<HaiClient> {
   const keypair = generateKeypair();
@@ -9,29 +10,21 @@ async function makeClient(jacsId: string = 'agent/with/slash'): Promise<HaiClien
 
 describe('client additional API methods', () => {
   afterEach(() => {
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
   it('escapes updateUsername agentId and uses PUT', async () => {
     const client = await makeClient();
-    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
-      expect(String(url)).toBe('https://hai.example/api/v1/agents/agent%2F..%2Fescape/username');
-      expect(init?.method).toBe('PUT');
-      expect(init?.body).toBe(JSON.stringify({ username: 'new-name' }));
-      return new Response(
-        JSON.stringify({
-          username: 'new-name',
-          email: 'new-name@hai.ai',
-          previous_username: 'old-name',
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        },
-      );
+    const updateUsernameMock = vi.fn(async (agentId: string, username: string) => {
+      expect(agentId).toBe('agent/../escape');
+      expect(username).toBe('new-name');
+      return {
+        username: 'new-name',
+        email: 'new-name@hai.ai',
+        previous_username: 'old-name',
+      };
     });
-    vi.stubGlobal('fetch', fetchMock);
+    client._setFFIAdapter(createMockFFI({ updateUsername: updateUsernameMock }));
 
     const result = await client.updateUsername('agent/../escape', 'new-name');
     expect(result.username).toBe('new-name');
@@ -40,22 +33,15 @@ describe('client additional API methods', () => {
 
   it('escapes deleteUsername agentId and uses DELETE', async () => {
     const client = await makeClient();
-    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
-      expect(String(url)).toBe('https://hai.example/api/v1/agents/agent%2F..%2Fescape/username');
-      expect(init?.method).toBe('DELETE');
-      return new Response(
-        JSON.stringify({
-          released_username: 'old-name',
-          cooldown_until: '2026-03-01T00:00:00Z',
-          message: 'released',
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        },
-      );
+    const deleteUsernameMock = vi.fn(async (agentId: string) => {
+      expect(agentId).toBe('agent/../escape');
+      return {
+        released_username: 'old-name',
+        cooldown_until: '2026-03-01T00:00:00Z',
+        message: 'released',
+      };
     });
-    vi.stubGlobal('fetch', fetchMock);
+    client._setFFIAdapter(createMockFFI({ deleteUsername: deleteUsernameMock }));
 
     const result = await client.deleteUsername('agent/../escape');
     expect(result.releasedUsername).toBe('old-name');
@@ -64,29 +50,19 @@ describe('client additional API methods', () => {
 
   it('verifyDocument POSTs to public /api/jacs/verify without auth header', async () => {
     const client = await makeClient();
-    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
-      expect(String(url)).toBe('https://hai.example/api/jacs/verify');
-      expect(init?.method).toBe('POST');
-      expect(init?.body).toBe(JSON.stringify({ document: '{"jacsId":"a"}' }));
-      const headers = new Headers(init?.headers as HeadersInit | undefined);
-      expect(headers.has('Authorization')).toBe(false);
-      return new Response(
-        JSON.stringify({
-          valid: true,
-          verified_at: '2026-01-01T00:00:00Z',
-          document_type: 'JacsDocument',
-          issuer_verified: true,
-          signature_verified: true,
-          signer_id: 'agent-1',
-          signed_at: '2026-01-01T00:00:00Z',
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        },
-      );
+    const verifyDocumentMock = vi.fn(async (document: string) => {
+      expect(document).toBe('{"jacsId":"a"}');
+      return {
+        valid: true,
+        verified_at: '2026-01-01T00:00:00Z',
+        document_type: 'JacsDocument',
+        issuer_verified: true,
+        signature_verified: true,
+        signer_id: 'agent-1',
+        signed_at: '2026-01-01T00:00:00Z',
+      };
     });
-    vi.stubGlobal('fetch', fetchMock);
+    client._setFFIAdapter(createMockFFI({ verifyDocument: verifyDocumentMock }));
 
     const result = await client.verifyDocument({ jacsId: 'a' });
     expect(result.valid).toBe(true);
@@ -96,31 +72,22 @@ describe('client additional API methods', () => {
 
   it('getVerification GETs public advanced verification endpoint without auth header', async () => {
     const client = await makeClient();
-    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
-      expect(String(url)).toBe('https://hai.example/api/v1/agents/agent%2F..%2Fescape/verification');
-      expect(init?.method).toBe('GET');
-      const headers = new Headers(init?.headers as HeadersInit | undefined);
-      expect(headers.has('Authorization')).toBe(false);
-      return new Response(
-        JSON.stringify({
-          agent_id: 'agent/../escape',
-          verification: {
-            jacs_valid: true,
-            dns_valid: true,
-            hai_registered: false,
-            badge: 'domain',
-          },
-          hai_signatures: ['ed25519:abc...'],
-          verified_at: '2026-01-02T00:00:00Z',
-          errors: [],
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
+    const getVerificationMock = vi.fn(async (agentId: string) => {
+      expect(agentId).toBe('agent/../escape');
+      return {
+        agent_id: 'agent/../escape',
+        verification: {
+          jacs_valid: true,
+          dns_valid: true,
+          hai_registered: false,
+          badge: 'domain',
         },
-      );
+        hai_signatures: ['ed25519:abc...'],
+        verified_at: '2026-01-02T00:00:00Z',
+        errors: [],
+      };
     });
-    vi.stubGlobal('fetch', fetchMock);
+    client._setFFIAdapter(createMockFFI({ getVerification: getVerificationMock }));
 
     const result = await client.getVerification('agent/../escape');
     expect(result.agentId).toBe('agent/../escape');
@@ -133,37 +100,24 @@ describe('client additional API methods', () => {
 
   it('verifyAgentDocumentOnHai POSTs public /api/v1/agents/verify without auth header', async () => {
     const client = await makeClient();
-    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
-      expect(String(url)).toBe('https://hai.example/api/v1/agents/verify');
-      expect(init?.method).toBe('POST');
-      expect(init?.body).toBe(
-        JSON.stringify({
-          agent_json: '{"jacsId":"agent-1","jacsAgentDomain":"example.com"}',
-          domain: 'override.example.com',
-        }),
-      );
-      const headers = new Headers(init?.headers as HeadersInit | undefined);
-      expect(headers.has('Authorization')).toBe(false);
-      return new Response(
-        JSON.stringify({
-          agent_id: 'agent-1',
-          verification: {
-            jacs_valid: true,
-            dns_valid: true,
-            hai_registered: true,
-            badge: 'attested',
-          },
-          hai_signatures: ['ed25519:def...'],
-          verified_at: '2026-01-02T00:00:00Z',
-          errors: [],
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
+    const verifyAgentDocumentMock = vi.fn(async (requestJson: string) => {
+      const parsed = JSON.parse(requestJson);
+      expect(parsed.agent_json).toBe('{"jacsId":"agent-1","jacsAgentDomain":"example.com"}');
+      expect(parsed.domain).toBe('override.example.com');
+      return {
+        agent_id: 'agent-1',
+        verification: {
+          jacs_valid: true,
+          dns_valid: true,
+          hai_registered: true,
+          badge: 'attested',
         },
-      );
+        hai_signatures: ['ed25519:def...'],
+        verified_at: '2026-01-02T00:00:00Z',
+        errors: [],
+      };
     });
-    vi.stubGlobal('fetch', fetchMock);
+    client._setFFIAdapter(createMockFFI({ verifyAgentDocument: verifyAgentDocumentMock }));
 
     const result = await client.verifyAgentDocumentOnHai(
       { jacsId: 'agent-1', jacsAgentDomain: 'example.com' },

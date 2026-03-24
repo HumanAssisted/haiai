@@ -16,8 +16,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# httpx is still needed for SSE/WS streaming, raw email sign/verify,
+# attestations, testconnection, pro_run payment flow, and register_new_agent.
+# These will migrate to FFI in Phase 2.
+http = ["httpx>=0.27"]
 ws = ["websockets>=12.0"]
-sse = ["httpx-sse>=0.4.0"]
+sse = ["httpx>=0.27", "httpx-sse>=0.4.0"]
 dns = ["dnspython>=2.4"]
 langchain = ["jacs[langchain]"]
 langgraph = ["jacs[langgraph]"]
@@ -27,8 +31,8 @@ fastapi = ["jacs[fastapi]"]
 mcp = ["jacs[mcp]", "mcp>=1.0.0"]
 agentsdk = ["jacs"]
 a2a = ["jacs[a2a]"]
-all = ["haiai[ws,sse,dns,langchain,langgraph,crewai,anthropic,fastapi,mcp,agentsdk,a2a]"]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-timeout>=2.3", "respx>=0.22"]
+all = ["haiai[http,ws,sse,dns,langchain,langgraph,crewai,anthropic,fastapi,mcp,agentsdk,a2a]"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-timeout>=2.3", "respx>=0.22", "httpx>=0.27"]
 
 [project.scripts]
 haiai = "haiai._binary:main"

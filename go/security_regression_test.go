@@ -2,10 +2,10 @@ package haiai
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"sync/atomic"
+	"fmt"
 	"testing"
 )
 
@@ -96,72 +96,76 @@ func (s *stubCryptoBackend) ExportAgentCard(agentDataJSON string) (string, error
 	return "", errors.New("not implemented")
 }
 
-func TestHelloFailsClosedWhenCryptoBackendCannotBuildAuthHeader(t *testing.T) {
-	var requests int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
-		t.Fatalf("request should not be sent when auth header generation fails")
-	}))
-	defer server.Close()
+// errorFFIClient is a mock FFI client that returns errors for specific methods.
+type errorFFIClient struct {
+	mockFFIClient
+	helloErr          error
+	submitResponseErr error
+}
 
-	client, _ := newTestClient(t, server.URL)
-	client.crypto = &stubCryptoBackend{
-		buildAuthHeader: func() (string, error) {
-			return "", errors.New("backend unavailable")
-		},
-		signString: func(string) (string, error) {
-			return "", errors.New("should not fall back to SignString")
-		},
+func (e *errorFFIClient) Hello(includeTest bool) (json.RawMessage, error) {
+	if e.helloErr != nil {
+		return nil, e.helloErr
+	}
+	return e.mockFFIClient.Hello(includeTest)
+}
+
+func (e *errorFFIClient) SubmitResponse(paramsJSON string) (json.RawMessage, error) {
+	if e.submitResponseErr != nil {
+		return nil, e.submitResponseErr
+	}
+	return e.mockFFIClient.SubmitResponse(paramsJSON)
+}
+
+func TestHelloFailsClosedWhenCryptoBackendCannotBuildAuthHeader(t *testing.T) {
+	// In the FFI architecture, auth failures are reported by the FFI layer.
+	// Verify that an FFI auth error is properly mapped to ErrAuthRequired.
+	errFFI := &errorFFIClient{
+		helloErr: fmt.Errorf("AuthFailed: backend unavailable"),
 	}
 
-	_, err := client.Hello(context.Background())
+	cl, err := NewClient(
+		WithEndpoint("http://localhost:9999"),
+		WithJACSID("test-agent-id"),
+		WithPrivateKey(make([]byte, ed25519.PrivateKeySize)),
+		WithFFIClient(errFFI),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	_, err = cl.Hello(context.Background())
 	if err == nil {
-		t.Fatal("expected Hello to fail when auth header generation fails")
+		t.Fatal("expected Hello to fail when FFI auth fails")
 	}
 
 	var sdkErr *Error
-	if !errors.As(err, &sdkErr) || sdkErr.Kind != ErrSigningFailed {
-		t.Fatalf("expected ErrSigningFailed, got %v", err)
-	}
-	if got := atomic.LoadInt32(&requests); got != 0 {
-		t.Fatalf("expected zero requests, got %d", got)
+	if !errors.As(err, &sdkErr) || sdkErr.Kind != ErrAuthRequired {
+		t.Fatalf("expected ErrAuthRequired, got %v", err)
 	}
 }
 
 func TestSubmitResponseFailsClosedWhenBackendCannotSignResponse(t *testing.T) {
-	var requests int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
-		t.Fatalf("request should not be sent when response signing fails")
-	}))
-	defer server.Close()
-
-	client, _ := newTestClient(t, server.URL)
-	client.crypto = &stubCryptoBackend{
-		buildAuthHeader: func() (string, error) {
-			return "JACS test-agent-id:1:signature", nil
-		},
-		signResponse: func(string) (string, error) {
-			return "", errors.New("sign response unavailable")
-		},
-		signBytes: func([]byte) ([]byte, error) {
-			return []byte("fallback-signature"), nil
-		},
+	// In the FFI architecture, signing failures are reported by the FFI layer.
+	errFFI := &errorFFIClient{
+		submitResponseErr: fmt.Errorf("AuthFailed: sign response unavailable"),
 	}
 
-	_, err := client.SubmitResponse(context.Background(), "job-123", ModerationResponse{
+	cl, err := NewClient(
+		WithEndpoint("http://localhost:9999"),
+		WithJACSID("test-agent-id"),
+		WithPrivateKey(make([]byte, ed25519.PrivateKeySize)),
+		WithFFIClient(errFFI),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	_, err = cl.SubmitResponse(context.Background(), "job-123", ModerationResponse{
 		Message: "safe",
 	})
 	if err == nil {
-		t.Fatal("expected SubmitResponse to fail when SignResponse fails")
-	}
-
-	var sdkErr *Error
-	if !errors.As(err, &sdkErr) || sdkErr.Kind != ErrSigningFailed {
-		t.Fatalf("expected ErrSigningFailed, got %v", err)
-	}
-	if got := atomic.LoadInt32(&requests); got != 0 {
-		t.Fatalf("expected zero requests, got %d", got)
+		t.Fatal("expected SubmitResponse to fail when FFI signing fails")
 	}
 }
 

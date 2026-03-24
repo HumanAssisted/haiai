@@ -9,155 +9,112 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import httpx
 import pytest
 
 from haiai.client import HaiClient
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-class _FakeResponse:
-    """Minimal httpx.Response stand-in for monkeypatching."""
-
-    def __init__(self, status_code: int, payload: dict[str, Any]) -> None:
-        self.status_code = status_code
-        self._payload = payload
-        self.text = json.dumps(payload)
-        self.headers: dict[str, str] = {"content-type": "application/json"}
-
-    def json(self) -> dict[str, Any]:
-        return self._payload
-
-    def raise_for_status(self) -> None:
-        if self.status_code >= 400:
-            raise RuntimeError(f"HTTP {self.status_code}")
-
-
-_HELLO_OK = {
-    "timestamp": "2026-01-01T00:00:00Z",
-    "client_ip": "127.0.0.1",
-    "hai_public_key_fingerprint": "fp",
-    "message": "ok",
-    "hello_id": "h1",
-}
-
-_BENCHMARK_OK = {
-    "benchmark_id": "b1",
-    "name": "demo",
-    "tier": "free",
-    "scores": {"overall": 100},
-    "tests": [],
-    "status": "completed",
-}
-
-_EMAIL_LIST_OK = {"messages": []}
-
-
 # ===================================================================
-# Issue #3 — hello_world must include agent_id in payload
+# Issue #3 -- hello_world must include agent_id in payload
 # ===================================================================
 
 class TestHelloWorldAgentId:
-    """hello_world() POST body must contain {"agent_id": "<jacsId>"}."""
+    """hello_world() calls ffi.hello() which receives include_test arg."""
 
-    def test_hello_payload_contains_agent_id(
+    def test_hello_calls_ffi(
         self,
         loaded_config: None,
         jacs_id: str,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
-
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, _HELLO_OK)
-
-        monkeypatch.setattr(httpx, "post", fake_post)
-
         client = HaiClient()
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["hello"] = {
+            "timestamp": "2026-01-01T00:00:00Z",
+            "client_ip": "127.0.0.1",
+            "hai_public_key_fingerprint": "fp",
+            "message": "ok",
+            "hello_id": "h1",
+        }
+
         client.hello_world("https://api.hai.ai")
 
-        assert "agent_id" in captured["json"], (
-            "hello_world payload must include 'agent_id'"
-        )
-        assert captured["json"]["agent_id"] == jacs_id
+        # FFI hello was called (agent_id is handled by binding-core)
+        assert mock_ffi.calls[0][0] == "hello"
 
-    def test_hello_payload_agent_id_coexists_with_include_test(
+    def test_hello_with_include_test(
         self,
         loaded_config: None,
         jacs_id: str,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
-
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, _HELLO_OK)
-
-        monkeypatch.setattr(httpx, "post", fake_post)
-
         client = HaiClient()
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["hello"] = {
+            "timestamp": "2026-01-01T00:00:00Z",
+            "client_ip": "127.0.0.1",
+            "hai_public_key_fingerprint": "fp",
+            "message": "ok",
+            "hello_id": "h1",
+        }
+
         client.hello_world("https://api.hai.ai", include_test=True)
 
-        assert captured["json"].get("agent_id") == jacs_id
-        assert captured["json"].get("include_test") is True
+        assert mock_ffi.calls[0][0] == "hello"
+        # include_test is passed as first positional arg to FFI hello
+        assert mock_ffi.calls[0][1][0] is True
 
 
 # ===================================================================
-# Issue #6 — free benchmark must include transport: "sse"
+# Issue #6 -- free benchmark must include transport: "sse"
 # ===================================================================
 
 class TestBenchmarkTransport:
-    """run_benchmark() payload must include "transport": "sse"."""
+    """benchmark() calls ffi.benchmark() which handles transport."""
 
-    def test_benchmark_payload_contains_transport(
+    def test_benchmark_calls_ffi_with_name_and_tier(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
-
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, _BENCHMARK_OK)
-
-        monkeypatch.setattr(httpx, "post", fake_post)
-
         client = HaiClient()
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["benchmark"] = {
+            "benchmark_id": "b1",
+            "name": "demo",
+            "tier": "free",
+            "scores": {"overall": 100},
+            "tests": [],
+            "status": "completed",
+        }
+
         client.benchmark("https://api.hai.ai", name="demo", tier="free")
 
-        assert "transport" in captured["json"], (
-            "run_benchmark payload must include 'transport'"
-        )
-        assert captured["json"]["transport"] == "sse"
+        assert mock_ffi.calls[0][0] == "benchmark"
+        # name and tier passed to FFI
+        assert mock_ffi.calls[0][1][0] == "demo"
+        assert mock_ffi.calls[0][1][1] == "free"
 
-    def test_benchmark_payload_has_name_tier_and_transport(
+    def test_benchmark_calls_ffi_with_custom_name_tier(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
-
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, _BENCHMARK_OK)
-
-        monkeypatch.setattr(httpx, "post", fake_post)
-
         client = HaiClient()
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["benchmark"] = {
+            "benchmark_id": "b1",
+            "name": "bench1",
+            "tier": "pro",
+            "scores": {"overall": 100},
+            "tests": [],
+            "status": "completed",
+        }
+
         client.benchmark("https://api.hai.ai", name="bench1", tier="pro")
 
-        payload = captured["json"]
-        assert payload["name"] == "bench1"
-        assert payload["tier"] == "pro"
-        assert payload["transport"] == "sse"
+        assert mock_ffi.calls[0][1][0] == "bench1"
+        assert mock_ffi.calls[0][1][1] == "pro"
 
 
 # ===================================================================
-# Issue #13 — base URL validation
+# Issue #13 -- base URL validation
 # ===================================================================
 
 class TestBaseUrlValidation:
@@ -186,123 +143,93 @@ class TestBaseUrlValidation:
 
 
 # ===================================================================
-# Issue #18 — list_messages & search_messages missing has_attachments
+# Issue #18 -- list_messages & search_messages missing has_attachments
 #             list_messages also missing since/until
 # ===================================================================
 
 class TestMessageQueryParams:
     """list_messages and search_messages must support has_attachments,
-    and list_messages must also support since/until — matching Rust/Go."""
+    and list_messages must also support since/until -- matching Rust/Go."""
 
     def test_list_messages_has_attachments_param(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
-
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["params"] = kwargs.get("params", {})
-            return _FakeResponse(200, _EMAIL_LIST_OK)
-
-        monkeypatch.setattr(httpx, "get", fake_get)
-
         client = HaiClient()
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["list_messages"] = []
+
         client.list_messages("https://api.hai.ai", has_attachments=True)
 
-        assert captured["params"].get("has_attachments") == "true"
+        options = mock_ffi.calls[0][1][0]
+        assert options["has_attachments"] is True
 
     def test_list_messages_has_attachments_false(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
-
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["params"] = kwargs.get("params", {})
-            return _FakeResponse(200, _EMAIL_LIST_OK)
-
-        monkeypatch.setattr(httpx, "get", fake_get)
-
         client = HaiClient()
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["list_messages"] = []
+
         client.list_messages("https://api.hai.ai", has_attachments=False)
 
-        assert captured["params"].get("has_attachments") == "false"
+        options = mock_ffi.calls[0][1][0]
+        assert options["has_attachments"] is False
 
     def test_list_messages_has_attachments_omitted_when_none(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
-
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["params"] = kwargs.get("params", {})
-            return _FakeResponse(200, _EMAIL_LIST_OK)
-
-        monkeypatch.setattr(httpx, "get", fake_get)
-
         client = HaiClient()
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["list_messages"] = []
+
         client.list_messages("https://api.hai.ai")
 
-        assert "has_attachments" not in captured["params"]
+        options = mock_ffi.calls[0][1][0]
+        assert "has_attachments" not in options
 
     def test_list_messages_since_until_params(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
-
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["params"] = kwargs.get("params", {})
-            return _FakeResponse(200, _EMAIL_LIST_OK)
-
-        monkeypatch.setattr(httpx, "get", fake_get)
-
         client = HaiClient()
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["list_messages"] = []
+
         client.list_messages(
             "https://api.hai.ai",
             since="2026-01-01T00:00:00Z",
             until="2026-03-01T00:00:00Z",
         )
 
-        assert captured["params"]["since"] == "2026-01-01T00:00:00Z"
-        assert captured["params"]["until"] == "2026-03-01T00:00:00Z"
+        options = mock_ffi.calls[0][1][0]
+        assert options["since"] == "2026-01-01T00:00:00Z"
+        assert options["until"] == "2026-03-01T00:00:00Z"
 
     def test_search_messages_has_attachments_param(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
-
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["params"] = kwargs.get("params", {})
-            return _FakeResponse(200, _EMAIL_LIST_OK)
-
-        monkeypatch.setattr(httpx, "get", fake_get)
-
         client = HaiClient()
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["search_messages"] = []
+
         client.search_messages("https://api.hai.ai", has_attachments=True)
 
-        assert captured["params"].get("has_attachments") == "true"
+        options = mock_ffi.calls[0][1][0]
+        assert options["has_attachments"] is True
 
     def test_search_messages_has_attachments_omitted_when_none(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
-
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["params"] = kwargs.get("params", {})
-            return _FakeResponse(200, _EMAIL_LIST_OK)
-
-        monkeypatch.setattr(httpx, "get", fake_get)
-
         client = HaiClient()
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["search_messages"] = []
+
         client.search_messages("https://api.hai.ai", q="test")
 
-        assert "has_attachments" not in captured["params"]
+        options = mock_ffi.calls[0][1][0]
+        assert "has_attachments" not in options

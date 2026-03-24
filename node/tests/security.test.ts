@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
 import { generateTestKeypair as generateKeypair } from './setup.js';
+import { createMockFFI } from './ffi-mock.js';
 
 async function makeClient(): Promise<HaiClient> {
   const kp = generateKeypair();
@@ -12,37 +13,21 @@ async function makeClient(): Promise<HaiClient> {
 
 describe('security behaviors (node)', () => {
   afterEach(() => {
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it('register does not send private key material and keeps bootstrap request unauthenticated', async () => {
+  it('register delegates to FFI without exposing private key material', async () => {
     const client = await makeClient();
-    const exported = client.exportKeys();
-
-    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
-      const headers = new Headers(init?.headers);
-      expect(headers.get('Authorization')).toBeNull();
-      expect(headers.get('Content-Type')).toBe('application/json');
-
-      const rawBody = String(init?.body ?? '');
-      expect(rawBody).not.toContain('BEGIN PRIVATE KEY');
-
-      const payload = JSON.parse(rawBody) as Record<string, string>;
-      expect(typeof payload.agent_json).toBe('string');
-      expect(payload.public_key).toBeTypeOf('string');
-      expect(Buffer.from(payload.public_key, 'base64').toString('utf-8')).toBe(exported.publicKeyPem);
-
-      return new Response(JSON.stringify({
+    const registerMock = vi.fn(async (options: Record<string, unknown>) => {
+      // Verify no private key in the options
+      expect(JSON.stringify(options)).not.toContain('BEGIN PRIVATE KEY');
+      return {
         agent_id: 'agent-123',
         jacs_id: 'security-agent',
         registered_at: '2026-01-01T00:00:00Z',
-      }), {
-        status: 201,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      };
     });
-    vi.stubGlobal('fetch', fetchMock);
+    client._setFFIAdapter(createMockFFI({ register: registerMock }));
 
     await client.register({
       ownerEmail: 'owner@hai.ai',
@@ -51,51 +36,31 @@ describe('security behaviors (node)', () => {
     });
   });
 
-  it('checkUsername remains unauthenticated public endpoint', async () => {
+  it('checkUsername delegates to FFI', async () => {
     const client = await makeClient();
-
-    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
-      const headers = new Headers(init?.headers);
-      expect(headers.get('Authorization')).toBeNull();
-
-      return new Response(JSON.stringify({
-        available: true,
-        username: 'agent',
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
+    const checkUsernameMock = vi.fn(async (username: string) => {
+      expect(username).toBe('agent');
+      return { available: true, username: 'agent' };
     });
-    vi.stubGlobal('fetch', fetchMock);
+    client._setFFIAdapter(createMockFFI({ checkUsername: checkUsernameMock }));
 
     const result = await client.checkUsername('agent');
     expect(result.available).toBe(true);
   });
 
-  it('registerNewAgent omits Authorization and sends base64 public key only', async () => {
+  it('registerNewAgent delegates to FFI', async () => {
     const client = await makeClient();
-
-    const fetchMock = vi.fn(async (_url: string | URL, init?: RequestInit) => {
-      const headers = new Headers(init?.headers);
-      expect(headers.get('Authorization')).toBeNull();
-      expect(headers.get('Content-Type')).toBe('application/json');
-
-      const payload = JSON.parse(String(init?.body ?? '{}')) as Record<string, string>;
-      const decodedPublicKey = Buffer.from(payload.public_key, 'base64').toString('utf-8');
-      expect(decodedPublicKey).toContain('BEGIN PUBLIC KEY');
-      expect(decodedPublicKey).not.toContain('BEGIN PRIVATE KEY');
-
-      return new Response(JSON.stringify({
+    const registerMock = vi.fn(async (options: Record<string, unknown>) => {
+      // Verify no private key in the options
+      expect(JSON.stringify(options)).not.toContain('BEGIN PRIVATE KEY');
+      return {
         agent_id: 'agent-999',
         jacs_id: 'security-agent',
         registration_id: 'reg-999',
         registered_at: '2026-01-01T00:00:00Z',
-      }), {
-        status: 201,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      };
     });
-    vi.stubGlobal('fetch', fetchMock);
+    client._setFFIAdapter(createMockFFI({ register: registerMock }));
 
     const result = await client.registerNewAgent('security-agent', {
       ownerEmail: 'owner@hai.ai',

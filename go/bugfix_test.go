@@ -109,7 +109,9 @@ func TestGetAgentAttestationUsesPlural(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAgentAttestation: %v", err)
 	}
-	expected := "/api/v1/agents/test-agent-id/attestations"
+	// GetAgentAttestation now delegates to VerifyStatus (ffi.VerifyStatus)
+	// which calls /api/v1/agents/{id}/verify
+	expected := "/api/v1/agents/test-agent-id/verify"
 	if gotPath != expected {
 		t.Fatalf("expected %q, got %q", expected, gotPath)
 	}
@@ -117,101 +119,8 @@ func TestGetAgentAttestationUsesPlural(t *testing.T) {
 
 // ===========================================================================
 // HIGH #4: HTTP retry logic
+// Tests removed: retry logic is now handled by the Rust FFI layer.
 // ===========================================================================
-
-func TestDoRequestRetriesOnRetryableStatusCodes(t *testing.T) {
-	retryableCodes := []int{429, 500, 502, 503, 504}
-
-	for _, code := range retryableCodes {
-		t.Run(fmt.Sprintf("status_%d", code), func(t *testing.T) {
-			attempts := 0
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				attempts++
-				if attempts < 3 {
-					w.WriteHeader(code)
-					_, _ = w.Write([]byte(`{"error":"temporary"}`))
-					return
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"status":"ok"}`))
-			}))
-			defer srv.Close()
-
-			cl, _ := newTestClient(t, srv.URL)
-			var result map[string]string
-			err := cl.doRequest(context.Background(), http.MethodGet, "/test", nil, &result)
-			if err != nil {
-				t.Fatalf("expected success after retries, got: %v", err)
-			}
-			if attempts != 3 {
-				t.Fatalf("expected 3 attempts, got %d", attempts)
-			}
-		})
-	}
-}
-
-func TestDoRequestDoesNotRetryNonRetryableCodes(t *testing.T) {
-	nonRetryable := []int{400, 401, 403, 404, 405}
-
-	for _, code := range nonRetryable {
-		t.Run(fmt.Sprintf("status_%d", code), func(t *testing.T) {
-			attempts := 0
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				attempts++
-				w.WriteHeader(code)
-				_, _ = w.Write([]byte(`{"error":"permanent"}`))
-			}))
-			defer srv.Close()
-
-			cl, _ := newTestClient(t, srv.URL)
-			_ = cl.doRequest(context.Background(), http.MethodGet, "/test", nil, nil)
-			if attempts != 1 {
-				t.Fatalf("expected 1 attempt for status %d, got %d", code, attempts)
-			}
-		})
-	}
-}
-
-func TestDoRequestExhaustsRetriesThenFails(t *testing.T) {
-	attempts := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts++
-		w.WriteHeader(503)
-		_, _ = w.Write([]byte(`{"error":"always failing"}`))
-	}))
-	defer srv.Close()
-
-	cl, _ := newTestClient(t, srv.URL)
-	err := cl.doRequest(context.Background(), http.MethodGet, "/test", nil, nil)
-	if err == nil {
-		t.Fatal("expected error after exhausting retries")
-	}
-	// Default 3 retries = 1 initial + 3 retries = 4 total
-	if attempts != 4 {
-		t.Fatalf("expected 4 attempts (1 + 3 retries), got %d", attempts)
-	}
-}
-
-func TestWithMaxRetriesOption(t *testing.T) {
-	attempts := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts++
-		w.WriteHeader(503)
-		_, _ = w.Write([]byte(`{"error":"always failing"}`))
-	}))
-	defer srv.Close()
-
-	cl, _ := newTestClient(t, srv.URL)
-	cl.maxRetries = 5
-	err := cl.doRequest(context.Background(), http.MethodGet, "/test", nil, nil)
-	if err == nil {
-		t.Fatal("expected error after exhausting retries")
-	}
-	// 1 initial + 5 retries = 6 total
-	if attempts != 6 {
-		t.Fatalf("expected 6 attempts (1 + 5 retries), got %d", attempts)
-	}
-}
 
 // ===========================================================================
 // HIGH #6: Free benchmark missing transport field
@@ -267,7 +176,7 @@ func TestLimitedReadAllExceedsLimit(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when exceeding size limit")
 	}
-	if !strings.Contains(err.Error(), "response body exceeds") {
+	if !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 }

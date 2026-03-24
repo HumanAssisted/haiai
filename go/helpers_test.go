@@ -118,8 +118,7 @@ func (b *testCryptoBackend) ExportAgentCard(agentDataJSON string) (string, error
 }
 
 // newTestClient creates a Client pointing at a test server with a generated key pair.
-// The client uses a test-only Ed25519 crypto backend (not the JACS agent) so that
-// unit tests work without a JACS config. The client's agentEmail is set to testAgentEmail.
+// The client uses the mockFFIClient to bridge HTTP test servers to the FFI interface.
 func newTestClient(t *testing.T, serverURL string) (*Client, ed25519.PublicKey) {
 	t.Helper()
 	pub, priv, err := GenerateKeyPair()
@@ -127,10 +126,24 @@ func newTestClient(t *testing.T, serverURL string) (*Client, ed25519.PublicKey) 
 		t.Fatalf("GenerateKeyPair: %v", err)
 	}
 
+	// Build an auth header for the mock FFI client
+	testBackend := &testCryptoBackend{
+		privateKey: priv,
+		jacsID:     "test-agent-id",
+	}
+	authHeader, err := testBackend.BuildAuthHeader()
+	if err != nil {
+		t.Fatalf("BuildAuthHeader: %v", err)
+	}
+
+	mockFFI := newMockFFIClient(serverURL, "test-agent-id", authHeader)
+	mockFFI.buildAuthHeaderFn = testBackend.BuildAuthHeader
+
 	cl, err := NewClient(
 		WithEndpoint(serverURL),
 		WithJACSID("test-agent-id"),
 		WithPrivateKey(priv),
+		WithFFIClient(mockFFI),
 	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
@@ -138,10 +151,7 @@ func newTestClient(t *testing.T, serverURL string) (*Client, ed25519.PublicKey) 
 	cl.SetAgentEmail(testAgentEmail)
 
 	// Override crypto backend with test-only Ed25519 backend
-	cl.crypto = &testCryptoBackend{
-		privateKey: priv,
-		jacsID:     "test-agent-id",
-	}
+	cl.crypto = testBackend
 
 	return cl, pub
 }

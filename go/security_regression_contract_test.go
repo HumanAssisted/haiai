@@ -2,8 +2,10 @@ package haiai
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -53,30 +55,30 @@ func TestSecurityRegressionFallbackDoesNotActivate(t *testing.T) {
 		t.Fatal("fallback_does_not_activate test case not found in fixture")
 	}
 
-	// When a crypto backend fails, the SDK should propagate the error, not fall
-	// back to a different signing mechanism.
-	backend := &stubCryptoBackend{
-		buildAuthHeader: func() (string, error) {
-			return "", errors.New("backend unavailable")
-		},
+	// When the FFI layer reports an auth error, the SDK should propagate it
+	// without falling back to a different signing mechanism.
+	errFFI := &errorFFIClient{
+		helloErr: fmt.Errorf("AuthFailed: backend unavailable"),
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("request should not be sent when auth header generation fails")
-	}))
-	defer server.Close()
+	client, err := NewClient(
+		WithEndpoint("http://localhost:9999"),
+		WithJACSID("test-agent-id"),
+		WithPrivateKey(make([]byte, ed25519.PrivateKeySize)),
+		WithFFIClient(errFFI),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
 
-	client, _ := newTestClient(t, server.URL)
-	client.crypto = backend
-
-	_, err := client.Hello(context.Background())
+	_, err = client.Hello(context.Background())
 	if err == nil {
 		t.Fatal("expected error when backend is unavailable")
 	}
 
 	var sdkErr *Error
-	if !errors.As(err, &sdkErr) || sdkErr.Kind != ErrSigningFailed {
-		t.Fatalf("expected ErrSigningFailed, got %v", err)
+	if !errors.As(err, &sdkErr) || sdkErr.Kind != ErrAuthRequired {
+		t.Fatalf("expected ErrAuthRequired, got %v", err)
 	}
 }
 

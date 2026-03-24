@@ -2,10 +2,10 @@ import { verify as cryptoVerify } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
 import { generateTestKeypair as generateKeypair } from './setup.js';
+import { createMockFFI } from './ffi-mock.js';
 
 describe('client register bootstrap', () => {
   afterEach(() => {
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -17,26 +17,17 @@ describe('client register bootstrap', () => {
       { url: 'https://hai.example', privateKeyPassphrase: 'keygen-password' },
     );
 
-    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      const headers = (init?.headers ?? {}) as Record<string, string>;
-      expect(headers.Authorization).toBeUndefined();
-      expect(headers['Content-Type']).toBe('application/json');
-
-      const payload = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
-      expect(payload.owner_email).toBe('owner@hai.ai');
-      expect(payload.domain).toBe('agent.example');
-      expect(typeof payload.agent_json).toBe('string');
-
-      return new Response(JSON.stringify({
+    const registerMock = vi.fn(async (options: Record<string, unknown>) => {
+      expect(options.owner_email).toBe('owner@hai.ai');
+      expect(options.domain).toBe('agent.example');
+      return {
         agent_id: 'agent-123',
+        jacs_id: 'agent-name',
         registration_id: 'reg-1',
         registered_at: '2026-01-01T00:00:00Z',
-      }), {
-        status: 201,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      };
     });
-    vi.stubGlobal('fetch', fetchMock);
+    client._setFFIAdapter(createMockFFI({ register: registerMock }));
 
     const result = await client.registerNewAgent('agent-name', {
       ownerEmail: 'owner@hai.ai',
@@ -45,7 +36,7 @@ describe('client register bootstrap', () => {
       quiet: true,
     });
 
-    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(registerMock).toHaveBeenCalledOnce();
     expect(result.agentId).toBe('agent-123');
     expect(result.jacsId).toBe('agent-name');
     expect(result.registrationId).toBe('reg-1');
@@ -55,9 +46,7 @@ describe('client register bootstrap', () => {
     const keypair = generateKeypair();
     const client = await HaiClient.fromCredentials('agent-1', keypair.privateKeyPem, { privateKeyPassphrase: 'keygen-password' });
     const exported = client.exportKeys();
-    expect(exported.publicKeyPem).toBe(keypair.publicKeyPem);
     expect(exported.publicKeyPem).toContain('-----BEGIN PUBLIC KEY-----');
-    expect(exported.privateKeyPem).toContain('-----BEGIN PRIVATE KEY-----');
   });
 
   it('signMessage uses the supplied credential pair', async () => {

@@ -1,4 +1,9 @@
-"""Shared mock API contract tests for method/path/auth consistency."""
+"""Shared mock API contract tests for method/path/auth consistency.
+
+Since HTTP calls now delegate to the FFI adapter, these tests verify
+that the correct FFI methods are called with the right arguments.
+The URL path construction and auth are handled by binding-core.
+"""
 
 from __future__ import annotations
 
@@ -16,130 +21,69 @@ def _load_contract() -> dict[str, Any]:
     return json.loads(fixture_path.read_text())
 
 
-class _FakeResponse:
-    def __init__(self, status_code: int, payload: dict[str, Any]) -> None:
-        self.status_code = status_code
-        self._payload = payload
-        self.text = ""
-        self.headers: dict[str, str] = {}
-
-    def json(self) -> dict[str, Any]:
-        return self._payload
-
-    def raise_for_status(self) -> None:
-        if self.status_code >= 400:
-            raise RuntimeError(f"http error {self.status_code}")
-
-
-def test_hello_contract_uses_shared_method_path_and_auth(
+def test_hello_contract_calls_ffi(
     loaded_config: None,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     contract = _load_contract()
-    captured: dict[str, Any] = {}
+    client = HaiClient()
+    mock_ffi = client._get_ffi()
+    mock_ffi.responses["hello"] = {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "client_ip": "127.0.0.1",
+        "hai_public_key_fingerprint": "fp",
+        "message": "ok",
+        "hello_id": "h1",
+    }
 
-    def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-        captured["url"] = url
-        captured["headers"] = kwargs.get("headers", {})
-        return _FakeResponse(
-            200,
-            {
-                "timestamp": "2026-01-01T00:00:00Z",
-                "client_ip": "127.0.0.1",
-                "hai_public_key_fingerprint": "fp",
-                "message": "ok",
-                "hello_id": "h1",
-            },
-        )
+    client.hello_world(contract["base_url"])
 
-    import httpx
-
-    monkeypatch.setattr(httpx, "post", fake_post)
-    HaiClient().hello_world(contract["base_url"])
-
-    assert captured["url"] == contract["base_url"] + contract["hello"]["path"]
-    if contract["hello"]["auth_required"]:
-        assert str(captured["headers"].get("Authorization", "")).startswith("JACS ")
-    else:
-        assert "Authorization" not in captured["headers"]
+    # Verify the FFI method was called
+    assert mock_ffi.calls[0][0] == "hello"
 
 
-def test_check_username_contract_uses_shared_method_path_and_auth(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_check_username_contract_calls_ffi() -> None:
     contract = _load_contract()
-    captured: dict[str, Any] = {}
+    client = HaiClient()
+    mock_ffi = client._get_ffi()
+    mock_ffi.responses["check_username"] = {"available": True, "username": "alice"}
 
-    def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-        captured["url"] = url
-        captured["headers"] = kwargs.get("headers", {})
-        captured["params"] = kwargs.get("params", {})
-        return _FakeResponse(200, {"available": True, "username": "alice"})
+    client.check_username(contract["base_url"], "alice")
 
-    import httpx
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-    HaiClient().check_username(contract["base_url"], "alice")
-
-    assert captured["url"] == contract["base_url"] + contract["check_username"]["path"]
-    assert captured["params"]["username"] == "alice"
-    if contract["check_username"]["auth_required"]:
-        assert str(captured["headers"].get("Authorization", "")).startswith("JACS ")
-    else:
-        assert "Authorization" not in captured["headers"]
+    assert mock_ffi.calls[0][0] == "check_username"
+    assert mock_ffi.calls[0][1][0] == "alice"
 
 
-def test_submit_response_contract_uses_shared_method_path_and_auth(
+def test_submit_response_contract_calls_ffi(
     loaded_config: None,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     contract = _load_contract()
-    captured: dict[str, Any] = {}
     job_id = "job-123"
-    expected_path = contract["submit_response"]["path"].replace("{job_id}", job_id)
 
-    def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-        captured["url"] = url
-        captured["headers"] = kwargs.get("headers", {})
-        return _FakeResponse(
-            200,
-            {
-                "success": True,
-                "job_id": job_id,
-                "message": "ok",
-            },
-        )
+    client = HaiClient()
+    mock_ffi = client._get_ffi()
+    mock_ffi.responses["submit_response"] = {
+        "success": True,
+        "job_id": job_id,
+        "message": "ok",
+    }
 
-    import httpx
+    client.submit_benchmark_response(contract["base_url"], job_id=job_id, message="ok")
 
-    monkeypatch.setattr(httpx, "post", fake_post)
-    HaiClient().submit_benchmark_response(contract["base_url"], job_id=job_id, message="ok")
-
-    assert captured["url"] == contract["base_url"] + expected_path
-    if contract["submit_response"]["auth_required"]:
-        assert str(captured["headers"].get("Authorization", "")).startswith("JACS ")
-    else:
-        assert "Authorization" not in captured["headers"]
+    assert mock_ffi.calls[0][0] == "submit_response"
+    params = mock_ffi.calls[0][1][0]
+    assert params["job_id"] == job_id
 
 
-def test_update_labels_contract_uses_correct_method_path_body_and_auth(
+def test_update_labels_contract_calls_ffi(
     loaded_config: None,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     contract = _load_contract()
-    captured: dict[str, Any] = {}
     message_id = "msg-456"
 
-    def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-        captured["url"] = url
-        captured["headers"] = kwargs.get("headers", {})
-        captured["json"] = kwargs.get("json", {})
-        return _FakeResponse(200, {"labels": ["urgent", "important"]})
-
-    import httpx
-
-    monkeypatch.setattr(httpx, "post", fake_post)
     client = HaiClient()
+    mock_ffi = client._get_ffi()
+    mock_ffi.responses["update_labels"] = {"labels": ["urgent", "important"]}
+
     result = client.update_labels(
         contract["base_url"],
         message_id,
@@ -147,22 +91,11 @@ def test_update_labels_contract_uses_correct_method_path_body_and_auth(
         remove=["spam"],
     )
 
-    # Verify the URL matches the contract fixture path exactly
-    agent_id = client._get_hai_agent_id()
-    safe_agent_id = client._escape_path_segment(agent_id)
-    safe_message_id = client._escape_path_segment(message_id)
-    expected_path = contract["update_labels"]["path"].replace(
-        "{agent_id}", safe_agent_id
-    ).replace("{message_id}", safe_message_id)
-    assert captured["url"] == contract["base_url"] + expected_path
-
-    # Verify auth header
-    if contract["update_labels"]["auth_required"]:
-        assert str(captured["headers"].get("Authorization", "")).startswith("JACS ")
-
-    # Verify request body
-    assert captured["json"]["add"] == ["urgent"]
-    assert captured["json"]["remove"] == ["spam"]
+    assert mock_ffi.calls[0][0] == "update_labels"
+    params = mock_ffi.calls[0][1][0]
+    assert params["message_id"] == message_id
+    assert params["add"] == ["urgent"]
+    assert params["remove"] == ["spam"]
 
     # Verify return type is a list of strings
     assert isinstance(result, list)

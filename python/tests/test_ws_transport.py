@@ -112,8 +112,8 @@ def test_connect_ws_retries_after_failure(monkeypatch: pytest.MonkeyPatch) -> No
 
     _install_ws_client(monkeypatch, fake_connect)
     monkeypatch.setattr(HaiClient, "_build_auth_headers", lambda self: {"Authorization": "JACS token"})
-    monkeypatch.setattr("haiai.client.backoff", lambda attempt: 0.0)
-    monkeypatch.setattr("haiai.client.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("haiai._retry.backoff", lambda attempt: 0.0)
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
 
     client = HaiClient()
     stream = client._connect_ws("http://hai.example")

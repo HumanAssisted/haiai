@@ -3,7 +3,7 @@
 Each new async method (free_run, submit_benchmark_response, send_signed_email,
 rotate_keys) must exist on AsyncHaiClient with matching parameter signatures.
 
-Also includes behavioral tests that mock HTTP to verify correct endpoint calls.
+Also includes behavioral tests that mock FFI to verify correct endpoint calls.
 """
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import asyncio
 import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 
 
@@ -108,41 +107,15 @@ class TestAsyncClientConstruction:
 
 
 # ---------------------------------------------------------------------------
-# Behavioral async tests (mock HTTP, verify correct endpoint calls)
+# Behavioral async tests (mock FFI, verify correct endpoint calls)
 # ---------------------------------------------------------------------------
-
-
-def _mock_config(jacs_id: str = "test-agent-id:v1") -> MagicMock:
-    """Return a mock config object with a jacs_id."""
-    cfg = MagicMock()
-    cfg.jacs_id = jacs_id
-    return cfg
-
-
-def _mock_agent() -> MagicMock:
-    """Return a mock JACS agent with sign_string support."""
-    agent = MagicMock()
-    agent.sign_string.return_value = "mock-signature-base64"
-    return agent
-
-
-def _make_response(
-    status_code: int = 200, json_data: dict | None = None
-) -> httpx.Response:
-    """Build a mock httpx.Response."""
-    data = json_data or {}
-    return httpx.Response(
-        status_code=status_code,
-        json=data,
-        request=httpx.Request("POST", "https://hai.ai/test"),
-    )
 
 
 @pytest.mark.asyncio
 class TestAsyncFreeRunBehavior:
-    """Verify async free_run calls the correct endpoint with correct payload."""
+    """Verify async free_run calls the correct FFI method."""
 
-    async def test_free_run_calls_correct_endpoint(self) -> None:
+    async def test_free_run_calls_ffi(self) -> None:
         from haiai.async_client import AsyncHaiClient
 
         response_data = {
@@ -153,58 +126,37 @@ class TestAsyncFreeRunBehavior:
             "upsell_message": "Upgrade for scoring!",
         }
 
-        mock_http = AsyncMock(spec=httpx.AsyncClient)
-        mock_http.is_closed = False
-        mock_http.post = AsyncMock(
-            return_value=_make_response(200, response_data)
-        )
-
         client = AsyncHaiClient(timeout=30.0)
-        client._http = mock_http
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["free_run"] = response_data
 
-        with patch("haiai.async_client.AsyncHaiClient._build_auth_headers", return_value={"Authorization": "JACS test:1:sig"}), \
-             patch("haiai.async_client.AsyncHaiClient._get_jacs_id", return_value="test-agent-id:v1"):
-            result = await client.free_run("https://hai.ai")
+        result = await client.free_run("https://hai.ai")
 
-        # Verify correct URL was called
-        call_args = mock_http.post.call_args
-        assert call_args is not None
-        url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
-        assert "/api/benchmark/run" in url
-
-        # Verify payload
-        json_payload = call_args.kwargs.get("json", {})
-        assert json_payload["tier"] == "free"
-        assert "transport" in json_payload
-
-        # Verify result
+        assert mock_ffi.calls[0][0] == "free_run"
         assert result.success is True
         assert result.run_id == "run-abc-123"
 
     async def test_free_run_rate_limited_raises(self) -> None:
         from haiai.async_client import AsyncHaiClient
-        from haiai.errors import HaiError
-
-        mock_http = AsyncMock(spec=httpx.AsyncClient)
-        mock_http.is_closed = False
-        mock_http.post = AsyncMock(
-            return_value=_make_response(429, {"error": "rate limited"})
-        )
+        from haiai.errors import RateLimited
 
         client = AsyncHaiClient(timeout=30.0)
-        client._http = mock_http
+        mock_ffi = client._get_ffi()
 
-        with patch("haiai.async_client.AsyncHaiClient._build_auth_headers", return_value={"Authorization": "JACS test:1:sig"}), \
-             patch("haiai.async_client.AsyncHaiClient._get_jacs_id", return_value="test-agent-id:v1"), \
-             pytest.raises(HaiError, match="Rate limited"):
+        def raise_rate_limited(*args, **kwargs):
+            raise RateLimited("Rate limited", status_code=429)
+
+        mock_ffi.responses["free_run"] = raise_rate_limited
+
+        with pytest.raises(RateLimited):
             await client.free_run("https://hai.ai")
 
 
 @pytest.mark.asyncio
 class TestAsyncSubmitBenchmarkResponseBehavior:
-    """Verify async submit_benchmark_response calls the correct endpoint."""
+    """Verify async submit_benchmark_response calls the correct FFI method."""
 
-    async def test_submit_benchmark_response_calls_correct_endpoint(self) -> None:
+    async def test_submit_benchmark_response_calls_ffi(self) -> None:
         from haiai.async_client import AsyncHaiClient
 
         response_data = {
@@ -213,38 +165,20 @@ class TestAsyncSubmitBenchmarkResponseBehavior:
             "message": "Response accepted",
         }
 
-        mock_http = AsyncMock(spec=httpx.AsyncClient)
-        mock_http.is_closed = False
-        mock_http.post = AsyncMock(
-            return_value=_make_response(200, response_data)
+        client = AsyncHaiClient(timeout=30.0)
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["submit_response"] = response_data
+
+        result = await client.submit_benchmark_response(
+            hai_url="https://hai.ai",
+            job_id="job-456",
+            message="The content is safe",
+            metadata={"confidence": 0.95},
         )
 
-        mock_cfg = _mock_config()
-        mock_agent = _mock_agent()
-
-        client = AsyncHaiClient(timeout=30.0)
-        client._http = mock_http
-
-        with patch("haiai.async_client.AsyncHaiClient._build_auth_headers", return_value={"Authorization": "JACS test:1:sig"}), \
-             patch("haiai.async_client.sign_response", return_value={"signed_document": "{}", "agent_jacs_id": "test-agent-id:v1"}), \
-             patch("haiai.async_client.AsyncHaiClient._escape_path_segment", return_value="job-456"), \
-             patch("haiai.config.get_config", return_value=mock_cfg), \
-             patch("haiai.config.get_agent", return_value=mock_agent):
-            result = await client.submit_benchmark_response(
-                hai_url="https://hai.ai",
-                job_id="job-456",
-                message="The content is safe",
-                metadata={"confidence": 0.95},
-            )
-
-        # Verify correct URL
-        call_args = mock_http.post.call_args
-        assert call_args is not None
-        url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
-        assert "/api/v1/agents/jobs/" in url
-        assert "/response" in url
-
-        # Verify result
+        assert mock_ffi.calls[0][0] == "submit_response"
+        params = mock_ffi.calls[0][1][0]
+        assert params["job_id"] == "job-456"
         assert result.success is True
         assert result.job_id == "job-456"
 
