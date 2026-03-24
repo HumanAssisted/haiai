@@ -368,6 +368,11 @@ pub struct SendEmailOptions {
     /// Labels/tags to apply to the sent message
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub labels: Vec<String>,
+    /// Whether to append a verification footer for external recipients.
+    /// Default (None) = true: appends footer for non-@hai.ai recipients.
+    /// Set to Some(false) to suppress the footer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub append_footer: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

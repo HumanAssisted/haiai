@@ -542,6 +542,7 @@ impl<'a, P: JacsProvider> A2AIntegration<'a, P> {
                 in_reply_to: None,
                 attachments: Vec::new(),
                 labels: Vec::new(),
+                append_footer: None,
             })
             .await
     }

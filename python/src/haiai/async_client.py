@@ -210,24 +210,19 @@ class AsyncHaiClient:
     # ------------------------------------------------------------------
 
     async def testconnection(self, hai_url: str) -> bool:
-        """Test connectivity to the HAI server."""
-        # testconnection is a simple health check -- keep native httpx
-        import httpx as _httpx
+        """Test connectivity to the HAI server.
 
-        http = _httpx.AsyncClient(timeout=self._timeout)
+        Uses the FFI-backed hello() as a single authenticated health check.
+
+        Args:
+            hai_url: Base URL of the HAI server (kept for backward compat).
+        """
         try:
-            endpoints = ["/api/v1/health", "/health", "/api/health", "/"]
-            for endpoint in endpoints:
-                try:
-                    url = self._make_url(hai_url, endpoint)
-                    resp = await http.get(url, timeout=min(self._timeout, 10.0), follow_redirects=True)
-                    if 200 <= resp.status_code < 300:
-                        return True
-                except Exception:
-                    pass
+            ffi = self._get_ffi()
+            await ffi.hello(False)
+            return True
+        except Exception:
             return False
-        finally:
-            await http.aclose()
 
     # ------------------------------------------------------------------
     # hello_world

@@ -635,18 +635,33 @@ impl<P: JacsProvider> HaiClient<P> {
             HaiError::Message("agent email not set — call claim_username first".into())
         })?;
 
-        // TODO: Append verification footer to body BEFORE signing for external
-        // recipients (those not @hai.ai). The server's send-signed path cannot
-        // modify the body post-signing without invalidating the JACS signature.
-        // This should be a flag on SendEmailOptions (e.g. `append_footer: bool`,
-        // default true) so users can opt out. The footer format is:
-        //   "\n\nVerify this agent's reputation: https://hai.ai/agents/{slug}"
-        // where slug comes from the agent's claimed username.
-        // See: api/src/routes/agent_email.rs lines 1809-1812 and
-        //      api/src/jacs_email.rs::append_verification_footer()
+        // Append verification footer before signing (Decision D8: client-side,
+        // not server-side, because modifying the body post-signing would
+        // invalidate the JACS signature).
+        let body = if options.append_footer != Some(false) {
+            // Check if ANY recipient is external (not @hai.ai)
+            let has_external = !options.to.ends_with("@hai.ai")
+                || options.cc.iter().any(|a| !a.ends_with("@hai.ai"))
+                || options.bcc.iter().any(|a| !a.ends_with("@hai.ai"));
+            if has_external {
+                let slug = email_to_slug(from);
+                format!(
+                    "{}\n\nVerify this agent's reputation: https://hai.ai/agents/{}",
+                    options.body, slug
+                )
+            } else {
+                options.body.clone()
+            }
+        } else {
+            options.body.clone()
+        };
 
-        // Step 1: Build RFC 5322 MIME locally
-        let raw_mime = crate::mime::build_rfc5322_email(options, from)?;
+        // Step 1: Build RFC 5322 MIME locally (with footer-amended body)
+        let opts_with_footer = SendEmailOptions {
+            body,
+            ..options.clone()
+        };
+        let raw_mime = crate::mime::build_rfc5322_email(&opts_with_footer, from)?;
 
         // Step 2: Sign with the agent's own JACS key
         let signed = self.jacs.sign_email_locally(&raw_mime)?;
@@ -1837,6 +1852,11 @@ pub fn encode_path_segment(value: &str) -> String {
         .expect("url should support path segments")
         .push(value);
     url.path().trim_start_matches('/').to_string()
+}
+
+/// Derive the agent slug from an email address (local part before `@`).
+fn email_to_slug(email: &str) -> &str {
+    email.split('@').next().unwrap_or(email)
 }
 
 fn parse_transcript(data: &Value) -> Vec<TranscriptMessage> {

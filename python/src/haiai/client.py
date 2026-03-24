@@ -12,7 +12,6 @@ import json
 import logging
 import os
 import time
-import webbrowser
 from pathlib import Path
 from typing import Any, Generator, Iterator, Optional, Union
 from urllib.parse import quote
@@ -459,35 +458,21 @@ class HaiClient:
     def testconnection(self, hai_url: str) -> bool:
         """Test connectivity to the HAI server.
 
-        Tries multiple health endpoints and returns True if any respond 2xx.
+        Uses the FFI-backed hello() method as a single authenticated health
+        check.  Returns True on success, False on any error.
 
         Args:
-            hai_url: Base URL of the HAI server.
+            hai_url: Base URL of the HAI server (kept for backward compat).
 
         Returns:
             True if the server is reachable.
         """
-        # testconnection is a simple health check -- keep native httpx for now
-        # since FFI adapter doesn't expose a raw health-check method.
-        import httpx as _httpx
-
-        endpoints = ["/api/v1/health", "/health", "/api/health", "/"]
-
-        for endpoint in endpoints:
-            try:
-                url = self._make_url(hai_url, endpoint)
-                resp = _httpx.get(
-                    url,
-                    timeout=min(self._timeout, 10.0),
-                    follow_redirects=True,
-                )
-                if 200 <= resp.status_code < 300:
-                    logger.info("Connection successful to %s", url)
-                    return True
-            except Exception as exc:
-                logger.debug("Connection failed to %s: %s", endpoint, exc)
-        logger.warning("All connection attempts to %s failed", hai_url)
-        return False
+        try:
+            ffi = self._get_ffi()
+            ffi.hello(False)
+            return True
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------
     # hello_world
@@ -1275,106 +1260,24 @@ class HaiClient:
         self,
         hai_url: str,
         transport: str = "sse",
-        open_browser: bool = True,
-        payment_poll_interval: float = 2.0,
-        payment_poll_timeout: float = 300.0,
     ) -> BaselineRunResult:
         """Run a pro tier benchmark ($20/month).
 
-        This method stays native because it involves browser interaction
-        and payment polling that are inherently local operations.
+        The entire payment + benchmark flow is handled by the Rust FFI layer,
+        matching the Node and Go SDK patterns.
+
+        Args:
+            hai_url: Base URL of the HAI server (kept for backward compat).
+            transport: Transport type for the benchmark run (default: "sse").
+
+        Returns:
+            BaselineRunResult with benchmark results.
         """
-        # TODO(DRY_FFI_PHASE2): migrate pro_run payment flow to FFI
-        import httpx as _httpx
-
-        jacs_id = self._get_jacs_id()
-
-        # Step 1: Create Stripe Checkout session
-        purchase_url = self._make_url(hai_url, "/api/benchmark/purchase")
-        headers = self._build_auth_headers()
-        headers["Content-Type"] = "application/json"
-
-        purchase_payload = {"tier": "pro", "agent_id": jacs_id}
-
-        try:
-            resp = _httpx.post(
-                purchase_url,
-                json=purchase_payload,
-                headers=headers,
-                timeout=self._timeout,
-            )
-            if resp.status_code in (401, 403):
-                raise HaiAuthError(
-                    "Authentication failed",
-                    status_code=resp.status_code,
-                    body=resp.text,
-                )
-            if resp.status_code not in (200, 201):
-                raise BenchmarkError(
-                    f"Failed to create payment: HTTP {resp.status_code}",
-                    status_code=resp.status_code,
-                )
-
-            purchase_data = resp.json()
-            checkout_url = purchase_data.get("checkout_url", "")
-            payment_id = purchase_data.get("payment_id", "")
-
-            if not checkout_url:
-                raise BenchmarkError("No checkout URL returned from API")
-
-        except (_httpx.ConnectError, _httpx.TimeoutException) as exc:
-            raise HaiConnectionError(f"Connection failed: {exc}")
-        except HaiError:
-            raise
-        except Exception as exc:
-            raise BenchmarkError(f"Failed to create payment: {exc}")
-
-        # Step 2: Open browser for payment
-        if open_browser:
-            webbrowser.open(checkout_url)
-
-        # Step 3: Poll for payment confirmation
-        safe_payment_id = self._escape_path_segment(payment_id)
-        payment_status_url = self._make_url(
-            hai_url, f"/api/benchmark/payments/{safe_payment_id}/status"
-        )
-        start_time = time.time()
-
-        while (time.time() - start_time) < payment_poll_timeout:
-            try:
-                status_resp = _httpx.get(
-                    payment_status_url, headers=headers, timeout=self._timeout,
-                )
-                if status_resp.status_code == 200:
-                    status_data = status_resp.json()
-                    payment_status = status_data.get("status", "")
-
-                    if payment_status == "paid":
-                        break
-                    if payment_status in ("failed", "expired", "cancelled"):
-                        raise BenchmarkError(
-                            f"Payment {payment_status}: "
-                            f"{status_data.get('message', '')}"
-                        )
-            except HaiError:
-                raise
-            except Exception as exc:
-                logger.debug("Payment poll error: %s", exc)
-
-            time.sleep(payment_poll_interval)
-        else:
-            raise BenchmarkError(
-                f"Payment not confirmed within {payment_poll_timeout}s. "
-                "Complete payment in your browser and retry."
-            )
-
-        # Step 4: Run the benchmark via FFI
         ffi = self._get_ffi()
         data = ffi.pro_run({
-            "name": f"Pro Run - {jacs_id[:8]}",
-            "tier": "pro",
-            "payment_id": payment_id,
             "transport": transport,
+            "poll_interval_ms": 2000,
+            "poll_timeout_secs": 300,
         })
 
         transcript = self._parse_transcript(data.get("transcript", []))
@@ -1385,7 +1288,7 @@ class HaiClient:
             run_id=data.get("run_id", data.get("runId", "")),
             score=score,
             transcript=transcript,
-            payment_id=payment_id,
+            payment_id=data.get("payment_id", ""),
             raw_response=data,
         )
 
@@ -2292,10 +2195,10 @@ def free_run(
 
 
 def pro_run(
-    hai_url: str, transport: str = "sse", open_browser: bool = True
+    hai_url: str, transport: str = "sse",
 ) -> BaselineRunResult:
     """Run a pro tier benchmark ($20/month)."""
-    return _get_client().pro_run(hai_url, transport, open_browser)
+    return _get_client().pro_run(hai_url, transport)
 
 
 # Deprecated alias for backward compatibility

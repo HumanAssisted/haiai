@@ -338,46 +338,14 @@ func (c *Client) Hello(ctx context.Context) (*HelloResult, error) {
 	return &result, nil
 }
 
-// TestConnection verifies connectivity to the HAI server (unauthenticated).
-// This method still uses HTTP directly since it's a simple health check.
+// TestConnection verifies connectivity to the HAI server using the FFI-backed
+// hello() as a single authenticated health check.
 func (c *Client) TestConnection(ctx context.Context) (bool, error) {
-	endpoints := []string{"/api/v1/health", "/health", "/api/health", "/"}
-	var lastErr error
-
-	for _, endpoint := range endpoints {
-		url := c.endpoint + endpoint
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return false, wrapError(ErrConnection, err, "failed to create request")
-		}
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			var health struct {
-				Status string `json:"status"`
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
-				_ = resp.Body.Close()
-				return true, nil
-			}
-			_ = resp.Body.Close()
-			if health.Status == "" || health.Status == "ok" || health.Status == "healthy" {
-				return true, nil
-			}
-		} else {
-			_ = resp.Body.Close()
-		}
+	_, err := c.ffi.Hello(false)
+	if err != nil {
+		return false, nil
 	}
-
-	if lastErr != nil {
-		return false, wrapError(ErrConnection, lastErr, "connection failed")
-	}
-	return false, nil
+	return true, nil
 }
 
 // RegisterOptions configures the Register call.

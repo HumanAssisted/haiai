@@ -951,33 +951,13 @@ export class HaiClient {
    * Does not require authentication.
    */
   async testConnection(): Promise<boolean> {
-    // testConnection is a simple unauthenticated health check. We keep it
-    // native since it probes multiple endpoints and the FFI adapter doesn't
-    // have a dedicated method for it.
-    const endpoints = ['/api/v1/health', '/health', '/api/health', '/'];
-    const timeoutMs = Math.min(this.timeout, 10000);
-
-    for (const endpoint of endpoints) {
-      try {
-        const url = `${this.baseUrl}${endpoint}`;
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-        const resp = await fetch(url, {
-          signal: controller.signal,
-          redirect: 'follow',
-        });
-
-        clearTimeout(timeoutId);
-
-        if (resp.ok) {
-          return true;
-        }
-      } catch {
-        // Ignore errors and try next endpoint
-      }
+    // Use the FFI-backed hello() as a single authenticated health check.
+    try {
+      await this.ffi.hello(false);
+      return true;
+    } catch {
+      return false;
     }
-    return false;
   }
 
   // ---------------------------------------------------------------------------

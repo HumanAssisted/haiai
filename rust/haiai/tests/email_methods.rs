@@ -52,6 +52,7 @@ async fn send_email_sends_content_fields() {
             in_reply_to: None,
             attachments: Vec::new(),
             labels: Vec::new(),
+            append_footer: None,
         })
         .await
         .expect("send_email");
@@ -87,6 +88,7 @@ async fn send_email_signature_uses_correct_hash_format() {
             in_reply_to: None,
             attachments: Vec::new(),
             labels: Vec::new(),
+            append_footer: None,
         })
         .await
         .expect("send_email");
@@ -130,6 +132,7 @@ async fn send_email_includes_in_reply_to_when_set() {
             in_reply_to: Some("orig-msg-id".to_string()),
             attachments: Vec::new(),
             labels: Vec::new(),
+            append_footer: None,
         })
         .await
         .expect("send_email with in_reply_to");
@@ -166,6 +169,7 @@ async fn send_email_includes_labels_when_set() {
             in_reply_to: None,
             attachments: Vec::new(),
             labels: vec!["urgent".to_string(), "project-x".to_string()],
+            append_footer: None,
         })
         .await
         .expect("send_email with labels");
