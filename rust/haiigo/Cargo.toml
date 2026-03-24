@@ -1,6 +1,6 @@
 [package]
 name = "haiigo"
-version = "0.1.11"
+version = "0.2.0"
 description = "Go C FFI binding for HAI SDK (cdylib)"
 edition.workspace = true
 license.workspace = true
