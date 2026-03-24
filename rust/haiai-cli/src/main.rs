@@ -2,9 +2,10 @@ use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use hai_mcp::{HaiMcpServer, HaiServerContext, LoadedSharedAgent};
 use haiai::{
-    CreateAgentOptions, HaiClient, HaiClientOptions, JacsAgentLifecycle, JacsDocumentProvider,
-    JacsProvider, ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions, SearchOptions,
-    SendEmailOptions,
+    CreateAgentOptions, CreateEmailTemplateOptions, HaiClient, HaiClientOptions,
+    JacsAgentLifecycle, JacsDocumentProvider, JacsProvider, ListEmailTemplatesOptions,
+    ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions, SearchOptions, SendEmailOptions,
+    UpdateEmailTemplateOptions,
 };
 use jacs_mcp::JacsMcpServer;
 use rmcp::{transport::stdio, ServiceExt};
@@ -313,6 +314,12 @@ enum Commands {
         json: bool,
     },
 
+    /// Manage email templates (create, list, get, update, delete)
+    Template {
+        #[command(subcommand)]
+        command: TemplateCommands,
+    },
+
     /// Manage the OS keychain password for your agent's private key
     Keychain {
         /// Agent ID to scope the keychain entry (e.g. your JACS ID)
@@ -321,6 +328,85 @@ enum Commands {
 
         #[command(subcommand)]
         action: KeychainAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum TemplateCommands {
+    /// Create a new email template
+    Create {
+        /// Template name (required)
+        #[arg(long)]
+        name: String,
+
+        /// Instructions for how to send emails using this template
+        #[arg(long)]
+        how_to_send: Option<String>,
+
+        /// Instructions for how to respond to emails matching this template
+        #[arg(long)]
+        how_to_respond: Option<String>,
+
+        /// Goal or purpose of this template
+        #[arg(long)]
+        goal: Option<String>,
+
+        /// Rules or constraints for this template
+        #[arg(long)]
+        rules: Option<String>,
+    },
+
+    /// List email templates with optional search
+    List {
+        /// Full-text search query
+        #[arg(long)]
+        query: Option<String>,
+
+        /// Maximum number of templates to return
+        #[arg(long, default_value = "20")]
+        limit: u32,
+
+        /// Offset for pagination
+        #[arg(long, default_value = "0")]
+        offset: u32,
+    },
+
+    /// Get a single email template by ID
+    Get {
+        /// Template ID
+        template_id: String,
+    },
+
+    /// Update an existing email template
+    Update {
+        /// Template ID
+        template_id: String,
+
+        /// New template name
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Updated instructions for how to send emails
+        #[arg(long)]
+        how_to_send: Option<String>,
+
+        /// Updated instructions for how to respond to emails
+        #[arg(long)]
+        how_to_respond: Option<String>,
+
+        /// Updated goal or purpose
+        #[arg(long)]
+        goal: Option<String>,
+
+        /// Updated rules or constraints
+        #[arg(long)]
+        rules: Option<String>,
+    },
+
+    /// Delete an email template
+    Delete {
+        /// Template ID
+        template_id: String,
     },
 }
 

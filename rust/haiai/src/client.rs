@@ -635,6 +635,16 @@ impl<P: JacsProvider> HaiClient<P> {
             HaiError::Message("agent email not set — call claim_username first".into())
         })?;
 
+        // TODO: Append verification footer to body BEFORE signing for external
+        // recipients (those not @hai.ai). The server's send-signed path cannot
+        // modify the body post-signing without invalidating the JACS signature.
+        // This should be a flag on SendEmailOptions (e.g. `append_footer: bool`,
+        // default true) so users can opt out. The footer format is:
+        //   "\n\nVerify this agent's reputation: https://hai.ai/agents/{slug}"
+        // where slug comes from the agent's claimed username.
+        // See: api/src/routes/agent_email.rs lines 1809-1812 and
+        //      api/src/jacs_email.rs::append_verification_footer()
+
         // Step 1: Build RFC 5322 MIME locally
         let raw_mime = crate::mime::build_rfc5322_email(options, from)?;
 
