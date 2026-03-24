@@ -177,13 +177,21 @@ type Client struct {
 }
 
 // NewClient creates a new FFI client from a config JSON string.
+//
+// Uses runtime.LockOSThread to ensure hai_client_new and hai_last_error
+// execute on the same OS thread, which is required because the Rust FFI
+// layer stores constructor errors in thread-local storage.
 func NewClient(configJSON string) (*Client, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	cs := cString(configJSON)
 	defer C.free(unsafe.Pointer(cs))
 
 	handle := C.hai_client_new(cs)
 	if handle == nil {
 		// Retrieve detailed error from hai_last_error()
+		// Safe because LockOSThread guarantees same OS thread as hai_client_new.
 		errPtr := C.hai_last_error()
 		if errPtr != nil {
 			errJSON := goString(errPtr)
@@ -768,8 +776,8 @@ func (c *Client) JacsID() (string, error) {
 // --- Client State (Mutating) ---
 
 func (c *Client) SetHaiAgentID(id string) error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if err := c.checkClosed(); err != nil {
 		return err
 	}
@@ -780,8 +788,8 @@ func (c *Client) SetHaiAgentID(id string) error {
 }
 
 func (c *Client) SetAgentEmail(email string) error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if err := c.checkClosed(); err != nil {
 		return err
 	}
@@ -808,6 +816,8 @@ func MapFFIError(err error) error {
 	switch {
 	case strings.EqualFold(kind, "AuthFailed"):
 		return &mappedError{kind: "auth", message: msg, statusCode: 401}
+	case strings.EqualFold(kind, "ProviderError"):
+		return &mappedError{kind: "auth", message: msg}
 	case strings.EqualFold(kind, "RateLimited"):
 		return &mappedError{kind: "rate_limited", message: msg, statusCode: 429}
 	case strings.EqualFold(kind, "NotFound"):

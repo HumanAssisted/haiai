@@ -115,10 +115,18 @@ jobs:
         run: |
           cd rust/haiinpm
           node -e "
-          try {
-            const binding = require('./haiinpm.linux-x64-gnu.node') || require('./haiinpm.linux-x64-musl.node');
+          async function main() {
+            let binding;
+            try {
+              binding = require('./haiinpm.linux-x64-gnu.node');
+            } catch {
+              binding = require('./haiinpm.linux-x64-musl.node');
+            }
             console.log('haiinpm native addon loaded OK');
-            if (typeof binding.HaiClient !== 'function') throw new Error('HaiClient not found');
+            if (typeof binding.HaiClient !== 'function') {
+              console.error('HaiClient not found in binding');
+              process.exit(1);
+            }
 
             // Instantiate with StaticJacsProvider (no real JACS keys needed)
             const client = new binding.HaiClient(JSON.stringify({
@@ -128,14 +136,15 @@ jobs:
             console.log('HaiClient instantiated OK');
 
             // Verify jacs_id accessor works
-            client.jacsId().then(jid => {
-              if (jid !== 'smoke-test:1') throw new Error('Expected jacs_id smoke-test:1, got ' + jid);
-              console.log('jacsId() returned:', jid);
-              console.log('haiinpm FFI smoke test PASSED');
-            });
-          } catch (e) {
-            console.log('haiinpm smoke test skipped (addon not found for this platform):', e.message);
+            const jid = await client.jacsId();
+            if (jid !== 'smoke-test:1') {
+              console.error('Expected jacs_id smoke-test:1, got ' + jid);
+              process.exit(1);
+            }
+            console.log('jacsId() returned:', jid);
+            console.log('haiinpm FFI smoke test PASSED');
           }
+          main().catch(e => { console.error('haiinpm FFI smoke test FAILED:', e.message); process.exit(1); });
           "
 
   test-go:

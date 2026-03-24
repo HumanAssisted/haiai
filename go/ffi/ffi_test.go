@@ -87,6 +87,7 @@ func TestMapFFIError(t *testing.T) {
 		wantNF   bool
 	}{
 		{"AuthFailed", true, false, false},
+		{"ProviderError", true, false, false},
 		{"RateLimited", false, true, false},
 		{"NotFound", false, false, true},
 		{"NetworkFailed", false, false, false},
