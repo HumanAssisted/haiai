@@ -13,9 +13,9 @@ homepage.workspace = true
 
 [dependencies]
 haiai = { version = "=0.1.9", path = "../haiai" }
-jacs = { version = "=0.9.10", features = ["a2a"] }
-jacs-binding-core = "=0.9.10"
-jacs-mcp = { version = "=0.9.10", features = ["mcp", "full-tools"] }
+jacs = { version = "=0.9.11", features = ["a2a"] }
+jacs-binding-core = "=0.9.11"
+jacs-mcp = { version = "=0.9.11", features = ["mcp", "full-tools"] }
 anyhow = "1"
 base64.workspace = true
 rmcp = { version = "0.12", features = ["server", "transport-io", "macros"] }
