@@ -1,0 +1,85 @@
+{
+  "description": "FFI method surface area parity contract. Every SDK must expose exactly these FFI methods. Tests verify that the FFI interface/adapter in each language covers the full method set.",
+  "version": "1.0.0",
+  "methods": {
+    "registration_and_identity": [
+      {"name": "hello", "args": ["include_test:bool"], "returns": "json"},
+      {"name": "check_username", "args": ["username:string"], "returns": "json"},
+      {"name": "register", "args": ["options_json:string"], "returns": "json"},
+      {"name": "rotate_keys", "args": ["options_json:string"], "returns": "json"},
+      {"name": "update_agent", "args": ["agent_data:string"], "returns": "json"},
+      {"name": "submit_response", "args": ["params_json:string"], "returns": "json"},
+      {"name": "verify_status", "args": ["agent_id:string?"], "returns": "json"}
+    ],
+    "username": [
+      {"name": "claim_username", "args": ["agent_id:string", "username:string"], "returns": "json"},
+      {"name": "update_username", "args": ["agent_id:string", "username:string"], "returns": "json"},
+      {"name": "delete_username", "args": ["agent_id:string"], "returns": "json"}
+    ],
+    "email_core": [
+      {"name": "send_email", "args": ["options_json:string"], "returns": "json"},
+      {"name": "send_signed_email", "args": ["options_json:string"], "returns": "json"},
+      {"name": "list_messages", "args": ["options_json:string"], "returns": "json"},
+      {"name": "update_labels", "args": ["params_json:string"], "returns": "json"},
+      {"name": "get_email_status", "args": [], "returns": "json"},
+      {"name": "get_message", "args": ["message_id:string"], "returns": "json"},
+      {"name": "get_unread_count", "args": [], "returns": "json"}
+    ],
+    "email_actions": [
+      {"name": "mark_read", "args": ["message_id:string"], "returns": "void"},
+      {"name": "mark_unread", "args": ["message_id:string"], "returns": "void"},
+      {"name": "delete_message", "args": ["message_id:string"], "returns": "void"},
+      {"name": "archive", "args": ["message_id:string"], "returns": "void"},
+      {"name": "unarchive", "args": ["message_id:string"], "returns": "void"},
+      {"name": "reply_with_options", "args": ["params_json:string"], "returns": "json"},
+      {"name": "forward", "args": ["params_json:string"], "returns": "json"}
+    ],
+    "search_and_contacts": [
+      {"name": "search_messages", "args": ["options_json:string"], "returns": "json"},
+      {"name": "contacts", "args": [], "returns": "json"}
+    ],
+    "key_operations": [
+      {"name": "fetch_remote_key", "args": ["jacs_id:string", "version:string"], "returns": "json"},
+      {"name": "fetch_key_by_hash", "args": ["hash:string"], "returns": "json"},
+      {"name": "fetch_key_by_email", "args": ["email:string"], "returns": "json"},
+      {"name": "fetch_key_by_domain", "args": ["domain:string"], "returns": "json"},
+      {"name": "fetch_all_keys", "args": ["jacs_id:string"], "returns": "json"}
+    ],
+    "verification": [
+      {"name": "verify_document", "args": ["document:string"], "returns": "json"},
+      {"name": "get_verification", "args": ["agent_id:string"], "returns": "json"},
+      {"name": "verify_agent_document", "args": ["request_json:string"], "returns": "json"}
+    ],
+    "benchmarks": [
+      {"name": "benchmark", "args": ["name:string?", "tier:string?"], "returns": "json"},
+      {"name": "free_run", "args": ["transport:string?"], "returns": "json"},
+      {"name": "pro_run", "args": ["options_json:string"], "returns": "json"},
+      {"name": "enterprise_run", "args": [], "returns": "void"}
+    ],
+    "jacs_delegation": [
+      {"name": "build_auth_header", "args": [], "returns": "string"},
+      {"name": "sign_message", "args": ["message:string"], "returns": "string"},
+      {"name": "canonical_json", "args": ["value_json:string"], "returns": "string"},
+      {"name": "verify_a2a_artifact", "args": ["wrapped_json:string"], "returns": "json"},
+      {"name": "export_agent_json", "args": [], "returns": "json"}
+    ],
+    "client_state": [
+      {"name": "jacs_id", "args": [], "returns": "string"},
+      {"name": "set_hai_agent_id", "args": ["id:string"], "returns": "void"},
+      {"name": "set_agent_email", "args": ["email:string"], "returns": "void"}
+    ]
+  },
+  "error_kinds": [
+    "AuthFailed",
+    "RateLimited",
+    "NotFound",
+    "NetworkFailed",
+    "ApiError",
+    "ConfigFailed",
+    "SerializationFailed",
+    "InvalidArgument",
+    "ProviderError"
+  ],
+  "error_format": "{ErrorKind}: {message}",
+  "total_method_count": 46
+}

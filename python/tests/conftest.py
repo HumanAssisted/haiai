@@ -325,6 +325,15 @@ class MockFFIAdapter:
     def sign_message(self, message: str) -> str:
         return self._record("sign_message", message)
 
+    def canonical_json(self, value_json: str) -> str:
+        return self._record("canonical_json", value_json)
+
+    def verify_a2a_artifact(self, wrapped_json: str) -> dict:
+        return self._record("verify_a2a_artifact", wrapped_json)
+
+    def export_agent_json(self) -> dict:
+        return self._record("export_agent_json")
+
     def jacs_id_sync(self) -> str:
         return self._record("jacs_id")
 
