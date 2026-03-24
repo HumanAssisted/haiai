@@ -34,6 +34,11 @@ import type {
   EmailStatus,
   Contact,
   ForwardOptions,
+  EmailTemplate,
+  CreateEmailTemplateOptions,
+  UpdateEmailTemplateOptions,
+  ListEmailTemplatesOptions,
+  ListEmailTemplatesResult,
   PublicKeyInfo,
   VerificationResult,
   DocumentVerificationResult,
@@ -2446,6 +2451,149 @@ export class HaiClient {
       jacsVerified: (c.jacs_verified as boolean) ?? false,
       reputationTier: (c.reputation_tier as string) || undefined,
     }));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Email Templates
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Create an email template for this agent.
+   *
+   * @param options - Template fields (name is required)
+   * @returns The created email template
+   */
+  async createEmailTemplate(options: CreateEmailTemplateOptions): Promise<EmailTemplate> {
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/templates`);
+
+    const payload: Record<string, unknown> = { name: options.name };
+    if (options.howToSend != null) payload.how_to_send = options.howToSend;
+    if (options.howToRespond != null) payload.how_to_respond = options.howToRespond;
+    if (options.goal != null) payload.goal = options.goal;
+    if (options.rules != null) payload.rules = options.rules;
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: this.buildAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    return this.parseEmailTemplate(data);
+  }
+
+  /**
+   * List or search email templates for this agent.
+   *
+   * When `options.q` is provided, performs BM25 full-text search across all
+   * template fields.
+   *
+   * @param options - Pagination and optional search query
+   * @returns List of templates with total count
+   */
+  async listEmailTemplates(options?: ListEmailTemplatesOptions): Promise<ListEmailTemplatesResult> {
+    const params = new URLSearchParams();
+    if (options?.limit != null) params.set('limit', String(options.limit));
+    if (options?.offset != null) params.set('offset', String(options.offset));
+    if (options?.q) params.set('q', options.q);
+
+    const qs = params.toString();
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/templates${qs ? `?${qs}` : ''}`);
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: this.buildAuthHeaders(),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    const rawTemplates = (data.templates as Array<Record<string, unknown>>) || [];
+    return {
+      templates: rawTemplates.map((t) => this.parseEmailTemplate(t)),
+      total: (data.total as number) || 0,
+      limit: (data.limit as number) || 0,
+      offset: (data.offset as number) || 0,
+    };
+  }
+
+  /**
+   * Get a single email template by ID.
+   *
+   * @param templateId - The template ID to retrieve
+   * @returns The email template
+   */
+  async getEmailTemplate(templateId: string): Promise<EmailTemplate> {
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const safeTemplateId = this.encodePathSegment(templateId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/templates/${safeTemplateId}`);
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'GET',
+      headers: this.buildAuthHeaders(),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    return this.parseEmailTemplate(data);
+  }
+
+  /**
+   * Update an email template. Only provided fields are changed.
+   *
+   * @param templateId - The template ID to update
+   * @param options - Fields to update (all optional)
+   * @returns The updated email template
+   */
+  async updateEmailTemplate(templateId: string, options: UpdateEmailTemplateOptions): Promise<EmailTemplate> {
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const safeTemplateId = this.encodePathSegment(templateId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/templates/${safeTemplateId}`);
+
+    const payload: Record<string, unknown> = {};
+    if (options.name != null) payload.name = options.name;
+    if (options.howToSend != null) payload.how_to_send = options.howToSend;
+    if (options.howToRespond != null) payload.how_to_respond = options.howToRespond;
+    if (options.goal != null) payload.goal = options.goal;
+    if (options.rules != null) payload.rules = options.rules;
+
+    const response = await this.fetchWithRetry(url, {
+      method: 'PUT',
+      headers: this.buildAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json() as Record<string, unknown>;
+    return this.parseEmailTemplate(data);
+  }
+
+  /**
+   * Delete an email template (soft delete).
+   *
+   * @param templateId - The template ID to delete
+   */
+  async deleteEmailTemplate(templateId: string): Promise<void> {
+    const safeAgentId = this.encodePathSegment(this.haiAgentId);
+    const safeTemplateId = this.encodePathSegment(templateId);
+    const url = this.makeUrl(`/api/agents/${safeAgentId}/email/templates/${safeTemplateId}`);
+
+    await this.fetchWithRetry(url, {
+      method: 'DELETE',
+      headers: this.buildAuthHeaders(),
+    });
+  }
+
+  private parseEmailTemplate(data: Record<string, unknown>): EmailTemplate {
+    return {
+      id: (data.id as string) || '',
+      agentId: (data.agent_id as string) || '',
+      name: (data.name as string) || '',
+      howToSend: (data.how_to_send as string) || undefined,
+      howToRespond: (data.how_to_respond as string) || undefined,
+      goal: (data.goal as string) || undefined,
+      rules: (data.rules as string) || undefined,
+      createdAt: (data.created_at as string) || '',
+      updatedAt: (data.updated_at as string) || '',
+    };
   }
 
   // ---------------------------------------------------------------------------

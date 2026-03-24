@@ -589,6 +589,82 @@ export interface EmailStatus {
   reputation?: EmailReputationInfo | null;
 }
 
+// =============================================================================
+// Email template types
+// =============================================================================
+
+/** An email template with reusable instructions for agent email workflows. */
+export interface EmailTemplate {
+  /** Unique template ID. */
+  id: string;
+  /** Agent ID that owns this template. */
+  agentId: string;
+  /** Human-readable template name. */
+  name: string;
+  /** Instructions for how to compose outbound emails using this template. */
+  howToSend?: string;
+  /** Instructions for how to respond to inbound emails matching this template. */
+  howToRespond?: string;
+  /** Goal or purpose this template serves. */
+  goal?: string;
+  /** Rules or constraints the agent must follow when using this template. */
+  rules?: string;
+  /** ISO 8601 creation timestamp. */
+  createdAt: string;
+  /** ISO 8601 last-updated timestamp. */
+  updatedAt: string;
+}
+
+/** Options for creating an email template. */
+export interface CreateEmailTemplateOptions {
+  /** Human-readable template name (required). */
+  name: string;
+  /** Instructions for how to compose outbound emails. */
+  howToSend?: string;
+  /** Instructions for how to respond to inbound emails. */
+  howToRespond?: string;
+  /** Goal or purpose this template serves. */
+  goal?: string;
+  /** Rules or constraints the agent must follow. */
+  rules?: string;
+}
+
+/** Options for updating an email template (all fields optional). */
+export interface UpdateEmailTemplateOptions {
+  /** New template name. */
+  name?: string;
+  /** Updated send instructions. */
+  howToSend?: string;
+  /** Updated response instructions. */
+  howToRespond?: string;
+  /** Updated goal. */
+  goal?: string;
+  /** Updated rules. */
+  rules?: string;
+}
+
+/** Options for listing/searching email templates. */
+export interface ListEmailTemplatesOptions {
+  /** Max number of templates to return. */
+  limit?: number;
+  /** Offset for pagination. */
+  offset?: number;
+  /** BM25 search query string. */
+  q?: string;
+}
+
+/** Result of listing email templates. */
+export interface ListEmailTemplatesResult {
+  /** Array of email templates. */
+  templates: EmailTemplate[];
+  /** Total number of matching templates. */
+  total: number;
+  /** Limit used in the query. */
+  limit: number;
+  /** Offset used in the query. */
+  offset: number;
+}
+
 /** Response from the public key registry endpoint. */
 export interface KeyRegistryResponse {
   /** The agent's email address. */

@@ -1,6 +1,6 @@
 {
   "name": "@haiai/cli-linux-x64",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Platform-specific binary for haiai CLI (Linux x64)",
   "os": ["linux"],
   "cpu": ["x64"],

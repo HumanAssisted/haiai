@@ -853,3 +853,74 @@ pub struct HaiEvent {
     #[serde(default)]
     pub raw: String,
 }
+
+// ============================================================================
+// Email Template Types
+// ============================================================================
+
+/// An email template with reusable instructions for agent email workflows.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailTemplate {
+    pub id: String,
+    pub agent_id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub how_to_send: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub how_to_respond: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rules: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Options for creating an email template.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CreateEmailTemplateOptions {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub how_to_send: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub how_to_respond: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rules: Option<String>,
+}
+
+/// Options for updating an email template (all fields optional).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UpdateEmailTemplateOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub how_to_send: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub how_to_respond: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rules: Option<String>,
+}
+
+/// Options for listing/searching email templates.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ListEmailTemplatesOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub q: Option<String>,
+}
+
+/// Result of listing email templates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListEmailTemplatesResult {
+    pub templates: Vec<EmailTemplate>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+}

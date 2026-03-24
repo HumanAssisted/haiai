@@ -1,6 +1,6 @@
 {
   "name": "@haiai/cli-darwin-x64",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Platform-specific binary for haiai CLI (macOS x64)",
   "os": ["darwin"],
   "cpu": ["x64"],
