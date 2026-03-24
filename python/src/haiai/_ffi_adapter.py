@@ -14,6 +14,7 @@ The haiipy binding provides:
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Optional
 
 from haiai.errors import (
@@ -56,7 +57,6 @@ def map_ffi_error(err: Exception) -> HaiError:
     if message.startswith("ApiError:"):
         msg = message[len("ApiError:"):].strip()
         # Try to extract status code
-        import re
         match = re.search(r"status (\d+)", msg)
         status = int(match.group(1)) if match else None
         if "email not active" in msg.lower():

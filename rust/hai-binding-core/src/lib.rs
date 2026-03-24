@@ -276,7 +276,13 @@ impl HaiClientWrapper {
             ))?;
             Box::new(local)
         } else {
-            // Fallback to StaticJacsProvider (test-only, produces fake signatures)
+            // Fallback to StaticJacsProvider (test-only, produces fake signatures).
+            // This provider generates deterministic signatures that will be rejected
+            // by the HAI API on every authenticated endpoint.
+            eprintln!(
+                "WARNING: hai-binding-core: No jacs_config_path provided. \
+                 Using test-only StaticJacsProvider. Authenticated API calls will fail."
+            );
             Box::new(StaticJacsProvider::new(jacs_id))
         };
 

@@ -10,6 +10,8 @@
  * @module ffi-client
  */
 
+import { createRequire } from 'node:module';
+
 import {
   HaiError,
   AuthenticationError,
