@@ -1772,15 +1772,9 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jacs"
-<<<<<<< Updated upstream
 version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4365a4a7b3dcad69d458b713a7e490f4377db3c568a8485d712e614185d5c827"
-=======
-version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4185aa0f7b2f1fee209accf402b778d2f2ea17adaa285a47c5f046dff755340"
->>>>>>> Stashed changes
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1842,15 +1836,9 @@ dependencies = [
 
 [[package]]
 name = "jacs-binding-core"
-<<<<<<< Updated upstream
 version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d73fec2d3f14e323bdbdbb7d1381258fb0fbb5d8838321c40d58b912b71f5785"
-=======
-version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca9cde9fa790942f18fb9ae41c40236089be4369aafca9c410c2b4804c65172f"
->>>>>>> Stashed changes
 dependencies = [
  "base64",
  "jacs",
@@ -1861,15 +1849,9 @@ dependencies = [
 
 [[package]]
 name = "jacs-mcp"
-<<<<<<< Updated upstream
 version = "0.9.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "204103ff34870c89fbad3067aec8754f55972b15ecf19055ac28e0c6e47463f9"
-=======
-version = "0.9.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc065630b00926734058139891bb71d515d111caeb45be14620ebe8950fc4ed4"
->>>>>>> Stashed changes
 dependencies = [
  "anyhow",
  "chrono",
@@ -5088,7 +5070,6 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[patch.unused]]
 name = "jacs"
-<<<<<<< Updated upstream
 version = "0.9.11"
 
 [[patch.unused]]
@@ -5098,14 +5079,3 @@ version = "0.9.11"
 [[patch.unused]]
 name = "jacs-mcp"
 version = "0.9.11"
-=======
-version = "0.9.10"
-
-[[patch.unused]]
-name = "jacs-binding-core"
-version = "0.9.10"
-
-[[patch.unused]]
-name = "jacs-mcp"
-version = "0.9.10"
->>>>>>> Stashed changes
