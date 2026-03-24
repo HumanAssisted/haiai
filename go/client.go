@@ -592,44 +592,6 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 	}, nil
 }
 
-// registerWithoutAuth registers an agent document without JACS request auth.
-// New-agent registration is self-authenticated by the signed agent document.
-// Retained for RegisterNewAgent bootstrap flow.
-func (c *Client) registerWithoutAuth(ctx context.Context, opts RegisterOptions) (*RegistrationResult, error) {
-	wireOpts := opts
-	if wireOpts.PublicKey != "" {
-		wireOpts.PublicKey = base64.StdEncoding.EncodeToString([]byte(opts.PublicKey))
-	}
-
-	body, err := json.Marshal(wireOpts)
-	if err != nil {
-		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal registration request")
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint+"/api/v1/agents/register", bytes.NewReader(body))
-	if err != nil {
-		return nil, wrapError(ErrConnection, err, "failed to create registration request")
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, wrapError(ErrConnection, err, "registration request failed")
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := limitedReadAll(resp.Body)
-		return nil, classifyHTTPError(resp.StatusCode, respBody)
-	}
-
-	var result RegistrationResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, wrapError(ErrInvalidResponse, err, "failed to decode registration response")
-	}
-
-	return &result, nil
-}
 
 // Status checks the registration/verification status of this agent with HAI.
 // Calls GET /api/v1/agents/{jacs_id}/verify.
@@ -1277,156 +1239,73 @@ func (c *Client) GetContacts(ctx context.Context) ([]Contact, error) {
 	return contacts, nil
 }
 
-// RegisterNewAgent generates a new Ed25519 keypair, creates a flat JACS agent
-// document, signs it, and registers with HAI.
-//
-// This method is kept native because it involves keygen, local signing, and
-// bootstrap registration without pre-existing auth.
+// RegisterNewAgent creates a new JACS agent and registers it with HAI.
+// Keys, agent document, and registration are all handled by the Rust FFI layer.
 func (c *Client) RegisterNewAgent(ctx context.Context, agentName string, opts *RegisterNewAgentOptions) (*RegisterResult, error) {
-	// Generate keypair via CryptoBackend
-	backend := c.crypto
-	if backend == nil {
-		backend = cryptoBackend
+	options := map[string]interface{}{
+		"agent_name": agentName,
 	}
-	pubPEMBytes, privPEMBytes, err := backend.GenerateKeyPair()
-	if err != nil {
-		return nil, wrapError(ErrSigningFailed, err, "key generation failed")
-	}
-
-	// Parse the generated private key so we can create a signing backend for it
-	priv, err := ParsePrivateKey(privPEMBytes)
-	if err != nil {
-		return nil, wrapError(ErrSigningFailed, err, "failed to parse generated private key")
-	}
-	pub := priv.Public().(ed25519.PublicKey)
-
-	// Re-encode public key to canonical SPKI PEM (matches Rust verifier expectation)
-	pubDER, err := x509.MarshalPKIXPublicKey(pub)
-	if err != nil {
-		return nil, wrapError(ErrSigningFailed, err, "failed to marshal public key")
-	}
-	pubPEMBytes = pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
-	pubPEMStr := string(pubPEMBytes)
-
-	jacsID := generateUUID()
-	now := time.Now().UTC().Format(time.RFC3339)
-
-	// Build flat JACS document with jacsSignature (minus .signature).
-	description := "Agent registered via Go SDK"
-	if opts != nil && opts.Description != "" {
-		description = opts.Description
-	}
-
-	doc := map[string]interface{}{
-		"jacsId":           jacsID,
-		"jacsVersion":      "1.0.0",
-		"jacsAgentVersion": "1.0.0",
-		"jacsAgentName":    agentName,
-		"jacsPublicKey":    pubPEMStr,
-		"description":      description,
-		"jacsSignature": map[string]interface{}{
-			"agentID": jacsID,
-			"date":    now,
-		},
-	}
-
-	if opts != nil && opts.Domain != "" {
-		doc["domain"] = opts.Domain
-	}
-
-	// Canonical JSON (Go encoding/json sorts map keys by default).
-	canonical, err := json.Marshal(doc)
-	if err != nil {
-		return nil, wrapError(ErrSigningFailed, err, "failed to marshal agent document")
-	}
-
-	// Sign the canonical JSON via CryptoBackend
-	newKeyBackend := newClientCryptoBackend(priv, jacsID)
-	sig, signErr := newKeyBackend.SignBytes(canonical)
-	if signErr != nil {
-		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign agent document")
-	}
-	sigB64 := base64.StdEncoding.EncodeToString(sig)
-
-	// Insert signature into jacsSignature and re-serialize.
-	doc["jacsSignature"].(map[string]interface{})["signature"] = sigB64
-
-	agentJSON, err := json.Marshal(doc)
-	if err != nil {
-		return nil, wrapError(ErrSigningFailed, err, "failed to marshal signed agent document")
-	}
-
-	// Register with HAI (self-authenticated agent document).
-	regOpts := RegisterOptions{
-		AgentJSON: string(agentJSON),
-		PublicKey: pubPEMStr,
+	if c.endpoint != "" {
+		options["base_url"] = c.endpoint
 	}
 	if opts != nil {
-		regOpts.OwnerEmail = opts.OwnerEmail
-	}
-
-	reg, err := c.registerWithoutAuth(ctx, regOpts)
-	if err != nil {
-		return nil, err
-	}
-
-	// Encode keys as PEM for local storage (PKCS#8 DER for private key).
-	pkcs8Bytes, err := x509.MarshalPKCS8PrivateKey(priv)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal private key: %w", err)
-	}
-	privPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "PRIVATE KEY",
-		Bytes: pkcs8Bytes,
-	})
-	pubPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: pubDER,
-	})
-
-	// Print next-step messaging
-	if opts == nil || !opts.Quiet {
-		ownerEmail := ""
-		if opts != nil {
-			ownerEmail = opts.OwnerEmail
+		if opts.OwnerEmail != "" {
+			options["owner_email"] = opts.OwnerEmail
 		}
-		fmt.Println()
-		fmt.Println("Agent created and submitted for registration!")
-		fmt.Printf("  -> Check your email (%s) for a verification link\n", ownerEmail)
-		fmt.Println("  -> Click the link and log into hai.ai to complete registration")
-		fmt.Println("  -> After verification, claim a @hai.ai username with:")
-		fmt.Println("     client.ClaimUsername(ctx, agentID, \"my-agent\")")
-		fmt.Println("  -> Save your config and private key to a secure, access-controlled location")
-
-		if opts != nil && opts.Domain != "" {
-			hash := sha256.Sum256([]byte(pubPEMStr))
-			fmt.Println()
-			fmt.Println("--- DNS Setup Instructions ---")
-			fmt.Printf("Add this TXT record to your domain '%s':\n", opts.Domain)
-			fmt.Printf("  Name:  _jacs.%s\n", opts.Domain)
-			fmt.Println("  Type:  TXT")
-			fmt.Printf("  Value: sha256:%x\n", hash)
-			fmt.Println("DNS verification enables the pro tier.")
+		if opts.Password != "" {
+			options["password"] = opts.Password
+		} else {
+			if pw := os.Getenv("JACS_PRIVATE_KEY_PASSWORD"); pw != "" {
+				options["password"] = pw
+			} else if pwFile := os.Getenv("JACS_PASSWORD_FILE"); pwFile != "" {
+				if data, err := os.ReadFile(pwFile); err == nil {
+					options["password"] = strings.TrimSpace(string(data))
+				}
+			}
 		}
-		fmt.Println()
+		if opts.Domain != "" {
+			options["domain"] = opts.Domain
+		}
+		if opts.Description != "" {
+			options["description"] = opts.Description
+		}
+		if opts.KeyDirectory != "" {
+			options["key_directory"] = opts.KeyDirectory
+		}
+		if opts.DataDirectory != "" {
+			options["data_directory"] = opts.DataDirectory
+		}
+		if opts.ConfigPath != "" {
+			options["config_path"] = opts.ConfigPath
+		}
+		if opts.Algorithm != "" {
+			options["algorithm"] = opts.Algorithm
+		}
 	}
 
-	return &RegisterResult{
-		Registration: reg,
-		PrivateKey:   privPEM,
-		PublicKey:    pubPEM,
-		AgentJSON:    string(agentJSON),
-	}, nil
+	optsJSON, err := json.Marshal(options)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal register options")
+	}
+
+	raw, err := c.ffi.RegisterNewAgent(string(optsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+
+	var result RegisterResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode register result")
+	}
+	return &result, nil
 }
 
 // RegisterNewAgentWithEndpoint bootstraps registration on a clean machine
 // without requiring a local config or existing private key.
+// The endpoint is passed through to the Rust FFI layer as base_url.
 func RegisterNewAgentWithEndpoint(ctx context.Context, endpoint, agentName string, opts *RegisterNewAgentOptions) (*RegisterResult, error) {
 	cl := &Client{
 		endpoint: strings.TrimRight(endpoint, "/"),
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
 	}
 	return cl.RegisterNewAgent(ctx, agentName, opts)
 }
@@ -1588,8 +1467,13 @@ func (c *Client) ClearAgentKeyCache() {
 }
 
 // FetchRemoteKeyFromURL fetches a public key from a specific key service URL.
-// Retained as a standalone function for backward compatibility.
+// Deprecated: Use Client.FetchRemoteKey instead.
 func FetchRemoteKeyFromURL(ctx context.Context, httpClient *http.Client, baseURL, agentID, version string) (*PublicKeyInfo, error) {
+	return fetchRemoteKeyHTTP(ctx, baseURL, agentID, version)
+}
+
+// fetchRemoteKeyHTTP is the direct HTTP implementation (no FFI).
+func fetchRemoteKeyHTTP(ctx context.Context, baseURL, agentID, version string) (*PublicKeyInfo, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 	url := fmt.Sprintf(
 		"%s/api/agents/keys/%s/%s",
@@ -1598,9 +1482,7 @@ func FetchRemoteKeyFromURL(ctx context.Context, httpClient *http.Client, baseURL
 		neturl.PathEscape(version),
 	)
 
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
-	}
+	httpClient := &http.Client{Timeout: 30 * time.Second}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

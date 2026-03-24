@@ -45,6 +45,7 @@ extern void hai_free_string(char* s);
 extern char* hai_hello(HaiClientHandle handle, _Bool include_test);
 extern char* hai_check_username(HaiClientHandle handle, const char* username);
 extern char* hai_register(HaiClientHandle handle, const char* options_json);
+extern char* hai_register_new_agent(HaiClientHandle handle, const char* options_json);
 extern char* hai_rotate_keys(HaiClientHandle handle, const char* options_json);
 extern char* hai_update_agent(HaiClientHandle handle, const char* agent_data);
 extern char* hai_submit_response(HaiClientHandle handle, const char* params_json);
@@ -287,6 +288,17 @@ func (c *Client) Register(optionsJSON string) (json.RawMessage, error) {
 	cs := cString(optionsJSON)
 	defer C.free(unsafe.Pointer(cs))
 	return parseEnvelope(goString(C.hai_register(c.handle, cs)))
+}
+
+func (c *Client) RegisterNewAgent(optionsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(optionsJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_register_new_agent(c.handle, cs)))
 }
 
 func (c *Client) RotateKeys(optionsJSON string) (json.RawMessage, error) {

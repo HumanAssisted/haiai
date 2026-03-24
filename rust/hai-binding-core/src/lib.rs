@@ -394,6 +394,92 @@ impl HaiClientWrapper {
         Ok(serde_json::to_string(&result)?)
     }
 
+    /// Register a brand-new agent: generate keys via JACS, create agent document,
+    /// then register with the HAI server.
+    ///
+    /// This is a combined operation that:
+    /// 1. Calls `LocalJacsProvider::create_agent_with_options()` to generate keypair + agent doc
+    /// 2. Loads the newly created agent as a `LocalJacsProvider`
+    /// 3. Creates a temporary `HaiClient` with that provider
+    /// 4. Calls `register()` on the server
+    /// 5. Returns combined result with agent_id, jacs_id, paths, etc.
+    pub async fn register_new_agent(&self, options_json: &str) -> HaiBindingResult<String> {
+        let v: Value = serde_json::from_str(options_json)?;
+
+        let agent_name = v.get("agent_name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| HaiBindingError::new(ErrorKind::InvalidArgument, "missing agent_name"))?;
+        let password = v.get("password")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| HaiBindingError::new(ErrorKind::InvalidArgument, "missing password"))?;
+
+        // Build CreateAgentOptions
+        let create_opts = haiai::types::CreateAgentOptions {
+            name: agent_name.to_string(),
+            password: password.to_string(),
+            algorithm: v.get("algorithm").and_then(|v| v.as_str()).map(String::from),
+            data_directory: v.get("data_directory").and_then(|v| v.as_str()).map(String::from),
+            key_directory: v.get("key_directory").and_then(|v| v.as_str()).map(String::from),
+            config_path: v.get("config_path").and_then(|v| v.as_str()).map(String::from),
+            agent_type: None,
+            description: v.get("description").and_then(|v| v.as_str()).map(String::from),
+            domain: v.get("domain").and_then(|v| v.as_str()).map(String::from),
+            default_storage: None,
+        };
+
+        // Step 1: Create the agent (keygen + doc creation)
+        let create_result = LocalJacsProvider::create_agent_with_options(&create_opts)
+            .map_err(|e| HaiBindingError::new(ErrorKind::Generic, format!("agent creation failed: {e}")))?;
+
+        // Step 2: Load the newly created agent
+        let config_path = Path::new(&create_result.config_path);
+        let provider = LocalJacsProvider::from_config_path(Some(config_path), None)
+            .map_err(|e| HaiBindingError::new(ErrorKind::Generic, format!("failed to load new agent: {e}")))?;
+
+        // Step 3: Read the public key PEM for registration
+        let pub_key_pem = std::fs::read_to_string(&create_result.public_key_path)
+            .map_err(|e| HaiBindingError::new(ErrorKind::Generic, format!("failed to read public key: {e}")))?;
+
+        // Step 4: Get the agent JSON from the provider
+        let agent_json = provider.export_agent_json()
+            .map_err(|e| HaiBindingError::new(ErrorKind::Generic, format!("failed to export agent JSON: {e}")))?;
+
+        // Step 5: Create a temporary HaiClient with the new provider
+        let base_url = v.get("base_url").and_then(|v| v.as_str());
+        let mut client_opts = HaiClientOptions::default();
+        if let Some(url) = base_url {
+            client_opts.base_url = url.to_string();
+        }
+        let temp_client = HaiClient::new(provider, client_opts)
+            .map_err(|e| HaiBindingError::new(ErrorKind::Generic, format!("failed to create temp client: {e}")))?;
+
+        // Step 6: Register with HAI
+        let register_opts = haiai::types::RegisterAgentOptions {
+            agent_json,
+            public_key_pem: Some(pub_key_pem),
+            owner_email: v.get("owner_email").and_then(|v| v.as_str()).map(String::from),
+            domain: v.get("domain").and_then(|v| v.as_str()).map(String::from),
+            description: v.get("description").and_then(|v| v.as_str()).map(String::from),
+        };
+
+        let reg_result = temp_client.register(&register_opts).await
+            .map_err(|e| HaiBindingError::new(ErrorKind::Generic, format!("registration failed: {e}")))?;
+
+        // Step 7: Build combined result
+        let mut result = serde_json::to_value(&create_result)?;
+        if let Some(obj) = result.as_object_mut() {
+            if let Ok(reg_val) = serde_json::to_value(&reg_result) {
+                if let Some(reg_obj) = reg_val.as_object() {
+                    for (k, v) in reg_obj {
+                        obj.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+
+        Ok(serde_json::to_string(&result)?)
+    }
+
     /// Rotate the agent's cryptographic keys.
     pub async fn rotate_keys(&self, options_json: &str) -> HaiBindingResult<String> {
         // RotateKeysOptions lacks Deserialize -- manually construct

@@ -30,6 +30,15 @@
       "notes": "Accepts RegisterAgentOptions as JSON. agent_json is a required field."
     },
     {
+      "name": "register_new_agent",
+      "category": "async",
+      "group": "registration_and_identity",
+      "params": { "options_json": "CreateAgentOptions + registration fields (JSON)" },
+      "returns": "CreateAgentResult + RegistrationResult (merged)",
+      "auth_required": false,
+      "notes": "Combined operation: creates JACS agent (keygen + doc), then registers with HAI server. Required fields: agent_name, password."
+    },
+    {
       "name": "rotate_keys",
       "category": "async",
       "group": "registration",
@@ -569,13 +578,13 @@
     }
   ],
   "summary": {
-    "async_methods": 50,
+    "async_methods": 51,
     "streaming_methods": 2,
     "callback_methods": 2,
     "sync_methods": 10,
     "mutating_methods": 2,
     "excluded_methods": 5,
-    "total_public_methods": 71,
-    "binding_core_scope": "50 async + 2 streaming + 10 sync + 2 mutating = 64 methods"
+    "total_public_methods": 72,
+    "binding_core_scope": "51 async + 2 streaming + 10 sync + 2 mutating = 65 methods"
   }
 }

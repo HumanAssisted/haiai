@@ -11,9 +11,6 @@ package haiai
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"os"
 	"testing"
@@ -48,9 +45,9 @@ func TestKeyIntegration(t *testing.T) {
 		t.Fatalf("RegisterNewAgentWithEndpoint: %v", err)
 	}
 
-	jacsID := reg.Registration.JacsID
+	jacsID := reg.JacsID
 	if jacsID == "" {
-		jacsID = reg.Registration.AgentID
+		jacsID = reg.AgentID
 	}
 	t.Logf("Registered agent: jacs_id=%s", jacsID)
 
@@ -94,36 +91,32 @@ func TestKeyIntegration(t *testing.T) {
 	// ── Test: fetch key by email ──────────────────────────────────────────
 	t.Run("FetchKeyByEmailMatches", func(t *testing.T) {
 		// Need a client with credentials to claim username.
-		if reg.PrivateKey == nil || len(reg.PrivateKey) == 0 {
-			t.Skip("no private key in registration result")
+		if reg.PrivateKeyPath == "" {
+			t.Skip("no private key path in registration result")
 		}
 
-		// Parse PEM private key
-		block, _ := pem.Decode(reg.PrivateKey)
-		if block == nil {
-			t.Skip("failed to decode private key PEM")
-		}
-		parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		// Load private key from path
+		password, err := ResolvePrivateKeyPassword()
 		if err != nil {
-			t.Skipf("ParsePKCS8PrivateKey: %v", err)
+			t.Skipf("ResolvePrivateKeyPassword: %v", err)
 		}
-		privKey, ok := parsed.(ed25519.PrivateKey)
-		if !ok {
-			t.Skip("parsed key is not ed25519.PrivateKey")
+		privKey, err := LoadPrivateKey(reg.PrivateKeyPath, password)
+		if err != nil {
+			t.Skipf("LoadPrivateKey: %v", err)
 		}
 
 		// Build a client
 		cl, err := NewClient(
 			WithEndpoint(apiURL),
 			WithJACSID(jacsID),
-			WithHaiAgentID(reg.Registration.AgentID),
+			WithHaiAgentID(reg.AgentID),
 			WithPrivateKey(privKey),
 		)
 		if err != nil {
 			t.Skipf("could not build client: %v", err)
 		}
 
-		claim, err := cl.ClaimUsername(ctx, reg.Registration.AgentID, agentName)
+		claim, err := cl.ClaimUsername(ctx, reg.AgentID, agentName)
 		if err != nil {
 			t.Skipf("could not claim username: %v", err)
 		}

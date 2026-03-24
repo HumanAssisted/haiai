@@ -75,18 +75,23 @@ func quickstartNew() {
 	if err != nil {
 		log.Fatalf("Registration failed: %v", err)
 	}
-	if reg.Registration == nil {
-		log.Fatal("Registration failed: empty registration response")
+	if !reg.Success {
+		log.Fatal("Registration failed: server returned success=false")
 	}
-	fmt.Printf("Agent ID: %s\n", reg.Registration.AgentID)
+	fmt.Printf("Agent ID: %s\n", reg.AgentID)
 
-	privateKey, err := haiai.ParsePrivateKey(reg.PrivateKey)
+	// Load the private key from the path created by the FFI layer.
+	password, err := haiai.ResolvePrivateKeyPassword()
 	if err != nil {
-		log.Fatalf("Failed to parse generated private key: %v", err)
+		log.Fatalf("Failed to resolve private key password: %v", err)
 	}
-	jacsID := reg.Registration.JacsID
+	privateKey, err := haiai.LoadPrivateKey(reg.PrivateKeyPath, password)
+	if err != nil {
+		log.Fatalf("Failed to load private key from %s: %v", reg.PrivateKeyPath, err)
+	}
+	jacsID := reg.JacsID
 	if jacsID == "" {
-		jacsID = reg.Registration.AgentID
+		jacsID = reg.AgentID
 	}
 
 	// 2. Create an authenticated client from the in-memory bootstrap credentials.

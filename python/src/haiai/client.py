@@ -2533,15 +2533,9 @@ def register_new_agent(
 ) -> RegistrationResult:
     """Generate a keypair, self-sign, register with HAI, and save config.
 
-    This stays native as it involves JACS agent creation, key generation,
-    and file I/O that are inherently local operations.
+    Delegates entirely to the Rust FFI binding which handles keygen, doc
+    creation, signing, and the HTTP registration call.
     """
-    # register_new_agent uses httpx directly for the initial registration
-    # because the FFI adapter needs a loaded config, but we're creating
-    # the config here.
-    import httpx as _httpx
-    import shutil
-
     if not owner_email:
         raise ValueError(
             "owner_email is required -- agents must be associated with a verified HAI user"
@@ -2549,144 +2543,47 @@ def register_new_agent(
 
     from haiai import config as hai_config
 
-    try:
-        from jacs import SimpleAgent as _SimpleAgent
-    except ImportError:
-        from jacs.jacs import SimpleAgent as _SimpleAgent  # type: ignore[no-redef]
-
     private_key_password = hai_config.load_private_key_password()
     password_str = private_key_password.decode("utf-8")
 
     kd = Path(key_dir).expanduser() if key_dir else (Path.home() / ".jacs" / "keys")
-    kd.mkdir(parents=True, exist_ok=True, mode=0o700)
-    try:
-        kd.chmod(0o700)
-    except OSError:
-        pass
-
-    # 1. Generate keypair + agent via JACS SimpleAgent.create_agent()
     data_dir = kd.parent / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
 
-    _new_agent, new_info = _SimpleAgent.create_agent(
-        name=name,
-        password=password_str,
-        algorithm=algorithm,
-        data_directory=str(data_dir),
-        key_directory=str(kd),
-        config_path=str(Path(config_path).resolve()),
-        description=description or "Agent registered via Python SDK",
-        domain=domain or "",
-        default_storage="fs",
-    )
-
-    # Copy JACS-generated key files to standard names expected by the SDK
-    private_key_path = kd / "agent_private_key.pem"
-    if not private_key_path.is_file():
-        priv_src = Path(new_info.get("private_key_path", ""))
-        if priv_src.is_file():
-            shutil.copy2(str(priv_src), str(private_key_path))
-    try:
-        private_key_path.chmod(0o600)
-    except OSError:
-        pass
-
-    public_pem = ""
-    try:
-        public_pem = _new_agent.get_public_key_pem()
-    except Exception:
-        pub_src = Path(new_info.get("public_key_path", ""))
-        if pub_src.is_file():
-            public_pem = _normalize_public_key_pem(pub_src.read_bytes())
-
-    pub_key_path = kd / "agent_public_key.pem"
-    if not pub_key_path.is_file() and public_pem:
-        pub_key_path.write_text(public_pem, encoding="utf-8")
-
-    logger.debug(
-        "register_new_agent: key_dir=%s, private_key exists=%s, "
-        "public_key exists=%s, public_pem len=%d",
-        kd, private_key_path.is_file(), pub_key_path.is_file(), len(public_pem),
-    )
-
-    # 2. Set up module state directly from the created agent
-    try:
-        from jacs.simple import _EphemeralAgentAdapter
-        wrapped_agent = _EphemeralAgentAdapter(_new_agent)
-    except ImportError:
-        wrapped_agent = _new_agent
-
-    hai_config._config = hai_config.AgentConfig(
-        name=name,
-        version=version,
-        key_dir=str(kd.resolve()),
-        jacs_id=None,
-    )
-    hai_config._agent = wrapped_agent
-    agent = wrapped_agent
-
-    extra_fields: dict = {"description": description or "Agent registered via Python SDK"}
-    if domain:
-        extra_fields["domain"] = domain
-    agent_doc = create_agent_document(
-        agent=agent,
-        name=name,
-        version=version,
-        extra_fields=extra_fields,
-    )
-    agent_json_str = json.dumps(agent_doc, indent=2)
-
-    # 3. Register with HAI (no API key -- the self-signed doc is the auth)
-    url = f"{hai_url.rstrip('/')}/api/v1/agents/register"
-    payload = {
-        "agent_json": agent_json_str,
-        "public_key": base64.b64encode(public_pem.encode("utf-8")).decode("utf-8"),
+    # Build FFI options -- Rust handles keygen, doc creation, signing, and HTTP
+    options: dict[str, Any] = {
+        "agent_name": name,
+        "password": password_str,
+        "algorithm": algorithm,
         "owner_email": owner_email,
+        "base_url": hai_url,
+        "key_directory": str(kd),
+        "data_directory": str(data_dir),
+        "config_path": str(Path(config_path).resolve()),
+        "description": description or "Agent registered via Python SDK",
     }
     if domain:
-        payload["domain"] = domain
-    if description:
-        payload["description"] = description
+        options["domain"] = domain
 
-    resp = _httpx.post(
-        url, json=payload, headers={"Content-Type": "application/json"}, timeout=30.0,
-    )
-    if resp.status_code in (401, 403):
-        raise HaiAuthError(
-            f"Registration auth failed: {resp.status_code}",
-            status_code=resp.status_code,
-            body=resp.text,
-        )
-    resp.raise_for_status()
+    # Create a temporary FFI adapter with minimal config (just base_url)
+    ffi_config = json.dumps({"base_url": hai_url})
+    ffi = FFIAdapter(ffi_config)
+    data = ffi.register_new_agent(options)
 
-    data = resp.json()
     agent_id = str(data.get("agent_id", ""))
-    jacs_id = str(data.get("jacs_id", agent_doc.get("jacsId", "")))
+    jacs_id = str(data.get("jacs_id", ""))
+    key_directory = data.get("key_directory", str(kd))
 
-    # 4. Update config with returned jacsId and reload
-    config_data = {
-        "jacsAgentName": name,
-        "jacsAgentVersion": version,
-        "jacsKeyDir": str(kd.resolve()),
-        "jacsId": jacs_id,
-    }
-    p = Path(config_path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "w") as f:
-        json.dump(config_data, f, indent=2)
-        f.write("\n")
-
-    # 5. Update module state with jacsId (agent is already loaded)
+    # Update module state with returned identifiers
     hai_config._config = hai_config.AgentConfig(
         name=name,
         version=version,
-        key_dir=str(kd.resolve()),
+        key_dir=str(Path(key_directory).resolve()),
         jacs_id=jacs_id,
     )
     global _client
     _client = None
 
-    # 6. Print next-step messaging
+    # Print next-step messaging
     if not quiet:
         print(f"\nAgent created and submitted for registration!")
         print(f"  -> Check your email ({owner_email}) for a verification link")
@@ -2694,19 +2591,34 @@ def register_new_agent(
         print(f"  -> After verification, claim a @hai.ai username with:")
         print(f"     client.claim_username('{hai_url}', '{agent_id}', 'my-agent')")
         print(f"  -> Config saved to {config_path}")
-        print(f"  -> Keys saved to {kd}")
+        print(f"  -> Keys saved to {key_directory}")
         print(
             "  -> Private key encrypted using JACS_PASSWORD_FILE/JACS_PRIVATE_KEY_PASSWORD"
         )
 
         if domain:
-            key_hash = _compute_public_key_hash(public_pem)
-            print(f"\n--- DNS Setup Instructions ---")
-            print(f"Add this TXT record to your domain '{domain}':")
-            print(f"  Name:  _jacs.{domain}")
-            print(f"  Type:  TXT")
-            print(f"  Value: {key_hash}")
-            print(f"DNS verification enables the pro tier.\n")
+            # Read public key PEM for DNS hash if available
+            pub_key_path = Path(data.get("public_key_path", ""))
+            if pub_key_path.is_file():
+                public_pem = pub_key_path.read_text(encoding="utf-8")
+                key_hash = _compute_public_key_hash(public_pem)
+                print(f"\n--- DNS Setup Instructions ---")
+                print(f"Add this TXT record to your domain '{domain}':")
+                print(f"  Name:  _jacs.{domain}")
+                print(f"  Type:  TXT")
+                print(f"  Value: {key_hash}")
+                print(f"DNS verification enables the pro tier.\n")
+            else:
+                dns_record = data.get("dns_record", "")
+                if dns_record:
+                    print(f"\n--- DNS Setup Instructions ---")
+                    print(f"Add this TXT record to your domain '{domain}':")
+                    print(f"  Name:  _jacs.{domain}")
+                    print(f"  Type:  TXT")
+                    print(f"  Value: {dns_record}")
+                    print(f"DNS verification enables the pro tier.\n")
+                else:
+                    print()
         else:
             print()
 

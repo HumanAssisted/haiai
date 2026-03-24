@@ -121,6 +121,21 @@ impl HaiClient {
         }).map_err(to_py_err)
     }
 
+    fn register_new_agent<'py>(&self, py: Python<'py>, options_json: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.register_new_agent(&options_json).await.map_err(to_py_err)
+        })
+    }
+
+    fn register_new_agent_sync(&self, py: Python, options_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.register_new_agent(&options_json).await })
+        }).map_err(to_py_err)
+    }
+
     fn rotate_keys<'py>(&self, py: Python<'py>, options_json: String) -> PyResult<Bound<'py, PyAny>> {
         let client = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {

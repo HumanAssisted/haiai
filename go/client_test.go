@@ -107,15 +107,20 @@ func TestClaimUsernameEscapesAgentID(t *testing.T) {
 	}
 }
 
-func TestRegisterNewAgentWithEndpointBootstrapsWithoutAuthHeader(t *testing.T) {
-	var gotAuth string
+func TestRegisterNewAgentDelegatesToFFI(t *testing.T) {
+	// The mock FFI's RegisterNewAgent posts to /api/v1/agents/register
+	// on the httptest server, which returns a canned response matching
+	// the merged CreateAgentResult + RegistrationResult FFI format.
 	var gotBody map[string]interface{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/agents/register" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-		gotAuth = r.Header.Get("Authorization")
+		// No auth header expected for bootstrap registration
+		if auth := r.Header.Get("Authorization"); auth != "" {
+			t.Fatalf("expected no Authorization header, got %q", auth)
+		}
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -126,44 +131,48 @@ func TestRegisterNewAgentWithEndpointBootstrapsWithoutAuthHeader(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"agent_id":"agent-123","jacs_id":"jacs-123","dns_verified":false,"signatures":[]}`))
+		_, _ = w.Write([]byte(`{
+			"agent_id":"agent-123",
+			"jacs_id":"jacs-123",
+			"name":"test-agent",
+			"success":true,
+			"dns_verified":false,
+			"public_key_path":"/tmp/keys/pub.pem",
+			"private_key_path":"/tmp/keys/priv.pem",
+			"config_path":"/tmp/jacs.config.json",
+			"version":"1.0.0",
+			"algorithm":"ed25519",
+			"registrations":[]
+		}`))
 	}))
 	defer srv.Close()
 
-	result, err := RegisterNewAgentWithEndpoint(context.Background(), srv.URL, "test-agent", &RegisterNewAgentOptions{
+	cl, _ := newTestClient(t, srv.URL)
+	result, err := cl.RegisterNewAgent(context.Background(), "test-agent", &RegisterNewAgentOptions{
 		OwnerEmail:  "owner@hai.ai",
 		Domain:      "agent.example",
 		Description: "Agent description",
+		Password:    "test-password",
 		Quiet:       true,
 	})
 	if err != nil {
-		t.Fatalf("RegisterNewAgentWithEndpoint: %v", err)
+		t.Fatalf("RegisterNewAgent: %v", err)
 	}
 
-	if gotAuth != "" {
-		t.Fatalf("expected no Authorization header for bootstrap registration, got %q", gotAuth)
+	if result.AgentID != "agent-123" {
+		t.Fatalf("expected agent_id=agent-123, got %q", result.AgentID)
 	}
-	if gotBody["owner_email"] != "owner@hai.ai" {
-		t.Fatalf("expected owner_email in body, got %#v", gotBody["owner_email"])
+	if result.JacsID != "jacs-123" {
+		t.Fatalf("expected jacs_id=jacs-123, got %q", result.JacsID)
 	}
-
-	rawAgentDoc, _ := gotBody["agent_json"].(string)
-	var doc map[string]interface{}
-	if err := json.Unmarshal([]byte(rawAgentDoc), &doc); err != nil {
-		t.Fatalf("invalid agent_json: %v", err)
+	if !result.Success {
+		t.Fatal("expected success=true")
 	}
-	if doc["description"] != "Agent description" {
-		t.Fatalf("expected description in agent_json, got %#v", doc["description"])
+	if result.PublicKeyPath != "/tmp/keys/pub.pem" {
+		t.Fatalf("expected public_key_path, got %q", result.PublicKeyPath)
 	}
-	if doc["domain"] != "agent.example" {
-		t.Fatalf("expected domain in agent_json, got %#v", doc["domain"])
-	}
-
-	if result.Registration == nil || result.Registration.AgentID != "agent-123" {
-		t.Fatalf("unexpected registration result: %#v", result.Registration)
-	}
-	if len(result.PrivateKey) == 0 || len(result.PublicKey) == 0 {
-		t.Fatal("expected generated key material in result")
+	if result.PrivateKeyPath != "/tmp/keys/priv.pem" {
+		t.Fatalf("expected private_key_path, got %q", result.PrivateKeyPath)
 	}
 }
 

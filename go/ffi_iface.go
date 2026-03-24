@@ -12,6 +12,7 @@ type FFIClient interface {
 	Hello(includeTest bool) (json.RawMessage, error)
 	CheckUsername(username string) (json.RawMessage, error)
 	Register(optionsJSON string) (json.RawMessage, error)
+	RegisterNewAgent(optionsJSON string) (json.RawMessage, error)
 	RotateKeys(optionsJSON string) (json.RawMessage, error)
 	UpdateAgent(agentData string) (json.RawMessage, error)
 	SubmitResponse(paramsJSON string) (json.RawMessage, error)

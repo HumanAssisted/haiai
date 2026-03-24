@@ -301,6 +301,10 @@ func (r *recordingFFIClient) Register(optionsJSON string) (json.RawMessage, erro
 	*r.calls = append(*r.calls, "Register")
 	return r.inner.Register(optionsJSON)
 }
+func (r *recordingFFIClient) RegisterNewAgent(optionsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "RegisterNewAgent")
+	return r.inner.RegisterNewAgent(optionsJSON)
+}
 func (r *recordingFFIClient) RotateKeys(optionsJSON string) (json.RawMessage, error) {
 	*r.calls = append(*r.calls, "RotateKeys")
 	return r.inner.RotateKeys(optionsJSON)

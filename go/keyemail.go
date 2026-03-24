@@ -12,23 +12,31 @@ import (
 )
 
 // FetchKeyByEmail fetches a public key by the agent's @hai.ai email address.
-// The base URL is read from HAI_KEYS_BASE_URL env, defaulting to DefaultKeysEndpoint.
-func FetchKeyByEmail(ctx context.Context, httpClient *http.Client, email string) (*PublicKeyInfo, error) {
+// If a Client is provided, delegates to its FFI-backed method.
+// Otherwise falls back to direct HTTP.
+func FetchKeyByEmail(ctx context.Context, client *Client, email string) (*PublicKeyInfo, error) {
+	if client != nil {
+		return client.FetchKeyByEmail(ctx, email)
+	}
 	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
 	if baseURL == "" {
 		baseURL = DefaultEndpoint
 	}
-	return FetchKeyByEmailFromURL(ctx, httpClient, baseURL, email)
+	return fetchKeyByEmailHTTP(ctx, baseURL, email)
 }
 
 // FetchKeyByEmailFromURL fetches a public key by email from a specific URL.
+// Deprecated: Use Client.FetchKeyByEmail instead.
 func FetchKeyByEmailFromURL(ctx context.Context, httpClient *http.Client, baseURL, email string) (*PublicKeyInfo, error) {
+	return fetchKeyByEmailHTTP(ctx, baseURL, email)
+}
+
+// fetchKeyByEmailHTTP is the direct HTTP implementation (no FFI).
+func fetchKeyByEmailHTTP(ctx context.Context, baseURL, email string) (*PublicKeyInfo, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 	apiURL := fmt.Sprintf("%s/api/agents/keys/%s", baseURL, url.PathEscape(email))
 
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
-	}
+	httpClient := &http.Client{Timeout: 30 * time.Second}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {

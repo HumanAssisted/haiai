@@ -74,6 +74,11 @@ impl HaiClient {
     }
 
     #[napi]
+    pub async fn register_new_agent(&self, options_json: String) -> Result<String> {
+        self.inner.register_new_agent(&options_json).await.map_err(to_napi_err)
+    }
+
+    #[napi]
     pub async fn rotate_keys(&self, options_json: String) -> Result<String> {
         self.inner.rotate_keys(&options_json).await.map_err(to_napi_err)
     }

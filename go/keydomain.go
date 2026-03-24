@@ -12,23 +12,31 @@ import (
 )
 
 // FetchKeyByDomain fetches the latest DNS-verified agent key for a domain.
-// The base URL is read from HAI_KEYS_BASE_URL env, defaulting to DefaultKeysEndpoint.
-func FetchKeyByDomain(ctx context.Context, httpClient *http.Client, domain string) (*PublicKeyInfo, error) {
+// If a Client is provided, delegates to its FFI-backed method.
+// Otherwise falls back to direct HTTP.
+func FetchKeyByDomain(ctx context.Context, client *Client, domain string) (*PublicKeyInfo, error) {
+	if client != nil {
+		return client.FetchKeyByDomain(ctx, domain)
+	}
 	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
 	if baseURL == "" {
 		baseURL = DefaultEndpoint
 	}
-	return FetchKeyByDomainFromURL(ctx, httpClient, baseURL, domain)
+	return fetchKeyByDomainHTTP(ctx, baseURL, domain)
 }
 
 // FetchKeyByDomainFromURL fetches the latest DNS-verified agent key for a domain from a specific URL.
+// Deprecated: Use Client.FetchKeyByDomain instead.
 func FetchKeyByDomainFromURL(ctx context.Context, httpClient *http.Client, baseURL, domain string) (*PublicKeyInfo, error) {
+	return fetchKeyByDomainHTTP(ctx, baseURL, domain)
+}
+
+// fetchKeyByDomainHTTP is the direct HTTP implementation (no FFI).
+func fetchKeyByDomainHTTP(ctx context.Context, baseURL, domain string) (*PublicKeyInfo, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 	apiURL := fmt.Sprintf("%s/api/agents/keys/domain/%s", baseURL, url.PathEscape(domain))
 
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
-	}
+	httpClient := &http.Client{Timeout: 30 * time.Second}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {

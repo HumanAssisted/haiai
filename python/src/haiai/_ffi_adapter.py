@@ -124,6 +124,13 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
+    def register_new_agent(self, options: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.register_new_agent_sync(json.dumps(options))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
     def rotate_keys(self, options: dict[str, Any]) -> dict[str, Any]:
         try:
             raw = self._native.rotate_keys_sync(json.dumps(options))
@@ -573,6 +580,13 @@ class AsyncFFIAdapter:
     async def register(self, options: dict[str, Any]) -> dict[str, Any]:
         try:
             raw = await self._native.register(json.dumps(options))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def register_new_agent(self, options: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.register_new_agent(json.dumps(options))
             return json.loads(raw)
         except RuntimeError as err:
             raise map_ffi_error(err) from err

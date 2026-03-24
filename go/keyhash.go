@@ -12,23 +12,31 @@ import (
 )
 
 // FetchKeyByHash fetches a public key by its hash from the HAI key distribution service.
-// The base URL is read from HAI_KEYS_BASE_URL env, defaulting to DefaultKeysEndpoint.
-func FetchKeyByHash(ctx context.Context, httpClient *http.Client, publicKeyHash string) (*PublicKeyInfo, error) {
+// If a Client is provided, delegates to its FFI-backed method.
+// Otherwise falls back to direct HTTP.
+func FetchKeyByHash(ctx context.Context, client *Client, publicKeyHash string) (*PublicKeyInfo, error) {
+	if client != nil {
+		return client.FetchKeyByHash(ctx, publicKeyHash)
+	}
 	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
 	if baseURL == "" {
 		baseURL = DefaultEndpoint
 	}
-	return FetchKeyByHashFromURL(ctx, httpClient, baseURL, publicKeyHash)
+	return fetchKeyByHashHTTP(ctx, baseURL, publicKeyHash)
 }
 
 // FetchKeyByHashFromURL fetches a public key by its hash from a specific URL.
+// Deprecated: Use Client.FetchKeyByHash instead.
 func FetchKeyByHashFromURL(ctx context.Context, httpClient *http.Client, baseURL, publicKeyHash string) (*PublicKeyInfo, error) {
+	return fetchKeyByHashHTTP(ctx, baseURL, publicKeyHash)
+}
+
+// fetchKeyByHashHTTP is the direct HTTP implementation (no FFI).
+func fetchKeyByHashHTTP(ctx context.Context, baseURL, publicKeyHash string) (*PublicKeyInfo, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 	url := fmt.Sprintf("%s/api/agents/keys/hash/%s", baseURL, publicKeyHash)
 
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
-	}
+	httpClient := &http.Client{Timeout: 30 * time.Second}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

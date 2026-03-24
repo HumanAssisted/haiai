@@ -168,6 +168,10 @@ func (m *mockFFIClient) Register(optionsJSON string) (json.RawMessage, error) {
 	return m.doPost("/api/v1/agents/register", json.RawMessage(optionsJSON))
 }
 
+func (m *mockFFIClient) RegisterNewAgent(optionsJSON string) (json.RawMessage, error) {
+	return m.doPostNoAuth("/api/v1/agents/register", json.RawMessage(optionsJSON))
+}
+
 func (m *mockFFIClient) RotateKeys(optionsJSON string) (json.RawMessage, error) {
 	return m.doPost("/api/v1/agents/rotate-keys", json.RawMessage(optionsJSON))
 }

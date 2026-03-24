@@ -33,23 +33,31 @@ type AgentKeyHistory struct {
 }
 
 // FetchAllKeys fetches all key versions for an agent.
-// The base URL is read from HAI_KEYS_BASE_URL env, defaulting to DefaultKeysEndpoint.
-func FetchAllKeys(ctx context.Context, httpClient *http.Client, jacsID string) (*AgentKeyHistory, error) {
+// If a Client is provided, delegates to its FFI-backed method.
+// Otherwise falls back to direct HTTP.
+func FetchAllKeys(ctx context.Context, client *Client, jacsID string) (*AgentKeyHistory, error) {
+	if client != nil {
+		return client.FetchAllKeys(ctx, jacsID)
+	}
 	baseURL := os.Getenv("HAI_KEYS_BASE_URL")
 	if baseURL == "" {
 		baseURL = DefaultEndpoint
 	}
-	return FetchAllKeysFromURL(ctx, httpClient, baseURL, jacsID)
+	return fetchAllKeysHTTP(ctx, baseURL, jacsID)
 }
 
 // FetchAllKeysFromURL fetches all key versions for an agent from a specific URL.
+// Deprecated: Use Client.FetchAllKeys instead.
 func FetchAllKeysFromURL(ctx context.Context, httpClient *http.Client, baseURL, jacsID string) (*AgentKeyHistory, error) {
+	return fetchAllKeysHTTP(ctx, baseURL, jacsID)
+}
+
+// fetchAllKeysHTTP is the direct HTTP implementation (no FFI).
+func fetchAllKeysHTTP(ctx context.Context, baseURL, jacsID string) (*AgentKeyHistory, error) {
 	baseURL = strings.TrimRight(baseURL, "/")
 	apiURL := fmt.Sprintf("%s/api/agents/keys/%s/all", baseURL, url.PathEscape(jacsID))
 
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
-	}
+	httpClient := &http.Client{Timeout: 30 * time.Second}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {

@@ -255,6 +255,7 @@ pub extern "C" fn hai_hello(handle: HaiClientHandle, include_test: bool) -> *mut
 
 ffi_method_str!(hai_check_username, check_username);
 ffi_method_str!(hai_register, register);
+ffi_method_str!(hai_register_new_agent, register_new_agent);
 ffi_method_str!(hai_rotate_keys, rotate_keys);
 ffi_method_str!(hai_update_agent, update_agent);
 ffi_method_str!(hai_submit_response, submit_response);

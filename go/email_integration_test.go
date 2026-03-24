@@ -11,9 +11,6 @@ package haiai
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"os"
 	"strings"
@@ -49,25 +46,21 @@ func TestEmailIntegration(t *testing.T) {
 		t.Fatalf("RegisterNewAgentWithEndpoint: %v", err)
 	}
 
-	jacsID := reg.Registration.JacsID
+	jacsID := reg.JacsID
 	if jacsID == "" {
-		jacsID = reg.Registration.AgentID
+		jacsID = reg.AgentID
 	}
-	haiAgentID := reg.Registration.AgentID
+	haiAgentID := reg.AgentID
 	t.Logf("Registered agent: jacs_id=%s, agent_id=%s", jacsID, haiAgentID)
 
-	// Parse the returned private key PEM back into ed25519.PrivateKey.
-	block, _ := pem.Decode(reg.PrivateKey)
-	if block == nil {
-		t.Fatal("failed to decode private key PEM")
-	}
-	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	// Load the private key from the path returned by FFI.
+	password, err := ResolvePrivateKeyPassword()
 	if err != nil {
-		t.Fatalf("ParsePKCS8PrivateKey: %v", err)
+		t.Fatalf("ResolvePrivateKeyPassword: %v", err)
 	}
-	privKey, ok := parsed.(ed25519.PrivateKey)
-	if !ok {
-		t.Fatal("parsed key is not ed25519.PrivateKey")
+	privKey, err := LoadPrivateKey(reg.PrivateKeyPath, password)
+	if err != nil {
+		t.Fatalf("LoadPrivateKey(%s): %v", reg.PrivateKeyPath, err)
 	}
 
 	// Build client with explicit credentials.

@@ -274,19 +274,49 @@ type RotationResult struct {
 
 // RegisterNewAgentOptions configures RegisterNewAgent behavior.
 type RegisterNewAgentOptions struct {
-	Domain      string
-	Description string
-	OwnerEmail  string
-	Quiet       bool
+	Domain        string
+	Description   string
+	OwnerEmail    string
+	Password      string
+	KeyDirectory  string
+	DataDirectory string
+	ConfigPath    string
+	Algorithm     string
+	Quiet         bool
 }
 
-// RegisterResult is the result of RegisterNewAgent, containing
-// the generated key material and registration response.
+// RegisterResult is the result of RegisterNewAgent. The FFI returns a merged
+// JSON containing both CreateAgentResult fields (paths, algorithm) and
+// RegistrationResult fields (agent_id, jacs_id, success).
 type RegisterResult struct {
-	Registration *RegistrationResult
-	PrivateKey   []byte // PEM-encoded Ed25519 private key
-	PublicKey    []byte // PEM-encoded Ed25519 public key
-	AgentJSON    string // The signed JACS agent document
+	// From CreateAgentResult
+	AgentID        string `json:"agent_id"`
+	Name           string `json:"name"`
+	PublicKeyPath  string `json:"public_key_path"`
+	ConfigPath     string `json:"config_path"`
+	Version        string `json:"version"`
+	Algorithm      string `json:"algorithm"`
+	PrivateKeyPath string `json:"private_key_path"`
+	DataDirectory  string `json:"data_directory"`
+	KeyDirectory   string `json:"key_directory"`
+	Domain         string `json:"domain"`
+	DNSRecord      string `json:"dns_record"`
+
+	// From RegistrationResult
+	Success      bool                `json:"success"`
+	JacsID       string              `json:"jacs_id"`
+	DNSVerified  bool                `json:"dns_verified"`
+	Registrations []RegistrationEntry `json:"registrations"`
+	RegisteredAt string              `json:"registered_at"`
+	Message      string              `json:"message,omitempty"`
+}
+
+// RegistrationEntry is an individual registration record returned by the server.
+type RegistrationEntry struct {
+	KeyID         string `json:"key_id"`
+	Algorithm     string `json:"algorithm"`
+	SignatureJSON string `json:"signature_json"`
+	SignedAt      string `json:"signed_at"`
 }
 
 // SendEmailOptions configures an email send request.
