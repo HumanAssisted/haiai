@@ -2,9 +2,10 @@ use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use hai_mcp::{HaiMcpServer, HaiServerContext, LoadedSharedAgent};
 use haiai::{
-    CreateAgentOptions, HaiClient, HaiClientOptions, JacsAgentLifecycle, JacsDocumentProvider,
-    JacsProvider, ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions, SearchOptions,
-    SendEmailOptions,
+    CreateAgentOptions, CreateEmailTemplateOptions, HaiClient, HaiClientOptions,
+    JacsAgentLifecycle, JacsDocumentProvider, JacsProvider, ListEmailTemplatesOptions,
+    ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions, SearchOptions, SendEmailOptions,
+    UpdateEmailTemplateOptions,
 };
 use jacs_mcp::JacsMcpServer;
 use rmcp::{transport::stdio, ServiceExt};
@@ -313,6 +314,12 @@ enum Commands {
         json: bool,
     },
 
+    /// Manage email templates (create, list, get, update, delete)
+    Template {
+        #[command(subcommand)]
+        command: TemplateCommands,
+    },
+
     /// Manage the OS keychain password for your agent's private key
     Keychain {
         /// Agent ID to scope the keychain entry (e.g. your JACS ID)
@@ -321,6 +328,85 @@ enum Commands {
 
         #[command(subcommand)]
         action: KeychainAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum TemplateCommands {
+    /// Create a new email template
+    Create {
+        /// Template name (required)
+        #[arg(long)]
+        name: String,
+
+        /// Instructions for how to send emails using this template
+        #[arg(long)]
+        how_to_send: Option<String>,
+
+        /// Instructions for how to respond to emails matching this template
+        #[arg(long)]
+        how_to_respond: Option<String>,
+
+        /// Goal or purpose of this template
+        #[arg(long)]
+        goal: Option<String>,
+
+        /// Rules or constraints for this template
+        #[arg(long)]
+        rules: Option<String>,
+    },
+
+    /// List email templates with optional search
+    List {
+        /// Full-text search query
+        #[arg(long)]
+        query: Option<String>,
+
+        /// Maximum number of templates to return
+        #[arg(long, default_value = "20")]
+        limit: u32,
+
+        /// Offset for pagination
+        #[arg(long, default_value = "0")]
+        offset: u32,
+    },
+
+    /// Get a single email template by ID
+    Get {
+        /// Template ID
+        template_id: String,
+    },
+
+    /// Update an existing email template
+    Update {
+        /// Template ID
+        template_id: String,
+
+        /// New template name
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Updated instructions for how to send emails
+        #[arg(long)]
+        how_to_send: Option<String>,
+
+        /// Updated instructions for how to respond to emails
+        #[arg(long)]
+        how_to_respond: Option<String>,
+
+        /// Updated goal or purpose
+        #[arg(long)]
+        goal: Option<String>,
+
+        /// Updated rules or constraints
+        #[arg(long)]
+        rules: Option<String>,
+    },
+
+    /// Delete an email template
+    Delete {
+        /// Template ID
+        template_id: String,
     },
 }
 
@@ -1146,6 +1232,109 @@ async fn main() -> anyhow::Result<()> {
                     }
                     println!("    ---");
                     println!();
+                }
+            }
+        }
+
+        Commands::Template { command } => {
+            let client = load_client()?;
+            match command {
+                TemplateCommands::Create {
+                    name,
+                    how_to_send,
+                    how_to_respond,
+                    goal,
+                    rules,
+                } => {
+                    let result = client
+                        .create_email_template(&CreateEmailTemplateOptions {
+                            name,
+                            how_to_send,
+                            how_to_respond,
+                            goal,
+                            rules,
+                        })
+                        .await
+                        .context("create template failed")?;
+                    println!("Created template:");
+                    println!("  ID:   {}", result.id);
+                    println!("  Name: {}", result.name);
+                }
+                TemplateCommands::List {
+                    query,
+                    limit,
+                    offset,
+                } => {
+                    let result = client
+                        .list_email_templates(&ListEmailTemplatesOptions {
+                            q: query,
+                            limit: Some(limit),
+                            offset: Some(offset),
+                        })
+                        .await
+                        .context("list templates failed")?;
+                    println!(
+                        "Templates ({} of {}):",
+                        result.templates.len(),
+                        result.total
+                    );
+                    for t in &result.templates {
+                        println!("  {} — {}", t.id, t.name);
+                    }
+                }
+                TemplateCommands::Get { template_id } => {
+                    let result = client
+                        .get_email_template(&template_id)
+                        .await
+                        .context("get template failed")?;
+                    println!("Template: {}", result.name);
+                    println!("  ID:             {}", result.id);
+                    if let Some(ref v) = result.how_to_send {
+                        println!("  How to send:    {v}");
+                    }
+                    if let Some(ref v) = result.how_to_respond {
+                        println!("  How to respond: {v}");
+                    }
+                    if let Some(ref v) = result.goal {
+                        println!("  Goal:           {v}");
+                    }
+                    if let Some(ref v) = result.rules {
+                        println!("  Rules:          {v}");
+                    }
+                    println!("  Created:        {}", result.created_at);
+                    println!("  Updated:        {}", result.updated_at);
+                }
+                TemplateCommands::Update {
+                    template_id,
+                    name,
+                    how_to_send,
+                    how_to_respond,
+                    goal,
+                    rules,
+                } => {
+                    let result = client
+                        .update_email_template(
+                            &template_id,
+                            &UpdateEmailTemplateOptions {
+                                name,
+                                how_to_send: how_to_send.map(Some),
+                                how_to_respond: how_to_respond.map(Some),
+                                goal: goal.map(Some),
+                                rules: rules.map(Some),
+                            },
+                        )
+                        .await
+                        .context("update template failed")?;
+                    println!("Updated template:");
+                    println!("  ID:   {}", result.id);
+                    println!("  Name: {}", result.name);
+                }
+                TemplateCommands::Delete { template_id } => {
+                    client
+                        .delete_email_template(&template_id)
+                        .await
+                        .context("delete template failed")?;
+                    println!("Deleted template {template_id}");
                 }
             }
         }

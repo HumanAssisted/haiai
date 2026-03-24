@@ -1,6 +1,7 @@
 use haiai::{
-    generate_verify_link, generate_verify_link_hosted, HaiClient, JacsProvider,
-    ListMessagesOptions, RegisterAgentOptions, SearchOptions, SendEmailOptions,
+    generate_verify_link, generate_verify_link_hosted, CreateEmailTemplateOptions, HaiClient,
+    JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions, RegisterAgentOptions,
+    SearchOptions, SendEmailOptions, UpdateEmailTemplateOptions,
 };
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 use rmcp::ErrorData as McpError;
@@ -45,6 +46,12 @@ pub fn has_tool(name: &str) -> bool {
             | "hai_unarchive_message"
             | "hai_list_contacts"
             | "hai_self_knowledge"
+            | "hai_create_email_template"
+            | "hai_list_email_templates"
+            | "hai_search_email_templates"
+            | "hai_get_email_template"
+            | "hai_update_email_template"
+            | "hai_delete_email_template"
     )
 }
 
@@ -85,6 +92,12 @@ pub async fn dispatch(
         "hai_unarchive_message" => call_unarchive_message(context, &args).await,
         "hai_list_contacts" => call_list_contacts(context, &args).await,
         "hai_self_knowledge" => call_self_knowledge(&args).await,
+        "hai_create_email_template" => call_create_email_template(context, &args).await,
+        "hai_list_email_templates" => call_list_email_templates(context, &args).await,
+        "hai_search_email_templates" => call_list_email_templates(context, &args).await,
+        "hai_get_email_template" => call_get_email_template(context, &args).await,
+        "hai_update_email_template" => call_update_email_template(context, &args).await,
+        "hai_delete_email_template" => call_delete_email_template(context, &args).await,
         _ => Err(ToolError::InvalidParams(format!(
             "unknown HAI tool: {name}"
         ))),
@@ -183,7 +196,7 @@ fn definition_values() -> Vec<Value> {
         }),
         json!({
             "name": "hai_send_email",
-            "description": "Send an email from the agent's @hai.ai address",
+            "description": "Send an email from the agent's @hai.ai address. Tip: use hai_search_email_templates first to find a template with instructions and rules for this type of email.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -318,7 +331,7 @@ fn definition_values() -> Vec<Value> {
         }),
         json!({
             "name": "hai_reply_email",
-            "description": "Reply to an email message (fetches original, sends reply with threading)",
+            "description": "Reply to an email message (fetches original, sends reply with threading). Tip: use hai_search_email_templates first to find a template with how_to_respond instructions for this type of email.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -399,6 +412,99 @@ fn definition_values() -> Vec<Value> {
                     }
                 },
                 "required": ["query"]
+            }
+        }),
+        // =====================================================================
+        // Email Template Tools
+        // =====================================================================
+        json!({
+            "name": "hai_create_email_template",
+            "description": "Create a reusable email template with instructions for sending and responding. Use templates to ensure consistency for repeated email types. Fields: name (unique label), how_to_send (composition instructions), how_to_respond (reply handling), goal (what the email should achieve), rules (guardrails like 'no PII').",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Unique template name (e.g. 'Cold Outreach', 'Support Reply')" },
+                    "how_to_send": { "type": "string", "description": "Instructions for composing this type of email (tone, structure, personalization)" },
+                    "how_to_respond": { "type": "string", "description": "Instructions for replying to this type of email (handling positive/negative/questions)" },
+                    "goal": { "type": "string", "description": "The objective this template serves" },
+                    "rules": { "type": "string", "description": "Constraints: e.g. 'no PII', 'don't send to @competitor.com', 'keep under 200 words'" },
+                    "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["name"]
+            }
+        }),
+        json!({
+            "name": "hai_list_email_templates",
+            "description": "List your email templates. Use this to review available templates before composing or replying to email. Supports search via the 'q' parameter to find the most relevant template for a given situation.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "q": { "type": "string", "description": "Search query to find relevant templates" },
+                    "limit": { "type": "integer", "description": "Max results (default 50)" },
+                    "offset": { "type": "integer", "description": "Pagination offset" },
+                    "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
+                    "config_path": { "type": "string" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_search_email_templates",
+            "description": "Search email templates by keyword. **Before sending or replying to an email, search your templates to find relevant instructions.** This ensures you follow established patterns and rules for this type of communication.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "q": { "type": "string", "description": "Search query (e.g. 'outreach', 'support', 'follow-up')" },
+                    "limit": { "type": "integer", "description": "Max results (default 50)" },
+                    "offset": { "type": "integer", "description": "Pagination offset" },
+                    "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["q"]
+            }
+        }),
+        json!({
+            "name": "hai_get_email_template",
+            "description": "Get a specific email template by ID. Read the full template before composing an email to follow its how_to_send, how_to_respond, goal, and rules.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "template_id": { "type": "string", "description": "Template UUID" },
+                    "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["template_id"]
+            }
+        }),
+        json!({
+            "name": "hai_update_email_template",
+            "description": "Update an existing email template. Use this to refine instructions as email patterns evolve.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "template_id": { "type": "string", "description": "Template UUID to update" },
+                    "name": { "type": "string", "description": "New template name" },
+                    "how_to_send": { "type": "string", "description": "Updated composition instructions" },
+                    "how_to_respond": { "type": "string", "description": "Updated reply instructions" },
+                    "goal": { "type": "string", "description": "Updated goal" },
+                    "rules": { "type": "string", "description": "Updated rules/constraints" },
+                    "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["template_id"]
+            }
+        }),
+        json!({
+            "name": "hai_delete_email_template",
+            "description": "Delete an email template (soft delete). Use when a template is no longer needed.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "template_id": { "type": "string", "description": "Template UUID to delete" },
+                    "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["template_id"]
             }
         }),
     ]
@@ -859,6 +965,99 @@ async fn call_self_knowledge(args: &Value) -> ToolResult {
     Ok(success_tool_result(
         text_summary,
         json!({ "results": results, "count": count }),
+    ))
+}
+
+// =========================================================================
+// Email Template Handlers
+// =========================================================================
+
+async fn call_create_email_template(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let name = required_string(args, "name")?;
+    let client = prepare_email_client(context, args).await?;
+    let result = client
+        .create_email_template(&CreateEmailTemplateOptions {
+            name: name.to_string(),
+            how_to_send: optional_string(args, "how_to_send").map(ToString::to_string),
+            how_to_respond: optional_string(args, "how_to_respond").map(ToString::to_string),
+            goal: optional_string(args, "goal").map(ToString::to_string),
+            rules: optional_string(args, "rules").map(ToString::to_string),
+        })
+        .await
+        .map_err(tool_message)?;
+
+    Ok(success_tool_result(
+        format!("created template id={} name={}", result.id, result.name),
+        json!({ "template": result }),
+    ))
+}
+
+async fn call_list_email_templates(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let client = prepare_email_client(context, args).await?;
+    let result = client
+        .list_email_templates(&ListEmailTemplatesOptions {
+            q: optional_string(args, "q").map(ToString::to_string),
+            limit: optional_u32(args, "limit"),
+            offset: optional_u32(args, "offset"),
+        })
+        .await
+        .map_err(tool_message)?;
+
+    let count = result.templates.len();
+    Ok(success_tool_result(
+        format!("found {} templates (total {})", count, result.total),
+        json!({ "templates": result.templates, "total": result.total }),
+    ))
+}
+
+async fn call_get_email_template(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let template_id = required_string(args, "template_id")?;
+    let client = prepare_email_client(context, args).await?;
+    let result = client
+        .get_email_template(template_id)
+        .await
+        .map_err(tool_message)?;
+
+    Ok(success_tool_result(
+        format!("template id={} name={}", result.id, result.name),
+        json!({ "template": result }),
+    ))
+}
+
+async fn call_update_email_template(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let template_id = required_string(args, "template_id")?;
+    let client = prepare_email_client(context, args).await?;
+    let result = client
+        .update_email_template(
+            template_id,
+            &UpdateEmailTemplateOptions {
+                name: optional_string(args, "name").map(ToString::to_string),
+                how_to_send: optional_string(args, "how_to_send").map(|s| Some(s.to_string())),
+                how_to_respond: optional_string(args, "how_to_respond").map(|s| Some(s.to_string())),
+                goal: optional_string(args, "goal").map(|s| Some(s.to_string())),
+                rules: optional_string(args, "rules").map(|s| Some(s.to_string())),
+            },
+        )
+        .await
+        .map_err(tool_message)?;
+
+    Ok(success_tool_result(
+        format!("updated template id={} name={}", result.id, result.name),
+        json!({ "template": result }),
+    ))
+}
+
+async fn call_delete_email_template(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let template_id = required_string(args, "template_id")?;
+    let client = prepare_email_client(context, args).await?;
+    client
+        .delete_email_template(template_id)
+        .await
+        .map_err(tool_message)?;
+
+    Ok(success_tool_result(
+        format!("deleted template_id={template_id}"),
+        json!({ "deleted": true, "template_id": template_id }),
     ))
 }
 

@@ -629,18 +629,24 @@ export interface CreateEmailTemplateOptions {
   rules?: string;
 }
 
-/** Options for updating an email template (all fields optional). */
+/** Options for updating an email template (all fields optional).
+ *
+ * For the four text fields (howToSend, howToRespond, goal, rules):
+ * - `undefined` (or absent) — don't change the current value
+ * - `null` — clear the value to NULL
+ * - `string` — set to the given value
+ */
 export interface UpdateEmailTemplateOptions {
   /** New template name. */
   name?: string;
-  /** Updated send instructions. */
-  howToSend?: string;
-  /** Updated response instructions. */
-  howToRespond?: string;
-  /** Updated goal. */
-  goal?: string;
-  /** Updated rules. */
-  rules?: string;
+  /** Updated send instructions. Set to null to clear. */
+  howToSend?: string | null;
+  /** Updated response instructions. Set to null to clear. */
+  howToRespond?: string | null;
+  /** Updated goal. Set to null to clear. */
+  goal?: string | null;
+  /** Updated rules. Set to null to clear. */
+  rules?: string | null;
 }
 
 /** Options for listing/searching email templates. */

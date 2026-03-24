@@ -47,21 +47,87 @@ jobs:
 
       - name: Publish haiai to crates.io
         working-directory: rust/haiai
-        run: cargo publish --no-default-features --features rustls-tls,jacs-crate --token ${{ secrets.CRATES_IO_TOKEN }} || echo "Already published (safe to ignore)"
+        run: |
+          cargo publish --no-default-features --features rustls-tls,jacs-crate --token ${{ secrets.CRATES_IO_TOKEN }} 2>&1 | tee /tmp/publish-haiai.log
+          STATUS=${PIPESTATUS[0]}
+          if [ $STATUS -ne 0 ]; then
+            if grep -q "already uploaded" /tmp/publish-haiai.log; then
+              echo "::warning::haiai already published (skipping)"
+            else
+              echo "::error::Failed to publish haiai"
+              exit 1
+            fi
+          fi
 
-      - name: Wait for crates.io index update
-        run: sleep 30
+      - name: Wait for haiai to appear on crates.io
+        run: |
+          VERSION="${{ needs.verify-version.outputs.version }}"
+          echo "Waiting for haiai v${VERSION} on crates.io..."
+          for i in $(seq 1 36); do
+            if cargo search haiai --limit 1 2>/dev/null | grep -q "\"${VERSION}\""; then
+              echo "haiai v${VERSION} found after $((i * 5))s"
+              break
+            fi
+            if [ $i -eq 36 ]; then
+              echo "::error::haiai v${VERSION} not found on crates.io after 180s"
+              exit 1
+            fi
+            sleep 5
+          done
 
       - name: Publish hai-mcp to crates.io
         working-directory: rust/hai-mcp
-        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }} || echo "Already published (safe to ignore)"
+        run: |
+          cargo publish --token ${{ secrets.CRATES_IO_TOKEN }} 2>&1 | tee /tmp/publish-hai-mcp.log
+          STATUS=${PIPESTATUS[0]}
+          if [ $STATUS -ne 0 ]; then
+            if grep -q "already uploaded" /tmp/publish-hai-mcp.log; then
+              echo "::warning::hai-mcp already published (skipping)"
+            else
+              echo "::error::Failed to publish hai-mcp"
+              exit 1
+            fi
+          fi
 
-      - name: Wait for crates.io index update
-        run: sleep 30
+      - name: Wait for hai-mcp to appear on crates.io
+        run: |
+          VERSION="${{ needs.verify-version.outputs.version }}"
+          echo "Waiting for hai-mcp v${VERSION} on crates.io..."
+          for i in $(seq 1 36); do
+            if cargo search hai-mcp --limit 1 2>/dev/null | grep -q "\"${VERSION}\""; then
+              echo "hai-mcp v${VERSION} found after $((i * 5))s"
+              break
+            fi
+            if [ $i -eq 36 ]; then
+              echo "::error::hai-mcp v${VERSION} not found on crates.io after 180s"
+              exit 1
+            fi
+            sleep 5
+          done
 
       - name: Publish haiai-cli to crates.io
         working-directory: rust/haiai-cli
-        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }} || echo "Already published (safe to ignore)"
+        run: |
+          for attempt in 1 2 3; do
+            echo "Publish attempt ${attempt}/3..."
+            cargo publish --token ${{ secrets.CRATES_IO_TOKEN }} 2>&1 | tee /tmp/publish-cli.log
+            STATUS=${PIPESTATUS[0]}
+            if [ $STATUS -eq 0 ]; then
+              echo "haiai-cli published successfully"
+              break
+            fi
+            if grep -q "already uploaded" /tmp/publish-cli.log; then
+              echo "::warning::haiai-cli already published (skipping)"
+              break
+            fi
+            if [ $attempt -eq 3 ]; then
+              echo "::error::Failed to publish haiai-cli after 3 attempts"
+              cat /tmp/publish-cli.log
+              exit 1
+            fi
+            echo "Retrying in 30s..."
+            sleep 30
+          done
 
   build:
     needs: verify-version

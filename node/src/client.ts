@@ -2550,11 +2550,12 @@ export class HaiClient {
     const url = this.makeUrl(`/api/agents/${safeAgentId}/email/templates/${safeTemplateId}`);
 
     const payload: Record<string, unknown> = {};
-    if (options.name != null) payload.name = options.name;
-    if (options.howToSend != null) payload.how_to_send = options.howToSend;
-    if (options.howToRespond != null) payload.how_to_respond = options.howToRespond;
-    if (options.goal != null) payload.goal = options.goal;
-    if (options.rules != null) payload.rules = options.rules;
+    if (options.name !== undefined) payload.name = options.name;
+    // For nullable fields: undefined = omit (don't update), null = send null (clear), string = set value
+    if (options.howToSend !== undefined) payload.how_to_send = options.howToSend;
+    if (options.howToRespond !== undefined) payload.how_to_respond = options.howToRespond;
+    if (options.goal !== undefined) payload.goal = options.goal;
+    if (options.rules !== undefined) payload.rules = options.rules;
 
     const response = await this.fetchWithRetry(url, {
       method: 'PUT',

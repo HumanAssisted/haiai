@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use base64::Engine;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -890,19 +890,66 @@ pub struct CreateEmailTemplateOptions {
     pub rules: Option<String>,
 }
 
+/// Serialize `Option<Option<String>>` so that `Some(None)` becomes JSON `null`
+/// and `None` is skipped (via `skip_serializing_if`).
+fn serialize_double_option<S>(value: &Option<Option<String>>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match value {
+        Some(inner) => inner.serialize(serializer),
+        None => serializer.serialize_none(),
+    }
+}
+
+/// Deserialize a double-option field: if the field is present in JSON, the outer
+/// Option becomes `Some`. The inner Option distinguishes `null` from a string value.
+fn deserialize_double_option<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: Option<String> = Option::deserialize(deserializer)?;
+    Ok(Some(value))
+}
+
 /// Options for updating an email template (all fields optional).
+///
+/// For the four text fields (`how_to_send`, `how_to_respond`, `goal`, `rules`):
+/// - `None` — field is omitted from the request (don't change the current value)
+/// - `Some(None)` — field is sent as `null` (clear the value to NULL)
+/// - `Some(Some(val))` — field is sent with a value (set to `val`)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UpdateEmailTemplateOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub how_to_send: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub how_to_respond: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub goal: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rules: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_double_option",
+        deserialize_with = "deserialize_double_option"
+    )]
+    pub how_to_send: Option<Option<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_double_option",
+        deserialize_with = "deserialize_double_option"
+    )]
+    pub how_to_respond: Option<Option<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_double_option",
+        deserialize_with = "deserialize_double_option"
+    )]
+    pub goal: Option<Option<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_double_option",
+        deserialize_with = "deserialize_double_option"
+    )]
+    pub rules: Option<Option<String>>,
 }
 
 /// Options for listing/searching email templates.
