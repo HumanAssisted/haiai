@@ -27,24 +27,30 @@ check_pattern() {
 
 status=0
 
-# Transitional allowlist. New usage must not be added outside these files.
+# Allowlist: Only JACS delegation and config files may use crypto directly.
+# client.py, async_client.py, and auth.go are REMOVED from the allowlist —
+# after FFI migration, they delegate HTTP + auth to Rust via hai-binding-core.
 check_pattern \
   "Python Ed25519 primitive imports" \
   "cryptography\.hazmat\.primitives\.asymmetric\.ed25519" \
-  '^(python/src/haiai/(crypt|client|async_client|config|signing)\.py):' || status=1
+  '^(python/src/haiai/(crypt|config|signing)\.py):' || status=1
 
+# NOTE: client.ts still uses node:crypto for fromCredentials() credential signing.
+# This will be removed once fromCredentials delegates to FFI binding.
+# TODO(DRY_FFI): Remove client.ts from allowlist after full FFI migration.
 check_pattern \
   "Node native crypto imports" \
   "from 'node:crypto'" \
   '^(node/src/(crypt|signing|client|hash|mime)\.ts):' || status=1
 
-# Go allowlist rationale:
+# Go allowlist rationale (post-FFI migration):
 #   signing.go     -- key parsing (LoadPrivateKey, ParsePublicKey) uses ed25519 types
-#   client.go      -- Client.privateKey field is ed25519.PrivateKey
+#   client.go      -- Client.privateKey field is ed25519.PrivateKey (kept for JACS init)
 #   crypto_jacs.go -- GenerateKeyPair uses local ed25519 (jacsgo lacks keygen FFI)
 #   a2a.go         -- references ed25519 types for key handling
 #   _test.go       -- test files may use ed25519 directly
 #   examples/      -- example code may demonstrate key usage
+# NOTE: auth.go is REMOVED from allowlist — auth header construction is now in Rust.
 check_pattern \
   "Go crypto/ed25519 imports" \
   '"crypto/ed25519"' \
