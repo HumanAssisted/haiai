@@ -16,12 +16,14 @@ use crate::error::{HaiError, Result};
 use crate::jacs::JacsProvider;
 use crate::types::{
     AgentKeyHistory, AgentVerificationResult, CheckUsernameResult, ClaimUsernameResult,
-    Contact, DeleteUsernameResult, DnsCertifiedResult, DnsCertifiedRunOptions, ProRunResult, ProRunOptions, DocumentVerificationResult,
-    EmailMessage, EmailStatus, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult,
-    ListMessagesOptions, PublicKeyInfo, RegisterAgentOptions, RegistrationResult,
+    Contact, CreateEmailTemplateOptions, DeleteUsernameResult, DnsCertifiedResult,
+    DnsCertifiedRunOptions, DocumentVerificationResult, EmailMessage, EmailStatus,
+    EmailTemplate, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult,
+    ListEmailTemplatesOptions, ListEmailTemplatesResult, ListMessagesOptions,
+    ProRunOptions, ProRunResult, PublicKeyInfo, RegisterAgentOptions, RegistrationResult,
     RotateKeysOptions, RotationResult, SearchOptions, SendEmailOptions, SendEmailResult,
-    TranscriptMessage, TransportType, UpdateAgentResult, UpdateUsernameResult,
-    VerifyAgentDocumentRequest, VerifyAgentResult,
+    TranscriptMessage, TransportType, UpdateAgentResult, UpdateEmailTemplateOptions,
+    UpdateUsernameResult, VerifyAgentDocumentRequest, VerifyAgentResult,
 };
 
 pub const DEFAULT_BASE_URL: &str = "https://beta.hai.ai";
@@ -1095,6 +1097,126 @@ impl<P: JacsProvider> HaiClient<P> {
         let data = response_json(response).await?;
         let contacts_val = data.get("contacts").cloned().unwrap_or(data.clone());
         Ok(serde_json::from_value(contacts_val)?)
+    }
+
+    // =========================================================================
+    // Email Template Methods
+    // =========================================================================
+
+    /// Create a new email template.
+    pub async fn create_email_template(
+        &self,
+        options: &CreateEmailTemplateOptions,
+    ) -> Result<EmailTemplate> {
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
+        let url = self.url(&format!(
+            "/api/agents/{safe_jacs_id}/email/templates"
+        ));
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .json(options)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        Ok(serde_json::from_value(data)?)
+    }
+
+    /// List email templates, optionally searching with BM25.
+    pub async fn list_email_templates(
+        &self,
+        options: &ListEmailTemplatesOptions,
+    ) -> Result<ListEmailTemplatesResult> {
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
+        let url = self.url(&format!(
+            "/api/agents/{safe_jacs_id}/email/templates"
+        ));
+
+        let mut request = self
+            .http
+            .get(url)
+            .header("Authorization", self.build_auth_header()?);
+
+        if let Some(limit) = options.limit {
+            request = request.query(&[("limit", &limit.to_string())]);
+        }
+        if let Some(offset) = options.offset {
+            request = request.query(&[("offset", &offset.to_string())]);
+        }
+        if let Some(ref q) = options.q {
+            request = request.query(&[("q", q.as_str())]);
+        }
+
+        let response = request.send().await?;
+        let data = response_json(response).await?;
+        Ok(serde_json::from_value(data)?)
+    }
+
+    /// Get a single email template by ID.
+    pub async fn get_email_template(&self, template_id: &str) -> Result<EmailTemplate> {
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
+        let safe_template_id = encode_path_segment(template_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_jacs_id}/email/templates/{safe_template_id}"
+        ));
+
+        let response = self
+            .http
+            .get(url)
+            .header("Authorization", self.build_auth_header()?)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        Ok(serde_json::from_value(data)?)
+    }
+
+    /// Update an email template (partial update).
+    pub async fn update_email_template(
+        &self,
+        template_id: &str,
+        options: &UpdateEmailTemplateOptions,
+    ) -> Result<EmailTemplate> {
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
+        let safe_template_id = encode_path_segment(template_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_jacs_id}/email/templates/{safe_template_id}"
+        ));
+
+        let response = self
+            .http
+            .put(url)
+            .header("Authorization", self.build_auth_header()?)
+            .json(options)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        Ok(serde_json::from_value(data)?)
+    }
+
+    /// Delete an email template (soft delete).
+    pub async fn delete_email_template(&self, template_id: &str) -> Result<()> {
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
+        let safe_template_id = encode_path_segment(template_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_jacs_id}/email/templates/{safe_template_id}"
+        ));
+
+        let response = self
+            .http
+            .delete(url)
+            .header("Authorization", self.build_auth_header()?)
+            .send()
+            .await?;
+
+        match response.status() {
+            StatusCode::OK | StatusCode::NO_CONTENT => Ok(()),
+            _ => Err(response_error(response).await),
+        }
     }
 
     pub async fn fetch_remote_key(&self, jacs_id: &str, version: &str) -> Result<PublicKeyInfo> {
