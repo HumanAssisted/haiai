@@ -2,7 +2,9 @@
         versions check-versions check-jacs-versions \
         bump-version bump-jacs-version \
         release-node release-python release-rust release-all \
-        release-delete-tags help
+        release-delete-tags \
+        retry-rust retry-python retry-node retry-everything \
+        help
 
 # ============================================================================
 # VERSION DETECTION
@@ -156,6 +158,96 @@ release-delete-tags:
 	@echo "Deleted release tags"
 
 # ============================================================================
+# RETRY FAILED RELEASES
+# ============================================================================
+# Safe retry: delete old tags (local+remote), retag, push to re-trigger CI.
+
+retry-rust:
+	@echo "Retrying Rust release for v$(RUST_VERSION)..."
+	-git tag -d rust/v$(RUST_VERSION)
+	-git push origin --delete rust/v$(RUST_VERSION)
+	git tag rust/v$(RUST_VERSION)
+	git push origin rust/v$(RUST_VERSION)
+	@echo "✓ Re-tagged rust/v$(RUST_VERSION) - CI will retry crates.io + CLI binaries"
+
+retry-python:
+	@echo "Retrying Python release for v$(PYTHON_VERSION)..."
+	-git tag -d python/v$(PYTHON_VERSION)
+	-git push origin --delete python/v$(PYTHON_VERSION)
+	git tag python/v$(PYTHON_VERSION)
+	git push origin python/v$(PYTHON_VERSION)
+	@echo "✓ Re-tagged python/v$(PYTHON_VERSION) - CI will retry PyPI publish"
+
+retry-node:
+	@echo "Retrying Node release for v$(NODE_VERSION)..."
+	-git tag -d node/v$(NODE_VERSION)
+	-git push origin --delete node/v$(NODE_VERSION)
+	git tag node/v$(NODE_VERSION)
+	git push origin node/v$(NODE_VERSION)
+	@echo "✓ Re-tagged node/v$(NODE_VERSION) - CI will retry npm publish"
+
+# Smart retry: check each registry and only retry releases that haven't published yet.
+retry-everything:
+	@echo "Checking which releases need retrying for v$(RUST_VERSION)..."
+	@echo ""
+	@NEED_RETRY=""; \
+	if curl -sf "https://crates.io/api/v1/crates/haiai/$(RUST_VERSION)" > /dev/null 2>&1; then \
+		echo "  crates.io  haiai $(RUST_VERSION) — already published, skipping"; \
+	else \
+		echo "  crates.io  haiai $(RUST_VERSION) — NOT found, will retry"; \
+		NEED_RETRY="$$NEED_RETRY rust"; \
+	fi; \
+	if curl -sf "https://pypi.org/pypi/haiai/$(PYTHON_VERSION)/json" > /dev/null 2>&1; then \
+		echo "  PyPI       haiai $(PYTHON_VERSION) — already published, skipping"; \
+	else \
+		echo "  PyPI       haiai $(PYTHON_VERSION) — NOT found, will retry"; \
+		NEED_RETRY="$$NEED_RETRY python"; \
+	fi; \
+	if npm view "@haiai/haiai@$(NODE_VERSION)" version > /dev/null 2>&1; then \
+		echo "  npm        @haiai/haiai $(NODE_VERSION) — already published, skipping"; \
+	else \
+		echo "  npm        @haiai/haiai $(NODE_VERSION) — NOT found, will retry"; \
+		NEED_RETRY="$$NEED_RETRY node"; \
+	fi; \
+	echo ""; \
+	if [ -z "$$NEED_RETRY" ]; then \
+		echo "✓ All releases already published for v$(RUST_VERSION). Nothing to retry."; \
+	else \
+		echo "Retrying:$$NEED_RETRY"; \
+		echo ""; \
+		for target in $$NEED_RETRY; do \
+			case $$target in \
+				rust) \
+					echo "--- Retrying crates.io + CLI ---"; \
+					git tag -d rust/v$(RUST_VERSION) 2>/dev/null || true; \
+					git push origin --delete rust/v$(RUST_VERSION) 2>/dev/null || true; \
+					git tag rust/v$(RUST_VERSION); \
+					git push origin rust/v$(RUST_VERSION); \
+					echo "✓ Re-tagged rust/v$(RUST_VERSION)"; \
+					;; \
+				python) \
+					echo "--- Retrying PyPI ---"; \
+					git tag -d python/v$(PYTHON_VERSION) 2>/dev/null || true; \
+					git push origin --delete python/v$(PYTHON_VERSION) 2>/dev/null || true; \
+					git tag python/v$(PYTHON_VERSION); \
+					git push origin python/v$(PYTHON_VERSION); \
+					echo "✓ Re-tagged python/v$(PYTHON_VERSION)"; \
+					;; \
+				node) \
+					echo "--- Retrying npm ---"; \
+					git tag -d node/v$(NODE_VERSION) 2>/dev/null || true; \
+					git push origin --delete node/v$(NODE_VERSION) 2>/dev/null || true; \
+					git tag node/v$(NODE_VERSION); \
+					git push origin node/v$(NODE_VERSION); \
+					echo "✓ Re-tagged node/v$(NODE_VERSION)"; \
+					;; \
+			esac; \
+		done; \
+		echo ""; \
+		echo "✓ Retry tags pushed. GitHub CI will handle publishing."; \
+	fi
+
+# ============================================================================
 # HELP
 # ============================================================================
 
@@ -182,6 +274,12 @@ help:
 	@echo "  make release-node    Tag node/v<ver>   -> npm"
 	@echo "  make release-all     Verify versions, then release all"
 	@echo "  make release-delete-tags  Delete all tags for current version"
+	@echo ""
+	@echo "RETRY (safe retry for failed releases — delete tags, retag, push):"
+	@echo "  make retry-rust      Retry crates.io + CLI release"
+	@echo "  make retry-python    Retry PyPI release"
+	@echo "  make retry-node      Retry npm release"
+	@echo "  make retry-everything  Smart retry: check registries, only retry unpublished"
 	@echo ""
 	@echo "Required GitHub Secrets:"
 	@echo "  CRATES_IO_TOKEN  - for rust/v* tags"
