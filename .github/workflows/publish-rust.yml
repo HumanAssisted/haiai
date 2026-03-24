@@ -54,7 +54,7 @@ jobs:
           cargo publish --no-default-features --features rustls-tls,jacs-crate --token ${{ secrets.CRATES_IO_TOKEN }} 2>&1 | tee /tmp/publish-haiai.log
           STATUS=${PIPESTATUS[0]}
           if [ $STATUS -ne 0 ]; then
-            if grep -q "already uploaded" /tmp/publish-haiai.log; then
+            if grep -qE "already uploaded|already exists" /tmp/publish-haiai.log; then
               echo "::warning::haiai already published (skipping)"
             else
               echo "::error::Failed to publish haiai"
@@ -84,7 +84,7 @@ jobs:
           cargo publish --token ${{ secrets.CRATES_IO_TOKEN }} 2>&1 | tee /tmp/publish-hai-mcp.log
           STATUS=${PIPESTATUS[0]}
           if [ $STATUS -ne 0 ]; then
-            if grep -q "already uploaded" /tmp/publish-hai-mcp.log; then
+            if grep -qE "already uploaded|already exists" /tmp/publish-hai-mcp.log; then
               echo "::warning::hai-mcp already published (skipping)"
             else
               echo "::error::Failed to publish hai-mcp"
@@ -119,7 +119,7 @@ jobs:
               echo "haiai-cli published successfully"
               break
             fi
-            if grep -q "already uploaded" /tmp/publish-cli.log; then
+            if grep -qE "already uploaded|already exists" /tmp/publish-cli.log; then
               echo "::warning::haiai-cli already published (skipping)"
               break
             fi
