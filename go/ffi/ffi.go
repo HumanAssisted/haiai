@@ -71,18 +71,25 @@ extern char* hai_verify_agent_document(HaiClientHandle handle, const char* reque
 extern char* hai_benchmark(HaiClientHandle handle, const char* name, const char* tier);
 extern char* hai_free_run(HaiClientHandle handle, const char* transport);
 extern char* hai_pro_run(HaiClientHandle handle, const char* options_json);
+extern char* hai_enterprise_run(HaiClientHandle handle);
 
 // JACS Delegation
 extern char* hai_sign_message(HaiClientHandle handle, const char* message);
 extern char* hai_canonical_json(HaiClientHandle handle, const char* value_json);
 extern char* hai_verify_a2a_artifact(HaiClientHandle handle, const char* wrapped_json);
 extern char* hai_build_auth_header(HaiClientHandle handle);
+extern char* hai_export_agent_json(HaiClientHandle handle);
+
+// Client State (Mutating)
+extern char* hai_set_hai_agent_id(HaiClientHandle handle, const char* id);
+extern char* hai_set_agent_email(HaiClientHandle handle, const char* email);
 */
 import "C"
 import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"unsafe"
 )
 
@@ -128,7 +135,9 @@ func cString(s string) *C.char {
 
 // Client wraps a Rust HaiClientWrapper handle via CGo.
 type Client struct {
-	handle C.HaiClientHandle
+	handle    C.HaiClientHandle
+	closeOnce sync.Once
+	closed    bool
 }
 
 // NewClient creates a new FFI client from a config JSON string.
@@ -143,12 +152,23 @@ func NewClient(configJSON string) (*Client, error) {
 	return &Client{handle: handle}, nil
 }
 
-// Close frees the underlying Rust client.
+// Close frees the underlying Rust client. Safe to call multiple times.
 func (c *Client) Close() {
-	if c.handle != nil {
-		C.hai_client_free(c.handle)
-		c.handle = nil
+	c.closeOnce.Do(func() {
+		if c.handle != nil {
+			C.hai_client_free(c.handle)
+			c.handle = nil
+			c.closed = true
+		}
+	})
+}
+
+// checkClosed returns an error if the client has been closed.
+func (c *Client) checkClosed() error {
+	if c.closed || c.handle == nil {
+		return fmt.Errorf("client is closed")
 	}
+	return nil
 }
 
 // callStr calls an FFI function that takes one string arg and returns JSON envelope.
@@ -348,6 +368,11 @@ func (c *Client) ProRun(optionsJSON string) (json.RawMessage, error) {
 	return c.callStr(C.hai_pro_run, optionsJSON)
 }
 
+func (c *Client) EnterpriseRun() error {
+	_, err := c.callNoArg(C.hai_enterprise_run)
+	return err
+}
+
 // --- JACS Delegation ---
 
 func (c *Client) BuildAuthHeader() (string, error) {
@@ -388,6 +413,22 @@ func (c *Client) CanonicalJSON(valueJSON string) (string, error) {
 
 func (c *Client) VerifyA2AArtifact(wrappedJSON string) (json.RawMessage, error) {
 	return c.callStr(C.hai_verify_a2a_artifact, wrappedJSON)
+}
+
+func (c *Client) ExportAgentJSON() (json.RawMessage, error) {
+	return c.callNoArg(C.hai_export_agent_json)
+}
+
+// --- Client State (Mutating) ---
+
+func (c *Client) SetHaiAgentID(id string) error {
+	_, err := c.callStr(C.hai_set_hai_agent_id, id)
+	return err
+}
+
+func (c *Client) SetAgentEmail(email string) error {
+	_, err := c.callStr(C.hai_set_agent_email, email)
+	return err
 }
 
 // MapFFIError converts an FFI error to the appropriate haiai error type.

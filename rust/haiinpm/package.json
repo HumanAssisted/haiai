@@ -1,0 +1,32 @@
+{
+  "name": "haiinpm",
+  "version": "0.1.8",
+  "description": "Node.js napi-rs binding for HAI SDK",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "name": "haiinpm",
+    "triples": {
+      "defaults": true,
+      "additional": [
+        "aarch64-apple-darwin"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "napi build --release --platform",
+    "prepublishOnly": "napi prepublish -t npm"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HumanAssisted/haiai"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts"
+  ]
+}

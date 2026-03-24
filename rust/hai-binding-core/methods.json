@@ -337,17 +337,21 @@
       "name": "connect_sse",
       "category": "streaming",
       "group": "streaming",
+      "status": "phase2_deferred",
       "returns": "SseConnection (opaque handle)",
       "auth_required": true,
-      "ffi_pattern": "connect_sse() -> handle, sse_next_event(handle) -> Option<String>, sse_close(handle)"
+      "ffi_pattern": "connect_sse() -> handle, sse_next_event(handle) -> Option<String>, sse_close(handle)",
+      "notes": "Phase 2: Not yet implemented in binding-core. Native SSE implementations remain in each SDK."
     },
     {
       "name": "connect_ws",
       "category": "streaming",
       "group": "streaming",
+      "status": "phase2_deferred",
       "returns": "WsConnection (opaque handle)",
       "auth_required": true,
-      "ffi_pattern": "connect_ws() -> handle, ws_next_event(handle) -> Option<String>, ws_close(handle)"
+      "ffi_pattern": "connect_ws() -> handle, ws_next_event(handle) -> Option<String>, ws_close(handle)",
+      "notes": "Phase 2: Not yet implemented in binding-core. Native WebSocket implementations remain in each SDK."
     }
   ],
   "callback": [

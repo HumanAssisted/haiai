@@ -223,7 +223,13 @@ class FFIAdapter:
         try:
             raw = self._native.get_unread_count_sync()
             data = json.loads(raw)
-            return data.get("count", 0)
+            # binding-core serializes the u64 return directly, so JSON is a bare number
+            if isinstance(data, int):
+                return data
+            # Fallback: if the shape is {"count": N} (future API change)
+            if isinstance(data, dict):
+                return data.get("count", 0)
+            return 0
         except (RuntimeError, AttributeError) as err:
             raise map_ffi_error(err) from err
 
@@ -567,7 +573,13 @@ class AsyncFFIAdapter:
         try:
             raw = await self._native.get_unread_count()
             data = json.loads(raw)
-            return data.get("count", 0)
+            # binding-core serializes the u64 return directly, so JSON is a bare number
+            if isinstance(data, int):
+                return data
+            # Fallback: if the shape is {"count": N} (future API change)
+            if isinstance(data, dict):
+                return data.get("count", 0)
+            return 0
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 

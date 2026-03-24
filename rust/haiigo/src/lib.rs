@@ -362,6 +362,20 @@ pub extern "C" fn hai_free_run(handle: HaiClientHandle, transport: *const c_char
 
 ffi_method_str!(hai_pro_run, pro_run);
 
+#[no_mangle]
+pub extern "C" fn hai_enterprise_run(handle: HaiClientHandle) -> *mut c_char {
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let client = unsafe { &*handle }.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.enterprise_run().await;
+            let _ = tx.send(r);
+        });
+        to_c_string(result_unit_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
 // =============================================================================
 // FFI Methods — JACS Delegation
 // =============================================================================
@@ -380,6 +394,42 @@ pub extern "C" fn hai_build_auth_header(handle: HaiClientHandle) -> *mut c_char 
             let _ = tx.send(r);
         });
         to_c_string(result_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+ffi_method_noarg!(hai_export_agent_json, export_agent_json);
+
+// =============================================================================
+// FFI Methods — Client State (Mutating)
+// =============================================================================
+
+#[no_mangle]
+pub extern "C" fn hai_set_hai_agent_id(handle: HaiClientHandle, id: *const c_char) -> *mut c_char {
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let client = unsafe { &*handle }.clone();
+        let id = unsafe { c_str_to_string(id) };
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            client.set_hai_agent_id(id).await;
+            tx.send(Ok::<(), hai_binding_core::HaiBindingError>(())).ok();
+        });
+        to_c_string(result_unit_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+#[no_mangle]
+pub extern "C" fn hai_set_agent_email(handle: HaiClientHandle, email: *const c_char) -> *mut c_char {
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let client = unsafe { &*handle }.clone();
+        let email = unsafe { c_str_to_string(email) };
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            client.set_agent_email(email).await;
+            tx.send(Ok::<(), hai_binding_core::HaiBindingError>(())).ok();
+        });
+        to_c_string(result_unit_to_json(rx.recv().unwrap()))
     }));
     result.unwrap_or_else(|_| panic_json())
 }

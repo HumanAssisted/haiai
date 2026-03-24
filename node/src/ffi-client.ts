@@ -182,11 +182,14 @@ export class FFIClientAdapter {
   private native: NativeHaiClient;
 
   constructor(configJson: string) {
-    // Dynamically require haiinpm -- this will be the napi-rs native addon
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    // Load haiinpm native addon. Native .node addons require require(), so
+    // use createRequire for ESM compatibility (the Node SDK ships as dual ESM/CJS).
     let haiinpm: HaiinpmModule;
     try {
-      haiinpm = require('haiinpm') as HaiinpmModule;
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { createRequire } = require('node:module') as { createRequire: (url: string) => NodeRequire };
+      const dynamicRequire = createRequire(__filename);
+      haiinpm = dynamicRequire('haiinpm') as HaiinpmModule;
     } catch {
       throw new HaiError(
         'Failed to load haiinpm native binding. ' +
@@ -355,8 +358,16 @@ export class FFIClientAdapter {
   async getUnreadCount(): Promise<number> {
     try {
       const json = await this.native.getUnreadCount();
-      const data = JSON.parse(json) as Record<string, unknown>;
-      return (data.count as number) ?? 0;
+      // binding-core serializes the u64 return directly, so JSON is a bare number
+      const parsed = JSON.parse(json);
+      if (typeof parsed === 'number') {
+        return parsed;
+      }
+      // Fallback: if the shape is {count: N} (future API change)
+      if (typeof parsed === 'object' && parsed !== null && 'count' in parsed) {
+        return (parsed as Record<string, unknown>).count as number;
+      }
+      return 0;
     } catch (err) {
       throw mapFFIError(err);
     }

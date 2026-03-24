@@ -428,6 +428,15 @@ impl HaiClient {
             .map_err(to_napi_err)
     }
 
+    #[napi]
+    pub async fn enterprise_run(&self) -> Result<()> {
+        let client = self.inner.clone();
+        RT.spawn(async move { client.enterprise_run().await })
+            .await
+            .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?
+            .map_err(to_napi_err)
+    }
+
     // =========================================================================
     // Sync JACS Delegation
     // =========================================================================
@@ -463,6 +472,15 @@ impl HaiClient {
     pub async fn verify_a2a_artifact(&self, wrapped_json: String) -> Result<String> {
         let client = self.inner.clone();
         RT.spawn(async move { client.verify_a2a_artifact(&wrapped_json).await })
+            .await
+            .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn export_agent_json(&self) -> Result<String> {
+        let client = self.inner.clone();
+        RT.spawn(async move { client.export_agent_json().await })
             .await
             .map_err(|e| Error::new(Status::GenericFailure, e.to_string()))?
             .map_err(to_napi_err)
