@@ -16,5 +16,4 @@ crate-type = ["cdylib"]
 hai-binding-core = { path = "../hai-binding-core" }
 pyo3 = { version = "0.28", features = ["extension-module"] }
 pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
-serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread"] }

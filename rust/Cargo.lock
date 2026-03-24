@@ -1321,7 +1321,6 @@ dependencies = [
  "hai-binding-core",
  "pyo3",
  "pyo3-async-runtimes",
- "serde_json",
  "tokio",
 ]
 
