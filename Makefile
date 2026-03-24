@@ -1,4 +1,5 @@
 .PHONY: test test-python test-node test-go test-rust \
+        build-python-ffi build-node-ffi \
         versions check-versions check-jacs-versions \
         bump-version bump-jacs-version \
         release-node release-python release-rust release-all \
@@ -45,6 +46,16 @@ test-go:
 
 test-rust:
 	cd rust && cargo test --workspace
+
+# ============================================================================
+# BUILD (local FFI wheel builds for development)
+# ============================================================================
+
+build-python-ffi:
+	cd rust/haiipy && pip install maturin && maturin develop --release
+
+build-node-ffi:
+	cd rust/haiinpm && npm install && npm run build
 
 # ============================================================================
 # VERSION INFO

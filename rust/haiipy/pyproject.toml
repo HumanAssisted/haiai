@@ -2,5 +2,17 @@
 requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
+[project]
+name = "haiipy"
+version = "0.1.8"
+description = "Native PyO3 binding for HAI SDK (FFI layer)"
+requires-python = ">=3.10"
+license = "Apache-2.0 OR MIT"
+authors = [{ name = "HAI.AI", email = "engineering@hai.io" }]
+
+[project.urls]
+Homepage = "https://hai.ai"
+Repository = "https://github.com/HumanAssisted/haiai"
+
 [tool.maturin]
 features = ["pyo3/extension-module"]

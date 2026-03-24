@@ -13,6 +13,7 @@ authors = [{ name = "HAI.AI", email = "engineering@hai.io" }]
 dependencies = [
     "jacs==0.9.11",
     "httpx>=0.27",
+    "haiipy>=0.1.8",
 ]
 
 [project.optional-dependencies]
