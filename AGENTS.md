@@ -104,4 +104,4 @@ Each SDK pins a published JACS version for CI/release, but supports local path o
 - **Path segments must be URL-escaped** in all API paths.
 - **Auth header:** `JACS {jacsId}:{timestamp}:{signature_base64}`.
 - **FFI build requirements.** All language SDKs require a Rust toolchain to build from source. CI installs Rust for Python (maturin), Node (napi-rs), and Go (cargo build cdylib).
-- **Streaming (SSE/WS) not yet FFI-migrated.** Native SSE/WS implementations remain in each SDK temporarily. Phase 2 of FFI migration.
+- **Streaming (SSE/WS) is migrated to FFI.** SSE and WebSocket connections use an opaque handle pattern through binding-core. SDKs call connect/poll/close via FFI.

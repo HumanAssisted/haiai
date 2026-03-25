@@ -957,6 +957,64 @@ func (c *Client) JacsID() (string, error) {
 	return s, nil
 }
 
+// BaseURL returns the base URL of the client.
+func (c *Client) BaseURL() (string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return "", err
+	}
+	raw, err := parseEnvelope(goString(C.hai_base_url(c.handle)))
+	if err != nil {
+		return "", err
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", fmt.Errorf("failed to parse base url: %w", err)
+	}
+	return s, nil
+}
+
+// HaiAgentID returns the HAI-assigned agent UUID.
+func (c *Client) HaiAgentID() (string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return "", err
+	}
+	raw, err := parseEnvelope(goString(C.hai_hai_agent_id(c.handle)))
+	if err != nil {
+		return "", err
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", fmt.Errorf("failed to parse hai agent id: %w", err)
+	}
+	return s, nil
+}
+
+// AgentEmail returns the agent's @hai.ai email address, or empty string if not set.
+func (c *Client) AgentEmail() (string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return "", err
+	}
+	raw, err := parseEnvelope(goString(C.hai_agent_email(c.handle)))
+	if err != nil {
+		return "", err
+	}
+	// Result can be null (no email set) or a string
+	var s *string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", fmt.Errorf("failed to parse agent email: %w", err)
+	}
+	if s == nil {
+		return "", nil
+	}
+	return *s, nil
+}
+
 // --- Client State (Mutating) ---
 
 func (c *Client) SetHaiAgentID(id string) error {

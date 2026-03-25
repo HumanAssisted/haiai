@@ -23,6 +23,8 @@ type mockFFIClient struct {
 
 	// buildAuthHeaderFn returns the auth header. Tests can override this.
 	buildAuthHeaderFn func() (string, error)
+	// rotateKeysFn overrides RotateKeys for unit tests. If nil, falls back to doPost.
+	rotateKeysFn func(optionsJSON string) (json.RawMessage, error)
 }
 
 func newMockFFIClient(baseURL, jacsID, authHeader string) *mockFFIClient {
@@ -173,6 +175,9 @@ func (m *mockFFIClient) RegisterNewAgent(optionsJSON string) (json.RawMessage, e
 }
 
 func (m *mockFFIClient) RotateKeys(optionsJSON string) (json.RawMessage, error) {
+	if m.rotateKeysFn != nil {
+		return m.rotateKeysFn(optionsJSON)
+	}
 	return m.doPost("/api/v1/agents/rotate-keys", json.RawMessage(optionsJSON))
 }
 
@@ -457,6 +462,18 @@ func (m *mockFFIClient) ExportAgentJSON() (json.RawMessage, error) {
 
 func (m *mockFFIClient) JacsID() (string, error) {
 	return m.jacsID, nil
+}
+
+func (m *mockFFIClient) BaseURL() (string, error) {
+	return m.baseURL, nil
+}
+
+func (m *mockFFIClient) HaiAgentID() (string, error) {
+	return m.agentID, nil
+}
+
+func (m *mockFFIClient) AgentEmail() (string, error) {
+	return m.agentEmail, nil
 }
 
 func (m *mockFFIClient) SetHaiAgentID(id string) error {

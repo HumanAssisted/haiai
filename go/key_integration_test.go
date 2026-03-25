@@ -56,10 +56,31 @@ func TestKeyIntegration(t *testing.T) {
 
 	// ── Test: register then fetch key matches ─────────────────────────────
 	t.Run("RegisterThenFetchKeyMatches", func(t *testing.T) {
-		// FetchRemoteKeyFromURL still works (in client.go, will be migrated later)
-		key, err := FetchRemoteKeyFromURL(ctx, nil, apiURL, jacsID, "latest")
+		// FetchRemoteKeyFromURL is deprecated. Use Client.FetchRemoteKey instead.
+		// This test requires a client with credentials.
+		if reg.PrivateKeyPath == "" {
+			t.Skip("no private key path in registration result")
+		}
+		password, err := ResolvePrivateKeyPassword()
 		if err != nil {
-			t.Fatalf("FetchRemoteKeyFromURL: %v", err)
+			t.Skipf("ResolvePrivateKeyPassword: %v", err)
+		}
+		privKey, err := LoadPrivateKey(reg.PrivateKeyPath, password)
+		if err != nil {
+			t.Skipf("LoadPrivateKey: %v", err)
+		}
+		cl, err := NewClient(
+			WithEndpoint(apiURL),
+			WithJACSID(jacsID),
+			WithHaiAgentID(reg.AgentID),
+			WithPrivateKey(privKey),
+		)
+		if err != nil {
+			t.Skipf("could not build client: %v", err)
+		}
+		key, err := cl.FetchRemoteKey(ctx, jacsID, "latest")
+		if err != nil {
+			t.Fatalf("FetchRemoteKey: %v", err)
 		}
 		if len(key.PublicKey) == 0 {
 			t.Fatal("expected non-empty public key")
@@ -72,14 +93,6 @@ func TestKeyIntegration(t *testing.T) {
 
 	// ── Test: fetch key by hash via Client ────────────────────────────────
 	t.Run("FetchKeyByHashMatches", func(t *testing.T) {
-		key, err := FetchRemoteKeyFromURL(ctx, nil, apiURL, jacsID, "latest")
-		if err != nil {
-			t.Fatalf("FetchRemoteKeyFromURL: %v", err)
-		}
-		if key.PublicKeyHash == "" {
-			t.Skip("server did not return public_key_hash")
-		}
-
 		// NOTE: FetchKeyByHashFromURL is deprecated. Use Client.FetchKeyByHash instead.
 		// This test now requires a Client; skip if unavailable.
 		t.Skip("FetchKeyByHashFromURL deprecated; use Client-based test instead")

@@ -377,31 +377,15 @@ func TestVerifyAgentDocumentUsesPublicEndpoint(t *testing.T) {
 	}
 }
 
-func TestFetchRemoteKeyParsesCurrentAPIResponseShape(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/agents/keys/agent-123/latest" {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"jacs_id":"agent-123",
-			"version":"latest",
-			"public_key":"-----BEGIN PUBLIC KEY-----\nZm9v\n-----END PUBLIC KEY-----\n",
-			"public_key_raw_b64":"Zm9v",
-			"algorithm":"ed25519",
-			"public_key_hash":"sha256:abc"
-		}`))
-	}))
-	defer srv.Close()
-
-	key, err := FetchRemoteKeyFromURL(context.Background(), nil, srv.URL, "agent-123", "latest")
-	if err != nil {
-		t.Fatalf("FetchRemoteKeyFromURL: %v", err)
+func TestFetchRemoteKeyFromURLIsDeprecated(t *testing.T) {
+	_, err := FetchRemoteKeyFromURL(context.Background(), nil, "https://example.com", "agent-123", "latest")
+	if err == nil {
+		t.Fatal("expected error from deprecated FetchRemoteKeyFromURL")
 	}
-	if key.AgentID != "agent-123" {
-		t.Fatalf("expected jacs_id to populate AgentID, got %#v", key)
+	if !strings.Contains(err.Error(), "deprecated") {
+		t.Errorf("error should mention 'deprecated', got: %v", err)
 	}
-	if string(key.PublicKey) != "foo" {
-		t.Fatalf("expected raw key bytes from public_key_raw_b64, got %q", string(key.PublicKey))
+	if !strings.Contains(err.Error(), "FetchRemoteKey") {
+		t.Errorf("error should mention 'FetchRemoteKey' replacement, got: %v", err)
 	}
 }

@@ -85,6 +85,9 @@ func toPascalCase(s string) string {
 	if r == "VerifyA2aArtifact" {
 		return "VerifyA2AArtifact"
 	}
+	// SSE/WS acronym fixes
+	r = strings.ReplaceAll(r, "Sse", "SSE")
+	r = strings.ReplaceAll(r, "Ws", "WS")
 	return r
 }
 
@@ -468,6 +471,18 @@ func (r *recordingFFIClient) ExportAgentJSON() (json.RawMessage, error) {
 func (r *recordingFFIClient) JacsID() (string, error) {
 	*r.calls = append(*r.calls, "JacsID")
 	return r.inner.JacsID()
+}
+func (r *recordingFFIClient) BaseURL() (string, error) {
+	*r.calls = append(*r.calls, "BaseURL")
+	return r.inner.BaseURL()
+}
+func (r *recordingFFIClient) HaiAgentID() (string, error) {
+	*r.calls = append(*r.calls, "HaiAgentID")
+	return r.inner.HaiAgentID()
+}
+func (r *recordingFFIClient) AgentEmail() (string, error) {
+	*r.calls = append(*r.calls, "AgentEmail")
+	return r.inner.AgentEmail()
 }
 func (r *recordingFFIClient) SetHaiAgentID(id string) error {
 	*r.calls = append(*r.calls, "SetHaiAgentID")

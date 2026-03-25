@@ -90,6 +90,9 @@
     ],
     "client_state": [
       {"name": "jacs_id", "args": [], "returns": "string"},
+      {"name": "base_url", "args": [], "returns": "string"},
+      {"name": "hai_agent_id", "args": [], "returns": "string"},
+      {"name": "agent_email", "args": [], "returns": "string?"},
       {"name": "set_hai_agent_id", "args": ["id:string"], "returns": "void"},
       {"name": "set_agent_email", "args": ["email:string"], "returns": "void"}
     ]
@@ -106,5 +109,5 @@
     "ProviderError"
   ],
   "error_format": "{ErrorKind}: {message}",
-  "total_method_count": 65
+  "total_method_count": 68
 }

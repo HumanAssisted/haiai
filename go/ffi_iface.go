@@ -72,6 +72,9 @@ type FFIClient interface {
 
 	// Client State
 	JacsID() (string, error)
+	BaseURL() (string, error)
+	HaiAgentID() (string, error)
+	AgentEmail() (string, error)
 	SetHaiAgentID(id string) error
 	SetAgentEmail(email string) error
 

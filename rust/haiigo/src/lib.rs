@@ -584,6 +584,69 @@ pub extern "C" fn hai_jacs_id(handle: HaiClientHandle) -> *mut c_char {
     result.unwrap_or_else(|_| panic_json())
 }
 
+/// Get the base URL of the client.
+/// Returns a JSON envelope: `{"ok":"<base_url>"}` or `{"error":...}`.
+#[no_mangle]
+pub extern "C" fn hai_base_url(handle: HaiClientHandle) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let client = unsafe { &*handle }.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let url = client.base_url().await;
+            let _ = tx.send(url);
+        });
+        let url = rx.recv().unwrap();
+        let json = serde_json::to_string(&url).unwrap_or_else(|_| format!("\"{}\"", url));
+        to_c_string(format!(r#"{{"ok":{json}}}"#))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+/// Get the HAI agent ID of the client.
+/// Returns a JSON envelope: `{"ok":"<hai_agent_id>"}` or `{"error":...}`.
+#[no_mangle]
+pub extern "C" fn hai_hai_agent_id(handle: HaiClientHandle) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let client = unsafe { &*handle }.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let id = client.hai_agent_id().await;
+            let _ = tx.send(id);
+        });
+        let id = rx.recv().unwrap();
+        let json = serde_json::to_string(&id).unwrap_or_else(|_| format!("\"{}\"", id));
+        to_c_string(format!(r#"{{"ok":{json}}}"#))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+/// Get the agent email of the client.
+/// Returns a JSON envelope: `{"ok":"<email>"}` or `{"ok":null}` or `{"error":...}`.
+#[no_mangle]
+pub extern "C" fn hai_agent_email(handle: HaiClientHandle) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+    }
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let client = unsafe { &*handle }.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let email = client.agent_email().await;
+            let _ = tx.send(email);
+        });
+        let email = rx.recv().unwrap();
+        let json = serde_json::to_string(&email).unwrap_or_default();
+        to_c_string(format!(r#"{{"ok":{json}}}"#))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
 // =============================================================================
 // FFI Methods — Client State (Mutating)
 // =============================================================================

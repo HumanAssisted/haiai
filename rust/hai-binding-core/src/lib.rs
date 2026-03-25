@@ -36,13 +36,68 @@ use haiai::jacs_local::LocalJacsProvider;
 // Streaming handle management (opaque handle pattern for SSE/WS connections)
 // =============================================================================
 
+/// Maximum number of concurrent streaming handles (SSE + WS combined).
+const MAX_STREAMING_HANDLES: usize = 100;
+
+/// Handles idle for longer than this are considered stale and eligible for cleanup.
+const HANDLE_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60); // 30 minutes
+
 static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
 
-static SSE_CONNECTIONS: std::sync::LazyLock<tokio::sync::Mutex<HashMap<u64, SseConnection>>> =
+/// Tracked SSE connection with last-access timestamp for idle cleanup.
+struct TrackedSseConnection {
+    conn: SseConnection,
+    last_access: std::time::Instant,
+}
+
+/// Tracked WS connection with last-access timestamp for idle cleanup.
+struct TrackedWsConnection {
+    conn: WsConnection,
+    last_access: std::time::Instant,
+}
+
+static SSE_CONNECTIONS: std::sync::LazyLock<tokio::sync::Mutex<HashMap<u64, TrackedSseConnection>>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(HashMap::new()));
 
-static WS_CONNECTIONS: std::sync::LazyLock<tokio::sync::Mutex<HashMap<u64, WsConnection>>> =
+static WS_CONNECTIONS: std::sync::LazyLock<tokio::sync::Mutex<HashMap<u64, TrackedWsConnection>>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(HashMap::new()));
+
+/// Remove stale SSE handles that have been idle past the timeout.
+async fn cleanup_stale_sse_handles() {
+    let mut connections = SSE_CONNECTIONS.lock().await;
+    let now = std::time::Instant::now();
+    let stale_handles: Vec<u64> = connections.iter()
+        .filter(|(_, tracked)| now.duration_since(tracked.last_access) > HANDLE_IDLE_TIMEOUT)
+        .map(|(id, _)| *id)
+        .collect();
+    for id in stale_handles {
+        if let Some(mut tracked) = connections.remove(&id) {
+            tracked.conn.close().await;
+        }
+    }
+}
+
+/// Remove stale WS handles that have been idle past the timeout.
+async fn cleanup_stale_ws_handles() {
+    let mut connections = WS_CONNECTIONS.lock().await;
+    let now = std::time::Instant::now();
+    let stale_handles: Vec<u64> = connections.iter()
+        .filter(|(_, tracked)| now.duration_since(tracked.last_access) > HANDLE_IDLE_TIMEOUT)
+        .map(|(id, _)| *id)
+        .collect();
+    for id in stale_handles {
+        if let Some(mut tracked) = connections.remove(&id) {
+            tracked.conn.close().await;
+        }
+    }
+}
+
+/// Returns total number of active streaming handles (SSE + WS).
+async fn total_streaming_handles() -> usize {
+    let sse_count = SSE_CONNECTIONS.lock().await.len();
+    let ws_count = WS_CONNECTIONS.lock().await.len();
+    sse_count + ws_count
+}
 
 // =============================================================================
 // Error types
@@ -991,11 +1046,28 @@ impl HaiClientWrapper {
     // =========================================================================
 
     /// Connect to SSE and return an opaque handle ID.
+    ///
+    /// Enforces a maximum handle limit and cleans up stale idle connections
+    /// before allocating a new handle.
     pub async fn connect_sse(&self) -> HaiBindingResult<u64> {
+        // Lazy cleanup of stale handles before allocating
+        cleanup_stale_sse_handles().await;
+        cleanup_stale_ws_handles().await;
+
+        if total_streaming_handles().await >= MAX_STREAMING_HANDLES {
+            return Err(HaiBindingError::new(
+                ErrorKind::ApiError,
+                format!("maximum streaming handle limit ({MAX_STREAMING_HANDLES}) exceeded; close existing connections first"),
+            ));
+        }
+
         let client = self.inner.read().await;
         let conn = client.connect_sse().await?;
         let handle = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
-        SSE_CONNECTIONS.lock().await.insert(handle, conn);
+        SSE_CONNECTIONS.lock().await.insert(handle, TrackedSseConnection {
+            conn,
+            last_access: std::time::Instant::now(),
+        });
         Ok(handle)
     }
 
@@ -1004,11 +1076,28 @@ impl HaiClientWrapper {
     // =========================================================================
 
     /// Connect to WebSocket and return an opaque handle ID.
+    ///
+    /// Enforces a maximum handle limit and cleans up stale idle connections
+    /// before allocating a new handle.
     pub async fn connect_ws(&self) -> HaiBindingResult<u64> {
+        // Lazy cleanup of stale handles before allocating
+        cleanup_stale_sse_handles().await;
+        cleanup_stale_ws_handles().await;
+
+        if total_streaming_handles().await >= MAX_STREAMING_HANDLES {
+            return Err(HaiBindingError::new(
+                ErrorKind::ApiError,
+                format!("maximum streaming handle limit ({MAX_STREAMING_HANDLES}) exceeded; close existing connections first"),
+            ));
+        }
+
         let client = self.inner.read().await;
         let conn = client.connect_ws().await?;
         let handle = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
-        WS_CONNECTIONS.lock().await.insert(handle, conn);
+        WS_CONNECTIONS.lock().await.insert(handle, TrackedWsConnection {
+            conn,
+            last_access: std::time::Instant::now(),
+        });
         Ok(handle)
     }
 }
@@ -1020,18 +1109,19 @@ impl HaiClientWrapper {
 /// Poll next SSE event. Returns JSON string or None if connection closed.
 pub async fn sse_next_event(handle_id: u64) -> HaiBindingResult<Option<String>> {
     // Take the connection out of the map to release the lock during await
-    let mut conn = {
+    let mut tracked = {
         let mut connections = SSE_CONNECTIONS.lock().await;
         connections.remove(&handle_id)
             .ok_or_else(|| HaiBindingError::new(ErrorKind::InvalidArgument, format!("invalid SSE handle: {handle_id}")))?
     };
 
-    let event = conn.next_event().await;
+    let event = tracked.conn.next_event().await;
 
     match event {
         Some(evt) => {
-            // Put connection back
-            SSE_CONNECTIONS.lock().await.insert(handle_id, conn);
+            // Update last access time and put connection back
+            tracked.last_access = std::time::Instant::now();
+            SSE_CONNECTIONS.lock().await.insert(handle_id, tracked);
             Ok(Some(serde_json::to_string(&evt)?))
         }
         None => {
@@ -1044,8 +1134,8 @@ pub async fn sse_next_event(handle_id: u64) -> HaiBindingResult<Option<String>> 
 /// Close an SSE connection and release the handle.
 pub async fn sse_close(handle_id: u64) -> HaiBindingResult<()> {
     let mut connections = SSE_CONNECTIONS.lock().await;
-    if let Some(mut conn) = connections.remove(&handle_id) {
-        conn.close().await;
+    if let Some(mut tracked) = connections.remove(&handle_id) {
+        tracked.conn.close().await;
     }
     Ok(())
 }
@@ -1057,18 +1147,19 @@ pub async fn sse_close(handle_id: u64) -> HaiBindingResult<()> {
 /// Poll next WebSocket event. Returns JSON string or None if connection closed.
 pub async fn ws_next_event(handle_id: u64) -> HaiBindingResult<Option<String>> {
     // Take the connection out of the map to release the lock during await
-    let mut conn = {
+    let mut tracked = {
         let mut connections = WS_CONNECTIONS.lock().await;
         connections.remove(&handle_id)
             .ok_or_else(|| HaiBindingError::new(ErrorKind::InvalidArgument, format!("invalid WS handle: {handle_id}")))?
     };
 
-    let event = conn.next_event().await;
+    let event = tracked.conn.next_event().await;
 
     match event {
         Some(evt) => {
-            // Put connection back
-            WS_CONNECTIONS.lock().await.insert(handle_id, conn);
+            // Update last access time and put connection back
+            tracked.last_access = std::time::Instant::now();
+            WS_CONNECTIONS.lock().await.insert(handle_id, tracked);
             Ok(Some(serde_json::to_string(&evt)?))
         }
         None => Ok(None),
@@ -1078,8 +1169,8 @@ pub async fn ws_next_event(handle_id: u64) -> HaiBindingResult<Option<String>> {
 /// Close a WebSocket connection and release the handle.
 pub async fn ws_close(handle_id: u64) -> HaiBindingResult<()> {
     let mut connections = WS_CONNECTIONS.lock().await;
-    if let Some(mut conn) = connections.remove(&handle_id) {
-        conn.close().await;
+    if let Some(mut tracked) = connections.remove(&handle_id) {
+        tracked.conn.close().await;
     }
     Ok(())
 }
@@ -1603,5 +1694,156 @@ mod tests {
             "HaiClientWrapper has methods not listed in methods.json: {:?}",
             undocumented
         );
+    }
+
+    // =========================================================================
+    // SSE/WS handle management tests
+    // =========================================================================
+
+    #[test]
+    fn handle_counter_increments() {
+        let h1 = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
+        let h2 = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
+        assert!(h2 > h1, "handle counter should increment monotonically");
+    }
+
+    #[tokio::test]
+    async fn sse_next_event_invalid_handle_returns_error() {
+        let result = sse_next_event(999_999).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::InvalidArgument);
+        assert!(err.message.contains("invalid SSE handle"));
+    }
+
+    #[tokio::test]
+    async fn ws_next_event_invalid_handle_returns_error() {
+        let result = ws_next_event(999_998).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::InvalidArgument);
+        assert!(err.message.contains("invalid WS handle"));
+    }
+
+    #[tokio::test]
+    async fn sse_close_nonexistent_handle_is_noop() {
+        // Closing a handle that doesn't exist should not error
+        let result = sse_close(888_888).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn ws_close_nonexistent_handle_is_noop() {
+        // Closing a handle that doesn't exist should not error
+        let result = ws_close(888_887).await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn max_streaming_handles_constant_is_reasonable() {
+        assert_eq!(MAX_STREAMING_HANDLES, 100);
+    }
+
+    #[test]
+    fn handle_idle_timeout_is_30_minutes() {
+        assert_eq!(HANDLE_IDLE_TIMEOUT, std::time::Duration::from_secs(30 * 60));
+    }
+
+    // =========================================================================
+    // Phase 2 method coverage tests (binding-core delegation)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn fetch_server_keys_method_exists_on_wrapper() {
+        // Verify fetch_server_keys is callable (will fail at runtime without
+        // a real server, but should parse and compile)
+        let config = r#"{"jacs_id": "test-fskeys"}"#;
+        let wrapper = HaiClientWrapper::from_config_json_auto(config).unwrap();
+        // We can't call it without a server, but verify it exists via compilation
+        let _method_exists = HaiClientWrapper::fetch_server_keys;
+        let _ = wrapper;
+    }
+
+    #[tokio::test]
+    async fn sign_email_raw_method_exists_on_wrapper() {
+        let _method_exists = HaiClientWrapper::sign_email_raw;
+    }
+
+    #[tokio::test]
+    async fn verify_email_raw_method_exists_on_wrapper() {
+        let _method_exists = HaiClientWrapper::verify_email_raw;
+    }
+
+    #[tokio::test]
+    async fn create_attestation_method_exists_on_wrapper() {
+        let _method_exists = HaiClientWrapper::create_attestation;
+    }
+
+    #[tokio::test]
+    async fn list_attestations_method_exists_on_wrapper() {
+        let _method_exists = HaiClientWrapper::list_attestations;
+    }
+
+    #[tokio::test]
+    async fn get_attestation_method_exists_on_wrapper() {
+        let _method_exists = HaiClientWrapper::get_attestation;
+    }
+
+    #[tokio::test]
+    async fn verify_attestation_method_exists_on_wrapper() {
+        let _method_exists = HaiClientWrapper::verify_attestation;
+    }
+
+    #[tokio::test]
+    async fn create_email_template_method_exists_on_wrapper() {
+        let _method_exists = HaiClientWrapper::create_email_template;
+    }
+
+    #[tokio::test]
+    async fn list_email_templates_method_exists_on_wrapper() {
+        let _method_exists = HaiClientWrapper::list_email_templates;
+    }
+
+    #[tokio::test]
+    async fn get_email_template_method_exists_on_wrapper() {
+        let _method_exists = HaiClientWrapper::get_email_template;
+    }
+
+    #[tokio::test]
+    async fn update_email_template_method_exists_on_wrapper() {
+        let _method_exists = HaiClientWrapper::update_email_template;
+    }
+
+    #[tokio::test]
+    async fn delete_email_template_method_exists_on_wrapper() {
+        let _method_exists = HaiClientWrapper::delete_email_template;
+    }
+
+    #[tokio::test]
+    async fn register_new_agent_method_exists_on_wrapper() {
+        let _method_exists = HaiClientWrapper::register_new_agent;
+    }
+
+    #[tokio::test]
+    async fn rotate_keys_accepts_valid_json() {
+        let config = r#"{"jacs_id": "rotate-test"}"#;
+        let wrapper = HaiClientWrapper::from_config_json_auto(config).unwrap();
+        // rotate_keys with invalid options should still parse (options are valid JSON)
+        // but will fail at the JACS provider level since StaticJacsProvider can't rotate
+        let result = wrapper.rotate_keys(r#"{"register_with_hai": false}"#).await;
+        // Expected to fail (StaticJacsProvider doesn't support rotation), but not with
+        // a serialization error
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_ne!(err.kind, ErrorKind::SerializationFailed, "options JSON should parse correctly");
+    }
+
+    #[tokio::test]
+    async fn rotate_keys_rejects_invalid_json() {
+        let config = r#"{"jacs_id": "rotate-test"}"#;
+        let wrapper = HaiClientWrapper::from_config_json_auto(config).unwrap();
+        let result = wrapper.rotate_keys("not json").await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, ErrorKind::SerializationFailed);
     }
 }

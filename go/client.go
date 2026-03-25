@@ -14,19 +14,14 @@
 package haiai
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
-	"net/http"
-	neturl "net/url"
 	"os"
 	"strings"
 	"sync"
@@ -54,8 +49,7 @@ type Client struct {
 	haiAgentID string       // HAI-assigned agent UUID for email URL paths (set after registration)
 	agentEmail string       // Agent's @hai.ai email address (set after ClaimUsername)
 	privateKey ed25519.PrivateKey
-	crypto     CryptoBackend // signing/verification backend (JACS CGo) — used by native methods only
-	httpClient *http.Client  // used by SSE/WS streaming and bootstrap methods only
+	crypto     CryptoBackend // signing/verification backend (JACS CGo) — used by local signing only
 	agentKeys  *keyCache     // Agent key cache with 5-minute TTL
 	ffi        FFIClient     // Rust FFI client for all API calls
 }
@@ -92,16 +86,20 @@ func WithHaiAgentID(id string) Option {
 }
 
 // WithHTTPClient sets a custom HTTP client.
-func WithHTTPClient(httpClient *http.Client) Option {
+// Deprecated: All HTTP calls are now handled by the Rust FFI layer.
+// This option is retained for API compatibility but has no effect.
+func WithHTTPClient(httpClient interface{}) Option {
 	return func(c *Client) {
-		c.httpClient = httpClient
+		// No-op: HTTP is handled by Rust FFI layer.
 	}
 }
 
 // WithTimeout sets the HTTP client timeout.
+// Deprecated: Timeout is now configured in the Rust FFI layer.
+// This option is retained for API compatibility but has no effect.
 func WithTimeout(timeout time.Duration) Option {
 	return func(c *Client) {
-		c.httpClient.Timeout = timeout
+		// No-op: timeout is handled by Rust FFI layer.
 	}
 }
 
@@ -129,10 +127,7 @@ func WithFFIClient(ffiClient FFIClient) Option {
 // Use options to override specific settings.
 func NewClient(opts ...Option) (*Client, error) {
 	cl := &Client{
-		endpoint: DefaultEndpoint,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		endpoint:  DefaultEndpoint,
 		agentKeys: newKeyCache(),
 	}
 
@@ -277,29 +272,18 @@ func (c *Client) buildAuthHeader() (string, error) {
 	return header, nil
 }
 
-// setAuthHeaders sets the JACS Authorization and Content-Type headers.
-func (c *Client) setAuthHeaders(req *http.Request) error {
-	header, err := c.buildAuthHeader()
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", header)
-	req.Header.Set("Content-Type", "application/json")
-	return nil
-}
-
 // classifyHTTPError maps HTTP status codes to appropriate ErrorKind values.
 // Retained for native methods (SSE/WS, bootstrap) that still use HTTP directly.
 func classifyHTTPError(statusCode int, body []byte) *Error {
 	msg := fmt.Sprintf("status %d: %s", statusCode, string(body))
 	switch statusCode {
-	case http.StatusUnauthorized:
+	case 401: // Unauthorized
 		return newError(ErrAuthRequired, msg)
-	case http.StatusForbidden:
+	case 403: // Forbidden
 		return newError(ErrForbidden, msg)
-	case http.StatusNotFound:
+	case 404: // Not Found
 		return newError(ErrNotFound, msg)
-	case http.StatusTooManyRequests:
+	case 429: // Too Many Requests
 		return newError(ErrRateLimited, msg)
 	default:
 		return newError(ErrInvalidResponse, msg)
@@ -377,11 +361,11 @@ func (c *Client) Register(ctx context.Context, opts RegisterOptions) (*Registrat
 	return &result, nil
 }
 
-// RotateKeys rotates the agent's cryptographic keys.
+// RotateKeys rotates the agent's cryptographic keys via FFI.
 //
-// This method is kept native (not delegated to FFI) because it involves
-// local file operations, key generation, config file updates, and a multi-step
-// registration flow that requires Go-specific logic.
+// Delegates key generation, document signing, file operations, and HAI
+// re-registration to the Rust FFI layer. After successful rotation, reloads
+// the new private key from disk to keep Go-side crypto state in sync.
 func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*RotationResult, error) {
 	if c.jacsID == "" {
 		return nil, newError(ErrConfigInvalid, "cannot rotate keys: no jacsId")
@@ -396,200 +380,51 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 		configPath = opts.ConfigPath
 	}
 
-	// Discover config to find key paths
-	var cfg *Config
+	// Build FFI options JSON
+	ffiOpts := map[string]interface{}{
+		"register_with_hai": registerWithHai,
+	}
+	optionsJSON, err := json.Marshal(ffiOpts)
+	if err != nil {
+		return nil, wrapError(ErrSigningFailed, err, "failed to build rotate_keys options")
+	}
+
+	// Delegate to Rust FFI -- handles keygen, signing, file ops, and HAI registration
+	raw, err := c.ffi.RotateKeys(string(optionsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+
+	var result RotationResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode rotation result")
+	}
+
+	// Reload new private key from disk to keep Go-side crypto state in sync.
+	// The Rust side wrote the new key; we need it for local signing operations
+	// (e.g., SignBenchmarkResult).
+	if configPath == "" {
+		_, cfgPath, discoverErr := discoverConfigWithPath()
+		if discoverErr == nil {
+			configPath = cfgPath
+		}
+	}
 	if configPath != "" {
-		var err error
-		cfg, err = LoadConfig(configPath)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		var cfgPath string
-		var err error
-		cfg, cfgPath, err = discoverConfigWithPath()
-		if err != nil {
-			return nil, err
-		}
-		configPath = cfgPath
-	}
-
-	oldVersion := cfg.JacsAgentVersion
-
-	// Save old private key for chain-of-trust auth during re-registration
-	oldPrivateKey := c.privateKey
-
-	// Resolve key paths
-	privKeyPath := ResolveKeyPath(cfg, configPath)
-	pubKeyPath := ResolvePublicKeyPath(cfg, configPath)
-
-	// 1. Archive old keys
-	archivePriv := strings.TrimSuffix(privKeyPath, ".pem") + "." + oldVersion + ".pem"
-	archivePub := strings.TrimSuffix(pubKeyPath, ".pem") + "." + oldVersion + ".pem"
-
-	if err := os.Rename(privKeyPath, archivePriv); err != nil {
-		return nil, wrapError(ErrSigningFailed, err, "failed to archive private key")
-	}
-	// Only ignore file-not-found for public key; warn on other errors
-	if err := os.Rename(pubKeyPath, archivePub); err != nil && !os.IsNotExist(err) {
-		// Non-fatal but log a warning
-		fmt.Fprintf(os.Stderr, "warning: failed to archive public key: %v\n", err)
-	}
-
-	// 2. Generate new keypair via CryptoBackend
-	pubPEM, privPEM, err := c.crypto.GenerateKeyPair()
-	if err != nil {
-		// Rollback: restore archived keys
-		_ = os.Rename(archivePriv, privKeyPath)
-		_ = os.Rename(archivePub, pubKeyPath)
-		return nil, wrapError(ErrSigningFailed, err, "key generation failed")
-	}
-
-	// Parse the generated keys for local use
-	newPriv, err := ParsePrivateKey(privPEM)
-	if err != nil {
-		_ = os.Rename(archivePriv, privKeyPath)
-		_ = os.Rename(archivePub, pubKeyPath)
-		return nil, wrapError(ErrSigningFailed, err, "failed to parse generated private key")
-	}
-	newPub := newPriv.Public().(ed25519.PublicKey)
-
-	// Re-encode to canonical PEM formats for disk storage
-	pubDER, err := x509.MarshalPKIXPublicKey(newPub)
-	if err != nil {
-		_ = os.Rename(archivePriv, privKeyPath)
-		_ = os.Rename(archivePub, pubKeyPath)
-		return nil, wrapError(ErrSigningFailed, err, "failed to marshal new public key")
-	}
-	pubPEM = pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})
-
-	privDER, err := x509.MarshalPKCS8PrivateKey(newPriv)
-	if err != nil {
-		_ = os.Rename(archivePriv, privKeyPath)
-		_ = os.Rename(archivePub, pubKeyPath)
-		return nil, wrapError(ErrSigningFailed, err, "failed to marshal new private key")
-	}
-	privPEM = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})
-
-	if err := os.WriteFile(privKeyPath, privPEM, 0o600); err != nil {
-		_ = os.Rename(archivePriv, privKeyPath)
-		_ = os.Rename(archivePub, pubKeyPath)
-		return nil, wrapError(ErrSigningFailed, err, "failed to write new private key")
-	}
-	if err := os.WriteFile(pubKeyPath, pubPEM, 0o644); err != nil {
-		// Best-effort cleanup
-		_ = os.Rename(archivePriv, privKeyPath)
-		_ = os.Rename(archivePub, pubKeyPath)
-		return nil, wrapError(ErrSigningFailed, err, "failed to write new public key")
-	}
-
-	// 4. Build new signed agent document
-	newVersion := generateUUID()
-	pubPEMStr := string(pubPEM)
-	now := time.Now().UTC().Format(time.RFC3339)
-
-	// Preserve description from config if available, otherwise use default
-	description := "Agent registered via Go SDK"
-	if cfg.Description != "" {
-		description = cfg.Description
-	}
-	doc := map[string]interface{}{
-		"jacsId":              c.jacsID,
-		"jacsVersion":         newVersion,
-		"jacsPreviousVersion": oldVersion,
-		"jacsPublicKey":       pubPEMStr,
-		"name":                cfg.JacsAgentName,
-		"description":         description,
-		"jacsSignature": map[string]interface{}{
-			"agentID": c.jacsID,
-			"date":    now,
-		},
-	}
-
-	// Canonical JSON (Go encoding/json sorts map keys by default)
-	canonical, err := json.Marshal(doc)
-	if err != nil {
-		return nil, wrapError(ErrSigningFailed, err, "failed to marshal agent document")
-	}
-
-	// Sign with the NEW key via a temporary CryptoBackend
-	newKeyBackend := newClientCryptoBackend(newPriv, c.jacsID)
-	sig, signErr := newKeyBackend.SignBytes(canonical)
-	if signErr != nil {
-		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign agent document with new key")
-	}
-	sigB64 := base64.StdEncoding.EncodeToString(sig)
-	doc["jacsSignature"].(map[string]interface{})["signature"] = sigB64
-
-	agentJSON, err := json.Marshal(doc)
-	if err != nil {
-		return nil, wrapError(ErrSigningFailed, err, "failed to marshal signed agent document")
-	}
-	signedAgentJSON := string(agentJSON)
-
-	// 5. Compute new public key hash
-	newPublicKeyHash := fmt.Sprintf("%x", sha256.Sum256(pubDER))
-
-	// 6. Update in-memory state
-	c.privateKey = newPriv
-	c.crypto = newClientCryptoBackend(newPriv, c.jacsID)
-
-	// 7. Update config file
-	cfgData, err := os.ReadFile(configPath)
-	if err == nil {
-		var rawCfg map[string]interface{}
-		if json.Unmarshal(cfgData, &rawCfg) == nil {
-			rawCfg["jacsAgentVersion"] = newVersion
-			if updated, err := json.MarshalIndent(rawCfg, "", "  "); err == nil {
-				_ = os.WriteFile(configPath, append(updated, '\n'), 0o600)
-			}
-		}
-	}
-
-	// 8. Optionally re-register with HAI using the OLD key for auth
-	// (chain of trust: old key vouches for new key)
-	registeredWithHai := false
-	if registerWithHai {
-		regBody := RegisterOptions{
-			AgentJSON: signedAgentJSON,
-			PublicKey: pubPEMStr,
-		}
-		wireOpts := regBody
-		if wireOpts.PublicKey != "" {
-			wireOpts.PublicKey = base64.StdEncoding.EncodeToString([]byte(regBody.PublicKey))
-		}
-		bodyData, err := json.Marshal(wireOpts)
-		if err == nil {
-			regURL := c.endpoint + "/api/v1/agents/register"
-			req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, regURL, bytes.NewReader(bodyData))
-			if reqErr == nil {
-				// Build 4-part auth header signed by OLD key via CryptoBackend
-				oldKeyBackend := newClientCryptoBackend(oldPrivateKey, c.jacsID)
-				authHeader, authErr := build4PartAuthHeaderWithBackend(c.jacsID, oldVersion, oldKeyBackend)
-				if authErr == nil {
-					req.Header.Set("Authorization", authHeader)
-					req.Header.Set("Content-Type", "application/json")
-					resp, doErr := c.httpClient.Do(req)
-					if doErr == nil {
-						defer resp.Body.Close()
-						if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-							registeredWithHai = true
-						}
-					}
+		cfg, loadErr := LoadConfig(configPath)
+		if loadErr == nil {
+			keyPath := ResolveKeyPath(cfg, configPath)
+			password, pwErr := ResolvePrivateKeyPassword()
+			if pwErr == nil {
+				newKey, keyErr := LoadPrivateKey(keyPath, password)
+				if keyErr == nil {
+					c.privateKey = newKey
+					c.crypto = newClientCryptoBackend(newKey, c.jacsID)
 				}
 			}
 		}
-		// HAI registration failure is non-fatal
 	}
 
-	return &RotationResult{
-		JacsID:            c.jacsID,
-		OldVersion:        oldVersion,
-		NewVersion:        newVersion,
-		NewPublicKeyHash:  newPublicKeyHash,
-		RegisteredWithHai: registeredWithHai,
-		SignedAgentJSON:   signedAgentJSON,
-	}, nil
+	return &result, nil
 }
 
 
@@ -1467,91 +1302,9 @@ func (c *Client) ClearAgentKeyCache() {
 }
 
 // FetchRemoteKeyFromURL fetches a public key from a specific key service URL.
-// Deprecated: Use Client.FetchRemoteKey instead.
-func FetchRemoteKeyFromURL(ctx context.Context, httpClient *http.Client, baseURL, agentID, version string) (*PublicKeyInfo, error) {
-	return fetchRemoteKeyHTTP(ctx, baseURL, agentID, version)
-}
-
-// fetchRemoteKeyHTTP is the direct HTTP implementation (no FFI).
-func fetchRemoteKeyHTTP(ctx context.Context, baseURL, agentID, version string) (*PublicKeyInfo, error) {
-	baseURL = strings.TrimRight(baseURL, "/")
-	url := fmt.Sprintf(
-		"%s/api/agents/keys/%s/%s",
-		baseURL,
-		neturl.PathEscape(agentID),
-		neturl.PathEscape(version),
-	)
-
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, wrapError(ErrConnection, err, "failed to create key request")
-	}
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, wrapError(ErrConnection, err, "failed to fetch key")
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, newError(ErrKeyNotFound, "public key not found for agent '%s' version '%s'", agentID, version)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := limitedReadAll(resp.Body)
-		return nil, newError(ErrConnection, "status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var keyResp struct {
-		JacsID          string `json:"jacs_id"`
-		AgentID         string `json:"agent_id"`
-		Version         string `json:"version"`
-		PublicKey       string `json:"public_key"`
-		PublicKeyB64    string `json:"public_key_b64"`
-		PublicKeyRawB64 string `json:"public_key_raw_b64"`
-		Algorithm       string `json:"algorithm"`
-		PublicKeyHash   string `json:"public_key_hash"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&keyResp); err != nil {
-		return nil, wrapError(ErrInvalidResponse, err, "failed to decode key response")
-	}
-
-	var publicKey []byte
-	switch {
-	case keyResp.PublicKeyRawB64 != "":
-		publicKey, err = base64.StdEncoding.DecodeString(keyResp.PublicKeyRawB64)
-		if err != nil {
-			return nil, wrapError(ErrInvalidResponse, err, "invalid public_key_raw_b64 encoding")
-		}
-	case keyResp.PublicKeyB64 != "":
-		publicKey, err = base64.StdEncoding.DecodeString(keyResp.PublicKeyB64)
-		if err != nil {
-			return nil, wrapError(ErrInvalidResponse, err, "invalid public_key_b64 encoding")
-		}
-	case strings.Contains(keyResp.PublicKey, "BEGIN PUBLIC KEY"):
-		publicKey = []byte(keyResp.PublicKey)
-	default:
-		publicKey, err = base64.StdEncoding.DecodeString(keyResp.PublicKey)
-		if err != nil {
-			return nil, wrapError(ErrInvalidResponse, err, "invalid public key encoding")
-		}
-	}
-
-	agentIDResp := keyResp.AgentID
-	if agentIDResp == "" {
-		agentIDResp = keyResp.JacsID
-	}
-
-	return &PublicKeyInfo{
-		PublicKey:     publicKey,
-		Algorithm:     keyResp.Algorithm,
-		PublicKeyHash: keyResp.PublicKeyHash,
-		AgentID:       agentIDResp,
-		Version:       keyResp.Version,
-	}, nil
+// Deprecated: Use Client.FetchRemoteKey instead. This function always returns an error.
+func FetchRemoteKeyFromURL(ctx context.Context, httpClient interface{}, baseURL, agentID, version string) (*PublicKeyInfo, error) {
+	return nil, newError(ErrConnection, "FetchRemoteKeyFromURL is deprecated: use Client.FetchRemoteKey instead")
 }
 
 // FetchKeyByEmail fetches an agent's public key by their @hai.ai email address.

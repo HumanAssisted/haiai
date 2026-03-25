@@ -49,6 +49,13 @@ impl SseConnection {
     }
 }
 
+/// An active WebSocket connection to the HAI server.
+///
+/// Provides read-only event streaming via [`next_event()`](Self::next_event).
+/// Bidirectional sending (e.g., `ws_send`) is intentionally not supported through
+/// the FFI boundary. To send job responses, use the separate
+/// [`submit_response()`](HaiClient::submit_response) REST endpoint, which is
+/// available via FFI in all SDKs.
 pub struct WsConnection {
     events: mpsc::Receiver<HaiEvent>,
     shutdown: Option<oneshot::Sender<()>>,
