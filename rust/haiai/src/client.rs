@@ -559,10 +559,14 @@ impl<P: JacsProvider> HaiClient<P> {
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/send"));
 
+        // Defensive: strip CR/LF from subject to prevent header injection
+        // (e.g. from email header folding in stored inbound subjects).
+        let safe_subject = crate::mime::sanitize_header(&options.subject);
+
         // Server handles JACS signing — client only sends content fields.
         let mut payload = json!({
             "to": options.to,
-            "subject": options.subject,
+            "subject": safe_subject,
             "body": options.body,
         });
         if !options.cc.is_empty() {
@@ -1047,7 +1051,9 @@ impl<P: JacsProvider> HaiClient<P> {
             payload["recipients_override"] = serde_json::json!(recipients);
         }
         if let Some(s) = subject_override {
-            payload["subject_override"] = serde_json::Value::String(s.to_string());
+            // Defensive: strip CR/LF from subject override
+            let safe = crate::mime::sanitize_header(s);
+            payload["subject_override"] = serde_json::Value::String(safe);
         }
 
         let auth = self.build_auth_header()?;

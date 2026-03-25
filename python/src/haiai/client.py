@@ -1370,20 +1370,41 @@ class HaiClient:
     ) -> SendEmailResult:
         """Send an agent-signed email.
 
-        .. deprecated::
-            send_signed_email currently delegates to send_email. Use
-            send_email directly.
+        Builds RFC 5322 MIME, signs with the agent's JACS key via the Rust
+        FFI layer, and submits to the HAI API. The server validates the
+        signature, countersigns, and delivers.
         """
-        return self.send_email(
-            hai_url,
-            to,
-            subject,
-            body,
-            in_reply_to=in_reply_to,
-            attachments=attachments,
-            cc=cc,
-            bcc=bcc,
-            labels=labels,
+        if self._agent_email is None:
+            raise HaiError("agent email not set -- call claim_username first")
+
+        ffi = self._get_ffi()
+        options: dict[str, Any] = {
+            "to": to,
+            "subject": subject,
+            "body": body,
+        }
+        if in_reply_to is not None:
+            options["in_reply_to"] = in_reply_to
+        if cc:
+            options["cc"] = cc
+        if bcc:
+            options["bcc"] = bcc
+        if labels:
+            options["labels"] = labels
+        if attachments:
+            options["attachments"] = [
+                {
+                    "filename": a["filename"],
+                    "content_type": a["content_type"],
+                    "data_base64": base64.b64encode(a["data"]).decode(),
+                }
+                for a in attachments
+            ]
+
+        data = ffi.send_signed_email(options)
+        return SendEmailResult(
+            message_id=data.get("message_id", ""),
+            status=data.get("status", "sent"),
         )
 
     def verify_email(self, hai_url: str, raw_email: bytes) -> EmailVerificationResultV2:
@@ -1550,10 +1571,12 @@ class HaiClient:
         body: str,
         subject: Optional[str] = None,
     ) -> SendEmailResult:
-        """Reply to an email message."""
+        """Reply to an email message. Always JACS-signed."""
         original = self.get_message(hai_url, message_id)
-        reply_subject = subject if subject is not None else f"Re: {original.subject}"
-        return self.send_email(
+        # Sanitize: strip CR/LF that may be present from email header folding.
+        clean_subject = (original.subject or "").replace("\r", "").replace("\n", "")
+        reply_subject = subject if subject is not None else f"Re: {clean_subject}"
+        return self.send_signed_email(
             hai_url,
             to=original.from_address,
             subject=reply_subject,

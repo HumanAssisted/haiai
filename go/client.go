@@ -798,12 +798,37 @@ func (c *Client) SignEmail(ctx context.Context, rawEmail []byte) ([]byte, error)
 	return base64.StdEncoding.DecodeString(b64Result)
 }
 
-// SendSignedEmail builds an RFC 5322 MIME email and sends it.
-//
-// Deprecated: SendSignedEmail currently delegates to SendEmailWithOptions.
-// Use SendEmail or SendEmailWithOptions directly.
+// SendSignedEmail builds an RFC 5322 MIME email, signs it with the agent's
+// JACS key via the Rust FFI layer, and submits to the HAI API. The server
+// validates the JACS signature, countersigns, and delivers.
 func (c *Client) SendSignedEmail(ctx context.Context, opts SendEmailOptions) (*SendEmailResult, error) {
-	return c.SendEmailWithOptions(ctx, opts)
+	c.mu.RLock()
+	email := c.agentEmail
+	c.mu.RUnlock()
+	if email == "" {
+		return nil, fmt.Errorf("%w: agent email not set — call ClaimUsername first", ErrEmailNotActive)
+	}
+
+	// Encode attachment data to base64 for JSON serialization
+	for i := range opts.Attachments {
+		if opts.Attachments[i].DataBase64 == "" && len(opts.Attachments[i].Data) > 0 {
+			opts.Attachments[i].DataBase64 = base64.StdEncoding.EncodeToString(opts.Attachments[i].Data)
+		}
+	}
+
+	optsJSON, err := json.Marshal(opts)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal send email options")
+	}
+	raw, err := c.ffi.SendSignedEmail(string(optsJSON))
+	if err != nil {
+		return nil, err
+	}
+	var result SendEmailResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode send signed email response")
+	}
+	return &result, nil
 }
 
 // VerifyEmail sends a raw RFC 5322 email to the HAI server for JACS signature verification.
@@ -933,6 +958,7 @@ func (c *Client) GetUnreadCount(ctx context.Context) (int, error) {
 
 // Reply sends a reply to an existing message. If subjectOverride is empty,
 // the original message's subject is fetched and prefixed with "Re: ".
+// The reply is always JACS-signed via SendSignedEmail.
 func (c *Client) Reply(ctx context.Context, messageID, body, subjectOverride string) (*SendEmailResult, error) {
 	original, err := c.GetMessage(ctx, messageID)
 	if err != nil {
@@ -941,7 +967,8 @@ func (c *Client) Reply(ctx context.Context, messageID, body, subjectOverride str
 
 	subject := subjectOverride
 	if subject == "" {
-		subject = original.Subject
+		// Sanitize: strip CR/LF that may be present from email header folding.
+		subject = strings.NewReplacer("\r", "", "\n", "").Replace(original.Subject)
 		if !strings.HasPrefix(strings.ToLower(subject), "re: ") {
 			subject = "Re: " + subject
 		}
@@ -954,7 +981,7 @@ func (c *Client) Reply(ctx context.Context, messageID, body, subjectOverride str
 		inReplyTo = original.MessageID
 	}
 
-	return c.SendEmailWithOptions(ctx, SendEmailOptions{
+	return c.SendSignedEmail(ctx, SendEmailOptions{
 		To:        original.FromAddress,
 		Subject:   subject,
 		Body:      body,

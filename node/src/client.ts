@@ -1238,10 +1238,38 @@ export class HaiClient {
   /**
    * Send an agent-signed email.
    *
-   * @deprecated sendSignedEmail currently delegates to sendEmail. Use sendEmail directly.
+   * Builds RFC 5322 MIME, signs with the agent's JACS key via the Rust FFI
+   * layer, and submits to the HAI API. The server validates the signature,
+   * countersigns, and delivers.
    */
   async sendSignedEmail(options: SendEmailOptions): Promise<SendEmailResult> {
-    return this.sendEmail(options);
+    if (!this.agentEmail) {
+      throw new Error('agent email not set — call claimUsername first');
+    }
+
+    const emailOptions: Record<string, unknown> = {
+      to: options.to,
+      subject: options.subject,
+      body: options.body,
+    };
+    if (options.inReplyTo) emailOptions.in_reply_to = options.inReplyTo;
+    if (options.attachments?.length) {
+      emailOptions.attachments = options.attachments.map(a => ({
+        filename: a.filename,
+        content_type: a.contentType,
+        data_base64: a.data.toString('base64'),
+      }));
+    }
+    if (options.cc?.length) emailOptions.cc = options.cc;
+    if (options.bcc?.length) emailOptions.bcc = options.bcc;
+    if (options.labels?.length) emailOptions.labels = options.labels;
+
+    const data = await this.ffi.sendSignedEmail(emailOptions);
+
+    return {
+      messageId: (data.message_id as string) || '',
+      status: (data.status as string) || '',
+    };
   }
 
   /**
@@ -1432,8 +1460,10 @@ export class HaiClient {
    */
   async reply(messageId: string, body: string, subjectOverride?: string): Promise<SendEmailResult> {
     const original = await this.getMessage(messageId);
-    const subject = subjectOverride ?? (original.subject?.startsWith('Re: ') ? original.subject : `Re: ${original.subject}`);
-    return this.sendEmail({
+    // Sanitize: strip CR/LF that may be present from email header folding.
+    const rawSubject = (original.subject ?? '').replace(/[\r\n]/g, '');
+    const subject = subjectOverride ?? (rawSubject.startsWith('Re: ') ? rawSubject : `Re: ${rawSubject}`);
+    return this.sendSignedEmail({
       to: original.fromAddress,
       subject,
       body,

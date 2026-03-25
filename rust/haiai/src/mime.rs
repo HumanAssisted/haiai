@@ -10,7 +10,7 @@ use crate::error::{HaiError, Result};
 use crate::types::SendEmailOptions;
 
 /// Strip `\r`, `\n`, and `"` from a header value to prevent CRLF and parameter injection.
-fn sanitize_header(value: &str) -> String {
+pub(crate) fn sanitize_header(value: &str) -> String {
     value
         .chars()
         .filter(|c| *c != '\r' && *c != '\n' && *c != '"')
