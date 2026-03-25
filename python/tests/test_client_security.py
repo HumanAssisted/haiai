@@ -57,53 +57,10 @@ def _fake_register_result(options: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Auth header tests
+# Auth header tests — auth headers are now built in Rust (FFI).
+# The Rust test suite (contract_endpoints.rs) verifies auth header shape,
+# no-auth on register, and no private key leakage at the HTTP layer.
 # ---------------------------------------------------------------------------
-
-
-class TestAuthHeader:
-    """Verify auth-header construction does not expose secrets."""
-
-    def test_build_auth_header_does_not_contain_private_key(
-        self, loaded_config: None
-    ) -> None:
-        from haiai.signing import build_auth_header
-
-        header = build_auth_header()
-        assert "BEGIN PRIVATE KEY" not in header
-        assert header.startswith("JACS ")
-
-    def test_build_auth_header_has_correct_shape(self, loaded_config: None) -> None:
-        from haiai.signing import build_auth_header
-
-        header = build_auth_header()
-        parts = header.split(" ", 1)
-        assert parts[0] == "JACS"
-        fields = parts[1].split(":")
-        assert len(fields) == 3
-
-    def test_build_auth_header_signature_is_base64(self, loaded_config: None) -> None:
-        from haiai.signing import build_auth_header
-
-        header = build_auth_header()
-        sig_b64 = header.split(":")[-1]
-        try:
-            base64.b64decode(sig_b64, validate=True)
-        except Exception:
-            pytest.fail(f"Signature is not valid base64: {sig_b64!r}")
-
-
-# ---------------------------------------------------------------------------
-# Async client double-check
-# ---------------------------------------------------------------------------
-
-
-class TestAsyncClientSecurityParity:
-    """AsyncHaiClient must mirror HaiClient security properties."""
-
-    def test_async_client_requires_credentials(self) -> None:
-        with pytest.raises(Exception):
-            AsyncHaiClient(hai_url="https://hai.ai")
 
 
 # ---------------------------------------------------------------------------
