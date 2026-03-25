@@ -1055,40 +1055,44 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     /// Forward a message to another agent with an optional comment.
+    ///
+    /// Fetches the original message client-side, constructs a forwarded email
+    /// with the original content quoted, signs with the agent's JACS key, and
+    /// sends via `send_signed_email`.
     pub async fn forward(
         &self,
         message_id: &str,
         to: &str,
         comment: Option<&str>,
     ) -> Result<SendEmailResult> {
-        let _ = self.agent_email.as_deref().ok_or_else(|| {
-            HaiError::Message("agent email not set — call claim_username first".into())
-        })?;
-        let agent_id = self.hai_agent_id();
-        let safe_agent_id = encode_path_segment(agent_id);
-        let url = self.url(&format!(
-            "/api/agents/{safe_agent_id}/email/forward"
-        ));
+        let original = self.get_message(message_id).await?;
 
-        let mut payload = serde_json::json!({
-            "message_id": message_id,
-            "to": to,
-        });
+        // Sanitize original fields
+        let orig_subject = crate::mime::sanitize_header(&original.subject);
+        let orig_from = crate::mime::sanitize_header(&original.from_address);
 
+        let subject = format!("Fwd: {orig_subject}");
+
+        // Build forwarded body with optional comment and quoted original
+        let mut body = String::new();
         if let Some(c) = comment {
-            payload["comment"] = serde_json::Value::String(c.to_string());
+            body.push_str(c);
+            body.push_str("\n\n");
         }
+        body.push_str("---------- Forwarded message ----------\n");
+        body.push_str(&format!("From: {}\n", orig_from));
+        body.push_str(&format!("Date: {}\n", original.created_at));
+        body.push_str(&format!("Subject: {}\n", orig_subject));
+        body.push('\n');
+        body.push_str(&original.body_text);
 
-        let response = self
-            .http
-            .post(url)
-            .header("Authorization", self.build_auth_header()?)
-            .json(&payload)
-            .send()
-            .await?;
-
-        let data = response_json(response).await?;
-        Ok(serde_json::from_value(data)?)
+        self.send_signed_email(&SendEmailOptions {
+            to: to.to_string(),
+            subject,
+            body,
+            ..Default::default()
+        })
+        .await
     }
 
     /// Convenience alias for contacts endpoint.

@@ -606,17 +606,38 @@ async fn reply_with_custom_recipients_posts_to_reply_endpoint() {
 }
 
 // --- Task 009: Forward ---
+// Forward now fetches the original message client-side, constructs a forwarded
+// email with quoted content, and sends via send_signed_email.
 
 #[tokio::test]
 async fn forward_posts_to_forward_endpoint() {
     let server = MockServer::start_async().await;
 
-    let mock = server
+    // Mock: get original message
+    let get_mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/api/agents/test-agent-001/email/messages/orig-msg-uuid");
+            then.status(200).json_body(json!({
+                "id": "orig-msg-uuid",
+                "direction": "inbound",
+                "from_address": "alice@hai.ai",
+                "to_address": "test-agent-001@hai.ai",
+                "subject": "Important Update",
+                "body_text": "Please review this.",
+                "is_read": true,
+                "delivery_status": "delivered",
+                "created_at": "2026-03-25T10:00:00Z"
+            }));
+        })
+        .await;
+
+    // Mock: send-signed endpoint
+    let send_mock = server
         .mock_async(|when, then| {
             when.method(POST)
-                .path("/api/agents/test-agent-001/email/forward")
-                .body_includes("\"to\":\"agent-c@hai.ai\"")
-                .body_includes("\"message_id\"");
+                .path("/api/agents/test-agent-001/email/send-signed")
+                .header("content-type", "message/rfc822");
             then.status(200).json_body(json!({
                 "message_id": "fwd-msg",
                 "status": "queued"
@@ -631,17 +652,36 @@ async fn forward_posts_to_forward_endpoint() {
         .expect("forward");
 
     assert_eq!(result.message_id, "fwd-msg");
-    mock.assert_async().await;
+    get_mock.assert_async().await;
+    send_mock.assert_async().await;
 }
 
 #[tokio::test]
 async fn forward_without_comment() {
     let server = MockServer::start_async().await;
 
-    let mock = server
+    let get_mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/api/agents/test-agent-001/email/messages/orig-msg-uuid");
+            then.status(200).json_body(json!({
+                "id": "orig-msg-uuid",
+                "direction": "inbound",
+                "from_address": "bob@hai.ai",
+                "to_address": "test-agent-001@hai.ai",
+                "subject": "Quick note",
+                "body_text": "Hey there.",
+                "is_read": true,
+                "delivery_status": "delivered",
+                "created_at": "2026-03-25T11:00:00Z"
+            }));
+        })
+        .await;
+
+    let send_mock = server
         .mock_async(|when, then| {
             when.method(POST)
-                .path("/api/agents/test-agent-001/email/forward");
+                .path("/api/agents/test-agent-001/email/send-signed");
             then.status(200).json_body(json!({
                 "message_id": "fwd-msg-2",
                 "status": "queued"
@@ -656,7 +696,8 @@ async fn forward_without_comment() {
         .expect("forward no comment");
 
     assert_eq!(result.message_id, "fwd-msg-2");
-    mock.assert_async().await;
+    get_mock.assert_async().await;
+    send_mock.assert_async().await;
 }
 
 // --- Task 011: Search with new filters ---
