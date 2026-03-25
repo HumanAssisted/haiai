@@ -523,6 +523,24 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
+    def base_url(self) -> str:
+        try:
+            return self._native.base_url_sync()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def hai_agent_id(self) -> str:
+        try:
+            return self._native.hai_agent_id_sync()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def agent_email(self) -> Optional[str]:
+        try:
+            return self._native.agent_email_sync()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
     def set_hai_agent_id(self, agent_id: str) -> None:
         try:
             self._native.set_hai_agent_id_sync(agent_id)
@@ -1026,6 +1044,24 @@ class AsyncFFIAdapter:
     async def jacs_id(self) -> str:
         try:
             return await self._native.jacs_id()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def base_url(self) -> str:
+        try:
+            return await self._native.base_url()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def hai_agent_id(self) -> str:
+        try:
+            return await self._native.hai_agent_id()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def agent_email(self) -> Optional[str]:
+        try:
+            return await self._native.agent_email()
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 

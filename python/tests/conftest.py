@@ -337,6 +337,83 @@ class MockFFIAdapter:
     def jacs_id_sync(self) -> str:
         return self._record("jacs_id")
 
+    # Registration (additional)
+    def register_new_agent(self, options: dict) -> dict:
+        return self._record("register_new_agent", options)
+
+    # Email Sign/Verify (raw)
+    def sign_email_raw(self, raw_email_b64: str) -> str:
+        return self._record("sign_email_raw", raw_email_b64)
+
+    def verify_email_raw(self, raw_email_b64: str) -> dict:
+        return self._record("verify_email_raw", raw_email_b64)
+
+    # Email Templates
+    def create_email_template(self, options: dict) -> dict:
+        return self._record("create_email_template", options)
+
+    def list_email_templates(self, options: dict) -> dict:
+        return self._record("list_email_templates", options)
+
+    def get_email_template(self, template_id: str) -> dict:
+        return self._record("get_email_template", template_id)
+
+    def update_email_template(self, template_id: str, options: dict) -> dict:
+        return self._record("update_email_template", template_id, options)
+
+    def delete_email_template(self, template_id: str) -> None:
+        self._record("delete_email_template", template_id)
+
+    # Server Keys
+    def fetch_server_keys(self) -> dict:
+        return self._record("fetch_server_keys")
+
+    # Attestations
+    def create_attestation(self, params: dict) -> dict:
+        return self._record("create_attestation", params)
+
+    def list_attestations(self, params: dict) -> dict:
+        return self._record("list_attestations", params)
+
+    def get_attestation(self, agent_id: str, doc_id: str) -> dict:
+        return self._record("get_attestation", agent_id, doc_id)
+
+    def verify_attestation(self, document: str) -> dict:
+        return self._record("verify_attestation", document)
+
+    # Streaming
+    def connect_sse(self) -> int:
+        result = self._record("connect_sse")
+        return result if isinstance(result, int) else 0
+
+    def sse_next_event(self, handle: int) -> Any:
+        return self._record("sse_next_event", handle)
+
+    def sse_close(self, handle: int) -> None:
+        self._record("sse_close", handle)
+
+    def connect_ws(self) -> int:
+        result = self._record("connect_ws")
+        return result if isinstance(result, int) else 0
+
+    def ws_next_event(self, handle: int) -> Any:
+        return self._record("ws_next_event", handle)
+
+    def ws_close(self, handle: int) -> None:
+        self._record("ws_close", handle)
+
+    # Client State (accessors)
+    def base_url(self) -> str:
+        result = self._record("base_url")
+        return result if isinstance(result, str) else ""
+
+    def hai_agent_id(self) -> str:
+        result = self._record("hai_agent_id")
+        return result if isinstance(result, str) else ""
+
+    def agent_email(self) -> Any:
+        return self._record("agent_email")
+
     def set_hai_agent_id(self, agent_id: str) -> None:
         self._record("set_hai_agent_id", agent_id)
 
@@ -455,6 +532,76 @@ class MockAsyncFFIAdapter(MockFFIAdapter):
 
     async def submit_response(self, params: dict) -> dict:  # type: ignore[override]
         return self._record("submit_response", params)
+
+    async def register_new_agent(self, options: dict) -> dict:  # type: ignore[override]
+        return self._record("register_new_agent", options)
+
+    async def sign_email_raw(self, raw_email_b64: str) -> str:  # type: ignore[override]
+        return self._record("sign_email_raw", raw_email_b64)
+
+    async def verify_email_raw(self, raw_email_b64: str) -> dict:  # type: ignore[override]
+        return self._record("verify_email_raw", raw_email_b64)
+
+    async def create_email_template(self, options: dict) -> dict:  # type: ignore[override]
+        return self._record("create_email_template", options)
+
+    async def list_email_templates(self, options: dict) -> dict:  # type: ignore[override]
+        return self._record("list_email_templates", options)
+
+    async def get_email_template(self, template_id: str) -> dict:  # type: ignore[override]
+        return self._record("get_email_template", template_id)
+
+    async def update_email_template(self, template_id: str, options: dict) -> dict:  # type: ignore[override]
+        return self._record("update_email_template", template_id, options)
+
+    async def delete_email_template(self, template_id: str) -> None:  # type: ignore[override]
+        self._record("delete_email_template", template_id)
+
+    async def fetch_server_keys(self) -> dict:  # type: ignore[override]
+        return self._record("fetch_server_keys")
+
+    async def create_attestation(self, params: dict) -> dict:  # type: ignore[override]
+        return self._record("create_attestation", params)
+
+    async def list_attestations(self, params: dict) -> dict:  # type: ignore[override]
+        return self._record("list_attestations", params)
+
+    async def get_attestation(self, agent_id: str, doc_id: str) -> dict:  # type: ignore[override]
+        return self._record("get_attestation", agent_id, doc_id)
+
+    async def verify_attestation(self, document: str) -> dict:  # type: ignore[override]
+        return self._record("verify_attestation", document)
+
+    async def connect_sse(self) -> int:  # type: ignore[override]
+        result = self._record("connect_sse")
+        return result if isinstance(result, int) else 0
+
+    async def sse_next_event(self, handle: int) -> Any:  # type: ignore[override]
+        return self._record("sse_next_event", handle)
+
+    async def sse_close(self, handle: int) -> None:  # type: ignore[override]
+        self._record("sse_close", handle)
+
+    async def connect_ws(self) -> int:  # type: ignore[override]
+        result = self._record("connect_ws")
+        return result if isinstance(result, int) else 0
+
+    async def ws_next_event(self, handle: int) -> Any:  # type: ignore[override]
+        return self._record("ws_next_event", handle)
+
+    async def ws_close(self, handle: int) -> None:  # type: ignore[override]
+        self._record("ws_close", handle)
+
+    async def base_url(self) -> str:  # type: ignore[override]
+        result = self._record("base_url")
+        return result if isinstance(result, str) else ""
+
+    async def hai_agent_id(self) -> str:  # type: ignore[override]
+        result = self._record("hai_agent_id")
+        return result if isinstance(result, str) else ""
+
+    async def agent_email(self) -> Any:  # type: ignore[override]
+        return self._record("agent_email")
 
 
 @pytest.fixture()

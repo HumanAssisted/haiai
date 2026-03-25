@@ -125,34 +125,47 @@ describe('#13: base URL validation', () => {
 });
 
 // =============================================================================
-// #14 — SSE/WS max reconnect attempts (stays native, still uses fetch)
+// #14 — SSE/WS max reconnect attempts (uses FFI connectSse)
 // =============================================================================
 describe('#14: SSE/WS max reconnect attempts', () => {
   afterEach(() => {
-    vi.unstubAllGlobals();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
   it('stops reconnecting SSE after maxReconnectAttempts', async () => {
+    vi.useFakeTimers();
     const client = await makeClient('agent-sse', { maxReconnectAttempts: 3 });
 
-    let fetchCallCount = 0;
-    const fetchMock = vi.fn(async () => {
-      fetchCallCount++;
-      // Simulate a connection error each time
-      throw new TypeError('fetch failed');
+    let connectCallCount = 0;
+    const connectSseMock = vi.fn(async () => {
+      connectCallCount++;
+      throw new HaiConnectionError('SSE connection failed');
     });
-    vi.stubGlobal('fetch', fetchMock);
+    client._setFFIAdapter(createMockFFI({ connectSse: connectSseMock }));
 
-    const events: unknown[] = [];
-    await expect(async () => {
+    // Attach the rejection handler immediately to avoid unhandled rejection.
+    const connectPromise = (async () => {
+      const events: unknown[] = [];
       for await (const event of client.connect({ transport: 'sse' })) {
         events.push(event);
       }
-    }).rejects.toThrow(HaiConnectionError);
+    })().catch((err: unknown) => { throw err; });
 
-    // Should have attempted exactly maxReconnectAttempts times
-    expect(fetchCallCount).toBe(3);
+    // Keep a reference to the caught promise to avoid unhandled rejection warnings.
+    const settled = connectPromise.catch(() => {});
+
+    // Advance through all reconnect backoff delays until the error propagates.
+    // Each failed attempt triggers exponential backoff (1s, 2s, 4s, ...).
+    for (let i = 0; i < 10; i++) {
+      await vi.advanceTimersByTimeAsync(60_000);
+    }
+
+    await settled;
+    await expect(connectPromise).rejects.toThrow(HaiConnectionError);
+
+    // Initial attempt + maxReconnectAttempts retries = 4 total
+    expect(connectCallCount).toBe(4);
   });
 });
 

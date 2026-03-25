@@ -522,15 +522,15 @@ class TestReply:
         mock_ffi = client._get_ffi()
 
         mock_ffi.responses["get_message"] = original_msg
-        mock_ffi.responses["send_email"] = {"message_id": "msg-reply", "status": "sent"}
+        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-reply", "status": "sent"}
 
         result = client.reply(BASE_URL, "msg-orig", "The answer is 4.")
 
         assert result.message_id == "msg-reply"
-        # Verify get_message was called first, then send_email
+        # Verify get_message was called first, then send_signed_email
         assert mock_ffi.calls[0][0] == "get_message"
         assert mock_ffi.calls[0][1][0] == "msg-orig"
-        assert mock_ffi.calls[1][0] == "send_email"
+        assert mock_ffi.calls[1][0] == "send_signed_email"
         send_options = mock_ffi.calls[1][1][0]
         assert send_options["to"] == "alice@hai.ai"
         assert send_options["subject"] == "Re: Question"
@@ -559,7 +559,7 @@ class TestReply:
         mock_ffi = client._get_ffi()
 
         mock_ffi.responses["get_message"] = original_msg
-        mock_ffi.responses["send_email"] = {"message_id": "msg-reply", "status": "sent"}
+        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-reply", "status": "sent"}
 
         client.reply(BASE_URL, "msg-orig", "Answer", subject="Custom Subject")
         send_options = mock_ffi.calls[1][1][0]
@@ -657,7 +657,7 @@ class TestReplyThreading:
         mock_ffi = client._get_ffi()
 
         mock_ffi.responses["get_message"] = original_msg
-        mock_ffi.responses["send_email"] = {"message_id": "msg-reply", "status": "sent"}
+        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-reply", "status": "sent"}
 
         client.reply(BASE_URL, "db-uuid-123", "Thanks!")
 
@@ -688,12 +688,12 @@ class TestReplyThreading:
         mock_ffi = client._get_ffi()
 
         mock_ffi.responses["get_message"] = original_msg
-        mock_ffi.responses["send_email"] = {"message_id": "msg-reply", "status": "sent"}
+        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-reply", "status": "sent"}
 
         client.reply(BASE_URL, "db-uuid-456", "Thanks!")
 
         send_options = mock_ffi.calls[1][1][0]
-        # message_id was None -> send_email skips in_reply_to entirely
+        # message_id was None -> send_signed_email skips in_reply_to entirely
         assert "in_reply_to" not in send_options
 
 
@@ -807,11 +807,11 @@ class TestSendSignedEmail:
         self,
         loaded_config: None,
     ) -> None:
-        """send_signed_email should delegate to send_email (TASK_017 deprecation)."""
+        """send_signed_email calls FFI send_signed_email directly."""
         client = HaiClient()
         mock_ffi = client._get_ffi()
 
-        mock_ffi.responses["send_email"] = {"message_id": "msg-signed-1", "status": "sent"}
+        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-signed-1", "status": "sent"}
 
         result = client.send_signed_email(
             BASE_URL, "bob@hai.ai", "Hello Signed", "Signed body",
@@ -819,8 +819,8 @@ class TestSendSignedEmail:
 
         assert result.message_id == "msg-signed-1"
         assert result.status == "sent"
-        # Delegates to send_email (same FFI method)
-        assert mock_ffi.calls[0][0] == "send_email"
+        # Calls FFI send_signed_email directly
+        assert mock_ffi.calls[0][0] == "send_signed_email"
         options = mock_ffi.calls[0][1][0]
         assert options["to"] == "bob@hai.ai"
         assert options["subject"] == "Hello Signed"
