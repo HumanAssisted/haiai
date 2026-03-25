@@ -505,9 +505,12 @@ impl HaiClientWrapper {
         let provider = LocalJacsProvider::from_config_path(Some(config_path), None)
             .map_err(|e| HaiBindingError::new(ErrorKind::Generic, format!("failed to load new agent: {e}")))?;
 
-        // Step 3: Read the public key PEM for registration
-        let pub_key_pem = std::fs::read_to_string(&create_result.public_key_path)
+        // Step 3: Read the public key for registration.
+        // Read as raw bytes and normalize to PEM — JACS may write DER (binary)
+        // or PEM depending on the algorithm.
+        let pub_key_bytes = std::fs::read(&create_result.public_key_path)
             .map_err(|e| HaiBindingError::new(ErrorKind::Generic, format!("failed to read public key: {e}")))?;
+        let pub_key_pem = haiai::key_format::normalize_public_key_pem(&pub_key_bytes);
 
         // Step 4: Get the agent JSON from the provider
         let agent_json = provider.export_agent_json()
