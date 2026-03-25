@@ -238,13 +238,9 @@ export class FFIClientAdapter {
       if (typeof __filename !== 'undefined') {
         refUrl = __filename;
       } else {
-        // ESM context: import.meta.url is always available
-        try {
-          refUrl = (import.meta as { url: string }).url;
-        } catch {
-          // Last resort fallback for environments where import.meta is unavailable
-          refUrl = process.cwd() + '/ffi-client.js';
-        }
+        // ESM context: import.meta.url is always available.
+        // @ts-ignore -- import.meta is only valid in ESM; CJS always takes the __filename branch above.
+        refUrl = (import.meta as { url: string }).url ?? (process.cwd() + '/ffi-client.js');
       }
       const dynamicRequire = createRequire(refUrl);
       haiinpm = dynamicRequire('haiinpm') as HaiinpmModule;
