@@ -232,16 +232,12 @@ export class FFIClientAdapter {
     // 'node:module' is a built-in that TypeScript compiles correctly in both modes.
     let haiinpm: HaiinpmModule;
     try {
-      // In ESM, __filename is undefined; use import.meta.url as fallback.
-      // In CJS, __filename is always defined.
-      let refUrl: string;
-      if (typeof __filename !== 'undefined') {
-        refUrl = __filename;
-      } else {
-        // ESM context: import.meta.url is always available.
-        // @ts-ignore -- import.meta is only valid in ESM; CJS always takes the __filename branch above.
-        refUrl = (import.meta as { url: string }).url ?? (process.cwd() + '/ffi-client.js');
-      }
+      // CJS: __filename is always defined. ESM: use process.cwd() as the
+      // reference path. Both work because haiinpm is resolved from
+      // node_modules via absolute module resolution, not relative paths.
+      const refUrl = typeof __filename !== 'undefined'
+        ? __filename
+        : process.cwd() + '/index.js';
       const dynamicRequire = createRequire(refUrl);
       haiinpm = dynamicRequire('haiinpm') as HaiinpmModule;
     } catch (err) {
