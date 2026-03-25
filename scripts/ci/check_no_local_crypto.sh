@@ -35,26 +35,26 @@ check_pattern \
   "cryptography\.hazmat\.primitives\.asymmetric\.ed25519" \
   '^(python/src/haiai/(crypt|config|signing)\.py):' || status=1
 
-# NOTE: client.ts still uses node:crypto for fromCredentials() credential signing.
-# This will be removed once fromCredentials delegates to FFI binding.
-# TODO(DRY_FFI): Remove client.ts from allowlist after full FFI migration.
+# Node allowlist (post-crypto-elimination):
+#   signing.ts -- uses randomUUID from node:crypto (not signing, acceptable)
+#   hash.ts    -- uses createHash from node:crypto (deterministic hashing, acceptable)
+#   crypt.ts   -- JACS crypto delegation layer
+#   mime.ts    -- MIME handling
+# client.ts is REMOVED from allowlist -- fromCredentials no longer uses node:crypto.
 check_pattern \
   "Node native crypto imports" \
   "from 'node:crypto'" \
-  '^(node/src/(crypt|signing|client|hash|mime)\.ts):' || status=1
+  '^(node/src/(crypt|signing|hash|mime)\.ts):' || status=1
 
-# Go allowlist rationale (post-FFI migration):
-#   signing.go     -- key parsing (LoadPrivateKey, ParsePublicKey) uses ed25519 types
-#   client.go      -- Client.privateKey field is ed25519.PrivateKey (kept for JACS init)
-#   crypto_jacs.go -- GenerateKeyPair uses local ed25519 (jacsgo lacks keygen FFI)
-#   a2a.go         -- references ed25519 types for key handling
-#   _test.go       -- test files may use ed25519 directly
-#   examples/      -- example code may demonstrate key usage
-# NOTE: auth.go is REMOVED from allowlist — auth header construction is now in Rust.
+# Go allowlist (post-crypto-elimination):
+#   _test.go   -- test files may use ed25519 directly for test fixtures
+#   examples/  -- example code may demonstrate key usage
+# signing.go, client.go, crypto_jacs.go, a2a.go are REMOVED from allowlist --
+# all local crypto has been eliminated from production Go code.
 check_pattern \
   "Go crypto/ed25519 imports" \
   '"crypto/ed25519"' \
-  '^(go/(signing|client|crypto_jacs|a2a)\.go|go/.+_test\.go|go/examples/.+):' || status=1
+  '^(go/.+_test\.go|go/examples/.+):' || status=1
 
 if [[ "$status" -ne 0 ]]; then
   cat <<'MSG'

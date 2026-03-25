@@ -309,8 +309,8 @@ func TestListMessagesSendsDateFilters(t *testing.T) {
 // ===========================================================================
 
 func TestFetchKeyByEmailDefaultsToMainEndpoint(t *testing.T) {
-	// The standalone function should default to DefaultEndpoint (beta.hai.ai)
-	// when HAI_KEYS_BASE_URL is not set. We override via env for test isolation.
+	// The standalone function requires a Client (FFI) -- passing nil returns an error.
+	// Verify the function works when a client is provided.
 	var gotPath string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -320,8 +320,8 @@ func TestFetchKeyByEmailDefaultsToMainEndpoint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	t.Setenv("HAI_KEYS_BASE_URL", srv.URL)
-	_, err := FetchKeyByEmail(context.Background(), nil, "alice@hai.ai")
+	cl, _ := newTestClient(t, srv.URL)
+	_, err := FetchKeyByEmail(context.Background(), cl, "alice@hai.ai")
 	if err != nil {
 		t.Fatalf("FetchKeyByEmail: %v", err)
 	}
@@ -331,23 +331,15 @@ func TestFetchKeyByEmailDefaultsToMainEndpoint(t *testing.T) {
 	}
 }
 
-func TestFetchKeyByDomainFromURL_UsesAPIAgentsKeysPath(t *testing.T) {
-	var gotPath string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.EscapedPath()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(keyResponseJSON()))
-	}))
-	defer srv.Close()
-
-	_, err := FetchKeyByDomainFromURL(context.Background(), nil, srv.URL, "example.com")
-	if err != nil {
-		t.Fatalf("FetchKeyByDomainFromURL: %v", err)
+func TestFetchKeyByDomainFromURL_ReturnsDeprecatedError(t *testing.T) {
+	// FetchKeyByDomainFromURL is deprecated -- native HTTP fallback removed.
+	// Verify it returns a deprecation error.
+	_, err := FetchKeyByDomainFromURL(context.Background(), nil, "http://unused", "example.com")
+	if err == nil {
+		t.Fatal("expected error from deprecated FetchKeyByDomainFromURL")
 	}
-	expected := "/api/agents/keys/domain/example.com"
-	if gotPath != expected {
-		t.Fatalf("expected %q, got %q", expected, gotPath)
+	if !strings.Contains(err.Error(), "deprecated") {
+		t.Fatalf("expected deprecation error, got: %v", err)
 	}
 }
 

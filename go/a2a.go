@@ -307,8 +307,8 @@ func (a *A2AIntegration) signArtifactLocal(
 
 // VerifyArtifact verifies a wrapped artifact signature.
 //
-// When the JACS CGo backend is loaded, this delegates to the Rust core for
-// verification. Uses local logic with CryptoBackend.VerifyBytes otherwise.
+// Delegates to the FFI layer for cryptographic verification.
+// Falls back to local logic when FFI is unavailable.
 //
 // If no explicit public key is provided, uses:
 // 1) this client's own public key (when signerId matches this client)
@@ -339,25 +339,22 @@ func (a *A2AIntegration) VerifyArtifact(
 		}
 	}
 
-	return a.verifyArtifactLocal(wrapped, publicKeyPEM...)
+	return a.verifyArtifactFallback(wrapped, publicKeyPEM...)
 }
 
-// verifyArtifactLocal is the pure-Go local logic for VerifyArtifact.
-func (a *A2AIntegration) verifyArtifactLocal(
+// verifyArtifactFallback returns a failing verification result when FFI is
+// unavailable. It extracts metadata from the wrapped artifact but does not
+// attempt cryptographic verification (which requires the FFI/JACS backend).
+func (a *A2AIntegration) verifyArtifactFallback(
 	wrapped *A2AWrappedArtifact,
 	publicKeyPEM ...string,
 ) (*A2AArtifactVerificationResult, error) {
 	result := &A2AArtifactVerificationResult{
 		Valid:            false,
-		SignerID:         "",
-		ArtifactType:     "",
-		Timestamp:        "",
-		OriginalArtifact: map[string]interface{}{},
+		ArtifactType:     wrapped.JacsType,
+		Timestamp:        wrapped.JacsVersionDate,
+		OriginalArtifact: wrapped.A2AArtifact,
 	}
-
-	result.ArtifactType = wrapped.JacsType
-	result.Timestamp = wrapped.JacsVersionDate
-	result.OriginalArtifact = wrapped.A2AArtifact
 	if wrapped.JacsSignature != nil {
 		result.SignerID = wrapped.JacsSignature.AgentID
 	}
@@ -367,30 +364,7 @@ func (a *A2AIntegration) verifyArtifactLocal(
 		return result, nil
 	}
 
-	canonical, err := canonicalArtifactBytes(wrapped)
-	if err != nil {
-		return nil, wrapError(ErrSigningFailed, err, "failed to canonicalize wrapped artifact")
-	}
-
-	sigBytes, err := base64.StdEncoding.DecodeString(wrapped.JacsSignature.Signature)
-	if err != nil {
-		result.Error = "invalid base64 signature"
-		return result, nil
-	}
-
-	pubKeyPEM, err := resolveVerificationKeyPEM(a.client, wrapped, publicKeyPEM...)
-	if err != nil {
-		result.Error = err.Error()
-		return result, nil
-	}
-
-	// Signature verification requires the FFI layer. If we reached this
-	// local path, FFI verification already failed or was unavailable.
-	result.Valid = false
 	result.Error = "signature verification requires FFI (JACS) backend"
-	_ = canonical
-	_ = sigBytes
-	_ = pubKeyPEM
 	return result, nil
 }
 

@@ -152,7 +152,9 @@ func NewClient(opts ...Option) (*Client, error) {
 		return nil, newError(ErrConfigInvalid, "jacsId is empty in config")
 	}
 
-	// Initialize FFI client if not injected via WithFFIClient
+	// Initialize FFI client if not injected via WithFFIClient.
+	// Production usage requires an FFI client for all crypto and API operations.
+	// Use newFFIClient() (build-tagged) or WithFFIClient() for test injection.
 	if cl.ffi == nil {
 		ffiConfig := map[string]interface{}{
 			"base_url": cl.endpoint,
@@ -165,14 +167,11 @@ func NewClient(opts ...Option) (*Client, error) {
 		if err != nil {
 			return nil, wrapError(ErrConfigInvalid, err, "failed to build FFI config")
 		}
-		_ = configJSON
-		// TODO: Enable FFI client creation once libhaiigo is available at link time.
-		// For now, the FFI client is injected via WithFFIClient in tests.
-		// ffiClient, err := ffi.NewClient(string(configJSON))
-		// if err != nil {
-		//     return nil, wrapError(ErrConfigInvalid, err, "failed to create FFI client")
-		// }
-		// cl.ffi = ffiClient
+		ffiClient, ffiErr := newFFIClientFromConfig(string(configJSON))
+		if ffiErr != nil {
+			return nil, wrapError(ErrConfigInvalid, ffiErr, "failed to create FFI client")
+		}
+		cl.ffi = ffiClient
 	}
 
 	return cl, nil

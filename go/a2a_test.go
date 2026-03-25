@@ -32,6 +32,34 @@ func mustA2AIntegration(t *testing.T) *A2AIntegration {
 		}
 		return json.Marshal(data)
 	}
+	mockFFI.verifyA2AArtifactFn = func(wrappedJSON string) (json.RawMessage, error) {
+		// Parse the wrapped artifact, verify the signature using the test key
+		var wrapped A2AWrappedArtifact
+		if err := json.Unmarshal([]byte(wrappedJSON), &wrapped); err != nil {
+			return nil, err
+		}
+		if wrapped.JacsSignature == nil {
+			result, _ := json.Marshal(map[string]interface{}{"valid": false, "error": "no signature"})
+			return result, nil
+		}
+		sigBytes, err := base64.StdEncoding.DecodeString(wrapped.JacsSignature.Signature)
+		if err != nil {
+			result, _ := json.Marshal(map[string]interface{}{"valid": false, "error": "bad base64"})
+			return result, nil
+		}
+		clone := wrapped
+		clone.JacsSignature = nil
+		canonical, _ := json.Marshal(clone)
+		valid := ed25519.Verify(pub, canonical, sigBytes)
+		result, _ := json.Marshal(A2AArtifactVerificationResult{
+			Valid:            valid,
+			SignerID:         wrapped.JacsSignature.AgentID,
+			ArtifactType:     wrapped.JacsType,
+			Timestamp:        wrapped.JacsVersionDate,
+			OriginalArtifact: wrapped.A2AArtifact,
+		})
+		return result, nil
+	}
 
 	client, err := NewClient(
 		WithJACSID("demo-agent"),

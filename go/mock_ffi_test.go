@@ -1,6 +1,7 @@
 package haiai
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,6 +28,8 @@ type mockFFIClient struct {
 	signMessageFn func(message string) (string, error)
 	// exportAgentJSONFn overrides ExportAgentJSON. Tests can override this.
 	exportAgentJSONFn func() (json.RawMessage, error)
+	// verifyA2AArtifactFn overrides VerifyA2AArtifact. Tests can override this.
+	verifyA2AArtifactFn func(wrappedJSON string) (json.RawMessage, error)
 	// rotateKeysFn overrides RotateKeys for unit tests. If nil, falls back to doPost.
 	rotateKeysFn func(optionsJSON string) (json.RawMessage, error)
 }
@@ -458,6 +461,9 @@ func (m *mockFFIClient) CanonicalJSON(valueJSON string) (string, error) {
 }
 
 func (m *mockFFIClient) VerifyA2AArtifact(wrappedJSON string) (json.RawMessage, error) {
+	if m.verifyA2AArtifactFn != nil {
+		return m.verifyA2AArtifactFn(wrappedJSON)
+	}
 	return nil, fmt.Errorf("mock: VerifyA2AArtifact not implemented")
 }
 
@@ -505,11 +511,52 @@ func (m *mockFFIClient) FetchServerKeys() (json.RawMessage, error) {
 // --- Email Sign/Verify (raw, base64-encoded) ---
 
 func (m *mockFFIClient) SignEmailRaw(rawEmailB64 string) (json.RawMessage, error) {
-	return m.doPost("/api/v1/email/sign", map[string]string{"raw_email": rawEmailB64})
+	// Decode base64 -> raw email, send as message/rfc822, return base64-encoded result as JSON string
+	decoded, err := base64.StdEncoding.DecodeString(rawEmailB64)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodPost, m.baseURL+"/api/v1/email/sign", strings.NewReader(string(decoded)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "message/rfc822")
+	if m.authHeader != "" {
+		req.Header.Set("Authorization", m.authHeader)
+	}
+	resp, err := m.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	// Return the response body as a JSON-encoded base64 string
+	b64Result := base64.StdEncoding.EncodeToString(body)
+	resultJSON, _ := json.Marshal(b64Result)
+	return json.RawMessage(resultJSON), nil
 }
 
 func (m *mockFFIClient) VerifyEmailRaw(rawEmailB64 string) (json.RawMessage, error) {
-	return m.doPost("/api/v1/email/verify", map[string]string{"raw_email": rawEmailB64})
+	// Decode base64 -> raw email, send as message/rfc822, return JSON response
+	decoded, err := base64.StdEncoding.DecodeString(rawEmailB64)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodPost, m.baseURL+"/api/v1/email/verify", strings.NewReader(string(decoded)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "message/rfc822")
+	if m.authHeader != "" {
+		req.Header.Set("Authorization", m.authHeader)
+	}
+	return m.doHTTP(req)
 }
 
 // --- Attestations ---

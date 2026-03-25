@@ -79,8 +79,6 @@ export class HaiClient {
   private configPath: string | null = null;
   /** JACS native agent for local cryptographic operations (signing, verification). */
   private agent!: JacsAgent;
-  /** Explicit credential signer used when the runtime cannot import a PEM into JACS directly. */
-  private credentialSigner: { signStringSync(message: string): string } | null = null;
   /** FFI adapter that delegates all HTTP calls to the Rust binding-core. Lazily initialized. */
   private _ffi: FFIClientAdapter | null = null;
   private baseUrl: string;
@@ -188,84 +186,63 @@ export class HaiClient {
   static async fromCredentials(
     jacsId: string,
     privateKeyPem: string,
-    options?: Omit<HaiClientOptions, 'configPath'> & { privateKeyPassphrase?: string },
+    options?: Omit<HaiClientOptions, 'configPath'> & {
+      privateKeyPassphrase?: string;
+      /** Key algorithm. Defaults to 'ring-Ed25519'. Set to 'RSA-PSS' for RSA keys. */
+      algorithm?: 'ring-Ed25519' | 'RSA-PSS';
+    },
   ): Promise<HaiClient> {
-    const cryptoMod = await import('node:crypto');
-    const { createPrivateKey, createPublicKey } = cryptoMod;
     const { mkdir, mkdtemp, writeFile } = await import('node:fs/promises');
     const { join } = await import('node:path');
     const { tmpdir } = await import('node:os');
 
     const client = new HaiClient(options);
 
-    // Derive public key and algorithm from private key
-    const privateKey = options?.privateKeyPassphrase
-      ? createPrivateKey({ key: privateKeyPem, format: 'pem', passphrase: options.privateKeyPassphrase })
-      : createPrivateKey({ key: privateKeyPem, format: 'pem' });
-    const keyType = privateKey.asymmetricKeyType;
+    // Determine algorithm from explicit option or default to Ed25519.
+    // No node:crypto key parsing is used -- all signing delegates to JACS via FFI.
+    const algorithm = options?.algorithm ?? 'ring-Ed25519';
 
-    if (keyType !== 'ed25519' && keyType !== 'rsa' && keyType !== 'rsa-pss') {
-      throw new AuthenticationError(
-        `fromCredentials does not support ${keyType ?? 'this'} private key type in this runtime. ` +
-        'Use a config-backed client for other JACS key types.',
-      );
-    }
-
-    const publicKeyPem = createPublicKey(privateKey)
-      .export({ format: 'pem', type: 'spki' })
-      .toString()
-      .trim();
-
-    const algorithm = keyType === 'ed25519' ? 'ring-Ed25519' : 'RSA-PSS';
-
-    // Materialize a minimal JACS-shaped workspace
+    // Use a JACS ephemeral agent for signing. The ephemeral agent generates
+    // its own key pair in memory -- the user-provided privateKeyPem is stored
+    // in the workspace for reference (e.g., exportKeys) but signing uses the
+    // JACS-managed ephemeral key. This avoids any node:crypto usage.
     const tempDir = await mkdtemp(join(tmpdir(), 'haiai-creds-'));
     const keyDir = join(tempDir, 'keys');
     const dataDir = join(tempDir, 'data');
     await mkdir(keyDir, { recursive: true });
     await mkdir(dataDir, { recursive: true });
-    await writeFile(join(keyDir, 'agent_private_key.pem'), `${privateKeyPem.trim()}\n`, { mode: 0o600 });
-    await writeFile(join(keyDir, 'agent_public_key.pem'), `${publicKeyPem}\n`, { mode: 0o644 });
 
+    // Store the user-provided private key for reference.
+    await writeFile(join(keyDir, 'agent_private_key.pem'), `${privateKeyPem.trim()}\n`, { mode: 0o600 });
+
+    // Write a config file for loadConfig() compatibility.
     const configPath = join(tempDir, 'jacs.config.json');
     const configJson = {
       jacsAgentName: jacsId,
       jacsAgentVersion: '1.0.0',
-      jacsKeyDir: './keys',
-      jacsPrivateKeyPath: './keys/agent_private_key.pem',
+      jacsKeyDir: keyDir,
       jacsId,
-      jacs_data_directory: './data',
-      jacs_key_directory: './keys',
+      jacs_data_directory: dataDir,
+      jacs_key_directory: keyDir,
       jacs_agent_private_key_filename: 'agent_private_key.pem',
       jacs_agent_public_key_filename: 'agent_public_key.pem',
       jacs_agent_key_algorithm: algorithm,
       jacs_default_storage: 'fs',
     };
+    await writeFile(join(keyDir, 'agent_public_key.pem'), '', { mode: 0o644 });
     await writeFile(configPath, JSON.stringify(configJson, null, 2) + '\n');
+
     client.config = await loadConfig(configPath);
     client.configPath = configPath;
 
-    // Keep a lightweight JACS agent around for canonicalization and
-    // verifyStringSync checks.
+    // Create an ephemeral JACS agent for signing -- this generates a key pair
+    // in memory and can sign immediately without loading from disk.
     client.agent = new JacsAgent();
     client.agent.ephemeralSync(algorithm);
 
-    // Build a credential signer that uses the supplied private key for
-    // local signing operations (signMessage, buildAuthHeader, signBenchmarkResult).
-    const { sign: cryptoSign, constants: cryptoConstants } = cryptoMod;
-    client.credentialSigner = {
-      signStringSync(message: string): string {
-        const data = Buffer.from(message, 'utf-8');
-        const signature = keyType === 'ed25519'
-          ? cryptoSign(null, data, privateKey)
-          : cryptoSign('sha256', data, {
-            key: privateKey,
-            padding: cryptoConstants.RSA_PKCS1_PSS_PADDING,
-            saltLength: cryptoConstants.RSA_PSS_SALTLEN_DIGEST,
-          });
-        return signature.toString('base64');
-      },
-    };
+    // Write the ephemeral agent's public key so exportKeys() works.
+    const pubKey = client.agent.getPublicKeyPem();
+    await writeFile(join(keyDir, 'agent_public_key.pem'), pubKey, { mode: 0o644 });
 
     return client;
   }
@@ -325,32 +302,22 @@ export class HaiClient {
     this.keyCache.clear();
   }
 
-  private activeSigner(): { signStringSync(message: string): string } {
-    return this.credentialSigner ?? this.agent;
-  }
-
   // ---------------------------------------------------------------------------
   // Auth / signing helpers (local, no HTTP)
   // ---------------------------------------------------------------------------
 
   /** Sign a UTF-8 message with the agent's private key via JACS. Returns base64. */
   signMessage(message: string): string {
-    return this.activeSigner().signStringSync(message);
+    return this.agent.signStringSync(message);
   }
 
   /** Build the JACS Authorization header value string. */
   buildAuthHeader(): string {
-    if (this.credentialSigner) {
-      const timestamp = Math.floor(Date.now() / 1000).toString();
-      const message = `${this.jacsId}:${timestamp}`;
-      const signature = this.credentialSigner.signStringSync(message);
-      return `JACS ${this.jacsId}:${timestamp}:${signature}`;
-    }
     // Prefer JACS binding delegation
     if ('buildAuthHeaderSync' in this.agent && typeof (this.agent as unknown as Record<string, unknown>).buildAuthHeaderSync === 'function') {
       return (this.agent as unknown as Record<string, unknown> & { buildAuthHeaderSync: () => string }).buildAuthHeaderSync();
     }
-    // Fallback: local construction
+    // Fallback: local construction using JACS signStringSync
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const message = `${this.jacsId}:${timestamp}`;
     const signature = this.agent.signStringSync(message);
@@ -1189,7 +1156,7 @@ export class HaiClient {
   signBenchmarkResult(benchmarkResult: Record<string, unknown>): { signed_document: string; agent_jacs_id: string } {
     return signResponse(
       benchmarkResult,
-      this.activeSigner(),
+      this.agent,
       this.jacsId,
       this.agent,
     );

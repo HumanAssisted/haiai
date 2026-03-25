@@ -125,6 +125,9 @@ extern char* hai_export_agent_json(HaiClientHandle handle);
 
 // Client State (Read)
 extern char* hai_jacs_id(HaiClientHandle handle);
+extern char* hai_base_url(HaiClientHandle handle);
+extern char* hai_hai_agent_id(HaiClientHandle handle);
+extern char* hai_agent_email(HaiClientHandle handle);
 
 // Client State (Mutating)
 extern char* hai_set_hai_agent_id(HaiClientHandle handle, const char* id);
