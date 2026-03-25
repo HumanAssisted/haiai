@@ -717,6 +717,7 @@ async fn call_send_email(context: &HaiServerContext, args: &Value) -> ToolResult
             in_reply_to: optional_string(args, "in_reply_to").map(ToString::to_string),
             attachments: vec![],
             labels: optional_string_array(args, "labels"),
+            append_footer: None,
         })
         .await
         .map_err(tool_message)?;

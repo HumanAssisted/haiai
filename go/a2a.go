@@ -2,7 +2,6 @@ package haiai
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -165,8 +164,8 @@ func (c *Client) GetA2A(policy ...A2ATrustPolicy) *A2AIntegration {
 
 // ExportAgentCard builds an A2A card from JACS/agent metadata.
 //
-// When the JACS CGo backend is loaded, this delegates to the Rust core for card
-// generation, falling back to local Go logic when the backend is unavailable.
+// When FFI is available, delegates to the Rust core for card generation.
+// Falls back to pure-Go card construction when FFI is unavailable.
 func (a *A2AIntegration) ExportAgentCard(agentData map[string]interface{}) *A2AAgentCard {
 	// Try FFI delegation first.
 	if a.client.ffi != nil {
@@ -177,14 +176,14 @@ func (a *A2AIntegration) ExportAgentCard(agentData map[string]interface{}) *A2AA
 				return &card
 			}
 		}
-		// Fall through to local logic on any error.
+		// Fall through to metadata-based card construction on any error.
 	}
 
-	return a.exportAgentCardLocal(agentData)
+	return a.exportAgentCardFromData(agentData)
 }
 
-// exportAgentCardLocal is the pure-Go local logic for ExportAgentCard.
-func (a *A2AIntegration) exportAgentCardLocal(agentData map[string]interface{}) *A2AAgentCard {
+// exportAgentCardFromData constructs an A2AAgentCard from agent metadata fields.
+func (a *A2AIntegration) exportAgentCardFromData(agentData map[string]interface{}) *A2AAgentCard {
 	agentID := stringValue(agentData["jacsId"])
 	if agentID == "" {
 		agentID = a.client.jacsID
@@ -255,8 +254,8 @@ func (a *A2AIntegration) exportAgentCardLocal(agentData map[string]interface{}) 
 
 // SignArtifact wraps and signs an A2A artifact with JACS provenance.
 //
-// When the JACS CGo backend is loaded, this delegates to the Rust core for
-// artifact wrapping and signing, falling back to local Ed25519 logic otherwise.
+// Requires an FFI client to be configured. Signing is performed via
+// ffi.SignMessage() -- there is no local crypto fallback.
 func (a *A2AIntegration) SignArtifact(
 	artifact map[string]interface{},
 	artifactType string,
@@ -266,11 +265,11 @@ func (a *A2AIntegration) SignArtifact(
 		return nil, newError(ErrSigningFailed, "FFI client is not configured on client")
 	}
 
-	return a.signArtifactLocal(artifact, artifactType, parentSignatures)
+	return a.signArtifactViaFFI(artifact, artifactType, parentSignatures)
 }
 
-// signArtifactLocal is the pure-Go local logic for SignArtifact.
-func (a *A2AIntegration) signArtifactLocal(
+// signArtifactViaFFI wraps the artifact and signs it using ffi.SignMessage().
+func (a *A2AIntegration) signArtifactViaFFI(
 	artifact map[string]interface{},
 	artifactType string,
 	parentSignatures []map[string]interface{},
@@ -308,10 +307,7 @@ func (a *A2AIntegration) signArtifactLocal(
 // VerifyArtifact verifies a wrapped artifact signature.
 //
 // Delegates to the FFI layer for cryptographic verification.
-// Falls back to local logic when FFI is unavailable.
-//
-// If no explicit public key is provided, uses:
-// 1) this client's own public key (when signerId matches this client)
+// Returns a failing result when FFI is unavailable (no local crypto fallback).
 func (a *A2AIntegration) VerifyArtifact(
 	wrapped *A2AWrappedArtifact,
 	publicKeyPEM ...string,
@@ -335,7 +331,7 @@ func (a *A2AIntegration) VerifyArtifact(
 					return &result, nil
 				}
 			}
-			// Fall through to local logic on any error.
+			// Fall through to failing fallback on any error.
 		}
 	}
 
@@ -844,28 +840,6 @@ func canonicalArtifactBytes(wrapped *A2AWrappedArtifact) ([]byte, error) {
 	clone := *wrapped
 	clone.JacsSignature = nil
 	return json.Marshal(clone)
-}
-
-func resolveVerificationKeyPEM(client *Client, wrapped *A2AWrappedArtifact, publicKeyPEM ...string) (string, error) {
-	if len(publicKeyPEM) > 0 && strings.TrimSpace(publicKeyPEM[0]) != "" {
-		return publicKeyPEM[0], nil
-	}
-	if wrapped.JacsSignature != nil && wrapped.JacsSignature.AgentID == client.jacsID {
-		// Use FFI to export the agent's public key
-		if client.ffi != nil {
-			agentJSON, err := client.ffi.ExportAgentJSON()
-			if err == nil {
-				var agentData map[string]interface{}
-				if json.Unmarshal(agentJSON, &agentData) == nil {
-					if pubKey, ok := agentData["publicKeyPem"].(string); ok && pubKey != "" {
-						return pubKey, nil
-					}
-				}
-			}
-		}
-		return "", fmt.Errorf("failed to export agent public key via FFI")
-	}
-	return "", fmt.Errorf("no verification key available for signer '%s'", wrapped.JacsSignature.AgentID)
 }
 
 func hasJACSExtension(card map[string]interface{}) bool {

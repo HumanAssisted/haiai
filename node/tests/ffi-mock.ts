@@ -20,23 +20,30 @@ export function createMockFFI(overrides?: Partial<MockFFI>): FFIClientAdapter {
   const defaultReject = () => Promise.reject(new Error('FFI method not mocked'));
 
   const mock: Record<string, unknown> = {
+    // Registration & Identity
     hello: defaultReject,
     checkUsername: defaultReject,
     register: defaultReject,
+    registerNewAgent: defaultReject,
     rotateKeys: defaultReject,
     updateAgent: defaultReject,
     submitResponse: defaultReject,
     verifyStatus: defaultReject,
+    // Username
     claimUsername: defaultReject,
     updateUsername: defaultReject,
     deleteUsername: defaultReject,
+    // Email Core
     sendEmail: defaultReject,
     sendSignedEmail: defaultReject,
+    signEmailRaw: defaultReject,
+    verifyEmailRaw: defaultReject,
     listMessages: defaultReject,
     updateLabels: defaultReject,
     getEmailStatus: defaultReject,
     getMessage: defaultReject,
     getUnreadCount: defaultReject,
+    // Email Actions
     markRead: defaultReject,
     markUnread: defaultReject,
     deleteMessage: defaultReject,
@@ -44,26 +51,54 @@ export function createMockFFI(overrides?: Partial<MockFFI>): FFIClientAdapter {
     unarchive: defaultReject,
     replyWithOptions: defaultReject,
     forward: defaultReject,
+    // Email Templates
+    createEmailTemplate: defaultReject,
+    listEmailTemplates: defaultReject,
+    getEmailTemplate: defaultReject,
+    updateEmailTemplate: defaultReject,
+    deleteEmailTemplate: defaultReject,
+    // Search & Contacts
     searchMessages: defaultReject,
     contacts: defaultReject,
+    // Key Operations
     fetchRemoteKey: defaultReject,
     fetchKeyByHash: defaultReject,
     fetchKeyByEmail: defaultReject,
     fetchKeyByDomain: defaultReject,
     fetchAllKeys: defaultReject,
+    fetchServerKeys: defaultReject,
+    // Verification
     verifyDocument: defaultReject,
     getVerification: defaultReject,
     verifyAgentDocument: defaultReject,
+    // Attestations
+    createAttestation: defaultReject,
+    listAttestations: defaultReject,
+    getAttestation: defaultReject,
+    verifyAttestation: defaultReject,
+    // Benchmarks
     benchmark: defaultReject,
     freeRun: defaultReject,
     proRun: defaultReject,
     enterpriseRun: defaultReject,
+    // Streaming
+    connectSse: defaultReject,
+    sseNextEvent: defaultReject,
+    sseClose: defaultReject,
+    connectWs: defaultReject,
+    wsNextEvent: defaultReject,
+    wsClose: defaultReject,
+    // JACS Delegation
     buildAuthHeader: defaultReject,
     signMessage: defaultReject,
     canonicalJson: defaultReject,
     verifyA2aArtifact: defaultReject,
     exportAgentJson: defaultReject,
+    // Client State
     jacsId: defaultReject,
+    baseUrl: defaultReject,
+    haiAgentId: defaultReject,
+    agentEmail: defaultReject,
     setHaiAgentId: defaultReject,
     setAgentEmail: defaultReject,
   };

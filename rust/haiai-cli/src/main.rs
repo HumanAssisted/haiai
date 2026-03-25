@@ -821,6 +821,7 @@ async fn main() -> anyhow::Result<()> {
                 in_reply_to: None,
                 attachments: vec![],
                 labels,
+                append_footer: None,
             };
             let result = client
                 .send_signed_email(&options)

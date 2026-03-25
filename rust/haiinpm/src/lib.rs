@@ -396,6 +396,21 @@ impl HaiClient {
     }
 
     #[napi]
+    pub async fn base_url(&self) -> Result<String> {
+        Ok(self.inner.base_url().await)
+    }
+
+    #[napi]
+    pub async fn hai_agent_id(&self) -> Result<String> {
+        Ok(self.inner.hai_agent_id().await)
+    }
+
+    #[napi]
+    pub async fn agent_email(&self) -> Result<Option<String>> {
+        Ok(self.inner.agent_email().await)
+    }
+
+    #[napi]
     pub async fn set_hai_agent_id(&self, id: String) -> Result<()> {
         self.inner.set_hai_agent_id(id).await;
         Ok(())

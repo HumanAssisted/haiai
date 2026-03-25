@@ -35,6 +35,7 @@ interface NativeHaiClient {
   hello(includeTest: boolean): Promise<string>;
   checkUsername(username: string): Promise<string>;
   register(optionsJson: string): Promise<string>;
+  registerNewAgent(optionsJson: string): Promise<string>;
   rotateKeys(optionsJson: string): Promise<string>;
   updateAgent(newAgentData: string): Promise<string>;
   submitResponse(paramsJson: string): Promise<string>;
@@ -48,6 +49,8 @@ interface NativeHaiClient {
   // Email Core
   sendEmail(optionsJson: string): Promise<string>;
   sendSignedEmail(optionsJson: string): Promise<string>;
+  signEmailRaw(rawEmailB64: string): Promise<string>;
+  verifyEmailRaw(rawEmailB64: string): Promise<string>;
   listMessages(optionsJson: string): Promise<string>;
   updateLabels(paramsJson: string): Promise<string>;
   getEmailStatus(): Promise<string>;
@@ -112,6 +115,9 @@ interface NativeHaiClient {
 
   // Client State
   jacsId(): Promise<string>;
+  baseUrl(): Promise<string>;
+  haiAgentId(): Promise<string>;
+  agentEmail(): Promise<string | null>;
   setHaiAgentId(id: string): Promise<void>;
   setAgentEmail(email: string): Promise<void>;
 
@@ -291,6 +297,15 @@ export class FFIClientAdapter {
     }
   }
 
+  async registerNewAgent(options: Record<string, unknown>): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.registerNewAgent(JSON.stringify(options));
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
   async rotateKeys(options: Record<string, unknown>): Promise<Record<string, unknown>> {
     try {
       const json = await this.native.rotateKeys(JSON.stringify(options));
@@ -374,6 +389,24 @@ export class FFIClientAdapter {
   async sendSignedEmail(options: Record<string, unknown>): Promise<Record<string, unknown>> {
     try {
       const json = await this.native.sendSignedEmail(JSON.stringify(options));
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async signEmailRaw(rawEmailB64: string): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.signEmailRaw(rawEmailB64);
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async verifyEmailRaw(rawEmailB64: string): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.verifyEmailRaw(rawEmailB64);
       return JSON.parse(json) as Record<string, unknown>;
     } catch (err) {
       throw mapFFIError(err);
@@ -782,6 +815,30 @@ export class FFIClientAdapter {
   async jacsId(): Promise<string> {
     try {
       return await this.native.jacsId();
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async baseUrl(): Promise<string> {
+    try {
+      return await this.native.baseUrl();
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async haiAgentId(): Promise<string> {
+    try {
+      return await this.native.haiAgentId();
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async agentEmail(): Promise<string | null> {
+    try {
+      return await this.native.agentEmail();
     } catch (err) {
       throw mapFFIError(err);
     }

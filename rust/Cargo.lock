@@ -1854,9 +1854,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jacs"
-version = "0.9.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6637fa799ce4e6368cb5e25d4b25506a51e2a360ac46720a5cf635e44f3251f4"
+version = "0.9.12"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1898,6 +1896,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_json_canonicalizer",
+ "serde_yaml_ng",
  "sha2",
  "signature",
  "strum",
@@ -1918,12 +1917,12 @@ dependencies = [
 
 [[package]]
 name = "jacs-binding-core"
-version = "0.9.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d45c9835b1757cb6382faf2a89b28e60dd4b71621f30d23ae741f64b740b7ce"
+version = "0.9.12"
 dependencies = [
  "base64",
  "jacs",
+ "rand 0.9.2",
+ "rsa",
  "serde",
  "serde_json",
  "tracing",
@@ -1931,9 +1930,7 @@ dependencies = [
 
 [[package]]
 name = "jacs-mcp"
-version = "0.9.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d075b27bdbed30eb81f043781b381f906f358917f21e436ebe981b27b2cd9fdf"
+version = "0.9.12"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3709,6 +3706,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4331,6 +4341,12 @@ dependencies = [
  "crypto-common",
  "subtle",
 ]
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"
