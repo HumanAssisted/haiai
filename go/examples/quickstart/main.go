@@ -80,25 +80,16 @@ func quickstartNew() {
 	}
 	fmt.Printf("Agent ID: %s\n", reg.AgentID)
 
-	// Load the private key from the path created by the FFI layer.
-	password, err := haiai.ResolvePrivateKeyPassword()
-	if err != nil {
-		log.Fatalf("Failed to resolve private key password: %v", err)
-	}
-	privateKey, err := haiai.LoadPrivateKey(reg.PrivateKeyPath, password)
-	if err != nil {
-		log.Fatalf("Failed to load private key from %s: %v", reg.PrivateKeyPath, err)
-	}
 	jacsID := reg.JacsID
 	if jacsID == "" {
 		jacsID = reg.AgentID
 	}
 
-	// 2. Create an authenticated client from the in-memory bootstrap credentials.
+	// 2. Create an authenticated client from the registered agent config.
+	// The FFI layer wrote a jacs.config.json during registration.
 	client, err := haiai.NewClient(
 		haiai.WithEndpoint(HAIURL),
 		haiai.WithJACSID(jacsID),
-		haiai.WithPrivateKey(privateKey),
 	)
 	if err != nil {
 		log.Fatalf("Failed to create client from bootstrap credentials: %v", err)

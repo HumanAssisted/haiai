@@ -2,11 +2,8 @@ package haiai
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"sort"
 	"strings"
@@ -171,16 +168,13 @@ func (c *Client) GetA2A(policy ...A2ATrustPolicy) *A2AIntegration {
 // When the JACS CGo backend is loaded, this delegates to the Rust core for card
 // generation, falling back to local Go logic when the backend is unavailable.
 func (a *A2AIntegration) ExportAgentCard(agentData map[string]interface{}) *A2AAgentCard {
-	// Try JACS core delegation first.
-	if a.client.crypto != nil {
-		agentDataJSON, marshalErr := json.Marshal(agentData)
-		if marshalErr == nil {
-			cardJSON, err := a.client.crypto.ExportAgentCard(string(agentDataJSON))
-			if err == nil {
-				var card A2AAgentCard
-				if json.Unmarshal([]byte(cardJSON), &card) == nil {
-					return &card
-				}
+	// Try FFI delegation first.
+	if a.client.ffi != nil {
+		agentJSON, err := a.client.ffi.ExportAgentJSON()
+		if err == nil {
+			var card A2AAgentCard
+			if json.Unmarshal(agentJSON, &card) == nil {
+				return &card
 			}
 		}
 		// Fall through to local logic on any error.
@@ -268,30 +262,8 @@ func (a *A2AIntegration) SignArtifact(
 	artifactType string,
 	parentSignatures []map[string]interface{},
 ) (*A2AWrappedArtifact, error) {
-	if a.client.crypto == nil && a.client.privateKey == nil {
-		return nil, newError(ErrSigningFailed, "crypto backend or private key not configured on client")
-	}
-
-	// Try JACS core delegation first.
-	if a.client.crypto != nil {
-		// Build the input artifact JSON, including parent signatures if provided.
-		inputPayload := map[string]interface{}{
-			"a2aArtifact": artifact,
-		}
-		if len(parentSignatures) > 0 {
-			inputPayload["jacsParentSignatures"] = parentSignatures
-		}
-		artifactJSON, marshalErr := json.Marshal(inputPayload)
-		if marshalErr == nil {
-			resultJSON, err := a.client.crypto.SignA2AArtifact(string(artifactJSON), artifactType)
-			if err == nil {
-				var wrapped A2AWrappedArtifact
-				if json.Unmarshal([]byte(resultJSON), &wrapped) == nil {
-					return &wrapped, nil
-				}
-			}
-			// Fall through to local logic on any error.
-		}
+	if a.client.ffi == nil {
+		return nil, newError(ErrSigningFailed, "FFI client is not configured on client")
 	}
 
 	return a.signArtifactLocal(artifact, artifactType, parentSignatures)
@@ -321,14 +293,14 @@ func (a *A2AIntegration) signArtifactLocal(
 		return nil, wrapError(ErrSigningFailed, err, "failed to canonicalize artifact")
 	}
 
-	sig, signErr := a.client.crypto.SignBytes(canonical)
+	sigB64, signErr := a.client.ffi.SignMessage(string(canonical))
 	if signErr != nil {
-		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign artifact")
+		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign artifact via FFI")
 	}
 	wrapped.JacsSignature = &A2AArtifactSignature{
 		AgentID:   a.client.jacsID,
 		Date:      now,
-		Signature: base64.StdEncoding.EncodeToString(sig),
+		Signature: sigB64,
 	}
 	return wrapped, nil
 }
@@ -352,14 +324,14 @@ func (a *A2AIntegration) VerifyArtifact(
 		}, nil
 	}
 
-	// Try JACS core delegation first.
-	if a.client.crypto != nil {
+	// Try FFI delegation first.
+	if a.client.ffi != nil {
 		wrappedJSON, marshalErr := json.Marshal(wrapped)
 		if marshalErr == nil {
-			resultJSON, err := a.client.crypto.VerifyA2AArtifact(string(wrappedJSON))
+			resultJSON, err := a.client.ffi.VerifyA2AArtifact(string(wrappedJSON))
 			if err == nil {
 				var result A2AArtifactVerificationResult
-				if json.Unmarshal([]byte(resultJSON), &result) == nil {
+				if json.Unmarshal(resultJSON, &result) == nil {
 					return &result, nil
 				}
 			}
@@ -412,12 +384,13 @@ func (a *A2AIntegration) verifyArtifactLocal(
 		return result, nil
 	}
 
-	if verifyErr := a.client.crypto.VerifyBytes(canonical, sigBytes, pubKeyPEM); verifyErr != nil {
-		result.Valid = false
-		result.Error = "signature verification failed"
-	} else {
-		result.Valid = true
-	}
+	// Signature verification requires the FFI layer. If we reached this
+	// local path, FFI verification already failed or was unavailable.
+	result.Valid = false
+	result.Error = "signature verification requires FFI (JACS) backend"
+	_ = canonical
+	_ = sigBytes
+	_ = pubKeyPEM
 	return result, nil
 }
 
@@ -552,30 +525,7 @@ func (a *A2AIntegration) AssessRemoteAgent(
 		resolvedPolicy = normalizeTrustPolicy(policy[0])
 	}
 
-	// Try JACS core delegation first.
-	if a.client.crypto != nil {
-		policyJSON := fmt.Sprintf(`{"policy":"%s"}`, resolvedPolicy)
-		resultJSON, err := a.client.crypto.AssessA2AAgent(agentCardJSON, policyJSON)
-		if err == nil {
-			var assessment A2ATrustAssessment
-			if json.Unmarshal([]byte(resultJSON), &assessment) == nil {
-				// Overlay local trust-store awareness, since JACS core does not
-				// have visibility into the in-process trust store.
-				var card map[string]interface{}
-				if json.Unmarshal([]byte(agentCardJSON), &card) == nil {
-					agentID := extractCardAgentID(card)
-					if agentID != "" && a.IsTrustedA2AAgent(agentID) {
-						assessment.InTrustStore = true
-						if assessment.TrustLevel == "untrusted" {
-							assessment.TrustLevel = "explicitly_trusted"
-						}
-					}
-				}
-				return &assessment, nil
-			}
-		}
-		// Fall through to local logic on any error.
-	}
+	// FFI does not currently expose AssessA2AAgent, so use local logic.
 
 	return a.assessRemoteAgentLocal(agentCardJSON, resolvedPolicy)
 }
@@ -927,14 +877,19 @@ func resolveVerificationKeyPEM(client *Client, wrapped *A2AWrappedArtifact, publ
 		return publicKeyPEM[0], nil
 	}
 	if wrapped.JacsSignature != nil && wrapped.JacsSignature.AgentID == client.jacsID {
-		if client.privateKey == nil {
-			return "", fmt.Errorf("client private key is not configured")
+		// Use FFI to export the agent's public key
+		if client.ffi != nil {
+			agentJSON, err := client.ffi.ExportAgentJSON()
+			if err == nil {
+				var agentData map[string]interface{}
+				if json.Unmarshal(agentJSON, &agentData) == nil {
+					if pubKey, ok := agentData["publicKeyPem"].(string); ok && pubKey != "" {
+						return pubKey, nil
+					}
+				}
+			}
 		}
-		pemStr, err := MarshalPublicKeyPEM(client.privateKey.Public().(ed25519.PublicKey))
-		if err != nil {
-			return "", fmt.Errorf("failed to marshal client public key: %w", err)
-		}
-		return pemStr, nil
+		return "", fmt.Errorf("failed to export agent public key via FFI")
 	}
 	return "", fmt.Errorf("no verification key available for signer '%s'", wrapped.JacsSignature.AgentID)
 }
@@ -988,11 +943,3 @@ func resolveCardProfile(card *A2AAgentCard) string {
 	return A2AProtocolVersion04
 }
 
-// MarshalPublicKeyPEM marshals an Ed25519 public key as SPKI PEM.
-func MarshalPublicKeyPEM(publicKey ed25519.PublicKey) (string, error) {
-	der, err := x509.MarshalPKIXPublicKey(publicKey)
-	if err != nil {
-		return "", err
-	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})), nil
-}

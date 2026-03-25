@@ -57,23 +57,11 @@ func TestKeyIntegration(t *testing.T) {
 	// ── Test: register then fetch key matches ─────────────────────────────
 	t.Run("RegisterThenFetchKeyMatches", func(t *testing.T) {
 		// FetchRemoteKeyFromURL is deprecated. Use Client.FetchRemoteKey instead.
-		// This test requires a client with credentials.
-		if reg.PrivateKeyPath == "" {
-			t.Skip("no private key path in registration result")
-		}
-		password, err := ResolvePrivateKeyPassword()
-		if err != nil {
-			t.Skipf("ResolvePrivateKeyPassword: %v", err)
-		}
-		privKey, err := LoadPrivateKey(reg.PrivateKeyPath, password)
-		if err != nil {
-			t.Skipf("LoadPrivateKey: %v", err)
-		}
+		// This test requires a client with credentials via FFI.
 		cl, err := NewClient(
 			WithEndpoint(apiURL),
 			WithJACSID(jacsID),
 			WithHaiAgentID(reg.AgentID),
-			WithPrivateKey(privKey),
 		)
 		if err != nil {
 			t.Skipf("could not build client: %v", err)
@@ -100,27 +88,11 @@ func TestKeyIntegration(t *testing.T) {
 
 	// ── Test: fetch key by email via Client ──────────────────────────────
 	t.Run("FetchKeyByEmailMatches", func(t *testing.T) {
-		// Need a client with credentials to claim username.
-		if reg.PrivateKeyPath == "" {
-			t.Skip("no private key path in registration result")
-		}
-
-		// Load private key from path
-		password, err := ResolvePrivateKeyPassword()
-		if err != nil {
-			t.Skipf("ResolvePrivateKeyPassword: %v", err)
-		}
-		privKey, err := LoadPrivateKey(reg.PrivateKeyPath, password)
-		if err != nil {
-			t.Skipf("LoadPrivateKey: %v", err)
-		}
-
-		// Build a client
+		// Need a client with credentials via FFI to claim username.
 		cl, err := NewClient(
 			WithEndpoint(apiURL),
 			WithJACSID(jacsID),
 			WithHaiAgentID(reg.AgentID),
-			WithPrivateKey(privKey),
 		)
 		if err != nil {
 			t.Skipf("could not build client: %v", err)

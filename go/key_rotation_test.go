@@ -20,12 +20,7 @@ func setupRotationAgent(t *testing.T) (*Client, string, *mockFFIClient) {
 		t.Fatal(err)
 	}
 
-	// Generate keypair and write to disk
-	pub, priv, err := GenerateKeyPair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = pub
+	// Write dummy key files for the config to reference
 
 	// Write a dummy private key PEM for the config to reference
 	privPath := filepath.Join(keyDir, "agent_private_key.pem")
@@ -76,7 +71,6 @@ func setupRotationAgent(t *testing.T) (*Client, string, *mockFFIClient) {
 	cl, err := NewClient(
 		WithEndpoint("https://hai.example"),
 		WithJACSID("test-jacs-id-12345"),
-		WithPrivateKey(priv),
 		WithFFIClient(mockFFI),
 	)
 	if err != nil {
@@ -202,20 +196,14 @@ func TestRotateKeysDefaultsToRegisterTrue(t *testing.T) {
 }
 
 func TestRotateKeysErrorsWithoutJacsID(t *testing.T) {
-	_, priv, err := GenerateKeyPair()
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	mockFFI := newMockFFIClient("https://hai.example", "", "")
 	cl := &Client{
 		endpoint:  "https://hai.example",
-		privateKey: priv,
 		agentKeys: newKeyCache(),
 		ffi:       mockFFI,
 	}
 
-	_, err = cl.RotateKeys(context.Background(), &RotateKeysOptions{
+	_, err := cl.RotateKeys(context.Background(), &RotateKeysOptions{
 		RegisterWithHai: boolPtr(false),
 	})
 	if err == nil {

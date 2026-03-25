@@ -18,35 +18,17 @@ const (
 // GenerateVerifyLink creates a verification URL for a signed JACS document.
 // The document is base64url-encoded and appended as a query parameter.
 // If baseUrl is empty, DefaultEndpoint is used.
-// Uses local base64url encoding. For JACS-delegated encoding, use
-// GenerateVerifyLinkWithBackend.
 func GenerateVerifyLink(document string, baseUrl string) (string, error) {
-	return generateVerifyLinkImpl(document, baseUrl, nil)
+	return generateVerifyLinkImpl(document, baseUrl)
 }
 
-// GenerateVerifyLinkWithBackend creates a verification URL, delegating the
-// base64url encoding to the CryptoBackend when available.
-func GenerateVerifyLinkWithBackend(document string, baseUrl string, backend CryptoBackend) (string, error) {
-	return generateVerifyLinkImpl(document, baseUrl, backend)
-}
-
-func generateVerifyLinkImpl(document string, baseUrl string, backend CryptoBackend) (string, error) {
+func generateVerifyLinkImpl(document string, baseUrl string) (string, error) {
 	if baseUrl == "" {
 		baseUrl = DefaultEndpoint
 	}
 	base := strings.TrimRight(baseUrl, "/")
 
-	var encoded string
-	if backend != nil {
-		if enc, err := backend.EncodeVerifyPayload(document); err == nil {
-			encoded = enc
-		} else {
-			// Fall back to local encoding
-			encoded = base64.RawURLEncoding.EncodeToString([]byte(document))
-		}
-	} else {
-		encoded = base64.RawURLEncoding.EncodeToString([]byte(document))
-	}
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(document))
 
 	fullUrl := base + "/jacs/verify?s=" + encoded
 	if len(fullUrl) > MaxVerifyURLLen {

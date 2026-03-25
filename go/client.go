@@ -15,7 +15,6 @@ package haiai
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -42,16 +41,16 @@ const (
 )
 
 // Client is the HAI SDK client. It authenticates using JACS agent identity.
+// All cryptographic operations (signing, verification, key management) are
+// delegated to the Rust FFI layer via the FFIClient interface.
 type Client struct {
 	endpoint   string
 	jacsID     string
 	mu         sync.RWMutex // protects haiAgentID and agentEmail
 	haiAgentID string       // HAI-assigned agent UUID for email URL paths (set after registration)
 	agentEmail string       // Agent's @hai.ai email address (set after ClaimUsername)
-	privateKey ed25519.PrivateKey
-	crypto     CryptoBackend // signing/verification backend (JACS CGo) — used by local signing only
-	agentKeys  *keyCache     // Agent key cache with 5-minute TTL
-	ffi        FFIClient     // Rust FFI client for all API calls
+	agentKeys  *keyCache    // Agent key cache with 5-minute TTL
+	ffi        FFIClient    // Rust FFI client for all API calls and crypto operations
 }
 
 // Option configures a Client.
@@ -68,13 +67,6 @@ func WithEndpoint(endpoint string) Option {
 func WithJACSID(jacsID string) Option {
 	return func(c *Client) {
 		c.jacsID = jacsID
-	}
-}
-
-// WithPrivateKey sets the Ed25519 private key explicitly.
-func WithPrivateKey(key ed25519.PrivateKey) Option {
-	return func(c *Client) {
-		c.privateKey = key
 	}
 }
 
@@ -123,7 +115,8 @@ func WithFFIClient(ffiClient FFIClient) Option {
 
 // NewClient creates a new HAI client.
 //
-// With no options, it auto-discovers jacs.config.json and loads the private key.
+// With no options, it auto-discovers jacs.config.json and loads the JACS ID.
+// All cryptographic operations are delegated to the Rust FFI layer.
 // Use options to override specific settings.
 func NewClient(opts ...Option) (*Client, error) {
 	cl := &Client{
@@ -141,9 +134,9 @@ func NewClient(opts ...Option) (*Client, error) {
 		cl.endpoint = strings.TrimRight(envURL, "/")
 	}
 
-	// Auto-discover config if jacsID or privateKey are missing
+	// Auto-discover config if jacsID is missing
 	var configPath string
-	if cl.jacsID == "" || cl.privateKey == nil {
+	if cl.jacsID == "" {
 		cfg, cfgPath, err := discoverConfigWithPath()
 		if err != nil {
 			return nil, err
@@ -153,28 +146,11 @@ func NewClient(opts ...Option) (*Client, error) {
 		if cl.jacsID == "" {
 			cl.jacsID = cfg.JacsID
 		}
-
-		if cl.privateKey == nil {
-			keyPath := ResolveKeyPath(cfg, cfgPath)
-			password, err := ResolvePrivateKeyPassword()
-			if err != nil {
-				return nil, err
-			}
-
-			key, err := LoadPrivateKey(keyPath, password)
-			if err != nil {
-				return nil, err
-			}
-			cl.privateKey = key
-		}
 	}
 
 	if cl.jacsID == "" {
 		return nil, newError(ErrConfigInvalid, "jacsId is empty in config")
 	}
-
-	// Initialize crypto backend (JACS CGo agent) — used by native methods only
-	cl.crypto = newClientCryptoBackend(cl.privateKey, cl.jacsID)
 
 	// Initialize FFI client if not injected via WithFFIClient
 	if cl.ffi == nil {
@@ -252,22 +228,14 @@ func mapFFIErr(err error) error {
 	}
 }
 
-// buildAuthHeader constructs the JACS authentication header.
-// Delegates to the FFI client when available, otherwise falls back to the CryptoBackend.
+// buildAuthHeader constructs the JACS authentication header via the FFI layer.
 func (c *Client) buildAuthHeader() (string, error) {
-	if c.ffi != nil {
-		header, err := c.ffi.BuildAuthHeader()
-		if err != nil {
-			return "", wrapError(ErrSigningFailed, err, "failed to build JACS auth header via FFI")
-		}
-		return header, nil
+	if c.ffi == nil {
+		return "", newError(ErrSigningFailed, "FFI client is not initialized")
 	}
-	if c.crypto == nil {
-		return "", newError(ErrSigningFailed, "crypto backend is not initialized")
-	}
-	header, err := c.crypto.BuildAuthHeader()
+	header, err := c.ffi.BuildAuthHeader()
 	if err != nil {
-		return "", wrapError(ErrSigningFailed, err, "failed to build JACS auth header")
+		return "", wrapError(ErrSigningFailed, err, "failed to build JACS auth header via FFI")
 	}
 	return header, nil
 }
@@ -364,20 +332,18 @@ func (c *Client) Register(ctx context.Context, opts RegisterOptions) (*Registrat
 // RotateKeys rotates the agent's cryptographic keys via FFI.
 //
 // Delegates key generation, document signing, file operations, and HAI
-// re-registration to the Rust FFI layer. After successful rotation, reloads
-// the new private key from disk to keep Go-side crypto state in sync.
+// re-registration to the Rust FFI layer. The FFI layer handles key state
+// internally after rotation -- no local key reload is needed.
 func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*RotationResult, error) {
 	if c.jacsID == "" {
 		return nil, newError(ErrConfigInvalid, "cannot rotate keys: no jacsId")
 	}
 
 	registerWithHai := true
-	configPath := ""
 	if opts != nil {
 		if opts.RegisterWithHai != nil {
 			registerWithHai = *opts.RegisterWithHai
 		}
-		configPath = opts.ConfigPath
 	}
 
 	// Build FFI options JSON
@@ -400,29 +366,8 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 		return nil, wrapError(ErrInvalidResponse, err, "failed to decode rotation result")
 	}
 
-	// Reload new private key from disk to keep Go-side crypto state in sync.
-	// The Rust side wrote the new key; we need it for local signing operations
-	// (e.g., SignBenchmarkResult).
-	if configPath == "" {
-		_, cfgPath, discoverErr := discoverConfigWithPath()
-		if discoverErr == nil {
-			configPath = cfgPath
-		}
-	}
-	if configPath != "" {
-		cfg, loadErr := LoadConfig(configPath)
-		if loadErr == nil {
-			keyPath := ResolveKeyPath(cfg, configPath)
-			password, pwErr := ResolvePrivateKeyPassword()
-			if pwErr == nil {
-				newKey, keyErr := LoadPrivateKey(keyPath, password)
-				if keyErr == nil {
-					c.privateKey = newKey
-					c.crypto = newClientCryptoBackend(newKey, c.jacsID)
-				}
-			}
-		}
-	}
+	// The FFI layer handles key state internally after rotation --
+	// no local key reload needed.
 
 	return &result, nil
 }
@@ -603,14 +548,11 @@ func (c *Client) SubmitResponse(ctx context.Context, jobID string, response Mode
 	return &result, nil
 }
 
-// signResponse wraps a response payload in a JACS document envelope and signs it.
-//
-// Delegates to CryptoBackend.SignResponse and fails closed if the backend
-// cannot produce a signed envelope.
-// Retained for local signing operations (e.g., SignBenchmarkResult).
+// signResponse wraps a response payload in a JACS document envelope and signs it
+// via the FFI layer.
 func (c *Client) signResponse(response interface{}) (map[string]interface{}, error) {
-	if c.crypto == nil {
-		return nil, newError(ErrSigningFailed, "crypto backend is not initialized")
+	if c.ffi == nil {
+		return nil, newError(ErrSigningFailed, "FFI client is not initialized")
 	}
 
 	payloadBytes, err := json.Marshal(response)
@@ -618,14 +560,17 @@ func (c *Client) signResponse(response interface{}) (map[string]interface{}, err
 		return nil, wrapError(ErrSigningFailed, err, "failed to marshal response for signing")
 	}
 
-	signedJSON, signErr := c.crypto.SignResponse(string(payloadBytes))
+	sigB64, signErr := c.ffi.SignMessage(string(payloadBytes))
 	if signErr != nil {
-		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign response")
+		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign response via FFI")
 	}
 
-	var result map[string]interface{}
-	if parseErr := json.Unmarshal([]byte(signedJSON), &result); parseErr != nil {
-		return nil, wrapError(ErrSigningFailed, parseErr, "failed to parse signed response")
+	result := map[string]interface{}{
+		"response": response,
+		"jacsSignature": map[string]interface{}{
+			"signature": sigB64,
+			"agentID":   c.jacsID,
+		},
 	}
 	return result, nil
 }
@@ -1180,12 +1125,14 @@ func (c *Client) SignBenchmarkResult(result map[string]interface{}) (*SignedDocu
 	hashBytes := sha256.Sum256(dataJSON)
 	hash := fmt.Sprintf("%x", hashBytes)
 
-	// Sign the canonical data payload via CryptoBackend
-	sig, signErr := c.crypto.SignBytes(dataJSON)
-	if signErr != nil {
-		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign benchmark result")
+	// Sign the canonical data payload via FFI
+	if c.ffi == nil {
+		return nil, newError(ErrSigningFailed, "FFI client is not initialized")
 	}
-	sigB64 := base64.StdEncoding.EncodeToString(sig)
+	sigB64, signErr := c.ffi.SignMessage(string(dataJSON))
+	if signErr != nil {
+		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign benchmark result via FFI")
+	}
 
 	doc := &SignedDocument{
 		Version:      "1.0.0",

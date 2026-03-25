@@ -23,6 +23,10 @@ type mockFFIClient struct {
 
 	// buildAuthHeaderFn returns the auth header. Tests can override this.
 	buildAuthHeaderFn func() (string, error)
+	// signMessageFn signs a message. Tests can override this.
+	signMessageFn func(message string) (string, error)
+	// exportAgentJSONFn overrides ExportAgentJSON. Tests can override this.
+	exportAgentJSONFn func() (json.RawMessage, error)
 	// rotateKeysFn overrides RotateKeys for unit tests. If nil, falls back to doPost.
 	rotateKeysFn func(optionsJSON string) (json.RawMessage, error)
 }
@@ -443,6 +447,9 @@ func (m *mockFFIClient) BuildAuthHeader() (string, error) {
 }
 
 func (m *mockFFIClient) SignMessage(message string) (string, error) {
+	if m.signMessageFn != nil {
+		return m.signMessageFn(message)
+	}
 	return "", fmt.Errorf("mock: SignMessage not implemented")
 }
 
@@ -455,6 +462,9 @@ func (m *mockFFIClient) VerifyA2AArtifact(wrappedJSON string) (json.RawMessage, 
 }
 
 func (m *mockFFIClient) ExportAgentJSON() (json.RawMessage, error) {
+	if m.exportAgentJSONFn != nil {
+		return m.exportAgentJSONFn()
+	}
 	return nil, fmt.Errorf("mock: ExportAgentJSON not implemented")
 }
 

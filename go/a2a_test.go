@@ -1,26 +1,56 @@
 package haiai
 
 import (
+	"crypto/ed25519"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"os"
 	"testing"
 )
 
 func mustA2AIntegration(t *testing.T) *A2AIntegration {
 	t.Helper()
-	_, priv, err := GenerateKeyPair()
+	pub, priv, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("GenerateKeyPair: %v", err)
 	}
 
+	// Marshal public key as PEM for ExportAgentJSON
+	pubPEM := marshalTestPublicKeyPEM(t, pub)
+
+	mockFFI := newMockFFIClient("http://localhost:9999", "demo-agent", "")
+	mockFFI.signMessageFn = func(message string) (string, error) {
+		sig := ed25519.Sign(priv, []byte(message))
+		return base64.StdEncoding.EncodeToString(sig), nil
+	}
+	mockFFI.exportAgentJSONFn = func() (json.RawMessage, error) {
+		data := map[string]interface{}{
+			"jacsId":       "demo-agent",
+			"publicKeyPem": pubPEM,
+		}
+		return json.Marshal(data)
+	}
+
 	client, err := NewClient(
 		WithJACSID("demo-agent"),
-		WithPrivateKey(priv),
+		WithFFIClient(mockFFI),
 	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 	return client.GetA2A()
+}
+
+// marshalTestPublicKeyPEM marshals an ed25519 public key as PEM (test-only helper).
+func marshalTestPublicKeyPEM(t *testing.T, pub ed25519.PublicKey) string {
+	t.Helper()
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
 }
 
 func loadA2AFixture(t *testing.T, name string) map[string]interface{} {

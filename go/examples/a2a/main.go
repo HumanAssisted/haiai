@@ -44,28 +44,16 @@ func main() {
 	}
 	fmt.Printf("Agent registered: %s\n", jacsID)
 
-	// Load keys from the paths created by the FFI layer.
-	password, err := haiai.ResolvePrivateKeyPassword()
-	if err != nil {
-		log.Fatalf("resolve private key password: %v", err)
-	}
-	privateKey, err := haiai.LoadPrivateKey(reg.PrivateKeyPath, password)
-	if err != nil {
-		log.Fatalf("load private key from %s: %v", reg.PrivateKeyPath, err)
-	}
+	// Read public key PEM for display/well-known generation.
 	pubPEM, err := os.ReadFile(reg.PublicKeyPath)
 	if err != nil {
 		log.Fatalf("read public key from %s: %v", reg.PublicKeyPath, err)
 	}
-	publicKey, err := haiai.ParsePublicKey(pubPEM)
-	if err != nil {
-		log.Fatalf("parse public key: %v", err)
-	}
 
+	// Create an authenticated client -- all crypto delegated to FFI.
 	client, err := haiai.NewClient(
 		haiai.WithEndpoint(HAIURL),
 		haiai.WithJACSID(jacsID),
-		haiai.WithPrivateKey(privateKey),
 	)
 	if err != nil {
 		log.Fatalf("build client from generated credentials: %v", err)
@@ -149,7 +137,7 @@ func main() {
 	}
 
 	fmt.Println("\n=== Step 6: Generate .well-known bundle ===")
-	publicKeyB64 := base64.RawURLEncoding.EncodeToString(publicKey)
+	publicKeyB64 := base64.RawURLEncoding.EncodeToString(pubPEM)
 	wellKnown := a2a.GenerateWellKnownDocuments(card, "", publicKeyB64, agentData)
 	for path, doc := range wellKnown {
 		docJSON, _ := json.MarshalIndent(doc, "", "  ")

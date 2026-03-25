@@ -53,24 +53,13 @@ func TestEmailIntegration(t *testing.T) {
 	haiAgentID := reg.AgentID
 	t.Logf("Registered agent: jacs_id=%s, agent_id=%s", jacsID, haiAgentID)
 
-	// Load the private key from the path returned by FFI.
-	password, err := ResolvePrivateKeyPassword()
-	if err != nil {
-		t.Fatalf("ResolvePrivateKeyPassword: %v", err)
-	}
-	privKey, err := LoadPrivateKey(reg.PrivateKeyPath, password)
-	if err != nil {
-		t.Fatalf("LoadPrivateKey(%s): %v", reg.PrivateKeyPath, err)
-	}
-
-	// Build client with explicit credentials.
+	// Build client from config -- all crypto delegated to FFI.
 	// jacsID is used for auth headers; haiAgentID (the HAI-assigned UUID) is
 	// used for email URL paths.
 	client, err := NewClient(
 		WithEndpoint(apiURL),
 		WithJACSID(jacsID),
 		WithHaiAgentID(haiAgentID),
-		WithPrivateKey(privKey),
 	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

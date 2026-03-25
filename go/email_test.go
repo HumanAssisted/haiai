@@ -560,16 +560,10 @@ func TestSendEmailFallsBackToGenericErrorForUnstructuredResponse(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSendEmailErrorsWhenAgentEmailEmpty(t *testing.T) {
-	pub, priv, err := GenerateKeyPair()
-	if err != nil {
-		t.Fatalf("GenerateKeyPair: %v", err)
-	}
-	_ = pub
-
 	cl, err := NewClient(
 		WithEndpoint("http://localhost:9999"),
 		WithJACSID("test-agent-id"),
-		WithPrivateKey(priv),
+		WithFFIClient(newMockFFIClient("http://localhost:9999", "test-agent-id", "")),
 	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
@@ -881,14 +875,10 @@ func TestSendSignedEmailFailsWithoutAgentEmail(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, priv, err := GenerateKeyPair()
-	if err != nil {
-		t.Fatalf("GenerateKeyPair: %v", err)
-	}
 	cl, err := NewClient(
 		WithEndpoint(srv.URL),
 		WithJACSID("test-agent-id"),
-		WithPrivateKey(priv),
+		WithFFIClient(newMockFFIClient(srv.URL, "test-agent-id", "")),
 	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

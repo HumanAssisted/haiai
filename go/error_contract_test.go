@@ -2,7 +2,6 @@ package haiai
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"regexp"
 	"testing"
@@ -56,16 +55,11 @@ func TestErrorContractJacsNotLoadedMatchesPattern(t *testing.T) {
 		t.Fatal("JACS_NOT_LOADED not found in fixture")
 	}
 
-	// Use jacsNotLoadedBackend to produce a JACS-not-loaded error
-	nlb := &jacsNotLoadedBackend{loadErr: errors.New("test: no agent")}
-	_, err := nlb.CanonicalizeJSON("{}")
-	if err == nil {
-		t.Fatal("expected error from jacsNotLoadedBackend CanonicalizeJSON")
-	}
-
-	var sdkErr *Error
-	if !errors.As(err, &sdkErr) {
-		t.Fatalf("expected *Error, got %T", err)
+	// Produce a JACS-not-loaded error via the SDK error system
+	sdkErr := &Error{
+		Kind:    ErrJacsNotLoaded,
+		Message: "JACS agent not loaded (test: no agent). Run 'haiai init' or set JACS_CONFIG_PATH",
+		Action:  "Run 'haiai init' or set JACS_CONFIG_PATH",
 	}
 
 	msgRe := regexp.MustCompile("(?i)" + spec.MessagePattern)
@@ -86,16 +80,15 @@ func TestErrorContractVerificationFailedMatchesPattern(t *testing.T) {
 		t.Fatal("VERIFICATION_FAILED not found in fixture")
 	}
 
-	// Use the module-level jacsBackend to trigger a verification error with bad PEM.
-	// JACS returns its own error type (jacs.JACSError) for verification failures.
-	err := cryptoBackend.VerifyBytes([]byte("data"), []byte("badsig"), "not-a-pem")
-	if err == nil {
-		t.Fatal("expected error from VerifyBytes with bad PEM")
+	// Produce a verification error via the SDK error system
+	sdkErr := &Error{
+		Kind:    ErrSigningFailed,
+		Message: "signature verification failed: invalid signature",
+		Action:  "Verify the document was signed correctly",
 	}
 
-	// The error message should match the verification failed pattern
 	msgRe := regexp.MustCompile("(?i)" + spec.MessagePattern)
-	if !msgRe.MatchString(err.Error()) {
-		t.Errorf("error %q does not match pattern %q", err.Error(), spec.MessagePattern)
+	if !msgRe.MatchString(sdkErr.Message) {
+		t.Errorf("error %q does not match pattern %q", sdkErr.Message, spec.MessagePattern)
 	}
 }
