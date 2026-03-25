@@ -126,13 +126,11 @@ jobs:
           cd rust/haiinpm
           node -e "
           async function main() {
-            let binding;
-            try {
-              binding = require('./haiinpm.linux-x64-gnu.node');
-            } catch {
-              binding = require('./haiinpm.linux-x64-musl.node');
-            }
-            console.log('haiinpm native addon loaded OK');
+            const fs = require('fs');
+            const nodeFile = fs.readdirSync('.').find(f => f.endsWith('.node'));
+            if (!nodeFile) { console.error('No .node file found'); process.exit(1); }
+            const binding = require('./' + nodeFile);
+            console.log('haiinpm native addon loaded OK (' + nodeFile + ')');
             if (typeof binding.HaiClient !== 'function') {
               console.error('HaiClient not found in binding');
               process.exit(1);
