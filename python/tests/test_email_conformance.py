@@ -211,28 +211,37 @@ class TestConformanceFieldStatusValues:
 
 
 class TestConformanceSignEmailAPIContract:
-    """SignEmail must POST to /api/v1/email/sign with message/rfc822."""
+    """SignEmail must delegate to FFI sign_email_raw with base64 input."""
 
     def test_api_contract(
         self,
         loaded_config: None,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        contract = CONFORMANCE["api_contracts"]["sign_email"]
+        import base64
+
         captured: dict[str, Any] = {}
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["url"] = url
-            captured["headers"] = kwargs.get("headers", {})
-            return _FakeResponse(200, content=b"signed email bytes")
+        # The Rust FFI layer handles URL construction and Content-Type.
+        # At the Python level we verify sign_email encodes to base64 and
+        # decodes the base64 result returned by the FFI.
+        signed_bytes = b"signed email bytes"
+        signed_b64 = base64.b64encode(signed_bytes).decode("ascii")
 
-        monkeypatch.setattr("httpx.post", fake_post)
+        def fake_sign_email_raw(raw_email_b64: str) -> str:
+            captured["raw_email_b64"] = raw_email_b64
+            return signed_b64
 
         client = HaiClient()
-        client.sign_email(BASE_URL, b"raw email bytes")
+        ffi = client._get_ffi()
+        ffi.responses["sign_email_raw"] = fake_sign_email_raw
 
-        assert captured["url"].endswith(contract["path"])
-        assert captured["headers"].get("Content-Type") == contract["request_content_type"]
+        raw_email = b"raw email bytes"
+        result = client.sign_email(BASE_URL, raw_email)
+
+        expected_input_b64 = base64.b64encode(raw_email).decode("ascii")
+        assert captured["raw_email_b64"] == expected_input_b64
+        assert result == signed_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -241,29 +250,36 @@ class TestConformanceSignEmailAPIContract:
 
 
 class TestConformanceVerifyEmailAPIContract:
-    """VerifyEmail must POST to /api/v1/email/verify with message/rfc822."""
+    """VerifyEmail must delegate to FFI verify_email_raw with base64 input."""
 
     def test_api_contract(
         self,
         loaded_config: None,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        contract = CONFORMANCE["api_contracts"]["verify_email"]
+        import base64
+
         mock_json = CONFORMANCE["mock_verify_response"]["json"]
         captured: dict[str, Any] = {}
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["url"] = url
-            captured["headers"] = kwargs.get("headers", {})
-            return _FakeResponse(200, payload=mock_json)
-
-        monkeypatch.setattr("httpx.post", fake_post)
+        # The Rust FFI layer handles URL construction and Content-Type.
+        # At the Python level we verify verify_email encodes to base64 and
+        # correctly parses the dict returned by the FFI.
+        def fake_verify_email_raw(raw_email_b64: str) -> dict:
+            captured["raw_email_b64"] = raw_email_b64
+            return mock_json
 
         client = HaiClient()
-        client.verify_email(BASE_URL, b"raw email bytes")
+        ffi = client._get_ffi()
+        ffi.responses["verify_email_raw"] = fake_verify_email_raw
 
-        assert captured["url"].endswith(contract["path"])
-        assert captured["headers"].get("Content-Type") == contract["request_content_type"]
+        raw_email = b"raw email bytes"
+        result = client.verify_email(BASE_URL, raw_email)
+
+        expected_input_b64 = base64.b64encode(raw_email).decode("ascii")
+        assert captured["raw_email_b64"] == expected_input_b64
+        assert result.valid is True
+        assert result.jacs_id == "conformance-test-agent-001"
 
 
 # ---------------------------------------------------------------------------
