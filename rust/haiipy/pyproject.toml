@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "haiipy"
-version = "0.1.8"
+version = "0.2.0"
 description = "Native PyO3 binding for HAI SDK (FFI layer)"
 requires-python = ">=3.10"
 license = "Apache-2.0 OR MIT"

@@ -202,7 +202,7 @@ describe('reply', () => {
       expect(options.in_reply_to).toBe('<msg-orig@hai.ai>');
       return { message_id: 'msg-reply', status: 'queued' };
     });
-    client._setFFIAdapter(createMockFFI({ getMessage: getMessageMock, sendEmail: sendEmailMock }));
+    client._setFFIAdapter(createMockFFI({ getMessage: getMessageMock, sendSignedEmail: sendEmailMock }));
 
     const result = await client.reply('msg-orig', 'Thanks!');
     expect(result.messageId).toBe('msg-reply');
@@ -231,7 +231,7 @@ describe('reply', () => {
       expect(options.subject).toBe('Custom Subject');
       return { message_id: 'msg-reply-2', status: 'queued' };
     });
-    client._setFFIAdapter(createMockFFI({ getMessage: getMessageMock, sendEmail: sendEmailMock }));
+    client._setFFIAdapter(createMockFFI({ getMessage: getMessageMock, sendSignedEmail: sendEmailMock }));
 
     const result = await client.reply('msg-orig', 'body', 'Custom Subject');
     expect(result.messageId).toBe('msg-reply-2');
@@ -420,15 +420,15 @@ describe('sendSignedEmail', () => {
     vi.restoreAllMocks();
   });
 
-  it('delegates to sendEmail (deprecated, TASK_017)', async () => {
+  it('calls FFI sendSignedEmail for client-side JACS signing', async () => {
     const client = await makeClient();
     let capturedOptions: Record<string, unknown> | null = null;
 
-    const sendEmailMock = vi.fn(async (options: Record<string, unknown>) => {
+    const sendSignedEmailMock = vi.fn(async (options: Record<string, unknown>) => {
       capturedOptions = options;
       return { message_id: 'msg-signed-1', status: 'sent' };
     });
-    client._setFFIAdapter(createMockFFI({ sendEmail: sendEmailMock }));
+    client._setFFIAdapter(createMockFFI({ sendSignedEmail: sendSignedEmailMock }));
 
     const result = await client.sendSignedEmail({
       to: 'bob@hai.ai',
@@ -438,7 +438,6 @@ describe('sendSignedEmail', () => {
 
     expect(result.messageId).toBe('msg-signed-1');
     expect(result.status).toBe('sent');
-    // Delegates to sendEmail which uses the FFI sendEmail
     expect(capturedOptions!.to).toBe('bob@hai.ai');
     expect(capturedOptions!.subject).toBe('Hello Signed');
   });

@@ -77,12 +77,31 @@ echo "  python/pyproject.toml"
 sed -i '' "s/__version__ = \"$CURRENT\"/__version__ = \"$NEW_VERSION\"/" python/src/haiai/__init__.py 2>/dev/null || true
 echo "  python/src/haiai/__init__.py (fallback version)"
 
+# --- haiinpm package.json (napi-rs native binding) ---
+
+echo ""
+echo "haiinpm:"
+sed -i '' "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" rust/haiinpm/package.json
+echo "  rust/haiinpm/package.json: version"
+
+# --- haiipy pyproject.toml (PyO3 native binding) ---
+
+echo ""
+echo "haiipy:"
+sed -i '' "s/^version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" rust/haiipy/pyproject.toml
+echo "  rust/haiipy/pyproject.toml: version"
+
 # --- Node main package ---
 
 echo ""
 echo "Node:"
 sed -i '' "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" node/package.json
 echo "  node/package.json: version"
+
+# --- Node haiinpm dependency version ---
+
+sed -i '' "s/\"haiinpm\": \"$CURRENT\"/\"haiinpm\": \"$NEW_VERSION\"/" node/package.json
+echo "  node/package.json: haiinpm dependency"
 
 # --- Node optionalDependencies (CLI platform binary refs in main package.json) ---
 
