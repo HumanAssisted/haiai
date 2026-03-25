@@ -37,29 +37,37 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust (for haiipy build via maturin)
         uses: dtolnay/rust-toolchain@stable
-      - name: Install maturin
-        run: pip install maturin
+      - name: Create virtualenv and install maturin
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install maturin
       - name: Build haiipy native binding
         run: |
+          source .venv/bin/activate
           cd rust/haiipy
           maturin develop --release
         timeout-minutes: 10
       - name: Install dependencies
         run: |
+          source .venv/bin/activate
           cd python
           pip install -e ".[dev,mcp]"
         timeout-minutes: 5
       - name: Run tests
         run: |
+          source .venv/bin/activate
           cd python
           pytest -v --timeout=60
         timeout-minutes: 10
       - name: Smoke import
         run: |
+          source .venv/bin/activate
           cd python
           python -c "import haiai; import haiai.integrations as i; assert hasattr(haiai, 'HaiClient'); assert callable(i.langgraph_wrap_tool_call)"
       - name: Smoke test haiipy FFI binding
         run: |
+          source .venv/bin/activate
           python -c "
           import haiipy
           print('haiipy module loaded OK')
@@ -102,7 +110,9 @@ jobs:
       - name: Install dependencies
         run: |
           cd node
-          npm ci
+          # haiinpm is not yet on npm registry; point at the local build.
+          npm pkg set "dependencies.haiinpm=file:../rust/haiinpm"
+          npm install
       - name: Run tests
         run: |
           cd node
