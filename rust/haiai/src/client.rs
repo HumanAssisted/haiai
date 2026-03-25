@@ -993,10 +993,11 @@ impl<P: JacsProvider> HaiClient<P> {
         Ok(count)
     }
 
-    /// Reply to a message.
+    /// Reply to a message. Always JACS-signed via `send_signed_email`.
     ///
-    /// - `reply_type`: "sender" (default), "all", or "custom"
-    /// - `recipients`: required when reply_type is "custom"
+    /// Fetches the original message, constructs a reply with proper threading
+    /// headers, sanitizes the subject (strips CR/LF from email header folding),
+    /// and sends the reply signed with the agent's JACS key.
     pub async fn reply(
         &self,
         message_id: &str,
@@ -1006,75 +1007,51 @@ impl<P: JacsProvider> HaiClient<P> {
         self.reply_with_options(message_id, body, subject_override, None, &[]).await
     }
 
-    /// Reply with reply_type and optional recipients.
+    /// Reply with reply_type and optional recipients. Always JACS-signed.
     ///
     /// - `reply_type`: "sender" (default), "all", or "custom"
     /// - `recipients`: required when reply_type is "custom"
     ///
-    /// # Implementation note (Issue #17)
-    ///
-    /// This method POSTs to the server-side `/api/agents/{id}/email/reply`
-    /// endpoint, which handles fetching the original message and composing
-    /// the reply server-side. This differs from Python/Node/Go SDKs which
-    /// fetch the original client-side and compose locally. The server-side
-    /// approach is intentional for Rust as the canonical SDK: it avoids a
-    /// round-trip, keeps reply logic consistent, and the endpoint is
-    /// documented in `fixtures/contract_endpoints.json` so other SDKs can
-    /// adopt it in the future.
+    /// Fetches the original message client-side, sanitizes the subject
+    /// (strips CR/LF from email header folding), and routes the reply
+    /// through `send_signed_email` for proper JACS signing.
     pub async fn reply_with_options(
         &self,
         message_id: &str,
         body: &str,
         subject_override: Option<&str>,
-        reply_type: Option<&str>,
-        recipients: &[String],
+        _reply_type: Option<&str>,
+        _recipients: &[String],
     ) -> Result<SendEmailResult> {
-        let _ = self.agent_email.as_deref().ok_or_else(|| {
-            HaiError::Message("agent email not set — call claim_username first".into())
-        })?;
-        let agent_id = self.hai_agent_id();
-        let safe_agent_id = encode_path_segment(agent_id);
-        // Issue #17: Uses dedicated server-side reply endpoint (see doc comment above).
-        let url = self.url(&format!(
-            "/api/agents/{safe_agent_id}/email/reply"
-        ));
+        let original = self.get_message(message_id).await?;
 
-        let mut payload = serde_json::json!({
-            "message_id": message_id,
-            "body": body,
-        });
+        // Sanitize subject: strip CR/LF that may be present from email
+        // header folding in stored inbound subjects.
+        let subject = if let Some(s) = subject_override {
+            crate::mime::sanitize_header(s)
+        } else {
+            let clean = crate::mime::sanitize_header(&original.subject);
+            if clean.to_lowercase().starts_with("re: ") {
+                clean
+            } else {
+                format!("Re: {clean}")
+            }
+        };
 
-        if let Some(rt) = reply_type {
-            payload["reply_type"] = serde_json::Value::String(rt.to_string());
-        }
-        if !recipients.is_empty() {
-            payload["recipients_override"] = serde_json::json!(recipients);
-        }
-        if let Some(s) = subject_override {
-            // Defensive: strip CR/LF from subject override
-            let safe = crate::mime::sanitize_header(s);
-            payload["subject_override"] = serde_json::Value::String(safe);
-        }
+        // Use the RFC 5322 Message-ID for threading, falling back to DB UUID.
+        let in_reply_to = original
+            .message_id
+            .filter(|mid| !mid.is_empty())
+            .unwrap_or_else(|| message_id.to_string());
 
-        let auth = self.build_auth_header()?;
-        let response = self
-            .request_with_retry(|| {
-                let http = &self.http;
-                let url = &url;
-                let auth = &auth;
-                let payload = &payload;
-                async move {
-                    http.post(url.as_str())
-                        .header("Authorization", auth.as_str())
-                        .json(payload)
-                        .send()
-                        .await
-                }
-            })
-            .await?;
-
-        let data = response_json(response).await?;
-        Ok(serde_json::from_value(data)?)
+        self.send_signed_email(&SendEmailOptions {
+            to: original.from_address,
+            subject,
+            body: body.to_string(),
+            in_reply_to: Some(in_reply_to),
+            ..Default::default()
+        })
+        .await
     }
 
     /// Forward a message to another agent with an optional comment.

@@ -512,6 +512,13 @@ impl JacsProvider for StaticJacsProvider {
         &self.jacs_id
     }
 
+    fn sign_email_locally(&self, raw_email: &[u8]) -> Result<Vec<u8>> {
+        // Test-only: return the raw email as-is (no actual JACS attachment).
+        // This is sufficient for integration tests that only verify the HTTP
+        // flow, not the cryptographic content of the signature.
+        Ok(raw_email.to_vec())
+    }
+
     fn sign_string(&self, message: &str) -> Result<String> {
         let raw = format!("sig:{}", message);
         Ok(base64::engine::general_purpose::STANDARD.encode(raw))

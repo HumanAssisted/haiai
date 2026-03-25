@@ -350,7 +350,7 @@ impl EmailAttachment {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SendEmailOptions {
     pub to: String,
     pub subject: String,
