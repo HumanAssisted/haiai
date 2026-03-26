@@ -90,6 +90,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          verbose: true
 
   # ============================================================
   # Build haiai platform wheels (CLI binary + pure Python)
@@ -116,6 +117,9 @@ jobs:
             wheel_plat: win_amd64
             os: windows-latest
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     env:
       VERSION: ${{ needs.extract-version.outputs.version }}
     steps:
@@ -134,7 +138,7 @@ jobs:
             EXT="tar.gz"
           fi
           URL="https://github.com/HumanAssisted/haiai/releases/download/rust/v${VERSION}/${ASSET}.${EXT}"
-          for i in 1 2 3 4 5 6; do
+          for i in $(seq 1 15); do
             if curl -fLO "$URL"; then
               echo "Downloaded ${ASSET}.${EXT}"
               exit 0
@@ -142,7 +146,7 @@ jobs:
             echo "Attempt $i failed, Rust release may still be building. Waiting 60s..."
             sleep 60
           done
-          echo "::error::Failed to download $URL after 6 attempts"
+          echo "::error::Failed to download $URL after 15 attempts"
           exit 1
       - name: Embed binary into package
         run: |
