@@ -155,7 +155,7 @@ jobs:
       - name: Update package version
         run: |
           cd python
-          sed -i "s/^version = .*/version = \"${VERSION}\"/" pyproject.toml
+          sed -i.bak "s/^version = .*/version = \"${VERSION}\"/" pyproject.toml && rm -f pyproject.toml.bak
       - name: Build platform-specific wheel
         run: |
           cd python
