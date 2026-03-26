@@ -248,6 +248,7 @@ mod tests {
             in_reply_to: None,
             attachments: vec![],
             labels: vec![],
+            append_footer: None,
         };
         assert!(validate_send_email(&opts).is_ok());
     }
@@ -263,6 +264,7 @@ mod tests {
             in_reply_to: None,
             attachments: vec![],
             labels: vec![],
+            append_footer: None,
         };
         assert!(validate_send_email(&opts).is_err());
     }

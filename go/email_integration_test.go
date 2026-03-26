@@ -11,9 +11,6 @@ package haiai
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"os"
 	"strings"
@@ -49,35 +46,20 @@ func TestEmailIntegration(t *testing.T) {
 		t.Fatalf("RegisterNewAgentWithEndpoint: %v", err)
 	}
 
-	jacsID := reg.Registration.JacsID
+	jacsID := reg.JacsID
 	if jacsID == "" {
-		jacsID = reg.Registration.AgentID
+		jacsID = reg.AgentID
 	}
-	haiAgentID := reg.Registration.AgentID
+	haiAgentID := reg.AgentID
 	t.Logf("Registered agent: jacs_id=%s, agent_id=%s", jacsID, haiAgentID)
 
-	// Parse the returned private key PEM back into ed25519.PrivateKey.
-	block, _ := pem.Decode(reg.PrivateKey)
-	if block == nil {
-		t.Fatal("failed to decode private key PEM")
-	}
-	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		t.Fatalf("ParsePKCS8PrivateKey: %v", err)
-	}
-	privKey, ok := parsed.(ed25519.PrivateKey)
-	if !ok {
-		t.Fatal("parsed key is not ed25519.PrivateKey")
-	}
-
-	// Build client with explicit credentials.
+	// Build client from config -- all crypto delegated to FFI.
 	// jacsID is used for auth headers; haiAgentID (the HAI-assigned UUID) is
 	// used for email URL paths.
 	client, err := NewClient(
 		WithEndpoint(apiURL),
 		WithJACSID(jacsID),
 		WithHaiAgentID(haiAgentID),
-		WithPrivateKey(privKey),
 	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

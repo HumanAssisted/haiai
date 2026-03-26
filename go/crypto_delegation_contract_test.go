@@ -2,7 +2,6 @@ package haiai
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"sort"
 	"testing"
@@ -144,45 +143,38 @@ func TestCryptoDelegationFixtureAssertions(t *testing.T) {
 	}
 }
 
-func TestCryptoDelegationJacsNotLoadedErrors(t *testing.T) {
-	// When a JACS agent cannot be loaded, all crypto operations should
-	// return structured errors directing the developer to load JACS.
-	nlb := &jacsNotLoadedBackend{loadErr: errors.New("test: no agent")}
+func TestFFIDelegationBuildAuthHeaderRequiresFFI(t *testing.T) {
+	// A client with no FFI should fail to build auth headers.
+	cl := &Client{
+		jacsID: "test-agent",
+	}
+	_, err := cl.buildAuthHeader()
+	if err == nil {
+		t.Fatal("expected error from buildAuthHeader without FFI client")
+	}
+}
 
-	tests := []struct {
-		name string
-		fn   func() error
-	}{
-		{"SignString", func() error { _, err := nlb.SignString("msg"); return err }},
-		{"SignBytes", func() error { _, err := nlb.SignBytes([]byte("msg")); return err }},
-		{"SignRequest", func() error { _, err := nlb.SignRequest("{}"); return err }},
-		{"VerifyResponse", func() error { _, err := nlb.VerifyResponse("{}"); return err }},
-		{"CanonicalizeJSON", func() error { _, err := nlb.CanonicalizeJSON("{}"); return err }},
-		{"SignResponse", func() error { _, err := nlb.SignResponse("{}"); return err }},
-		{"EncodeVerifyPayload", func() error { _, err := nlb.EncodeVerifyPayload("doc"); return err }},
-		{"UnwrapSignedEvent", func() error { _, err := nlb.UnwrapSignedEvent("{}", "{}"); return err }},
-		{"BuildAuthHeader", func() error { _, err := nlb.BuildAuthHeader(); return err }},
+func TestFFIDelegationSignMessageDelegates(t *testing.T) {
+	// Verify that SignMessage delegates to the FFI client.
+	var called bool
+	mockFFI := newMockFFIClient("http://localhost:9999", "test-agent", "")
+	mockFFI.signMessageFn = func(message string) (string, error) {
+		called = true
+		return "test-signature", nil
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			err := tc.fn()
-			if err == nil {
-				t.Fatal("expected error from jacsNotLoadedBackend")
-			}
-
-			var sdkErr *Error
-			if !errors.As(err, &sdkErr) {
-				t.Fatalf("expected *Error, got %T: %v", err, err)
-			}
-
-			if sdkErr.Kind != ErrJacsNotLoaded {
-				t.Errorf("expected ErrJacsNotLoaded, got Kind=%d", sdkErr.Kind)
-			}
-
-			if sdkErr.Action == "" {
-				t.Error("expected non-empty Action hint")
-			}
-		})
+	cl := &Client{
+		jacsID: "test-agent",
+		ffi:    mockFFI,
+	}
+	sig, err := cl.ffi.SignMessage("test")
+	if err != nil {
+		t.Fatalf("SignMessage: %v", err)
+	}
+	if !called {
+		t.Fatal("expected FFI SignMessage to be called")
+	}
+	if sig != "test-signature" {
+		t.Fatalf("expected 'test-signature', got %q", sig)
 	}
 }

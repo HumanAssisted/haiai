@@ -1,5 +1,5 @@
 [workspace]
-members = ["haiai", "hai-mcp", "haiai-cli"]
+members = ["haiai", "hai-mcp", "haiai-cli", "hai-binding-core", "haiinpm", "haiipy", "haiigo"]
 resolver = "2"
 
 [workspace.package]
@@ -23,9 +23,8 @@ url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 sha2 = "0.10"
 
-# Local development: uncomment to build against ../JACS instead of crates.io.
-# CI/publish: this MUST be commented out. JACS must be published first.
-[patch.crates-io]
-jacs = { path = "../../JACS/jacs" }
-jacs-binding-core = { path = "../../JACS/binding-core" }
-jacs-mcp = { path = "../../JACS/jacs-mcp" }
+# Local development: uncomment to build against local JACS instead of crates.io.
+# [patch.crates-io]
+# jacs = { path = "../../JACS/jacs" }
+# jacs-binding-core = { path = "../../JACS/binding-core" }
+# jacs-mcp = { path = "../../JACS/jacs-mcp" }

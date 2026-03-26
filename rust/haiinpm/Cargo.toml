@@ -1,0 +1,20 @@
+[package]
+name = "haiinpm"
+version = "0.2.0"
+description = "Node.js napi-rs binding for HAI SDK"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+hai-binding-core = { path = "../hai-binding-core" }
+napi = { version = "3", features = ["async", "napi8"] }
+napi-derive = "3"
+
+[build-dependencies]
+napi-build = "2"

@@ -178,15 +178,11 @@ class TestRotateKeysGeneratesNewKeypair:
 
 
 class TestRotateKeysRegistersWithHai:
-    @patch("haiai.client.httpx.post")
-    def test_registers_with_hai(self, mock_post, agent_dir):
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {"agent_id": "hai-agent-uuid", "registered_at": "2026-03-02"},
-        )
-
+    def test_registers_with_hai(self, agent_dir):
         _load_agent(agent_dir)
         client = HaiClient()
+        # The _auto_mock_ffi fixture ensures _get_ffi() returns a MockFFIAdapter.
+        # MockFFIAdapter.register returns {} by default, so registration succeeds.
 
         result = client.rotate_keys(
             hai_url="https://hai.ai",
@@ -195,21 +191,34 @@ class TestRotateKeysRegistersWithHai:
         )
 
         assert result.registered_with_hai is True
-        assert mock_post.called
-        call_args = mock_post.call_args
-        assert "/api/v1/agents/register" in call_args[0][0]
+        # Verify FFI register was called (after rotation resets _ffi)
+        ffi = client._get_ffi()
+        register_calls = [c for c in ffi.calls if c[0] == "register"]
+        assert len(register_calls) >= 1
 
 
 class TestRotateKeysHaiFailureKeepsLocal:
-    @patch("haiai.client.httpx.post")
-    def test_hai_failure_preserves_local(self, mock_post, agent_dir):
-        mock_post.return_value = MagicMock(
-            status_code=500,
-            text="Internal Server Error",
-        )
-
+    def test_hai_failure_preserves_local(self, agent_dir, monkeypatch):
         _load_agent(agent_dir)
         client = HaiClient()
+
+        # After rotation, client resets _ffi and calls _get_ffi() which creates
+        # a new MockFFIAdapter. We need to make register fail on the new FFI.
+        # Patch _get_ffi on the class to inject our error-raising mock.
+        from haiai.client import HaiClient as _HC
+        from haiai.errors import HaiApiError
+
+        original_get_ffi = _HC._get_ffi
+
+        def patched_get_ffi(self_client):
+            ffi = original_get_ffi(self_client)
+            # Make register always raise
+            def raise_on_register(options):
+                raise HaiApiError("Internal Server Error", status_code=500)
+            ffi.responses["register"] = raise_on_register
+            return ffi
+
+        monkeypatch.setattr(_HC, "_get_ffi", patched_get_ffi)
 
         result = client.rotate_keys(
             hai_url="https://hai.ai",

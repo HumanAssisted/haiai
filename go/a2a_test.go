@@ -1,26 +1,84 @@
 package haiai
 
 import (
+	"crypto/ed25519"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"os"
 	"testing"
 )
 
 func mustA2AIntegration(t *testing.T) *A2AIntegration {
 	t.Helper()
-	_, priv, err := GenerateKeyPair()
+	pub, priv, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("GenerateKeyPair: %v", err)
 	}
 
+	// Marshal public key as PEM for ExportAgentJSON
+	pubPEM := marshalTestPublicKeyPEM(t, pub)
+
+	mockFFI := newMockFFIClient("http://localhost:9999", "demo-agent", "")
+	mockFFI.signMessageFn = func(message string) (string, error) {
+		sig := ed25519.Sign(priv, []byte(message))
+		return base64.StdEncoding.EncodeToString(sig), nil
+	}
+	mockFFI.exportAgentJSONFn = func() (json.RawMessage, error) {
+		data := map[string]interface{}{
+			"jacsId":       "demo-agent",
+			"publicKeyPem": pubPEM,
+		}
+		return json.Marshal(data)
+	}
+	mockFFI.verifyA2AArtifactFn = func(wrappedJSON string) (json.RawMessage, error) {
+		// Parse the wrapped artifact, verify the signature using the test key
+		var wrapped A2AWrappedArtifact
+		if err := json.Unmarshal([]byte(wrappedJSON), &wrapped); err != nil {
+			return nil, err
+		}
+		if wrapped.JacsSignature == nil {
+			result, _ := json.Marshal(map[string]interface{}{"valid": false, "error": "no signature"})
+			return result, nil
+		}
+		sigBytes, err := base64.StdEncoding.DecodeString(wrapped.JacsSignature.Signature)
+		if err != nil {
+			result, _ := json.Marshal(map[string]interface{}{"valid": false, "error": "bad base64"})
+			return result, nil
+		}
+		clone := wrapped
+		clone.JacsSignature = nil
+		canonical, _ := json.Marshal(clone)
+		valid := ed25519.Verify(pub, canonical, sigBytes)
+		result, _ := json.Marshal(A2AArtifactVerificationResult{
+			Valid:            valid,
+			SignerID:         wrapped.JacsSignature.AgentID,
+			ArtifactType:     wrapped.JacsType,
+			Timestamp:        wrapped.JacsVersionDate,
+			OriginalArtifact: wrapped.A2AArtifact,
+		})
+		return result, nil
+	}
+
 	client, err := NewClient(
 		WithJACSID("demo-agent"),
-		WithPrivateKey(priv),
+		WithFFIClient(mockFFI),
 	)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 	return client.GetA2A()
+}
+
+// marshalTestPublicKeyPEM marshals an ed25519 public key as PEM (test-only helper).
+func marshalTestPublicKeyPEM(t *testing.T, pub ed25519.PublicKey) string {
+	t.Helper()
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
 }
 
 func loadA2AFixture(t *testing.T, name string) map[string]interface{} {

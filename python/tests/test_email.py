@@ -31,7 +31,6 @@ from haiai.models import (
     SendEmailResult,
 )
 
-
 BASE_URL = "https://test.hai.ai"
 JACS_ID = "test-jacs-id-1234"
 TEST_AGENT_EMAIL = f"{JACS_ID}@hai.ai"
@@ -76,66 +75,55 @@ class TestSendEmailServerSideSigning:
     def test_send_email_no_client_side_signing(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """send_email payload must NOT contain jacs_signature or jacs_timestamp."""
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["url"] = url
-            captured["json"] = kwargs.get("json", {})
-            captured["headers"] = kwargs.get("headers", {})
-            return _FakeResponse(200, {"message_id": "msg-1", "status": "sent"})
+        mock_ffi.responses["send_email"] = {"message_id": "msg-1", "status": "sent"}
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
-
-        result = HaiClient().send_email(BASE_URL, "bob@hai.ai", "Hello", "World")
+        result = client.send_email(BASE_URL, "bob@hai.ai", "Hello", "World")
 
         assert result.message_id == "msg-1"
         assert result.status == "sent"
 
-        payload = captured["json"]
-        assert payload["to"] == "bob@hai.ai"
-        assert payload["subject"] == "Hello"
-        assert payload["body"] == "World"
+        # Verify FFI was called with correct options
+        assert len(mock_ffi.calls) == 1
+        method, args, kwargs = mock_ffi.calls[0]
+        assert method == "send_email"
+        options = args[0]
+        assert options["to"] == "bob@hai.ai"
+        assert options["subject"] == "Hello"
+        assert options["body"] == "World"
         # Server handles JACS signing -- client must NOT send these
-        assert "jacs_signature" not in payload
-        assert "jacs_timestamp" not in payload
+        assert "jacs_signature" not in options
+        assert "jacs_timestamp" not in options
 
     def test_send_email_passes_in_reply_to(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """in_reply_to must be forwarded to payload."""
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, {"message_id": "msg-4", "status": "sent"})
+        mock_ffi.responses["send_email"] = {"message_id": "msg-4", "status": "sent"}
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
+        client.send_email(BASE_URL, "bob@hai.ai", "Re: Hello", "Reply body", in_reply_to="orig-id")
 
-        HaiClient().send_email(BASE_URL, "bob@hai.ai", "Re: Hello", "Reply body", in_reply_to="orig-id")
-
-        assert captured["json"]["in_reply_to"] == "orig-id"
+        assert len(mock_ffi.calls) == 1
+        options = mock_ffi.calls[0][1][0]
+        assert options["in_reply_to"] == "orig-id"
 
     def test_send_email_with_attachments_includes_attachment_data(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """send_email with attachments must include attachments array in payload."""
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, {"message_id": "msg-att", "status": "sent"})
-
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
+        mock_ffi.responses["send_email"] = {"message_id": "msg-att", "status": "sent"}
 
         attachments = [
             {
@@ -149,27 +137,27 @@ class TestSendEmailServerSideSigning:
                 "data": b"\x89PNG\r\n\x1a\nfakedata",
             },
         ]
-        HaiClient().send_email(
+        client.send_email(
             BASE_URL, "bob@hai.ai", "With attachments", "Body", attachments=attachments,
         )
 
-        payload = captured["json"]
-        assert "attachments" in payload
-        assert len(payload["attachments"]) == 2
+        options = mock_ffi.calls[0][1][0]
+        assert "attachments" in options
+        assert len(options["attachments"]) == 2
 
-        att0 = payload["attachments"][0]
+        att0 = options["attachments"][0]
         assert "data_base64" in att0
         assert att0["filename"] == "hello.txt"
         assert att0["content_type"] == "text/plain"
         # Verify base64 round-trips correctly
         assert base64.b64decode(att0["data_base64"]) == b"Hello, world!"
 
-        att1 = payload["attachments"][1]
+        att1 = options["attachments"][1]
         assert att1["filename"] == "image.png"
         assert att1["content_type"] == "image/png"
         # No client-side signing fields
-        assert "jacs_signature" not in payload
-        assert "jacs_timestamp" not in payload
+        assert "jacs_signature" not in options
+        assert "jacs_timestamp" not in options
 
     def test_send_email_no_agent_email_raises(
         self,
@@ -198,91 +186,94 @@ class TestSendEmailErrors:
     def test_email_not_active_on_403_allocated(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(403, text='{"error":"Email status: allocated"}')
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
+        def raise_on_send(options: Any) -> Any:
+            raise EmailNotActive("Email status: allocated", status_code=403)
+
+        mock_ffi.responses["send_email"] = raise_on_send
 
         with pytest.raises(EmailNotActive):
-            HaiClient().send_email(BASE_URL, "bob@hai.ai", "Sub", "Body")
+            client.send_email(BASE_URL, "bob@hai.ai", "Sub", "Body")
 
     def test_rate_limited_on_429(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(
-                429,
-                payload={"error": "rate limited", "resets_at": "2026-03-01T00:00:00Z"},
-            )
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
+        def raise_on_send(options: Any) -> Any:
+            raise RateLimited("rate limited", status_code=429, resets_at="2026-03-01T00:00:00Z")
+
+        mock_ffi.responses["send_email"] = raise_on_send
 
         with pytest.raises(RateLimited) as exc_info:
-            HaiClient().send_email(BASE_URL, "bob@hai.ai", "Sub", "Body")
+            client.send_email(BASE_URL, "bob@hai.ai", "Sub", "Body")
 
         assert exc_info.value.resets_at == "2026-03-01T00:00:00Z"
 
     def test_recipient_not_found_on_400_recipient(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(400, text='{"error":"Recipient not found"}')
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
+        def raise_on_send(options: Any) -> Any:
+            raise RecipientNotFound("Recipient not found", status_code=400)
+
+        mock_ffi.responses["send_email"] = raise_on_send
 
         with pytest.raises(RecipientNotFound):
-            HaiClient().send_email(BASE_URL, "nobody@hai.ai", "Sub", "Body")
+            client.send_email(BASE_URL, "nobody@hai.ai", "Sub", "Body")
 
     def test_subject_too_long_on_400_subject(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(400, text='{"error":"Subject exceeds maximum length"}')
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
+        def raise_on_send(options: Any) -> Any:
+            raise SubjectTooLong("Subject exceeds maximum length", status_code=400)
+
+        mock_ffi.responses["send_email"] = raise_on_send
 
         with pytest.raises(SubjectTooLong):
-            HaiClient().send_email(BASE_URL, "bob@hai.ai", "x" * 1000, "Body")
+            client.send_email(BASE_URL, "bob@hai.ai", "x" * 1000, "Body")
 
     def test_body_too_large_on_400_body(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(400, text='{"error":"Body exceeds maximum size"}')
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
+        def raise_on_send(options: Any) -> Any:
+            raise BodyTooLarge("Body exceeds maximum size", status_code=400)
+
+        mock_ffi.responses["send_email"] = raise_on_send
 
         with pytest.raises(BodyTooLarge):
-            HaiClient().send_email(BASE_URL, "bob@hai.ai", "Sub", "x" * 100_000)
+            client.send_email(BASE_URL, "bob@hai.ai", "Sub", "x" * 100_000)
 
     def test_auth_error_on_401(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(401, text="Unauthorized")
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
+        def raise_on_send(options: Any) -> Any:
+            raise HaiAuthError("Unauthorized", status_code=401)
+
+        mock_ffi.responses["send_email"] = raise_on_send
 
         with pytest.raises(HaiAuthError):
-            HaiClient().send_email(BASE_URL, "bob@hai.ai", "Sub", "Body")
+            client.send_email(BASE_URL, "bob@hai.ai", "Sub", "Body")
 
 
 # ---------------------------------------------------------------
@@ -295,7 +286,6 @@ class TestGetMessage:
     def test_get_message_success(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         msg_data = {
             "id": "msg-42",
@@ -313,13 +303,12 @@ class TestGetMessage:
             "jacs_verified": True,
         }
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(200, msg_data)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        mock_ffi.responses["get_message"] = msg_data
 
-        result = HaiClient().get_message(BASE_URL, "msg-42")
+        result = client.get_message(BASE_URL, "msg-42")
         assert isinstance(result, EmailMessage)
         assert result.id == "msg-42"
         assert result.from_address == "alice@hai.ai"
@@ -333,16 +322,18 @@ class TestGetMessage:
     def test_get_message_404(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(404, text="Not found")
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+
+        def raise_not_found(message_id: str) -> Any:
+            raise HaiApiError("message not found", status_code=404)
+
+        mock_ffi.responses["get_message"] = raise_not_found
 
         with pytest.raises(HaiApiError) as exc_info:
-            HaiClient().get_message(BASE_URL, "nonexistent")
+            client.get_message(BASE_URL, "nonexistent")
         assert exc_info.value.status_code == 404
 
 
@@ -356,30 +347,30 @@ class TestDeleteMessage:
     def test_delete_message_success(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def fake_delete(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(204)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "delete", fake_delete)
+        # delete_message returns None (void), so no response needed
 
-        result = HaiClient().delete_message(BASE_URL, "msg-42")
+        result = client.delete_message(BASE_URL, "msg-42")
         assert result is True
 
     def test_delete_message_404(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def fake_delete(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(404, text="Not found")
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "delete", fake_delete)
+
+        def raise_not_found(message_id: str) -> Any:
+            raise HaiApiError("message not found", status_code=404)
+
+        mock_ffi.responses["delete_message"] = raise_not_found
 
         with pytest.raises(HaiApiError) as exc_info:
-            HaiClient().delete_message(BASE_URL, "nonexistent")
+            client.delete_message(BASE_URL, "nonexistent")
         assert exc_info.value.status_code == 404
 
 
@@ -393,20 +384,17 @@ class TestMarkUnread:
     def test_mark_unread_success(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["url"] = url
-            return _FakeResponse(200)
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
-
-        result = HaiClient().mark_unread(BASE_URL, "msg-42")
+        result = client.mark_unread(BASE_URL, "msg-42")
         assert result is True
-        assert "/messages/msg-42/unread" in captured["url"]
+        # Verify FFI was called with the message_id
+        assert len(mock_ffi.calls) == 1
+        assert mock_ffi.calls[0][0] == "mark_unread"
+        assert mock_ffi.calls[0][1][0] == "msg-42"
 
 
 # ---------------------------------------------------------------
@@ -419,7 +407,6 @@ class TestSearchMessages:
     def test_search_messages_basic(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         search_results = [
             {
@@ -435,47 +422,43 @@ class TestSearchMessages:
                 "delivery_status": "delivered",
             },
         ]
-        captured: dict[str, Any] = {}
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["params"] = kwargs.get("params", {})
-            return _FakeResponse(200, search_results)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        mock_ffi.responses["search_messages"] = search_results
 
-        result = HaiClient().search_messages(
+        result = client.search_messages(
             BASE_URL, q="hello", direction="inbound", limit=10,
         )
         assert len(result) == 1
         assert result[0].id == "msg-1"
-        assert captured["params"]["q"] == "hello"
-        assert captured["params"]["direction"] == "inbound"
-        assert captured["params"]["limit"] == 10
+
+        # Verify the options passed to FFI
+        options = mock_ffi.calls[0][1][0]
+        assert options["q"] == "hello"
+        assert options["direction"] == "inbound"
+        assert options["limit"] == 10
 
     def test_search_messages_optional_params(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Only set params should be sent."""
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["params"] = kwargs.get("params", {})
-            return _FakeResponse(200, [])
+        mock_ffi.responses["search_messages"] = []
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        client.search_messages(BASE_URL, from_address="alice@hai.ai")
 
-        HaiClient().search_messages(BASE_URL, from_address="alice@hai.ai")
-        params = captured["params"]
-        assert params["from_address"] == "alice@hai.ai"
-        assert "q" not in params
-        assert "direction" not in params
-        assert "to_address" not in params
-        assert "since" not in params
-        assert "until" not in params
+        options = mock_ffi.calls[0][1][0]
+        assert options["from_address"] == "alice@hai.ai"
+        assert "q" not in options
+        assert "direction" not in options
+        assert "to_address" not in options
+        assert "since" not in options
+        assert "until" not in options
 
 
 # ---------------------------------------------------------------
@@ -488,29 +471,25 @@ class TestGetUnreadCount:
     def test_get_unread_count_success(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(200, {"count": 5})
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        mock_ffi.responses["get_unread_count"] = 5
 
-        result = HaiClient().get_unread_count(BASE_URL)
+        result = client.get_unread_count(BASE_URL)
         assert result == 5
 
     def test_get_unread_count_zero(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(200, {"count": 0})
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        mock_ffi.responses["get_unread_count"] = 0
 
-        result = HaiClient().get_unread_count(BASE_URL)
+        result = client.get_unread_count(BASE_URL)
         assert result == 0
 
 
@@ -524,11 +503,8 @@ class TestReply:
     def test_reply_fetches_original_and_sends(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """reply() should GET the original, then POST with Re: subject."""
-        call_log: list[tuple[str, str]] = []
-
         original_msg = {
             "id": "msg-orig",
             "from_address": "alice@hai.ai",
@@ -542,40 +518,30 @@ class TestReply:
             "delivery_status": "delivered",
         }
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            call_log.append(("GET", url))
-            return _FakeResponse(200, original_msg)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            call_log.append(("POST", url))
-            call_log.append(("POST_JSON", kwargs.get("json", {})))
-            return _FakeResponse(200, {"message_id": "msg-reply", "status": "sent"})
+        mock_ffi.responses["get_message"] = original_msg
+        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-reply", "status": "sent"}
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
-        monkeypatch.setattr(httpx, "post", fake_post)
-
-        result = HaiClient().reply(BASE_URL, "msg-orig", "The answer is 4.")
+        result = client.reply(BASE_URL, "msg-orig", "The answer is 4.")
 
         assert result.message_id == "msg-reply"
-        # Verify GET was called first
-        assert call_log[0][0] == "GET"
-        assert "/messages/msg-orig" in call_log[0][1]
-        # Verify POST was called with correct payload
-        post_payload = call_log[2][1]
-        assert post_payload["to"] == "alice@hai.ai"
-        assert post_payload["subject"] == "Re: Question"
-        assert post_payload["body"] == "The answer is 4."
-        assert post_payload["in_reply_to"] == "<msg-orig@hai.ai>"
+        # Verify get_message was called first, then send_signed_email
+        assert mock_ffi.calls[0][0] == "get_message"
+        assert mock_ffi.calls[0][1][0] == "msg-orig"
+        assert mock_ffi.calls[1][0] == "send_signed_email"
+        send_options = mock_ffi.calls[1][1][0]
+        assert send_options["to"] == "alice@hai.ai"
+        assert send_options["subject"] == "Re: Question"
+        assert send_options["body"] == "The answer is 4."
+        assert send_options["in_reply_to"] == "<msg-orig@hai.ai>"
 
     def test_reply_with_custom_subject(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Custom subject should override the default Re: prefix."""
-        captured: dict[str, Any] = {}
-
         original_msg = {
             "id": "msg-orig",
             "from_address": "alice@hai.ai",
@@ -589,96 +555,76 @@ class TestReply:
             "delivery_status": "delivered",
         }
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(200, original_msg)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, {"message_id": "msg-reply", "status": "sent"})
+        mock_ffi.responses["get_message"] = original_msg
+        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-reply", "status": "sent"}
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
-        monkeypatch.setattr(httpx, "post", fake_post)
-
-        HaiClient().reply(BASE_URL, "msg-orig", "Answer", subject="Custom Subject")
-        assert captured["json"]["subject"] == "Custom Subject"
+        client.reply(BASE_URL, "msg-orig", "Answer", subject="Custom Subject")
+        send_options = mock_ffi.calls[1][1][0]
+        assert send_options["subject"] == "Custom Subject"
 
 
 # ---------------------------------------------------------------
-# URL construction
+# URL construction -- now tests verify FFI method args instead
 # ---------------------------------------------------------------
 
 
 class TestEmailUrlConstruction:
-    """Verify correct URL paths for all email methods."""
+    """Verify correct FFI method calls for all email methods."""
 
-    def test_get_message_url(
+    def test_get_message_calls_ffi(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["url"] = url
-            return _FakeResponse(200, {"id": "m1", "from_address": "", "to_address": "", "subject": "", "body_text": "", "created_at": ""})
+        mock_ffi.responses["get_message"] = {
+            "id": "m1", "from_address": "", "to_address": "",
+            "subject": "", "body_text": "", "created_at": "",
+        }
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        client.get_message(BASE_URL, "msg-42")
+        assert mock_ffi.calls[0][0] == "get_message"
+        assert mock_ffi.calls[0][1][0] == "msg-42"
 
-        HaiClient().get_message(BASE_URL, "msg-42")
-        assert captured["url"] == f"{BASE_URL}/api/agents/{JACS_ID}/email/messages/msg-42"
-
-    def test_delete_message_url(
+    def test_delete_message_calls_ffi(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_delete(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["url"] = url
-            return _FakeResponse(204)
 
-        import httpx
-        monkeypatch.setattr(httpx, "delete", fake_delete)
+        client.delete_message(BASE_URL, "msg-42")
+        assert mock_ffi.calls[0][0] == "delete_message"
+        assert mock_ffi.calls[0][1][0] == "msg-42"
 
-        HaiClient().delete_message(BASE_URL, "msg-42")
-        assert captured["url"] == f"{BASE_URL}/api/agents/{JACS_ID}/email/messages/msg-42"
-
-    def test_search_messages_url(
+    def test_search_messages_calls_ffi(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["url"] = url
-            return _FakeResponse(200, [])
+        mock_ffi.responses["search_messages"] = []
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        client.search_messages(BASE_URL)
+        assert mock_ffi.calls[0][0] == "search_messages"
 
-        HaiClient().search_messages(BASE_URL)
-        assert captured["url"] == f"{BASE_URL}/api/agents/{JACS_ID}/email/search"
-
-    def test_unread_count_url(
+    def test_unread_count_calls_ffi(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["url"] = url
-            return _FakeResponse(200, {"count": 0})
+        mock_ffi.responses["get_unread_count"] = 0
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
-
-        HaiClient().get_unread_count(BASE_URL)
-        assert captured["url"] == f"{BASE_URL}/api/agents/{JACS_ID}/email/unread-count"
+        client.get_unread_count(BASE_URL)
+        assert mock_ffi.calls[0][0] == "get_unread_count"
 
 
 # ---------------------------------------------------------------
@@ -692,11 +638,8 @@ class TestReplyThreading:
     def test_reply_uses_message_id_not_id_for_threading(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """reply() must set in_reply_to to original.message_id, NOT original.id."""
-        captured: dict[str, Any] = {}
-
         original_msg = {
             "id": "db-uuid-123",
             "from_address": "alice@hai.ai",
@@ -710,32 +653,24 @@ class TestReplyThreading:
             "delivery_status": "delivered",
         }
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(200, original_msg)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, {"message_id": "msg-reply", "status": "sent"})
+        mock_ffi.responses["get_message"] = original_msg
+        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-reply", "status": "sent"}
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
-        monkeypatch.setattr(httpx, "post", fake_post)
+        client.reply(BASE_URL, "db-uuid-123", "Thanks!")
 
-        HaiClient().reply(BASE_URL, "db-uuid-123", "Thanks!")
-
-        payload = captured["json"]
+        send_options = mock_ffi.calls[1][1][0]
         # Must use the RFC 5322 message_id, NOT the database id
-        assert payload["in_reply_to"] == "<db-uuid-123.bot@hai.ai>"
-        assert payload["in_reply_to"] != "db-uuid-123"
+        assert send_options["in_reply_to"] == "<db-uuid-123.bot@hai.ai>"
+        assert send_options["in_reply_to"] != "db-uuid-123"
 
     def test_reply_omits_in_reply_to_when_message_id_is_none(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When original.message_id is None, in_reply_to should not be in payload."""
-        captured: dict[str, Any] = {}
-
         original_msg = {
             "id": "db-uuid-456",
             "from_address": "alice@hai.ai",
@@ -749,22 +684,17 @@ class TestReplyThreading:
             "delivery_status": "delivered",
         }
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(200, original_msg)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, {"message_id": "msg-reply", "status": "sent"})
+        mock_ffi.responses["get_message"] = original_msg
+        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-reply", "status": "sent"}
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
-        monkeypatch.setattr(httpx, "post", fake_post)
+        client.reply(BASE_URL, "db-uuid-456", "Thanks!")
 
-        HaiClient().reply(BASE_URL, "db-uuid-456", "Thanks!")
-
-        payload = captured["json"]
-        # message_id was None -> send_email skips in_reply_to entirely
-        assert "in_reply_to" not in payload
+        send_options = mock_ffi.calls[1][1][0]
+        # message_id was None -> send_signed_email skips in_reply_to entirely
+        assert "in_reply_to" not in send_options
 
 
 # ---------------------------------------------------------------
@@ -778,69 +708,57 @@ class TestSendEmailErrorCodeParsing:
     def test_email_not_active_from_error_code(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """error_code=EMAIL_NOT_ACTIVE on 403 must raise EmailNotActive."""
-        error_body = {
-            "error": "Agent email is allocated and cannot send messages",
-            "error_code": "EMAIL_NOT_ACTIVE",
-            "status": 403,
-        }
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(403, payload=error_body)
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
+        def raise_on_send(options: Any) -> Any:
+            raise EmailNotActive("Agent email is allocated and cannot send messages", status_code=403)
+
+        mock_ffi.responses["send_email"] = raise_on_send
 
         with pytest.raises(EmailNotActive) as exc_info:
-            HaiClient().send_email(BASE_URL, "bob@hai.ai", "Sub", "Body")
+            client.send_email(BASE_URL, "bob@hai.ai", "Sub", "Body")
 
         assert exc_info.value.status_code == 403
 
     def test_recipient_not_found_from_error_code(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """error_code=RECIPIENT_NOT_FOUND on 400 must raise RecipientNotFound."""
-        error_body = {
-            "error": "Invalid recipient",
-            "error_code": "RECIPIENT_NOT_FOUND",
-            "status": 400,
-        }
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(400, payload=error_body)
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
+        def raise_on_send(options: Any) -> Any:
+            raise RecipientNotFound("Invalid recipient", status_code=400)
+
+        mock_ffi.responses["send_email"] = raise_on_send
 
         with pytest.raises(RecipientNotFound) as exc_info:
-            HaiClient().send_email(BASE_URL, "nobody@hai.ai", "Sub", "Body")
+            client.send_email(BASE_URL, "nobody@hai.ai", "Sub", "Body")
 
         assert exc_info.value.status_code == 400
 
     def test_rate_limited_from_error_code(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """error_code=RATE_LIMITED on 429 must raise RateLimited."""
-        error_body = {
-            "error": "Daily limit reached",
-            "error_code": "RATE_LIMITED",
-            "status": 429,
-        }
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(429, payload=error_body)
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
+        def raise_on_send(options: Any) -> Any:
+            raise RateLimited("Daily limit reached", status_code=429)
+
+        mock_ffi.responses["send_email"] = raise_on_send
 
         with pytest.raises(RateLimited) as exc_info:
-            HaiClient().send_email(BASE_URL, "bob@hai.ai", "Sub", "Body")
+            client.send_email(BASE_URL, "bob@hai.ai", "Sub", "Body")
 
         assert exc_info.value.status_code == 429
 
@@ -888,29 +806,24 @@ class TestSendSignedEmail:
     def test_send_signed_email_delegates_to_send_email(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """send_signed_email should delegate to send_email (TASK_017 deprecation)."""
-        captured: dict[str, Any] = {}
+        """send_signed_email calls FFI send_signed_email directly."""
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["url"] = url
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, {"message_id": "msg-signed-1", "status": "sent"})
+        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-signed-1", "status": "sent"}
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
-
-        result = HaiClient().send_signed_email(
+        result = client.send_signed_email(
             BASE_URL, "bob@hai.ai", "Hello Signed", "Signed body",
         )
 
         assert result.message_id == "msg-signed-1"
         assert result.status == "sent"
-        # Delegates to send_email, which POSTs to /email/send (not send-signed)
-        assert "/email/send" in captured["url"]
-        assert captured["json"]["to"] == "bob@hai.ai"
-        assert captured["json"]["subject"] == "Hello Signed"
+        # Calls FFI send_signed_email directly
+        assert mock_ffi.calls[0][0] == "send_signed_email"
+        options = mock_ffi.calls[0][1][0]
+        assert options["to"] == "bob@hai.ai"
+        assert options["subject"] == "Hello Signed"
 
     def test_send_signed_email_fails_without_agent_email(
         self,
@@ -936,50 +849,40 @@ class TestSendEmailCcBccLabels:
     def test_send_email_with_cc_bcc_labels(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, {"message_id": "msg-cc", "status": "sent"})
+        mock_ffi.responses["send_email"] = {"message_id": "msg-cc", "status": "sent"}
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
-
-        HaiClient().send_email(
+        client.send_email(
             BASE_URL, "bob@hai.ai", "Hello", "World",
             cc=["carol@hai.ai", "dave@hai.ai"],
             bcc=["eve@hai.ai"],
             labels=["important", "follow-up"],
         )
 
-        payload = captured["json"]
-        assert payload["cc"] == ["carol@hai.ai", "dave@hai.ai"]
-        assert payload["bcc"] == ["eve@hai.ai"]
-        assert payload["labels"] == ["important", "follow-up"]
+        options = mock_ffi.calls[0][1][0]
+        assert options["cc"] == ["carol@hai.ai", "dave@hai.ai"]
+        assert options["bcc"] == ["eve@hai.ai"]
+        assert options["labels"] == ["important", "follow-up"]
 
     def test_send_email_omits_empty_cc_bcc_labels(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When cc/bcc/labels are None, they should not appear in payload."""
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, {"message_id": "msg-plain", "status": "sent"})
+        mock_ffi.responses["send_email"] = {"message_id": "msg-plain", "status": "sent"}
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
+        client.send_email(BASE_URL, "bob@hai.ai", "Hello", "World")
 
-        HaiClient().send_email(BASE_URL, "bob@hai.ai", "Hello", "World")
-
-        payload = captured["json"]
-        assert "cc" not in payload
-        assert "bcc" not in payload
-        assert "labels" not in payload
+        options = mock_ffi.calls[0][1][0]
+        assert "cc" not in options
+        assert "bcc" not in options
+        assert "labels" not in options
 
 
 # ---------------------------------------------------------------
@@ -993,56 +896,44 @@ class TestListMessagesFilters:
     def test_list_messages_with_is_read_filter(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["params"] = kwargs.get("params", {})
-            return _FakeResponse(200, [])
+        mock_ffi.responses["list_messages"] = []
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
-
-        HaiClient().list_messages(BASE_URL, is_read=False)
-        assert captured["params"]["is_read"] == "false"
+        client.list_messages(BASE_URL, is_read=False)
+        options = mock_ffi.calls[0][1][0]
+        assert options["is_read"] is False
 
     def test_list_messages_with_folder_and_label(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["params"] = kwargs.get("params", {})
-            return _FakeResponse(200, [])
+        mock_ffi.responses["list_messages"] = []
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
-
-        HaiClient().list_messages(BASE_URL, folder="archive", label="important")
-        assert captured["params"]["folder"] == "archive"
-        assert captured["params"]["label"] == "important"
+        client.list_messages(BASE_URL, folder="archive", label="important")
+        options = mock_ffi.calls[0][1][0]
+        assert options["folder"] == "archive"
+        assert options["label"] == "important"
 
     def test_list_messages_omits_none_filters(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["params"] = kwargs.get("params", {})
-            return _FakeResponse(200, [])
+        mock_ffi.responses["list_messages"] = []
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
-
-        HaiClient().list_messages(BASE_URL)
-        assert "is_read" not in captured["params"]
-        assert "folder" not in captured["params"]
-        assert "label" not in captured["params"]
+        client.list_messages(BASE_URL)
+        options = mock_ffi.calls[0][1][0]
+        assert "is_read" not in options
+        assert "folder" not in options
+        assert "label" not in options
 
 
 # ---------------------------------------------------------------
@@ -1056,50 +947,40 @@ class TestSearchMessagesNewFilters:
     def test_search_with_all_new_filters(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["params"] = kwargs.get("params", {})
-            return _FakeResponse(200, [])
+        mock_ffi.responses["search_messages"] = []
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
-
-        HaiClient().search_messages(
+        client.search_messages(
             BASE_URL,
             is_read=True,
             jacs_verified=True,
             folder="inbox",
             label="urgent",
         )
-        params = captured["params"]
-        assert params["is_read"] == "true"
-        assert params["jacs_verified"] == "true"
-        assert params["folder"] == "inbox"
-        assert params["label"] == "urgent"
+        options = mock_ffi.calls[0][1][0]
+        assert options["is_read"] is True
+        assert options["jacs_verified"] is True
+        assert options["folder"] == "inbox"
+        assert options["label"] == "urgent"
 
     def test_search_omits_none_filters(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["params"] = kwargs.get("params", {})
-            return _FakeResponse(200, [])
+        mock_ffi.responses["search_messages"] = []
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
-
-        HaiClient().search_messages(BASE_URL, q="hello")
-        params = captured["params"]
-        assert "is_read" not in params
-        assert "jacs_verified" not in params
-        assert "folder" not in params
-        assert "label" not in params
+        client.search_messages(BASE_URL, q="hello")
+        options = mock_ffi.calls[0][1][0]
+        assert "is_read" not in options
+        assert "jacs_verified" not in options
+        assert "folder" not in options
+        assert "label" not in options
 
 
 # ---------------------------------------------------------------
@@ -1132,7 +1013,6 @@ class TestEmailMessageNewFields:
     def test_list_messages_parses_new_fields(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """list_messages must populate cc_addresses, labels, folder from response."""
         msg_data = [{
@@ -1145,13 +1025,12 @@ class TestEmailMessageNewFields:
             "folder": "archive",
         }]
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(200, msg_data)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        mock_ffi.responses["list_messages"] = msg_data
 
-        result = HaiClient().list_messages(BASE_URL)
+        result = client.list_messages(BASE_URL)
         assert len(result) == 1
         assert result[0].cc_addresses == ["c@hai.ai", "d@hai.ai"]
         assert result[0].labels == ["important"]
@@ -1169,56 +1048,49 @@ class TestForward:
     def test_forward_success(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["url"] = url
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, {"message_id": "msg-fwd", "status": "sent"})
+        mock_ffi.responses["forward"] = {"message_id": "msg-fwd", "status": "sent"}
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
-
-        result = HaiClient().forward(BASE_URL, "msg-42", "bob@hai.ai", comment="FYI")
+        result = client.forward(BASE_URL, "msg-42", "bob@hai.ai", comment="FYI")
         assert result.message_id == "msg-fwd"
         assert result.status == "sent"
-        assert "/email/forward" in captured["url"]
-        assert captured["json"]["message_id"] == "msg-42"
-        assert captured["json"]["to"] == "bob@hai.ai"
-        assert captured["json"]["comment"] == "FYI"
+        assert mock_ffi.calls[0][0] == "forward"
+        params = mock_ffi.calls[0][1][0]
+        assert params["message_id"] == "msg-42"
+        assert params["to"] == "bob@hai.ai"
+        assert params["comment"] == "FYI"
 
     def test_forward_without_comment(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["json"] = kwargs.get("json", {})
-            return _FakeResponse(200, {"message_id": "msg-fwd2", "status": "sent"})
+        mock_ffi.responses["forward"] = {"message_id": "msg-fwd2", "status": "sent"}
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
-
-        HaiClient().forward(BASE_URL, "msg-42", "bob@hai.ai")
-        assert "comment" not in captured["json"]
+        client.forward(BASE_URL, "msg-42", "bob@hai.ai")
+        params = mock_ffi.calls[0][1][0]
+        assert "comment" not in params
 
     def test_forward_auth_error(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(403, text="Forbidden")
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
+
+        def raise_on_forward(params: Any) -> Any:
+            raise HaiAuthError("Forbidden", status_code=403)
+
+        mock_ffi.responses["forward"] = raise_on_forward
 
         with pytest.raises(HaiAuthError):
-            HaiClient().forward(BASE_URL, "msg-42", "bob@hai.ai")
+            client.forward(BASE_URL, "msg-42", "bob@hai.ai")
 
 
 # ---------------------------------------------------------------
@@ -1232,52 +1104,44 @@ class TestArchiveUnarchive:
     def test_archive_success(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["url"] = url
-            return _FakeResponse(200)
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
-
-        result = HaiClient().archive(BASE_URL, "msg-42")
+        result = client.archive(BASE_URL, "msg-42")
         assert result is True
-        assert "/messages/msg-42/archive" in captured["url"]
+        assert mock_ffi.calls[0][0] == "archive"
+        assert mock_ffi.calls[0][1][0] == "msg-42"
 
     def test_unarchive_success(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        captured: dict[str, Any] = {}
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["url"] = url
-            return _FakeResponse(200)
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
-
-        result = HaiClient().unarchive(BASE_URL, "msg-42")
+        result = client.unarchive(BASE_URL, "msg-42")
         assert result is True
-        assert "/messages/msg-42/unarchive" in captured["url"]
+        assert mock_ffi.calls[0][0] == "unarchive"
+        assert mock_ffi.calls[0][1][0] == "msg-42"
 
     def test_archive_auth_error(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(401, text="Unauthorized")
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "post", fake_post)
+
+        def raise_on_archive(message_id: str) -> Any:
+            raise HaiAuthError("Unauthorized", status_code=401)
+
+        mock_ffi.responses["archive"] = raise_on_archive
 
         with pytest.raises(HaiAuthError):
-            HaiClient().archive(BASE_URL, "msg-42")
+            client.archive(BASE_URL, "msg-42")
 
 
 # ---------------------------------------------------------------
@@ -1291,7 +1155,6 @@ class TestContacts:
     def test_contacts_success(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         contacts_data = {
             "contacts": [
@@ -1308,16 +1171,13 @@ class TestContacts:
                 },
             ]
         }
-        captured: dict[str, Any] = {}
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            captured["url"] = url
-            return _FakeResponse(200, contacts_data)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        mock_ffi.responses["contacts"] = contacts_data
 
-        result = HaiClient().contacts(BASE_URL)
+        result = client.contacts(BASE_URL)
         assert len(result) == 2
         assert result[0].email == "alice@hai.ai"
         assert result[0].display_name == "Alice"
@@ -1325,41 +1185,41 @@ class TestContacts:
         assert result[0].reputation_tier == "good"
         assert result[1].email == "bob@hai.ai"
         assert result[1].jacs_verified is False
-        assert "/email/contacts" in captured["url"]
+        assert mock_ffi.calls[0][0] == "contacts"
 
     def test_contacts_bare_array_response(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """contacts() should handle bare array response (no wrapper)."""
         contacts_data = [
             {"email": "alice@hai.ai", "jacs_verified": True},
         ]
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(200, contacts_data)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        mock_ffi.responses["contacts"] = contacts_data
 
-        result = HaiClient().contacts(BASE_URL)
+        result = client.contacts(BASE_URL)
         assert len(result) == 1
         assert result[0].email == "alice@hai.ai"
 
     def test_contacts_auth_error(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(403, text="Forbidden")
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+
+        def raise_on_contacts() -> Any:
+            raise HaiAuthError("Forbidden", status_code=403)
+
+        mock_ffi.responses["contacts"] = raise_on_contacts
 
         with pytest.raises(HaiAuthError):
-            HaiClient().contacts(BASE_URL)
+            client.contacts(BASE_URL)
 
 
 # ---------------------------------------------------------------
@@ -1404,7 +1264,6 @@ class TestEmailMessageReplyTextFields:
     def test_list_messages_parses_reply_text_fields(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """list_messages must populate body_text_clean and quoted_text."""
         msg_data = [{
@@ -1417,13 +1276,12 @@ class TestEmailMessageReplyTextFields:
             "quoted_text": "Old",
         }]
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(200, msg_data)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        mock_ffi.responses["list_messages"] = msg_data
 
-        result = HaiClient().list_messages(BASE_URL)
+        result = client.list_messages(BASE_URL)
         assert len(result) == 1
         assert result[0].body_text_clean == "New"
         assert result[0].quoted_text == "Old"
@@ -1431,7 +1289,6 @@ class TestEmailMessageReplyTextFields:
     def test_list_messages_missing_reply_fields_default_none(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When API omits body_text_clean/quoted_text they should be None."""
         msg_data = [{
@@ -1442,20 +1299,18 @@ class TestEmailMessageReplyTextFields:
             "is_read": False, "delivery_status": "delivered",
         }]
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(200, msg_data)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        mock_ffi.responses["list_messages"] = msg_data
 
-        result = HaiClient().list_messages(BASE_URL)
+        result = client.list_messages(BASE_URL)
         assert result[0].body_text_clean is None
         assert result[0].quoted_text is None
 
     def test_get_message_parses_reply_text_and_thread(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """get_message must populate body_text_clean, quoted_text, and thread."""
         msg_data = {
@@ -1478,13 +1333,12 @@ class TestEmailMessageReplyTextFields:
             ],
         }
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(200, msg_data)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        mock_ffi.responses["get_message"] = msg_data
 
-        result = HaiClient().get_message(BASE_URL, "m2")
+        result = client.get_message(BASE_URL, "m2")
         assert isinstance(result, EmailMessage)
         assert result.body_text_clean == "Reply"
         assert result.quoted_text == "Original"
@@ -1497,7 +1351,6 @@ class TestEmailMessageReplyTextFields:
     def test_get_message_no_thread_defaults_none(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """get_message with no thread key should leave thread as None."""
         msg_data = {
@@ -1508,19 +1361,17 @@ class TestEmailMessageReplyTextFields:
             "is_read": False, "delivery_status": "delivered",
         }
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(200, msg_data)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        mock_ffi.responses["get_message"] = msg_data
 
-        result = HaiClient().get_message(BASE_URL, "m1")
+        result = client.get_message(BASE_URL, "m1")
         assert result.thread is None
 
     def test_get_message_empty_thread(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """get_message with empty thread list should return empty list."""
         msg_data = {
@@ -1532,19 +1383,17 @@ class TestEmailMessageReplyTextFields:
             "thread": [],
         }
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(200, msg_data)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        mock_ffi.responses["get_message"] = msg_data
 
-        result = HaiClient().get_message(BASE_URL, "m1")
+        result = client.get_message(BASE_URL, "m1")
         assert result.thread == []
 
     def test_search_messages_parses_reply_text_fields(
         self,
         loaded_config: None,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """search_messages must populate body_text_clean and quoted_text."""
         msg_data = [{
@@ -1557,13 +1406,12 @@ class TestEmailMessageReplyTextFields:
             "quoted_text": "Old",
         }]
 
-        def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
-            return _FakeResponse(200, msg_data)
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        import httpx
-        monkeypatch.setattr(httpx, "get", fake_get)
+        mock_ffi.responses["search_messages"] = msg_data
 
-        result = HaiClient().search_messages(BASE_URL, q="Hi")
+        result = client.search_messages(BASE_URL, q="Hi")
         assert len(result) == 1
         assert result[0].body_text_clean == "New"
         assert result[0].quoted_text == "Old"
@@ -1739,5 +1587,3 @@ class TestEmailStatusNestedFields:
 
         assert status.reputation is not None
         assert status.reputation.hai_score is None
-
-

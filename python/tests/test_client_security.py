@@ -11,169 +11,79 @@ import os
 import stat
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
-import httpx
 import pytest
 
 from haiai.async_client import AsyncHaiClient
 from haiai.client import HaiClient, register_new_agent
 
 
-class _FakeResponse:
-    def __init__(self, status_code: int, payload: dict, text: str = "") -> None:
-        self.status_code = status_code
-        self._payload = payload
-        self.text = text
-
-    def json(self) -> dict:
-        return self._payload
-
-    def raise_for_status(self) -> None:
-        if self.status_code >= 400:
-            raise httpx.HTTPStatusError(
-                "error",
-                request=httpx.Request("POST", "https://hai.ai"),
-                response=httpx.Response(self.status_code, text=self.text),
-            )
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
-class _FakeAsyncHTTP:
-    def __init__(self, response: _FakeResponse) -> None:
-        self._response = response
+def _fake_register_result(options: dict[str, Any]) -> dict[str, Any]:
+    """Build a fake FFI register_new_agent response and create key artifacts."""
+    key_dir = Path(options.get("key_directory", "/tmp/keys"))
+    key_dir.mkdir(parents=True, exist_ok=True)
 
-    async def post(self, *_args: Any, **_kwargs: Any) -> _FakeResponse:
-        return self._response
+    # Create dummy key files with correct permissions (simulates JACS keygen)
+    priv_key = key_dir / "agent_private_key.pem"
+    pub_key = key_dir / "agent_public_key.pem"
+    priv_key.write_text("-----BEGIN ENCRYPTED PRIVATE KEY-----\nfake\n-----END ENCRYPTED PRIVATE KEY-----\n")
+    pub_key.write_text("-----BEGIN PUBLIC KEY-----\nfake\n-----END PUBLIC KEY-----\n")
+    if os.name != "nt":
+        priv_key.chmod(0o600)
+        key_dir.chmod(0o700)
 
+    # Write a config file if config_path is given
+    config_path = options.get("config_path")
+    if config_path:
+        cfg = {
+            "jacsAgentName": options.get("agent_name", "Agent"),
+            "jacsKeyDir": str(key_dir.resolve()),
+            "jacsAgentVersion": "1.0.0",
+        }
+        Path(config_path).write_text(json.dumps(cfg))
 
-def test_verify_hai_message_supports_key_id_lookup(
-    jacs_agent: Any,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test that verify_hai_message can look up keys by ID from the server."""
-    from haiai import signing as signing_mod
-
-    message = '{"hello":"world"}'
-    # Sign the message using the test agent
-    signature = jacs_agent.sign_string(message)
-
-    # We can't easily verify with the mock agent's key via server lookup
-    # since the key ID lookup path requires real PEM keys.
-    # Instead, test the key ID lookup path returns False for mock keys
-    # (the signing keys won't match the mocked server keys)
-
-    monkeypatch.setattr(
-        signing_mod,
-        "fetch_server_keys",
-        lambda _hai_url: [
-            signing_mod._CachedKey(
-                key_id="fingerprint-123",
-                algorithm="ed25519",
-                public_key_pem="-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA+mock+key+for+testing==\n-----END PUBLIC KEY-----\n",
-            )
-        ],
-    )
-
-    client = HaiClient()
-    # Key ID lookup should work (even if verification fails with mock)
-    # The important thing is that the code path executes without error
-    result = client.verify_hai_message(
-        message=message,
-        signature=signature,
-        hai_public_key="fingerprint-123",
-        hai_url="https://hai.ai",
-    )
-    # Result may be True or False depending on whether JACS bindings work
-    assert isinstance(result, bool)
-
-    # Without hai_url, key ID lookup should return False
-    assert not client.verify_hai_message(
-        message=message,
-        signature=signature,
-        hai_public_key="fingerprint-123",
-        hai_url=None,
-    )
+    return {
+        "agent_id": "agent-123",
+        "jacs_id": "jacs-123",
+        "key_directory": str(key_dir),
+        "public_key_path": str(pub_key),
+    }
 
 
-def test_hello_world_passes_hai_url_to_verifier(
-    loaded_config: None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, str] = {}
-
-    def fake_verify(
-        self: HaiClient,
-        message: str,
-        signature: str,
-        hai_public_key: str = "",
-        hai_url: str | None = None,
-    ) -> bool:
-        captured["hai_url"] = hai_url or ""
-        return True
-
-    monkeypatch.setattr(HaiClient, "verify_hai_message", fake_verify)
-
-    monkeypatch.setattr(
-        httpx,
-        "post",
-        lambda *_args, **_kwargs: _FakeResponse(
-            status_code=200,
-            payload={
-                "timestamp": "2026-01-01T00:00:00Z",
-                "client_ip": "127.0.0.1",
-                "hai_public_key_fingerprint": "fingerprint-123",
-                "hai_signed_ack": "abc",
-                "message": "ok",
-                "hello_id": "h1",
-            },
-        ),
-    )
-
-    result = HaiClient().hello_world("https://hai.ai")
-    assert result.success
-    assert captured["hai_url"] == "https://hai.ai"
+# ---------------------------------------------------------------------------
+# Auth header tests — auth headers are now built in Rust (FFI).
+# The Rust test suite (contract_endpoints.rs) verifies auth header shape,
+# no-auth on register, and no private key leakage at the HTTP layer.
+# ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_async_hello_world_passes_hai_url_to_verifier(
-    loaded_config: None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, str] = {}
+# ---------------------------------------------------------------------------
+# Top-level register_new_agent
+# ---------------------------------------------------------------------------
 
-    def fake_verify(
-        self: AsyncHaiClient,
-        message: str,
-        signature: str,
-        hai_public_key: str = "",
-        hai_url: str | None = None,
-    ) -> bool:
-        captured["hai_url"] = hai_url or ""
-        return True
 
-    fake_http = _FakeAsyncHTTP(
-        _FakeResponse(
-            status_code=200,
-            payload={
-                "timestamp": "2026-01-01T00:00:00Z",
-                "client_ip": "127.0.0.1",
-                "hai_public_key_fingerprint": "fingerprint-123",
-                "hai_signed_ack": "abc",
-                "message": "ok",
-                "hello_id": "h1",
-            },
-        )
-    )
+def _make_mock_ffi_adapter(captured: dict[str, Any]) -> Any:
+    """Create a mock FFIAdapter that captures register_new_agent options."""
+    from haiai._ffi_adapter import FFIAdapter
 
-    async def fake_get_http(_self: AsyncHaiClient) -> _FakeAsyncHTTP:
-        return fake_http
+    original_init = FFIAdapter.__init__
 
-    monkeypatch.setattr(AsyncHaiClient, "verify_hai_message", fake_verify)
-    monkeypatch.setattr(AsyncHaiClient, "_get_http", fake_get_http)
+    class MockAdapter(FFIAdapter):
+        def __init__(self, config_json: str):
+            # Skip real FFI init
+            self._native = MagicMock()
 
-    result = await AsyncHaiClient().hello_world("https://hai.ai")
-    assert result.success
-    assert result.hai_signature_valid is True
-    assert captured["hai_url"] == "https://hai.ai"
+        def register_new_agent(self, options: dict[str, Any]) -> dict[str, Any]:
+            captured["options"] = options
+            return _fake_register_result(options)
+
+    return MockAdapter
 
 
 def test_register_new_agent_writes_private_key_with_0600(
@@ -184,25 +94,12 @@ def test_register_new_agent_writes_private_key_with_0600(
     if os.name == "nt":
         pytest.skip("POSIX permission bits are not reliable on Windows")
 
-    try:
-        from jacs import SimpleAgent  # noqa: F401
-    except ImportError:
-        pytest.skip("JACS bindings not available")
+    captured: dict[str, Any] = {}
+    MockAdapter = _make_mock_ffi_adapter(captured)
+    monkeypatch.setattr("haiai.client.FFIAdapter", MockAdapter)
 
     key_dir = tmp_path / "keys"
     config_path = tmp_path / "jacs.config.json"
-
-    monkeypatch.setattr(
-        httpx,
-        "post",
-        lambda *_args, **_kwargs: _FakeResponse(
-            status_code=201,
-            payload={
-                "agent_id": "agent-123",
-                "jacs_id": "jacs-123",
-            },
-        ),
-    )
 
     try:
         register_new_agent(
@@ -218,34 +115,20 @@ def test_register_new_agent_writes_private_key_with_0600(
         reset()
 
     private_key_path = key_dir / "agent_private_key.pem"
-    if private_key_path.is_file():
-        mode = stat.S_IMODE(private_key_path.stat().st_mode)
-        assert mode == 0o600
+    assert private_key_path.is_file()
+    mode = stat.S_IMODE(private_key_path.stat().st_mode)
+    assert mode == 0o600
 
 
 def test_register_new_agent_defaults_to_secure_key_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    try:
-        from jacs import SimpleAgent  # noqa: F401
-    except ImportError:
-        pytest.skip("JACS bindings not available")
-
-    captured_payload: dict[str, object] = {}
+    captured: dict[str, Any] = {}
+    MockAdapter = _make_mock_ffi_adapter(captured)
+    monkeypatch.setattr("haiai.client.FFIAdapter", MockAdapter)
     monkeypatch.setenv("HOME", str(tmp_path))
 
-    def fake_post(*_args, **kwargs):
-        captured_payload.update(kwargs.get("json", {}))
-        return _FakeResponse(
-            status_code=201,
-            payload={
-                "agent_id": "agent-123",
-                "jacs_id": "jacs-123",
-            },
-        )
-
-    monkeypatch.setattr(httpx, "post", fake_post)
     config_path = tmp_path / "jacs.config.json"
 
     try:
@@ -270,10 +153,11 @@ def test_register_new_agent_defaults_to_secure_key_dir(
 
     cfg = json.loads(config_path.read_text())
     assert Path(cfg["jacsKeyDir"]) == expected_key_dir
-    assert captured_payload.get("domain") == "agent.example"
-    doc = json.loads(str(captured_payload["agent_json"]))
-    assert doc["description"] == "Agent description"
-    assert doc["domain"] == "agent.example"
+
+    # Verify domain and description were passed to FFI
+    opts = captured["options"]
+    assert opts["domain"] == "agent.example"
+    assert opts["description"] == "Agent description"
 
 
 # ---------------------------------------------------------------------------
@@ -317,26 +201,14 @@ class TestSecurityRegressionContract:
     def test_register_omits_private_key(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """POST /api/v1/agents/register body must not contain 'BEGIN PRIVATE KEY'."""
+        """FFI options dict must not contain private key material."""
         fixture = self._load_fixture()
         tc = next(t for t in fixture["test_cases"] if t["name"] == "register_omits_private_key")
         assert tc is not None
 
-        try:
-            from jacs import SimpleAgent as _SimpleAgent  # noqa: F401
-        except ImportError:
-            pytest.skip("JACS bindings not available")
-
-        captured_body: dict[str, object] = {}
-
-        def fake_post(*_args: Any, **kwargs: Any) -> _FakeResponse:
-            captured_body.update(kwargs.get("json", {}))
-            return _FakeResponse(
-                status_code=201,
-                payload={"agent_id": "agent-123", "jacs_id": "jacs-123"},
-            )
-
-        monkeypatch.setattr(httpx, "post", fake_post)
+        captured: dict[str, Any] = {}
+        MockAdapter = _make_mock_ffi_adapter(captured)
+        monkeypatch.setattr("haiai.client.FFIAdapter", MockAdapter)
 
         try:
             register_new_agent(
@@ -351,34 +223,22 @@ class TestSecurityRegressionContract:
             from haiai.config import reset
             reset()
 
-        # Verify the POST body does not contain private key material
-        body_str = json.dumps(captured_body)
-        assert "BEGIN PRIVATE KEY" not in body_str
-        assert "PRIVATE KEY" not in body_str
+        # Verify the options passed to FFI do not contain private key material
+        opts_str = json.dumps(captured["options"])
+        assert "BEGIN PRIVATE KEY" not in opts_str
+        assert "PRIVATE KEY" not in opts_str
 
     def test_register_is_unauthenticated(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """POST /api/v1/agents/register must not have Authorization header."""
+        """register_new_agent options must not contain auth credentials."""
         fixture = self._load_fixture()
         tc = next(t for t in fixture["test_cases"] if t["name"] == "register_is_unauthenticated")
         assert tc is not None
 
-        try:
-            from jacs import SimpleAgent as _SimpleAgent  # noqa: F401
-        except ImportError:
-            pytest.skip("JACS bindings not available")
-
-        captured_headers: dict[str, str] = {}
-
-        def fake_post(*_args: Any, **kwargs: Any) -> _FakeResponse:
-            captured_headers.update(kwargs.get("headers", {}))
-            return _FakeResponse(
-                status_code=201,
-                payload={"agent_id": "agent-123", "jacs_id": "jacs-123"},
-            )
-
-        monkeypatch.setattr(httpx, "post", fake_post)
+        captured: dict[str, Any] = {}
+        MockAdapter = _make_mock_ffi_adapter(captured)
+        monkeypatch.setattr("haiai.client.FFIAdapter", MockAdapter)
 
         try:
             register_new_agent(
@@ -393,31 +253,9 @@ class TestSecurityRegressionContract:
             from haiai.config import reset
             reset()
 
-        # Verify no Authorization header was sent
-        assert "Authorization" not in captured_headers
-
-    def test_encrypted_key_requires_password(self) -> None:
-        """Loading encrypted private key without password returns clear error."""
-        fixture = self._load_fixture()
-        tc = next(t for t in fixture["test_cases"] if t["name"] == "encrypted_key_requires_password")
-        assert tc is not None
-
-        # Load the encrypted PEM key fixture and verify that attempting to
-        # use it without a password produces a clear error.
-        encrypted_pem_path = Path(__file__).resolve().parent.parent.parent / "fixtures" / "encrypted_test_key.pem"
-        encrypted_pem = encrypted_pem_path.read_bytes()
-
-        # The encrypted PEM has "ENCRYPTED PRIVATE KEY" header -- it cannot
-        # be loaded as a plain PKCS8 key. Attempting to parse it with
-        # standard crypto libraries should fail.
-        from cryptography.hazmat.primitives.serialization import load_pem_private_key
-
-        with pytest.raises(Exception) as exc_info:
-            # Passing no password to an encrypted key should raise
-            load_pem_private_key(encrypted_pem, password=None)
-
-        # The error should clearly indicate a password is needed
-        error_msg = str(exc_info.value).lower()
-        assert "password" in error_msg or "encrypted" in error_msg or "decrypt" in error_msg, (
-            f"Error should mention password/encrypted/decrypt: {exc_info.value}"
-        )
+        # Verify no auth tokens in the options sent to FFI
+        opts = captured["options"]
+        assert "Authorization" not in opts
+        assert "auth_header" not in opts
+        # The password field is for key encryption, not HTTP auth
+        assert "password" in opts  # expected — for JACS key encryption

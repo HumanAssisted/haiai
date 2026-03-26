@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { HaiClient } from '../src/client.js';
 import { loadConfig, loadPrivateKey } from '../src/config.js';
 import { generateTestKeypair as generateKeypair } from './setup.js';
+import { createMockFFI } from './ffi-mock.js';
 
 interface BootstrapRegisterContract {
   method: string;
@@ -31,7 +32,6 @@ function loadInitContractFixture(): InitContractFixture {
 
 describe('shared init contract (node)', () => {
   afterEach(() => {
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -89,35 +89,17 @@ describe('shared init contract (node)', () => {
       { url: 'https://hai.example', privateKeyPassphrase: 'keygen-password' },
     );
 
-    const fetchMock = vi.fn(async (url: string | URL, init?: RequestInit) => {
-      expect(String(url)).toBe(`https://hai.example${fixture.bootstrap_register.path}`);
-      expect(init?.method).toBe(fixture.bootstrap_register.method);
-
-      const headers = (init?.headers ?? {}) as Record<string, string>;
-      expect(headers.Authorization).toBeUndefined();
-      expect(fixture.bootstrap_register.auth_required).toBe(false);
-
-      const payload = JSON.parse(String(init?.body ?? '{}')) as Record<string, string>;
-      expect(payload.owner_email).toBe('owner@hai.ai');
-      expect(payload.domain).toBe('agent.example');
-      expect(typeof payload.agent_json).toBe('string');
-
-      if (fixture.bootstrap_register.public_key_encoding === 'base64') {
-        const decoded = Buffer.from(payload.public_key, 'base64').toString('utf-8');
-        expect(decoded).toContain('BEGIN PUBLIC KEY');
-      }
-
-      return new Response(JSON.stringify({
+    const registerMock = vi.fn(async (options: Record<string, unknown>) => {
+      expect(options.owner_email).toBe('owner@hai.ai');
+      expect(options.domain).toBe('agent.example');
+      return {
         agent_id: 'agent-123',
         jacs_id: 'bootstrap-agent',
         registration_id: 'reg-1',
         registered_at: '2026-01-01T00:00:00Z',
-      }), {
-        status: 201,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      };
     });
-    vi.stubGlobal('fetch', fetchMock);
+    client._setFFIAdapter(createMockFFI({ register: registerMock }));
 
     await client.registerNewAgent('bootstrap-agent', {
       ownerEmail: 'owner@hai.ai',

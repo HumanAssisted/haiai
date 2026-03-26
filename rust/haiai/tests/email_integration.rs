@@ -130,6 +130,7 @@ async fn email_integration_lifecycle() {
             in_reply_to: None,
             attachments: Vec::new(),
             labels: Vec::new(),
+            append_footer: None,
         })
         .await
         .expect("send_email");

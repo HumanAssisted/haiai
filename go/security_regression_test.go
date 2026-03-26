@@ -2,187 +2,94 @@ package haiai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"sync/atomic"
+	"fmt"
 	"testing"
 )
 
-type stubCryptoBackend struct {
-	buildAuthHeader func() (string, error)
-	signString      func(string) (string, error)
-	signBytes       func([]byte) ([]byte, error)
-	signResponse    func(string) (string, error)
+// errorFFIClient is a mock FFI client that returns errors for specific methods.
+type errorFFIClient struct {
+	mockFFIClient
+	helloErr          error
+	submitResponseErr error
 }
 
-func (s *stubCryptoBackend) SignString(message string) (string, error) {
-	if s.signString != nil {
-		return s.signString(message)
+func (e *errorFFIClient) Hello(includeTest bool) (json.RawMessage, error) {
+	if e.helloErr != nil {
+		return nil, e.helloErr
 	}
-	return "", errors.New("unexpected SignString call")
+	return e.mockFFIClient.Hello(includeTest)
 }
 
-func (s *stubCryptoBackend) SignBytes(data []byte) ([]byte, error) {
-	if s.signBytes != nil {
-		return s.signBytes(data)
+func (e *errorFFIClient) SubmitResponse(paramsJSON string) (json.RawMessage, error) {
+	if e.submitResponseErr != nil {
+		return nil, e.submitResponseErr
 	}
-	return nil, errors.New("unexpected SignBytes call")
+	return e.mockFFIClient.SubmitResponse(paramsJSON)
 }
 
-func (s *stubCryptoBackend) VerifyBytes(data, signature []byte, publicKeyPEM string) error {
-	return nil
-}
-
-func (s *stubCryptoBackend) SignRequest(payloadJSON string) (string, error) {
-	return "", errors.New("not implemented")
-}
-
-func (s *stubCryptoBackend) VerifyResponse(documentJSON string) (string, error) {
-	return "", errors.New("not implemented")
-}
-
-func (s *stubCryptoBackend) GenerateKeyPair() ([]byte, []byte, error) {
-	return nil, nil, errors.New("not implemented")
-}
-
-func (s *stubCryptoBackend) Algorithm() string {
-	return "stub"
-}
-
-func (s *stubCryptoBackend) CanonicalizeJSON(jsonStr string) (string, error) {
-	return jsonStr, nil
-}
-
-func (s *stubCryptoBackend) SignResponse(payloadJSON string) (string, error) {
-	if s.signResponse != nil {
-		return s.signResponse(payloadJSON)
-	}
-	return "", errors.New("unexpected SignResponse call")
-}
-
-func (s *stubCryptoBackend) EncodeVerifyPayload(document string) (string, error) {
-	return document, nil
-}
-
-func (s *stubCryptoBackend) UnwrapSignedEvent(eventJSON, serverKeysJSON string) (string, error) {
-	return "", errors.New("not implemented")
-}
-
-func (s *stubCryptoBackend) BuildAuthHeader() (string, error) {
-	if s.buildAuthHeader != nil {
-		return s.buildAuthHeader()
-	}
-	return "", errors.New("unexpected BuildAuthHeader call")
-}
-
-func (s *stubCryptoBackend) SignA2AArtifact(artifactJSON string, artifactType string) (string, error) {
-	return "", errors.New("not implemented")
-}
-
-func (s *stubCryptoBackend) VerifyA2AArtifact(wrappedJSON string) (string, error) {
-	return "", errors.New("not implemented")
-}
-
-func (s *stubCryptoBackend) VerifyA2AArtifactWithPolicy(wrappedJSON, agentCardJSON, policyJSON string) (string, error) {
-	return "", errors.New("not implemented")
-}
-
-func (s *stubCryptoBackend) AssessA2AAgent(agentCardJSON, policyJSON string) (string, error) {
-	return "", errors.New("not implemented")
-}
-
-func (s *stubCryptoBackend) ExportAgentCard(agentDataJSON string) (string, error) {
-	return "", errors.New("not implemented")
-}
-
-func TestHelloFailsClosedWhenCryptoBackendCannotBuildAuthHeader(t *testing.T) {
-	var requests int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
-		t.Fatalf("request should not be sent when auth header generation fails")
-	}))
-	defer server.Close()
-
-	client, _ := newTestClient(t, server.URL)
-	client.crypto = &stubCryptoBackend{
-		buildAuthHeader: func() (string, error) {
-			return "", errors.New("backend unavailable")
-		},
-		signString: func(string) (string, error) {
-			return "", errors.New("should not fall back to SignString")
-		},
+func TestHelloFailsClosedWhenFFIAuthFails(t *testing.T) {
+	// Verify that an FFI auth error is properly mapped to ErrAuthRequired.
+	errFFI := &errorFFIClient{
+		helloErr: fmt.Errorf("AuthFailed: backend unavailable"),
 	}
 
-	_, err := client.Hello(context.Background())
+	cl, err := NewClient(
+		WithEndpoint("http://localhost:9999"),
+		WithJACSID("test-agent-id"),
+		WithFFIClient(errFFI),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	_, err = cl.Hello(context.Background())
 	if err == nil {
-		t.Fatal("expected Hello to fail when auth header generation fails")
+		t.Fatal("expected Hello to fail when FFI auth fails")
 	}
 
 	var sdkErr *Error
-	if !errors.As(err, &sdkErr) || sdkErr.Kind != ErrSigningFailed {
-		t.Fatalf("expected ErrSigningFailed, got %v", err)
-	}
-	if got := atomic.LoadInt32(&requests); got != 0 {
-		t.Fatalf("expected zero requests, got %d", got)
+	if !errors.As(err, &sdkErr) || sdkErr.Kind != ErrAuthRequired {
+		t.Fatalf("expected ErrAuthRequired, got %v", err)
 	}
 }
 
-func TestSubmitResponseFailsClosedWhenBackendCannotSignResponse(t *testing.T) {
-	var requests int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
-		t.Fatalf("request should not be sent when response signing fails")
-	}))
-	defer server.Close()
-
-	client, _ := newTestClient(t, server.URL)
-	client.crypto = &stubCryptoBackend{
-		buildAuthHeader: func() (string, error) {
-			return "JACS test-agent-id:1:signature", nil
-		},
-		signResponse: func(string) (string, error) {
-			return "", errors.New("sign response unavailable")
-		},
-		signBytes: func([]byte) ([]byte, error) {
-			return []byte("fallback-signature"), nil
-		},
+func TestSubmitResponseFailsClosedWhenFFISigningFails(t *testing.T) {
+	// In the FFI architecture, signing failures are reported by the FFI layer.
+	errFFI := &errorFFIClient{
+		submitResponseErr: fmt.Errorf("AuthFailed: sign response unavailable"),
 	}
 
-	_, err := client.SubmitResponse(context.Background(), "job-123", ModerationResponse{
+	cl, err := NewClient(
+		WithEndpoint("http://localhost:9999"),
+		WithJACSID("test-agent-id"),
+		WithFFIClient(errFFI),
+	)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	_, err = cl.SubmitResponse(context.Background(), "job-123", ModerationResponse{
 		Message: "safe",
 	})
 	if err == nil {
-		t.Fatal("expected SubmitResponse to fail when SignResponse fails")
-	}
-
-	var sdkErr *Error
-	if !errors.As(err, &sdkErr) || sdkErr.Kind != ErrSigningFailed {
-		t.Fatalf("expected ErrSigningFailed, got %v", err)
-	}
-	if got := atomic.LoadInt32(&requests); got != 0 {
-		t.Fatalf("expected zero requests, got %d", got)
+		t.Fatal("expected SubmitResponse to fail when FFI signing fails")
 	}
 }
 
-func TestBuild4PartAuthHeaderFailsClosedWithoutBackendSignature(t *testing.T) {
-	_, _, err := GenerateKeyPair()
-	if err != nil {
-		t.Fatalf("GenerateKeyPair: %v", err)
-	}
-
-	_, err = build4PartAuthHeaderWithBackend(
-		"agent-123",
-		"v1",
-		&stubCryptoBackend{
-			signString: func(string) (string, error) {
-				return "", errors.New("sign string unavailable")
-			},
-		},
-	)
+func TestBuild4PartAuthHeaderFailsClosedWithoutFFI(t *testing.T) {
+	_, err := build4PartAuthHeaderWithFFI("agent-123", "v1", nil)
 	if err == nil {
-		t.Fatal("expected build4PartAuthHeaderWithBackend to fail closed")
+		t.Fatal("expected build4PartAuthHeaderWithFFI to fail with nil FFI client")
 	}
 }
 
-var _ CryptoBackend = (*stubCryptoBackend)(nil)
+func TestBuild4PartAuthHeaderFailsClosedWhenSignFails(t *testing.T) {
+	mockFFI := newMockFFIClient("http://localhost:9999", "agent-123", "")
+	// mockFFI.SignMessage returns "not implemented" by default
+	_, err := build4PartAuthHeaderWithFFI("agent-123", "v1", mockFFI)
+	if err == nil {
+		t.Fatal("expected build4PartAuthHeaderWithFFI to fail when SignMessage fails")
+	}
+}

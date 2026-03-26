@@ -17,21 +17,6 @@ from haiai.models import PublicKeyInfo
 # ---------------------------------------------------------------------------
 
 
-class _FakeResponse:
-    def __init__(self, status_code: int, payload: dict[str, Any]) -> None:
-        self.status_code = status_code
-        self._payload = payload
-        self.text = ""
-        self.headers: dict[str, str] = {}
-
-    def json(self) -> dict[str, Any]:
-        return self._payload
-
-    def raise_for_status(self) -> None:
-        if self.status_code >= 400:
-            raise RuntimeError(f"http error: {self.status_code}")
-
-
 def _make_key_response(version: str = "v1") -> dict[str, Any]:
     return {
         "jacs_id": "agent-abc",
@@ -52,22 +37,18 @@ def _make_key_response(version: str = "v1") -> dict[str, Any]:
 
 
 class TestFetchRemoteKeyCachesResult:
-    def test_second_call_returns_cached_value(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        call_count = 0
+    def test_second_call_returns_cached_value(self) -> None:
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_get(url: str, **_kwargs: Any) -> _FakeResponse:
+        call_count = 0
+        def counting_fetch(*args: Any, **kwargs: Any) -> dict:
             nonlocal call_count
             call_count += 1
-            return _FakeResponse(200, _make_key_response("v1"))
+            return _make_key_response("v1")
 
-        import httpx
+        mock_ffi.responses["fetch_remote_key"] = counting_fetch
 
-        monkeypatch.setattr(httpx, "get", fake_get)
-
-        client = HaiClient()
         r1 = client.fetch_remote_key("https://hai.ai", "agent-abc", "latest")
         r2 = client.fetch_remote_key("https://hai.ai", "agent-abc", "latest")
 
@@ -76,23 +57,16 @@ class TestFetchRemoteKeyCachesResult:
 
 
 class TestFetchRemoteKeyCacheExpires:
-    def test_expired_entry_causes_refetch(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        responses = iter([
-            _FakeResponse(200, _make_key_response("v1")),
-            _FakeResponse(200, _make_key_response("v2")),
-        ])
-
-        def fake_get(url: str, **_kwargs: Any) -> _FakeResponse:
-            return next(responses)
-
-        import httpx
-
-        monkeypatch.setattr(httpx, "get", fake_get)
-
+    def test_expired_entry_causes_refetch(self) -> None:
         client = HaiClient()
+        mock_ffi = client._get_ffi()
+
+        versions = iter(["v1", "v2"])
+        def version_fetch(*args: Any, **kwargs: Any) -> dict:
+            return _make_key_response(next(versions))
+
+        mock_ffi.responses["fetch_remote_key"] = version_fetch
+
         r1 = client.fetch_remote_key("https://hai.ai", "agent-abc", "latest")
         assert r1.version == "v1"
 
@@ -106,23 +80,16 @@ class TestFetchRemoteKeyCacheExpires:
 
 
 class TestInvalidateAgentKeyCacheForcesRefetch:
-    def test_invalidate_then_fetch_calls_api(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        responses = iter([
-            _FakeResponse(200, _make_key_response("v1")),
-            _FakeResponse(200, _make_key_response("v2")),
-        ])
-
-        def fake_get(url: str, **_kwargs: Any) -> _FakeResponse:
-            return next(responses)
-
-        import httpx
-
-        monkeypatch.setattr(httpx, "get", fake_get)
-
+    def test_invalidate_then_fetch_calls_api(self) -> None:
         client = HaiClient()
+        mock_ffi = client._get_ffi()
+
+        versions = iter(["v1", "v2"])
+        def version_fetch(*args: Any, **kwargs: Any) -> dict:
+            return _make_key_response(next(versions))
+
+        mock_ffi.responses["fetch_remote_key"] = version_fetch
+
         r1 = client.fetch_remote_key("https://hai.ai", "agent-abc", "latest")
         assert r1.version == "v1"
 
@@ -133,26 +100,20 @@ class TestInvalidateAgentKeyCacheForcesRefetch:
 
 
 class TestCacheKeyedByIdAndVersion:
-    def test_different_keys_are_cached_separately(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        call_count = 0
+    def test_different_keys_are_cached_separately(self) -> None:
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_get(url: str, **_kwargs: Any) -> _FakeResponse:
+        call_count = 0
+        def counting_fetch(jacs_id: str, version: str = "latest") -> dict:
             nonlocal call_count
             call_count += 1
-            # Return different versions based on which URL was called
-            if "agent-1" in url:
-                return _FakeResponse(200, _make_key_response("v1"))
-            else:
-                return _FakeResponse(200, _make_key_response("v2"))
+            if jacs_id == "agent-1" or (isinstance(jacs_id, str) and "agent-1" in str(jacs_id)):
+                return _make_key_response("v1")
+            return _make_key_response("v2")
 
-        import httpx
+        mock_ffi.responses["fetch_remote_key"] = counting_fetch
 
-        monkeypatch.setattr(httpx, "get", fake_get)
-
-        client = HaiClient()
         r1 = client.fetch_remote_key("https://hai.ai", "agent-1", "latest")
         r2 = client.fetch_remote_key("https://hai.ai", "agent-2", "latest")
 
@@ -172,43 +133,35 @@ class TestCacheKeyedByIdAndVersion:
 
 
 class TestFetchKeyByHashCache:
-    def test_second_call_uses_cache(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        call_count = 0
+    def test_second_call_uses_cache(self) -> None:
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_get(url: str, **_kwargs: Any) -> _FakeResponse:
+        call_count = 0
+        def counting_fetch(*args: Any, **kwargs: Any) -> dict:
             nonlocal call_count
             call_count += 1
-            return _FakeResponse(200, _make_key_response())
+            return _make_key_response()
 
-        import httpx
+        mock_ffi.responses["fetch_key_by_hash"] = counting_fetch
 
-        monkeypatch.setattr(httpx, "get", fake_get)
-
-        client = HaiClient()
         client.fetch_key_by_hash("https://hai.ai", "sha256:abc123")
         client.fetch_key_by_hash("https://hai.ai", "sha256:abc123")
 
         assert call_count == 1
 
-    def test_invalidate_clears_hash_cache(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        call_count = 0
+    def test_invalidate_clears_hash_cache(self) -> None:
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_get(url: str, **_kwargs: Any) -> _FakeResponse:
+        call_count = 0
+        def counting_fetch(*args: Any, **kwargs: Any) -> dict:
             nonlocal call_count
             call_count += 1
-            return _FakeResponse(200, _make_key_response())
+            return _make_key_response()
 
-        import httpx
+        mock_ffi.responses["fetch_key_by_hash"] = counting_fetch
 
-        monkeypatch.setattr(httpx, "get", fake_get)
-
-        client = HaiClient()
         client.fetch_key_by_hash("https://hai.ai", "sha256:abc123")
         client.invalidate_key_cache()
         client.fetch_key_by_hash("https://hai.ai", "sha256:abc123")
@@ -222,22 +175,18 @@ class TestFetchKeyByHashCache:
 
 
 class TestFetchKeyByEmailCache:
-    def test_second_call_uses_cache(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        call_count = 0
+    def test_second_call_uses_cache(self) -> None:
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_get(url: str, **_kwargs: Any) -> _FakeResponse:
+        call_count = 0
+        def counting_fetch(*args: Any, **kwargs: Any) -> dict:
             nonlocal call_count
             call_count += 1
-            return _FakeResponse(200, _make_key_response())
+            return _make_key_response()
 
-        import httpx
+        mock_ffi.responses["fetch_key_by_email"] = counting_fetch
 
-        monkeypatch.setattr(httpx, "get", fake_get)
-
-        client = HaiClient()
         client.fetch_key_by_email("https://hai.ai", "alice@hai.ai")
         client.fetch_key_by_email("https://hai.ai", "alice@hai.ai")
 
@@ -250,22 +199,18 @@ class TestFetchKeyByEmailCache:
 
 
 class TestFetchKeyByDomainCache:
-    def test_second_call_uses_cache(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        call_count = 0
+    def test_second_call_uses_cache(self) -> None:
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
 
-        def fake_get(url: str, **_kwargs: Any) -> _FakeResponse:
+        call_count = 0
+        def counting_fetch(*args: Any, **kwargs: Any) -> dict:
             nonlocal call_count
             call_count += 1
-            return _FakeResponse(200, _make_key_response())
+            return _make_key_response()
 
-        import httpx
+        mock_ffi.responses["fetch_key_by_domain"] = counting_fetch
 
-        monkeypatch.setattr(httpx, "get", fake_get)
-
-        client = HaiClient()
         client.fetch_key_by_domain("https://hai.ai", "example.com")
         client.fetch_key_by_domain("https://hai.ai", "example.com")
 

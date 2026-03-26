@@ -708,7 +708,7 @@ async fn prepare_email_client(
 async fn call_send_email(context: &HaiServerContext, args: &Value) -> ToolResult {
     let client = prepare_email_client(context, args).await?;
     let result = client
-        .send_email(&SendEmailOptions {
+        .send_signed_email(&SendEmailOptions {
             to: required_string(args, "to")?.to_string(),
             subject: required_string(args, "subject")?.to_string(),
             body: required_string(args, "body")?.to_string(),
@@ -717,6 +717,7 @@ async fn call_send_email(context: &HaiServerContext, args: &Value) -> ToolResult
             in_reply_to: optional_string(args, "in_reply_to").map(ToString::to_string),
             attachments: vec![],
             labels: optional_string_array(args, "labels"),
+            append_footer: None,
         })
         .await
         .map_err(tool_message)?;

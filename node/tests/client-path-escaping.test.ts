@@ -1,79 +1,78 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HaiClient } from '../src/client.js';
 import { generateTestKeypair as generateKeypair } from './setup.js';
+import { createMockFFI } from './ffi-mock.js';
 
 async function makeClient(jacsId: string = 'agent/with/slash'): Promise<HaiClient> {
   const keypair = generateKeypair();
   return HaiClient.fromCredentials(jacsId, keypair.privateKeyPem, { url: 'https://hai.example', privateKeyPassphrase: 'keygen-password' });
 }
 
-function stubJsonFetch(expectedUrl: string, payload: Record<string, unknown> = {}): void {
-  const fetchMock = vi.fn(async (url: string | URL) => {
-    expect(String(url)).toBe(expectedUrl);
-    return new Response(JSON.stringify(payload), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  });
-  vi.stubGlobal('fetch', fetchMock);
-}
-
 describe('client path escaping', () => {
   afterEach(() => {
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
   it('escapes claimUsername agentId path segments', async () => {
     const client = await makeClient();
-    stubJsonFetch(
-      'https://hai.example/api/v1/agents/agent%2F..%2Fescape/username',
-      { username: 'agent', email: 'agent@hai.ai', agent_id: 'agent/../escape' },
-    );
+    const claimUsernameMock = vi.fn(async (agentId: string, _username: string) => {
+      // FFI adapter receives the raw agentId; Rust handles escaping
+      expect(agentId).toBe('agent/../escape');
+      return { username: 'agent', email: 'agent@hai.ai', agent_id: 'agent/../escape' };
+    });
+    client._setFFIAdapter(createMockFFI({ claimUsername: claimUsernameMock }));
 
     await client.claimUsername('agent/../escape', 'agent');
   });
 
   it('escapes submitResponse jobId path segments', async () => {
     const client = await makeClient();
-    stubJsonFetch(
-      'https://hai.example/api/v1/agents/jobs/job%2Fwith%2Fslash/response',
-      { success: true, job_id: 'job/with/slash', message: 'ok' },
-    );
+    const submitResponseMock = vi.fn(async (params: Record<string, unknown>) => {
+      // FFI adapter receives the raw jobId in the params; Rust handles escaping
+      expect(params.job_id).toBe('job/with/slash');
+      return { success: true, job_id: 'job/with/slash', message: 'ok' };
+    });
+    client._setFFIAdapter(createMockFFI({ submitResponse: submitResponseMock }));
 
     await client.submitResponse('job/with/slash', 'response body');
   });
 
   it('escapes markRead jacsId and messageId path segments', async () => {
     const client = await makeClient('agent/with/slash');
-    stubJsonFetch(
-      'https://hai.example/api/agents/agent%2Fwith%2Fslash/email/messages/msg%2Fwith%2Fslash/read',
-      {},
-    );
+    const markReadMock = vi.fn(async (messageId: string) => {
+      // FFI adapter receives the raw messageId; Rust handles escaping
+      expect(messageId).toBe('msg/with/slash');
+    });
+    client._setFFIAdapter(createMockFFI({ markRead: markReadMock }));
 
     await client.markRead('msg/with/slash');
   });
 
   it('escapes fetchRemoteKey jacsId and version path segments', async () => {
     const client = await makeClient();
-    stubJsonFetch(
-      'https://hai.example/jacs/v1/agents/agent%2Fwith%2Fslash/keys/2026%2F01',
-      {
+    const fetchRemoteKeyMock = vi.fn(async (jacsId: string, version: string) => {
+      // FFI adapter receives the raw values; Rust handles escaping
+      expect(jacsId).toBe('agent/with/slash');
+      expect(version).toBe('2026/01');
+      return {
         jacs_id: 'agent/with/slash',
         version: '2026/01',
         public_key: 'pem',
-      },
-    );
+      };
+    });
+    client._setFFIAdapter(createMockFFI({ fetchRemoteKey: fetchRemoteKeyMock }));
 
     await client.fetchRemoteKey('agent/with/slash', '2026/01');
   });
 
   it('escapes getAgentAttestation agentId path segments', async () => {
     const client = await makeClient();
-    stubJsonFetch(
-      'https://hai.example/api/v1/agents/other%2Fagent/verify',
-      { jacs_id: 'other/agent', registered: false, registrations: [] },
-    );
+    const verifyStatusMock = vi.fn(async (agentId?: string) => {
+      // FFI adapter receives the raw agentId; Rust handles escaping
+      expect(agentId).toBe('other/agent');
+      return { jacs_id: 'other/agent', registered: false, registrations: [] };
+    });
+    client._setFFIAdapter(createMockFFI({ verifyStatus: verifyStatusMock }));
 
     await client.getAgentAttestation('other/agent');
   });

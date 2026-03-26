@@ -1,0 +1,17 @@
+[package]
+name = "haiigo"
+version = "0.2.0"
+description = "Go C FFI binding for HAI SDK (cdylib)"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+hai-binding-core = { path = "../hai-binding-core" }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread"] }

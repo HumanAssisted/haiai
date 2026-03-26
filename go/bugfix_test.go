@@ -109,7 +109,9 @@ func TestGetAgentAttestationUsesPlural(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAgentAttestation: %v", err)
 	}
-	expected := "/api/v1/agents/test-agent-id/attestations"
+	// GetAgentAttestation now delegates to VerifyStatus (ffi.VerifyStatus)
+	// which calls /api/v1/agents/{id}/verify
+	expected := "/api/v1/agents/test-agent-id/verify"
 	if gotPath != expected {
 		t.Fatalf("expected %q, got %q", expected, gotPath)
 	}
@@ -117,101 +119,8 @@ func TestGetAgentAttestationUsesPlural(t *testing.T) {
 
 // ===========================================================================
 // HIGH #4: HTTP retry logic
+// Tests removed: retry logic is now handled by the Rust FFI layer.
 // ===========================================================================
-
-func TestDoRequestRetriesOnRetryableStatusCodes(t *testing.T) {
-	retryableCodes := []int{429, 500, 502, 503, 504}
-
-	for _, code := range retryableCodes {
-		t.Run(fmt.Sprintf("status_%d", code), func(t *testing.T) {
-			attempts := 0
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				attempts++
-				if attempts < 3 {
-					w.WriteHeader(code)
-					_, _ = w.Write([]byte(`{"error":"temporary"}`))
-					return
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"status":"ok"}`))
-			}))
-			defer srv.Close()
-
-			cl, _ := newTestClient(t, srv.URL)
-			var result map[string]string
-			err := cl.doRequest(context.Background(), http.MethodGet, "/test", nil, &result)
-			if err != nil {
-				t.Fatalf("expected success after retries, got: %v", err)
-			}
-			if attempts != 3 {
-				t.Fatalf("expected 3 attempts, got %d", attempts)
-			}
-		})
-	}
-}
-
-func TestDoRequestDoesNotRetryNonRetryableCodes(t *testing.T) {
-	nonRetryable := []int{400, 401, 403, 404, 405}
-
-	for _, code := range nonRetryable {
-		t.Run(fmt.Sprintf("status_%d", code), func(t *testing.T) {
-			attempts := 0
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				attempts++
-				w.WriteHeader(code)
-				_, _ = w.Write([]byte(`{"error":"permanent"}`))
-			}))
-			defer srv.Close()
-
-			cl, _ := newTestClient(t, srv.URL)
-			_ = cl.doRequest(context.Background(), http.MethodGet, "/test", nil, nil)
-			if attempts != 1 {
-				t.Fatalf("expected 1 attempt for status %d, got %d", code, attempts)
-			}
-		})
-	}
-}
-
-func TestDoRequestExhaustsRetriesThenFails(t *testing.T) {
-	attempts := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts++
-		w.WriteHeader(503)
-		_, _ = w.Write([]byte(`{"error":"always failing"}`))
-	}))
-	defer srv.Close()
-
-	cl, _ := newTestClient(t, srv.URL)
-	err := cl.doRequest(context.Background(), http.MethodGet, "/test", nil, nil)
-	if err == nil {
-		t.Fatal("expected error after exhausting retries")
-	}
-	// Default 3 retries = 1 initial + 3 retries = 4 total
-	if attempts != 4 {
-		t.Fatalf("expected 4 attempts (1 + 3 retries), got %d", attempts)
-	}
-}
-
-func TestWithMaxRetriesOption(t *testing.T) {
-	attempts := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts++
-		w.WriteHeader(503)
-		_, _ = w.Write([]byte(`{"error":"always failing"}`))
-	}))
-	defer srv.Close()
-
-	cl, _ := newTestClient(t, srv.URL)
-	cl.maxRetries = 5
-	err := cl.doRequest(context.Background(), http.MethodGet, "/test", nil, nil)
-	if err == nil {
-		t.Fatal("expected error after exhausting retries")
-	}
-	// 1 initial + 5 retries = 6 total
-	if attempts != 6 {
-		t.Fatalf("expected 6 attempts (1 + 5 retries), got %d", attempts)
-	}
-}
 
 // ===========================================================================
 // HIGH #6: Free benchmark missing transport field
@@ -267,22 +176,28 @@ func TestLimitedReadAllExceedsLimit(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when exceeding size limit")
 	}
-	if !strings.Contains(err.Error(), "response body exceeds") {
+	if !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 }
 
 // ===========================================================================
-// MEDIUM #15: SSE http.Client has ResponseHeaderTimeout
+// MEDIUM #15: SSE connection via FFI (transport config moved to Rust)
 // ===========================================================================
 
-func TestSSEClientHasResponseHeaderTimeout(t *testing.T) {
-	// We can't easily test the internals of ConnectSSE without a real server,
-	// but we can verify the transport configuration function exists and
-	// returns the right config.
-	transport := newSSETransport()
-	if transport.ResponseHeaderTimeout != 30*time.Second {
-		t.Fatalf("expected ResponseHeaderTimeout of 30s, got %v", transport.ResponseHeaderTimeout)
+func TestSSEConnectionViaFFI(t *testing.T) {
+	// SSE transport configuration (timeouts, headers) is now handled by the
+	// Rust FFI layer. Verify that ConnectSSE delegates to FFI.
+	mock := newMockFFIClient("http://localhost", "test-jacs-id", "JACS test:123:sig")
+	cl := &Client{ffi: mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	// The default mock returns an error for ConnectSSE, confirming delegation.
+	_, err := cl.ConnectSSE(ctx)
+	if err == nil {
+		t.Fatal("expected error from mock ConnectSSE")
 	}
 }
 
@@ -394,8 +309,8 @@ func TestListMessagesSendsDateFilters(t *testing.T) {
 // ===========================================================================
 
 func TestFetchKeyByEmailDefaultsToMainEndpoint(t *testing.T) {
-	// The standalone function should default to DefaultEndpoint (beta.hai.ai)
-	// when HAI_KEYS_BASE_URL is not set. We override via env for test isolation.
+	// The standalone function requires a Client (FFI) -- passing nil returns an error.
+	// Verify the function works when a client is provided.
 	var gotPath string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -405,8 +320,8 @@ func TestFetchKeyByEmailDefaultsToMainEndpoint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	t.Setenv("HAI_KEYS_BASE_URL", srv.URL)
-	_, err := FetchKeyByEmail(context.Background(), nil, "alice@hai.ai")
+	cl, _ := newTestClient(t, srv.URL)
+	_, err := FetchKeyByEmail(context.Background(), cl, "alice@hai.ai")
 	if err != nil {
 		t.Fatalf("FetchKeyByEmail: %v", err)
 	}
@@ -416,68 +331,36 @@ func TestFetchKeyByEmailDefaultsToMainEndpoint(t *testing.T) {
 	}
 }
 
-func TestFetchKeyByDomainFromURL_UsesAPIAgentsKeysPath(t *testing.T) {
-	var gotPath string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.EscapedPath()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(keyResponseJSON()))
-	}))
-	defer srv.Close()
-
-	_, err := FetchKeyByDomainFromURL(context.Background(), nil, srv.URL, "example.com")
-	if err != nil {
-		t.Fatalf("FetchKeyByDomainFromURL: %v", err)
+func TestFetchKeyByDomainFromURL_ReturnsDeprecatedError(t *testing.T) {
+	// FetchKeyByDomainFromURL is deprecated -- native HTTP fallback removed.
+	// Verify it returns a deprecation error.
+	_, err := FetchKeyByDomainFromURL(context.Background(), nil, "http://unused", "example.com")
+	if err == nil {
+		t.Fatal("expected error from deprecated FetchKeyByDomainFromURL")
 	}
-	expected := "/api/agents/keys/domain/example.com"
-	if gotPath != expected {
-		t.Fatalf("expected %q, got %q", expected, gotPath)
+	if !strings.Contains(err.Error(), "deprecated") {
+		t.Fatalf("expected deprecation error, got: %v", err)
 	}
 }
 
-func TestFetchKeyByHashFromURL_UsesAPIAgentsKeysPath(t *testing.T) {
-	var gotPath string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.EscapedPath()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"public_key":"Zm9v",
-			"algorithm":"Ed25519",
-			"public_key_hash":"sha256:abcdef",
-			"agent_id":"agent-abc",
-			"version":"v1"
-		}`))
-	}))
-	defer srv.Close()
-
-	_, err := FetchKeyByHashFromURL(context.Background(), nil, srv.URL, "sha256:abcdef")
-	if err != nil {
-		t.Fatalf("FetchKeyByHashFromURL: %v", err)
+func TestFetchKeyByHashFromURL_ReturnsDeprecatedError(t *testing.T) {
+	// FetchKeyByHashFromURL is deprecated -- native HTTP fallback removed.
+	_, err := FetchKeyByHashFromURL(context.Background(), nil, "http://unused", "sha256:abcdef")
+	if err == nil {
+		t.Fatal("expected error from deprecated FetchKeyByHashFromURL")
 	}
-	expected := "/api/agents/keys/hash/sha256:abcdef"
-	if gotPath != expected {
-		t.Fatalf("expected %q, got %q", expected, gotPath)
+	if !strings.Contains(err.Error(), "deprecated") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestFetchAllKeysFromURL_UsesAPIAgentsKeysPath(t *testing.T) {
-	var gotPath string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.EscapedPath()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(keyHistoryResponseJSON()))
-	}))
-	defer srv.Close()
-
-	_, err := FetchAllKeysFromURL(context.Background(), nil, srv.URL, "agent-abc")
-	if err != nil {
-		t.Fatalf("FetchAllKeysFromURL: %v", err)
+func TestFetchAllKeysFromURL_ReturnsDeprecatedError(t *testing.T) {
+	// FetchAllKeysFromURL is deprecated -- native HTTP fallback removed.
+	_, err := FetchAllKeysFromURL(context.Background(), nil, "http://unused", "agent-abc")
+	if err == nil {
+		t.Fatal("expected error from deprecated FetchAllKeysFromURL")
 	}
-	expected := "/api/agents/keys/agent-abc/all"
-	if gotPath != expected {
-		t.Fatalf("expected %q, got %q", expected, gotPath)
+	if !strings.Contains(err.Error(), "deprecated") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

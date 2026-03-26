@@ -1,6 +1,6 @@
 [package]
 name = "haiai-cli"
-version = "0.1.11"
+version = "0.2.0"
 description = "HAIAI CLI: command-line interface for HAI.AI agent SDK"
 readme = "README.md"
 keywords = ["hai", "jacs", "agent", "cli", "mcp"]
@@ -16,16 +16,16 @@ name = "haiai"
 path = "src/main.rs"
 
 [dependencies]
-hai-mcp = { version = "=0.1.11", path = "../hai-mcp" }
-haiai = { version = "=0.1.11", path = "../haiai" }
-jacs = { version = "=0.9.11", features = ["keychain"] }
-jacs-mcp = { version = "=0.9.11", features = ["mcp"] }
+hai-mcp = { version = "=0.2.0", path = "../hai-mcp" }
+haiai = { version = "=0.2.0", path = "../haiai" }
+jacs = { version = "=0.9.12", features = ["keychain"] }
+jacs-mcp = { version = "=0.9.12", features = ["mcp"] }
 anyhow = "1"
 rmcp = { version = "0.12", features = ["server", "transport-io", "macros"] }
 clap = { version = "4", features = ["derive"] }
 tokio.workspace = true
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter", "registry"] }
 serde_json = "1"
 rpassword = "7"
 atty = "0.2"

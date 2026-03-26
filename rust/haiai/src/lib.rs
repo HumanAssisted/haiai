@@ -28,6 +28,7 @@
 //!     in_reply_to: None,
 //!     attachments: vec![],
 //!     labels: vec![],
+//!     append_footer: None,
 //! }).await?;
 //! # Ok(())
 //! # }

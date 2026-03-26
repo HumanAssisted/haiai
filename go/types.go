@@ -274,19 +274,49 @@ type RotationResult struct {
 
 // RegisterNewAgentOptions configures RegisterNewAgent behavior.
 type RegisterNewAgentOptions struct {
-	Domain      string
-	Description string
-	OwnerEmail  string
-	Quiet       bool
+	Domain        string
+	Description   string
+	OwnerEmail    string
+	Password      string
+	KeyDirectory  string
+	DataDirectory string
+	ConfigPath    string
+	Algorithm     string
+	Quiet         bool
 }
 
-// RegisterResult is the result of RegisterNewAgent, containing
-// the generated key material and registration response.
+// RegisterResult is the result of RegisterNewAgent. The FFI returns a merged
+// JSON containing both CreateAgentResult fields (paths, algorithm) and
+// RegistrationResult fields (agent_id, jacs_id, success).
 type RegisterResult struct {
-	Registration *RegistrationResult
-	PrivateKey   []byte // PEM-encoded Ed25519 private key
-	PublicKey    []byte // PEM-encoded Ed25519 public key
-	AgentJSON    string // The signed JACS agent document
+	// From CreateAgentResult
+	AgentID        string `json:"agent_id"`
+	Name           string `json:"name"`
+	PublicKeyPath  string `json:"public_key_path"`
+	ConfigPath     string `json:"config_path"`
+	Version        string `json:"version"`
+	Algorithm      string `json:"algorithm"`
+	PrivateKeyPath string `json:"private_key_path"`
+	DataDirectory  string `json:"data_directory"`
+	KeyDirectory   string `json:"key_directory"`
+	Domain         string `json:"domain"`
+	DNSRecord      string `json:"dns_record"`
+
+	// From RegistrationResult
+	Success      bool                `json:"success"`
+	JacsID       string              `json:"jacs_id"`
+	DNSVerified  bool                `json:"dns_verified"`
+	Registrations []RegistrationEntry `json:"registrations"`
+	RegisteredAt string              `json:"registered_at"`
+	Message      string              `json:"message,omitempty"`
+}
+
+// RegistrationEntry is an individual registration record returned by the server.
+type RegistrationEntry struct {
+	KeyID         string `json:"key_id"`
+	Algorithm     string `json:"algorithm"`
+	SignatureJSON string `json:"signature_json"`
+	SignedAt      string `json:"signed_at"`
 }
 
 // SendEmailOptions configures an email send request.
@@ -504,6 +534,52 @@ type Contact struct {
 // ContactsResponse is the wrapper returned by the contacts API.
 type ContactsResponse struct {
 	Contacts []Contact `json:"contacts"`
+}
+
+// EmailTemplate represents an agent email template.
+type EmailTemplate struct {
+	ID           string  `json:"id"`
+	AgentID      string  `json:"agent_id"`
+	Name         string  `json:"name"`
+	HowToSend    *string `json:"how_to_send,omitempty"`
+	HowToRespond *string `json:"how_to_respond,omitempty"`
+	Goal         *string `json:"goal,omitempty"`
+	Rules        *string `json:"rules,omitempty"`
+	CreatedAt    string  `json:"created_at"`
+	UpdatedAt    string  `json:"updated_at"`
+}
+
+// CreateEmailTemplateOptions are the options for creating an email template.
+type CreateEmailTemplateOptions struct {
+	Name         string  `json:"name"`
+	HowToSend    *string `json:"how_to_send,omitempty"`
+	HowToRespond *string `json:"how_to_respond,omitempty"`
+	Goal         *string `json:"goal,omitempty"`
+	Rules        *string `json:"rules,omitempty"`
+}
+
+// UpdateEmailTemplateOptions are the options for updating an email template.
+type UpdateEmailTemplateOptions struct {
+	Name         *string `json:"name,omitempty"`
+	HowToSend    *string `json:"how_to_send,omitempty"`
+	HowToRespond *string `json:"how_to_respond,omitempty"`
+	Goal         *string `json:"goal,omitempty"`
+	Rules        *string `json:"rules,omitempty"`
+}
+
+// ListEmailTemplatesOptions are the options for listing email templates.
+type ListEmailTemplatesOptions struct {
+	Limit  *int    `json:"limit,omitempty"`
+	Offset *int    `json:"offset,omitempty"`
+	Q      *string `json:"q,omitempty"`
+}
+
+// ListEmailTemplatesResult is the response from listing email templates.
+type ListEmailTemplatesResult struct {
+	Templates []EmailTemplate `json:"templates"`
+	Total     int             `json:"total"`
+	Limit     int             `json:"limit"`
+	Offset    int             `json:"offset"`
 }
 
 // ForwardOptions configures a forward email request.

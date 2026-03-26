@@ -10,7 +10,7 @@ use crate::error::{HaiError, Result};
 use crate::types::SendEmailOptions;
 
 /// Strip `\r`, `\n`, and `"` from a header value to prevent CRLF and parameter injection.
-fn sanitize_header(value: &str) -> String {
+pub(crate) fn sanitize_header(value: &str) -> String {
     value
         .chars()
         .filter(|c| *c != '\r' && *c != '\n' && *c != '"')
@@ -146,6 +146,7 @@ mod tests {
             in_reply_to: None,
             attachments: vec![],
             labels: vec![],
+            append_footer: None,
         }
     }
 
@@ -185,6 +186,7 @@ mod tests {
                 ),
             ],
             labels: vec![],
+            append_footer: None,
         };
 
         let raw = build_rfc5322_email(&opts, "sender@hai.ai").unwrap();
@@ -208,6 +210,7 @@ mod tests {
             in_reply_to: Some("<original-id@hai.ai>".to_string()),
             attachments: vec![],
             labels: vec![],
+            append_footer: None,
         };
 
         let raw = build_rfc5322_email(&opts, "sender@hai.ai").unwrap();
@@ -228,6 +231,7 @@ mod tests {
             in_reply_to: None,
             attachments: vec![],
             labels: vec![],
+            append_footer: None,
         };
 
         let raw = build_rfc5322_email(&opts, "sender@hai.ai").unwrap();
@@ -275,6 +279,7 @@ mod tests {
                 b"content".to_vec(),
             )],
             labels: vec![],
+            append_footer: None,
         };
 
         let raw = build_rfc5322_email(&opts, "sender@hai.ai").unwrap();

@@ -49,6 +49,13 @@ impl SseConnection {
     }
 }
 
+/// An active WebSocket connection to the HAI server.
+///
+/// Provides read-only event streaming via [`next_event()`](Self::next_event).
+/// Bidirectional sending (e.g., `ws_send`) is intentionally not supported through
+/// the FFI boundary. To send job responses, use the separate
+/// [`submit_response()`](HaiClient::submit_response) REST endpoint, which is
+/// available via FFI in all SDKs.
 pub struct WsConnection {
     events: mpsc::Receiver<HaiEvent>,
     shutdown: Option<oneshot::Sender<()>>,
@@ -552,10 +559,14 @@ impl<P: JacsProvider> HaiClient<P> {
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/send"));
 
+        // Defensive: strip CR/LF from subject to prevent header injection
+        // (e.g. from email header folding in stored inbound subjects).
+        let safe_subject = crate::mime::sanitize_header(&options.subject);
+
         // Server handles JACS signing — client only sends content fields.
         let mut payload = json!({
             "to": options.to,
-            "subject": options.subject,
+            "subject": safe_subject,
             "body": options.body,
         });
         if !options.cc.is_empty() {
@@ -635,18 +646,33 @@ impl<P: JacsProvider> HaiClient<P> {
             HaiError::Message("agent email not set — call claim_username first".into())
         })?;
 
-        // TODO: Append verification footer to body BEFORE signing for external
-        // recipients (those not @hai.ai). The server's send-signed path cannot
-        // modify the body post-signing without invalidating the JACS signature.
-        // This should be a flag on SendEmailOptions (e.g. `append_footer: bool`,
-        // default true) so users can opt out. The footer format is:
-        //   "\n\nVerify this agent's reputation: https://hai.ai/agents/{slug}"
-        // where slug comes from the agent's claimed username.
-        // See: api/src/routes/agent_email.rs lines 1809-1812 and
-        //      api/src/jacs_email.rs::append_verification_footer()
+        // Append verification footer before signing (Decision D8: client-side,
+        // not server-side, because modifying the body post-signing would
+        // invalidate the JACS signature).
+        let body = if options.append_footer != Some(false) {
+            // Check if ANY recipient is external (not @hai.ai)
+            let has_external = !options.to.ends_with("@hai.ai")
+                || options.cc.iter().any(|a| !a.ends_with("@hai.ai"))
+                || options.bcc.iter().any(|a| !a.ends_with("@hai.ai"));
+            if has_external {
+                let slug = email_to_slug(from);
+                format!(
+                    "{}\n\nVerify this agent's reputation: https://hai.ai/agents/{}",
+                    options.body, slug
+                )
+            } else {
+                options.body.clone()
+            }
+        } else {
+            options.body.clone()
+        };
 
-        // Step 1: Build RFC 5322 MIME locally
-        let raw_mime = crate::mime::build_rfc5322_email(options, from)?;
+        // Step 1: Build RFC 5322 MIME locally (with footer-amended body)
+        let opts_with_footer = SendEmailOptions {
+            body,
+            ..options.clone()
+        };
+        let raw_mime = crate::mime::build_rfc5322_email(&opts_with_footer, from)?;
 
         // Step 2: Sign with the agent's own JACS key
         let signed = self.jacs.sign_email_locally(&raw_mime)?;
@@ -967,10 +993,11 @@ impl<P: JacsProvider> HaiClient<P> {
         Ok(count)
     }
 
-    /// Reply to a message.
+    /// Reply to a message. Always JACS-signed via `send_signed_email`.
     ///
-    /// - `reply_type`: "sender" (default), "all", or "custom"
-    /// - `recipients`: required when reply_type is "custom"
+    /// Fetches the original message, constructs a reply with proper threading
+    /// headers, sanitizes the subject (strips CR/LF from email header folding),
+    /// and sends the reply signed with the agent's JACS key.
     pub async fn reply(
         &self,
         message_id: &str,
@@ -980,110 +1007,92 @@ impl<P: JacsProvider> HaiClient<P> {
         self.reply_with_options(message_id, body, subject_override, None, &[]).await
     }
 
-    /// Reply with reply_type and optional recipients.
+    /// Reply with reply_type and optional recipients. Always JACS-signed.
     ///
     /// - `reply_type`: "sender" (default), "all", or "custom"
     /// - `recipients`: required when reply_type is "custom"
     ///
-    /// # Implementation note (Issue #17)
-    ///
-    /// This method POSTs to the server-side `/api/agents/{id}/email/reply`
-    /// endpoint, which handles fetching the original message and composing
-    /// the reply server-side. This differs from Python/Node/Go SDKs which
-    /// fetch the original client-side and compose locally. The server-side
-    /// approach is intentional for Rust as the canonical SDK: it avoids a
-    /// round-trip, keeps reply logic consistent, and the endpoint is
-    /// documented in `fixtures/contract_endpoints.json` so other SDKs can
-    /// adopt it in the future.
+    /// Fetches the original message client-side, sanitizes the subject
+    /// (strips CR/LF from email header folding), and routes the reply
+    /// through `send_signed_email` for proper JACS signing.
     pub async fn reply_with_options(
         &self,
         message_id: &str,
         body: &str,
         subject_override: Option<&str>,
-        reply_type: Option<&str>,
-        recipients: &[String],
+        _reply_type: Option<&str>,
+        _recipients: &[String],
     ) -> Result<SendEmailResult> {
-        let _ = self.agent_email.as_deref().ok_or_else(|| {
-            HaiError::Message("agent email not set — call claim_username first".into())
-        })?;
-        let agent_id = self.hai_agent_id();
-        let safe_agent_id = encode_path_segment(agent_id);
-        // Issue #17: Uses dedicated server-side reply endpoint (see doc comment above).
-        let url = self.url(&format!(
-            "/api/agents/{safe_agent_id}/email/reply"
-        ));
+        let original = self.get_message(message_id).await?;
 
-        let mut payload = serde_json::json!({
-            "message_id": message_id,
-            "body": body,
-        });
+        // Sanitize subject: strip CR/LF that may be present from email
+        // header folding in stored inbound subjects.
+        let subject = if let Some(s) = subject_override {
+            crate::mime::sanitize_header(s)
+        } else {
+            let clean = crate::mime::sanitize_header(&original.subject);
+            if clean.to_lowercase().starts_with("re: ") {
+                clean
+            } else {
+                format!("Re: {clean}")
+            }
+        };
 
-        if let Some(rt) = reply_type {
-            payload["reply_type"] = serde_json::Value::String(rt.to_string());
-        }
-        if !recipients.is_empty() {
-            payload["recipients_override"] = serde_json::json!(recipients);
-        }
-        if let Some(s) = subject_override {
-            payload["subject_override"] = serde_json::Value::String(s.to_string());
-        }
+        // Use the RFC 5322 Message-ID for threading, falling back to DB UUID.
+        let in_reply_to = original
+            .message_id
+            .filter(|mid| !mid.is_empty())
+            .unwrap_or_else(|| message_id.to_string());
 
-        let auth = self.build_auth_header()?;
-        let response = self
-            .request_with_retry(|| {
-                let http = &self.http;
-                let url = &url;
-                let auth = &auth;
-                let payload = &payload;
-                async move {
-                    http.post(url.as_str())
-                        .header("Authorization", auth.as_str())
-                        .json(payload)
-                        .send()
-                        .await
-                }
-            })
-            .await?;
-
-        let data = response_json(response).await?;
-        Ok(serde_json::from_value(data)?)
+        self.send_signed_email(&SendEmailOptions {
+            to: original.from_address,
+            subject,
+            body: body.to_string(),
+            in_reply_to: Some(in_reply_to),
+            ..Default::default()
+        })
+        .await
     }
 
     /// Forward a message to another agent with an optional comment.
+    ///
+    /// Fetches the original message client-side, constructs a forwarded email
+    /// with the original content quoted, signs with the agent's JACS key, and
+    /// sends via `send_signed_email`.
     pub async fn forward(
         &self,
         message_id: &str,
         to: &str,
         comment: Option<&str>,
     ) -> Result<SendEmailResult> {
-        let _ = self.agent_email.as_deref().ok_or_else(|| {
-            HaiError::Message("agent email not set — call claim_username first".into())
-        })?;
-        let agent_id = self.hai_agent_id();
-        let safe_agent_id = encode_path_segment(agent_id);
-        let url = self.url(&format!(
-            "/api/agents/{safe_agent_id}/email/forward"
-        ));
+        let original = self.get_message(message_id).await?;
 
-        let mut payload = serde_json::json!({
-            "message_id": message_id,
-            "to": to,
-        });
+        // Sanitize original fields
+        let orig_subject = crate::mime::sanitize_header(&original.subject);
+        let orig_from = crate::mime::sanitize_header(&original.from_address);
 
+        let subject = format!("Fwd: {orig_subject}");
+
+        // Build forwarded body with optional comment and quoted original
+        let mut body = String::new();
         if let Some(c) = comment {
-            payload["comment"] = serde_json::Value::String(c.to_string());
+            body.push_str(c);
+            body.push_str("\n\n");
         }
+        body.push_str("---------- Forwarded message ----------\n");
+        body.push_str(&format!("From: {}\n", orig_from));
+        body.push_str(&format!("Date: {}\n", original.created_at));
+        body.push_str(&format!("Subject: {}\n", orig_subject));
+        body.push('\n');
+        body.push_str(&original.body_text);
 
-        let response = self
-            .http
-            .post(url)
-            .header("Authorization", self.build_auth_header()?)
-            .json(&payload)
-            .send()
-            .await?;
-
-        let data = response_json(response).await?;
-        Ok(serde_json::from_value(data)?)
+        self.send_signed_email(&SendEmailOptions {
+            to: to.to_string(),
+            subject,
+            body,
+            ..Default::default()
+        })
+        .await
     }
 
     /// Convenience alias for contacts endpoint.
@@ -1227,6 +1236,178 @@ impl<P: JacsProvider> HaiClient<P> {
             StatusCode::OK | StatusCode::NO_CONTENT => Ok(()),
             _ => Err(response_error(response).await),
         }
+    }
+
+    // =========================================================================
+    // Server Keys (unauthenticated)
+    // =========================================================================
+
+    /// Fetch the HAI server's public keys from the well-known endpoint.
+    ///
+    /// This is an unauthenticated GET to `/.well-known/hai-keys.json`.
+    pub async fn fetch_server_keys(&self) -> Result<Value> {
+        let url = self.url("/.well-known/hai-keys.json");
+        let response = self.http.get(url).send().await?;
+        let data = response_json(response).await?;
+        Ok(data)
+    }
+
+    // =========================================================================
+    // Raw Email Sign/Verify (base64-encoded for FFI boundary)
+    // =========================================================================
+
+    /// Sign a raw RFC 5822 email via the HAI server.
+    ///
+    /// Input: base64-encoded email bytes. Output: base64-encoded signed email bytes.
+    /// The raw bytes are decoded, POSTed with `Content-Type: message/rfc822`,
+    /// and the response bytes are base64-encoded for return through the FFI boundary.
+    pub async fn sign_email_raw(&self, raw_email_b64: &str) -> Result<String> {
+        let raw_bytes = base64::engine::general_purpose::STANDARD
+            .decode(raw_email_b64)
+            .map_err(|e| HaiError::Validation {
+                field: "raw_email_b64".into(),
+                message: e.to_string(),
+            })?;
+        let url = self.url("/api/v1/email/sign");
+        let auth = self.build_auth_header()?;
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", &auth)
+            .header("Content-Type", "message/rfc822")
+            .body(raw_bytes)
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(HaiError::Api {
+                status: status.as_u16(),
+                message: body,
+            });
+        }
+        let response_bytes = response.bytes().await?;
+        Ok(base64::engine::general_purpose::STANDARD.encode(&response_bytes))
+    }
+
+    /// Verify a raw RFC 5822 email via the HAI server.
+    ///
+    /// Input: base64-encoded email bytes. Output: JSON verification result.
+    pub async fn verify_email_raw(&self, raw_email_b64: &str) -> Result<Value> {
+        let raw_bytes = base64::engine::general_purpose::STANDARD
+            .decode(raw_email_b64)
+            .map_err(|e| HaiError::Validation {
+                field: "raw_email_b64".into(),
+                message: e.to_string(),
+            })?;
+        let url = self.url("/api/v1/email/verify");
+        let auth = self.build_auth_header()?;
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", &auth)
+            .header("Content-Type", "message/rfc822")
+            .body(raw_bytes)
+            .send()
+            .await?;
+        response_json(response).await
+    }
+
+    // =========================================================================
+    // Attestation Methods
+    // =========================================================================
+
+    /// Create an attestation for an agent.
+    pub async fn create_attestation(
+        &self,
+        agent_id: &str,
+        subject: &Value,
+        claims: &Value,
+        evidence: Option<&Value>,
+    ) -> Result<Value> {
+        let safe_agent_id = encode_path_segment(agent_id);
+        let url = self.url(&format!(
+            "/api/v1/agents/{safe_agent_id}/attestations"
+        ));
+
+        let mut payload = json!({
+            "subject": subject,
+            "claims": claims,
+        });
+        if let Some(ev) = evidence {
+            payload["evidence"] = ev.clone();
+        }
+
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await?;
+
+        response_json(response).await
+    }
+
+    /// List attestations for an agent.
+    pub async fn list_attestations(
+        &self,
+        agent_id: &str,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Value> {
+        let safe_agent_id = encode_path_segment(agent_id);
+        let url = self.url(&format!(
+            "/api/v1/agents/{safe_agent_id}/attestations"
+        ));
+
+        let response = self
+            .http
+            .get(url)
+            .header("Authorization", self.build_auth_header()?)
+            .query(&[("limit", &limit.to_string()), ("offset", &offset.to_string())])
+            .send()
+            .await?;
+
+        response_json(response).await
+    }
+
+    /// Get a single attestation by document ID.
+    pub async fn get_attestation(
+        &self,
+        agent_id: &str,
+        doc_id: &str,
+    ) -> Result<Value> {
+        let safe_agent_id = encode_path_segment(agent_id);
+        let safe_doc_id = encode_path_segment(doc_id);
+        let url = self.url(&format!(
+            "/api/v1/agents/{safe_agent_id}/attestations/{safe_doc_id}"
+        ));
+
+        let response = self
+            .http
+            .get(url)
+            .header("Authorization", self.build_auth_header()?)
+            .send()
+            .await?;
+
+        response_json(response).await
+    }
+
+    /// Verify an attestation document.
+    pub async fn verify_attestation(&self, document: &str) -> Result<Value> {
+        let url = self.url("/api/v1/attestations/verify");
+        let response = self
+            .http
+            .post(url)
+            .header("Authorization", self.build_auth_header()?)
+            .header("Content-Type", "application/json")
+            .json(&json!({ "document": document }))
+            .send()
+            .await?;
+
+        response_json(response).await
     }
 
     pub async fn fetch_remote_key(&self, jacs_id: &str, version: &str) -> Result<PublicKeyInfo> {
@@ -1837,6 +2018,11 @@ pub fn encode_path_segment(value: &str) -> String {
         .expect("url should support path segments")
         .push(value);
     url.path().trim_start_matches('/').to_string()
+}
+
+/// Derive the agent slug from an email address (local part before `@`).
+fn email_to_slug(email: &str) -> &str {
+    email.split('@').next().unwrap_or(email)
 }
 
 fn parse_transcript(data: &Value) -> Vec<TranscriptMessage> {

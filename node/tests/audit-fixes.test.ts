@@ -3,6 +3,8 @@ import { HaiClient } from '../src/client.js';
 import { HaiError, HaiConnectionError, RateLimitedError } from '../src/errors.js';
 import { generateTestKeypair } from './setup.js';
 import { createSseBody } from './setup.js';
+import { createMockFFI } from './ffi-mock.js';
+import { mapFFIError } from '../src/ffi-client.js';
 
 async function makeClient(
   jacsId: string = 'test-agent',
@@ -18,46 +20,38 @@ async function makeClient(
 }
 
 // =============================================================================
-// #5 — 429 should be retried, not thrown immediately
+// #5 — 429 retry is now handled by the Rust FFI layer.
+// These tests verify the FFI error mapping preserves RateLimitedError.
 // =============================================================================
-describe('#5: fetchWithRetry retries on 429', () => {
+describe('#5: FFI rate-limit error mapping', () => {
   afterEach(() => {
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it('retries 429 responses instead of throwing immediately', async () => {
+  it('retries are handled by FFI; successful call returns result', async () => {
     const client = await makeClient('agent-429', { maxRetries: 3 });
 
-    let callCount = 0;
-    const fetchMock = vi.fn(async () => {
-      callCount++;
-      if (callCount < 3) {
-        return new Response('Rate limited', { status: 429 });
-      }
-      return new Response(JSON.stringify({ message: 'ok' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    });
-    vi.stubGlobal('fetch', fetchMock);
+    const helloMock = vi.fn(async () => ({
+      timestamp: '2026-01-01T00:00:00Z',
+      client_ip: '127.0.0.1',
+      message: 'ok',
+      hello_id: 'h1',
+    }));
+    client._setFFIAdapter(createMockFFI({ hello: helloMock }));
 
-    // Should succeed after retrying the 429s
     const result = await client.hello();
-    expect(callCount).toBe(3);
+    expect(result.message).toBe('ok');
   });
 
-  it('throws RateLimitedError after exhausting all retries on 429', async () => {
+  it('throws RateLimitedError when FFI reports rate limit', async () => {
     const client = await makeClient('agent-429-exhaust', { maxRetries: 3 });
 
-    const fetchMock = vi.fn(async () => {
-      return new Response('Rate limited', { status: 429 });
+    const helloMock = vi.fn(async () => {
+      throw mapFFIError(new Error('RateLimited: Rate limited'));
     });
-    vi.stubGlobal('fetch', fetchMock);
+    client._setFFIAdapter(createMockFFI({ hello: helloMock }));
 
     await expect(client.hello()).rejects.toThrow(RateLimitedError);
-    // All 3 attempts should have been made
-    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -131,86 +125,87 @@ describe('#13: base URL validation', () => {
 });
 
 // =============================================================================
-// #14 — SSE/WS max reconnect attempts
+// #14 — SSE/WS max reconnect attempts (uses FFI connectSse)
 // =============================================================================
 describe('#14: SSE/WS max reconnect attempts', () => {
   afterEach(() => {
-    vi.unstubAllGlobals();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
   it('stops reconnecting SSE after maxReconnectAttempts', async () => {
+    vi.useFakeTimers();
     const client = await makeClient('agent-sse', { maxReconnectAttempts: 3 });
 
-    let fetchCallCount = 0;
-    const fetchMock = vi.fn(async () => {
-      fetchCallCount++;
-      // Simulate a connection error each time
-      throw new TypeError('fetch failed');
+    let connectCallCount = 0;
+    const connectSseMock = vi.fn(async () => {
+      connectCallCount++;
+      throw new HaiConnectionError('SSE connection failed');
     });
-    vi.stubGlobal('fetch', fetchMock);
+    client._setFFIAdapter(createMockFFI({ connectSse: connectSseMock }));
 
-    const events: unknown[] = [];
-    await expect(async () => {
+    // Attach the rejection handler immediately to avoid unhandled rejection.
+    const connectPromise = (async () => {
+      const events: unknown[] = [];
       for await (const event of client.connect({ transport: 'sse' })) {
         events.push(event);
       }
-    }).rejects.toThrow(HaiConnectionError);
+    })().catch((err: unknown) => { throw err; });
 
-    // Should have attempted exactly maxReconnectAttempts times
-    expect(fetchCallCount).toBe(3);
+    // Keep a reference to the caught promise to avoid unhandled rejection warnings.
+    const settled = connectPromise.catch(() => {});
+
+    // Advance through all reconnect backoff delays until the error propagates.
+    // Each failed attempt triggers exponential backoff (1s, 2s, 4s, ...).
+    for (let i = 0; i < 10; i++) {
+      await vi.advanceTimersByTimeAsync(60_000);
+    }
+
+    await settled;
+    await expect(connectPromise).rejects.toThrow(HaiConnectionError);
+
+    // Initial attempt + maxReconnectAttempts retries = 4 total
+    expect(connectCallCount).toBe(4);
   });
 });
 
 // =============================================================================
-// #18 — searchMessages and listMessages missing query params
+// #18 — searchMessages and listMessages query params
 // =============================================================================
 describe('#18: search/list messages support has_attachments, since, until', () => {
   afterEach(() => {
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it('listMessages passes has_attachments, since, until to query string', async () => {
+  it('listMessages passes has_attachments, since, until to FFI', async () => {
     const client = await makeClient();
-    // Need to set haiAgentId for email methods
-    (client as any)._haiAgentId = 'agent-uuid';
 
-    const fetchMock = vi.fn(async (url: string | URL) => {
-      const urlStr = String(url);
-      expect(urlStr).toContain('has_attachments=true');
-      expect(urlStr).toContain('since=2026-01-01T00%3A00%3A00Z');
-      expect(urlStr).toContain('until=2026-03-01T00%3A00%3A00Z');
-      return new Response(JSON.stringify({ messages: [] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
+    const listMessagesMock = vi.fn(async (options: Record<string, unknown>) => {
+      expect(options.has_attachments).toBe(true);
+      expect(options.since).toBe('2026-01-01T00:00:00Z');
+      expect(options.until).toBe('2026-03-01T00:00:00Z');
+      return [];
     });
-    vi.stubGlobal('fetch', fetchMock);
+    client._setFFIAdapter(createMockFFI({ listMessages: listMessagesMock }));
 
     await client.listMessages({
       hasAttachments: true,
       since: '2026-01-01T00:00:00Z',
       until: '2026-03-01T00:00:00Z',
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(listMessagesMock).toHaveBeenCalledTimes(1);
   });
 
-  it('searchMessages passes has_attachments, since, until to query string', async () => {
+  it('searchMessages passes has_attachments, since, until to FFI', async () => {
     const client = await makeClient();
-    (client as any)._haiAgentId = 'agent-uuid';
 
-    const fetchMock = vi.fn(async (url: string | URL) => {
-      const urlStr = String(url);
-      expect(urlStr).toContain('has_attachments=true');
-      expect(urlStr).toContain('since=2026-01-01T00%3A00%3A00Z');
-      expect(urlStr).toContain('until=2026-03-01T00%3A00%3A00Z');
-      return new Response(JSON.stringify({ messages: [] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      });
+    const searchMessagesMock = vi.fn(async (options: Record<string, unknown>) => {
+      expect(options.has_attachments).toBe(true);
+      expect(options.since).toBe('2026-01-01T00:00:00Z');
+      expect(options.until).toBe('2026-03-01T00:00:00Z');
+      return [];
     });
-    vi.stubGlobal('fetch', fetchMock);
+    client._setFFIAdapter(createMockFFI({ searchMessages: searchMessagesMock }));
 
     await client.searchMessages({
       query: 'test',
@@ -218,6 +213,6 @@ describe('#18: search/list messages support has_attachments, since, until', () =
       since: '2026-01-01T00:00:00Z',
       until: '2026-03-01T00:00:00Z',
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(searchMessagesMock).toHaveBeenCalledTimes(1);
   });
 });

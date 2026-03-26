@@ -40,6 +40,10 @@ RUST_CARGO_FILES=(
   rust/haiai/Cargo.toml
   rust/haiai-cli/Cargo.toml
   rust/hai-mcp/Cargo.toml
+  rust/hai-binding-core/Cargo.toml
+  rust/haiinpm/Cargo.toml
+  rust/haiipy/Cargo.toml
+  rust/haiigo/Cargo.toml
 )
 
 for f in "${RUST_CARGO_FILES[@]}"; do
@@ -67,10 +71,25 @@ done
 echo ""
 echo "Python:"
 sed -i '' "s/^version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" python/pyproject.toml
+sed -i '' "s/\"haiipy>=.*\"/\"haiipy>=$NEW_VERSION\"/" python/pyproject.toml
 echo "  python/pyproject.toml"
 # Safety net: update __init__.py fallback version if it contains a hardcoded version string
 sed -i '' "s/__version__ = \"$CURRENT\"/__version__ = \"$NEW_VERSION\"/" python/src/haiai/__init__.py 2>/dev/null || true
 echo "  python/src/haiai/__init__.py (fallback version)"
+
+# --- haiinpm package.json (napi-rs native binding) ---
+
+echo ""
+echo "haiinpm:"
+sed -i '' "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" rust/haiinpm/package.json
+echo "  rust/haiinpm/package.json: version"
+
+# --- haiipy pyproject.toml (PyO3 native binding) ---
+
+echo ""
+echo "haiipy:"
+sed -i '' "s/^version = \"$CURRENT\"/version = \"$NEW_VERSION\"/" rust/haiipy/pyproject.toml
+echo "  rust/haiipy/pyproject.toml: version"
 
 # --- Node main package ---
 
@@ -78,6 +97,11 @@ echo ""
 echo "Node:"
 sed -i '' "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" node/package.json
 echo "  node/package.json: version"
+
+# --- Node haiinpm dependency version ---
+
+sed -i '' "s/\"haiinpm\": \"$CURRENT\"/\"haiinpm\": \"$NEW_VERSION\"/" node/package.json
+echo "  node/package.json: haiinpm dependency"
 
 # --- Node optionalDependencies (CLI platform binary refs in main package.json) ---
 

@@ -1,3 +1,13 @@
+# Publish Node Package
+#
+# Distribution strategy for haiinpm (native FFI binding):
+# - The build-native-addon job builds platform-specific .node files for each OS/arch
+# - Native addons are uploaded as artifacts and downloaded during publish-haiinpm
+# - The haiinpm package is published to npm with all platform .node files bundled
+# - The main @haiai/haiai package depends on haiinpm via npm
+# - Users import 'haiai' which loads the haiinpm native addon at runtime
+# - haiinpm, haiipy, and haiigo are cdylib crates -- they are NOT published to crates.io
+# - The haiigo cdylib for Go consumers is distributed via GitHub Release assets
 name: Publish Node Package
 
 on:
@@ -21,6 +31,9 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/node/v}"
           echo "version=$TAG" >> $GITHUB_OUTPUT
 
+  # ============================================================
+  # Build CLI platform packages (existing — unchanged)
+  # ============================================================
   publish-platform-packages:
     needs: extract-version
     strategy:
@@ -98,8 +111,54 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  publish:
-    needs: [extract-version, publish-platform-packages]
+  # ============================================================
+  # Build haiinpm native addon (.node files) for each platform
+  # ============================================================
+  build-native-addon:
+    needs: extract-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            node_platform: darwin-arm64
+          - os: macos-14
+            target: x86_64-apple-darwin
+            node_platform: darwin-x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            node_platform: linux-x64-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            node_platform: win32-x64-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build haiinpm native addon
+        run: |
+          cd rust/haiinpm
+          npm install @napi-rs/cli
+          npx napi build --release --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: haiinpm-${{ matrix.node_platform }}
+          path: rust/haiinpm/*.node
+
+  # ============================================================
+  # Publish haiinpm package (native addon) to npm
+  # ============================================================
+  publish-haiinpm:
+    needs: [extract-version, build-native-addon]
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.extract-version.outputs.version }}
@@ -109,6 +168,42 @@ jobs:
         with:
           node-version: 20
           registry-url: "https://registry.npmjs.org"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: haiinpm-*
+          path: node/npm/haiinpm
+          merge-multiple: true
+      - name: List native addons
+        run: ls -la node/npm/haiinpm/
+      - name: Update haiinpm version
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('node/npm/haiinpm/package.json', 'utf-8'));
+            pkg.version = '${VERSION}';
+            fs.writeFileSync('node/npm/haiinpm/package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+      - name: Publish haiinpm
+        working-directory: node/npm/haiinpm
+        run: npm publish --provenance --access public || echo "Already published (safe to ignore)"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # ============================================================
+  # Publish main @haiai/haiai package
+  # ============================================================
+  publish:
+    needs: [extract-version, publish-platform-packages, publish-haiinpm]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.extract-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
+
       - name: Sync version from git tag
         run: |
           cd node
@@ -118,6 +213,9 @@ jobs:
             pkg.version = '${VERSION}';
             for (const dep of Object.keys(pkg.optionalDependencies || {})) {
               pkg.optionalDependencies[dep] = '${VERSION}';
+            }
+            if (pkg.dependencies && pkg.dependencies['haiinpm']) {
+              pkg.dependencies['haiinpm'] = '${VERSION}';
             }
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "

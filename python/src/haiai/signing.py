@@ -24,8 +24,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-import httpx
-
 logger = logging.getLogger("haiai.signing")
 
 
@@ -230,7 +228,7 @@ _key_cache: Optional[_KeyCache] = None
 _key_cache_lock = threading.Lock()
 
 
-def fetch_server_keys(hai_url: str) -> list[_CachedKey]:
+def fetch_server_keys(hai_url: str, ffi=None) -> list[_CachedKey]:
     """Fetch HAI public signing keys from ``/.well-known/hai-keys.json``.
 
     Results are cached for 1 hour with thread-safe refresh.
@@ -242,13 +240,12 @@ def fetch_server_keys(hai_url: str) -> list[_CachedKey]:
         if _key_cache is not None and (now - _key_cache.fetched_at) < _KEY_CACHE_TTL:
             return _key_cache.keys
 
-    url = f"{hai_url.rstrip('/')}/.well-known/hai-keys.json"
     try:
-        resp = httpx.get(url, timeout=10.0)
-        resp.raise_for_status()
-        data = resp.json()
+        if ffi is None:
+            raise RuntimeError("FFI client required for fetch_server_keys (no native HTTP fallback)")
+        data = ffi.fetch_server_keys()
     except Exception as exc:
-        logger.warning("Failed to fetch HAI signing keys from %s: %s", url, exc)
+        logger.warning("Failed to fetch HAI signing keys: %s", exc)
         with _key_cache_lock:
             if _key_cache is not None:
                 return _key_cache.keys
@@ -273,7 +270,7 @@ def fetch_server_keys(hai_url: str) -> list[_CachedKey]:
             keys=parsed, fetched_at=time.monotonic(), issuer=data.get("issuer", "")
         )
 
-    logger.info("Cached %d HAI signing keys from %s", len(parsed), url)
+    logger.info("Cached %d HAI signing keys", len(parsed))
     return parsed
 
 

@@ -1,4 +1,5 @@
 .PHONY: test test-python test-node test-go test-rust \
+        build-python-ffi build-node-ffi \
         versions check-versions check-jacs-versions \
         bump-version bump-jacs-version \
         release-node release-python release-rust release-all \
@@ -13,6 +14,10 @@
 RUST_VERSION := $(shell grep '^version' rust/haiai/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
 CLI_VERSION := $(shell grep '^version' rust/haiai-cli/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
 MCP_VERSION := $(shell grep '^version' rust/hai-mcp/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+BINDING_CORE_VERSION := $(shell grep '^version' rust/hai-binding-core/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+HAIINPM_VERSION := $(shell grep '^version' rust/haiinpm/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+HAIIPY_VERSION := $(shell grep '^version' rust/haiipy/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+HAIIGO_VERSION := $(shell grep '^version' rust/haiigo/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
 PYTHON_VERSION := $(shell grep '^version' python/pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
 NODE_VERSION := $(shell grep '"version"' node/package.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
 PLUGIN_VERSION := $(shell grep '"version"' .claude-plugin/plugin.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
@@ -30,8 +35,8 @@ JACS_NODE := $(shell grep '@hai.ai/jacs' node/package.json | head -1 | sed 's/.*
 
 test: test-python test-node test-go test-rust
 
-test-python:
-	cd python && pip install -e ".[dev]" && pytest
+test-python: build-python-ffi
+	cd python && pip install -e ".[dev,mcp]" && pytest
 
 test-node:
 	cd node && npm ci && npm test
@@ -43,20 +48,38 @@ test-rust:
 	cd rust && cargo test --workspace
 
 # ============================================================================
+# BUILD (local FFI wheel builds for development)
+# ============================================================================
+
+build-python-ffi:
+	cd rust/haiipy && pip install maturin && maturin develop --release
+
+build-node-ffi:
+	cd rust/haiinpm && npm install && npm run build
+
+# ============================================================================
 # VERSION INFO
 # ============================================================================
 
 versions:
 	@echo "Detected versions:"
-	@echo "  rust/haiai      $(RUST_VERSION)"
-	@echo "  rust/haiai-cli  $(CLI_VERSION)"
-	@echo "  rust/hai-mcp    $(MCP_VERSION)"
-	@echo "  python          $(PYTHON_VERSION)"
-	@echo "  node            $(NODE_VERSION)"
-	@echo "  plugin          $(PLUGIN_VERSION)"
+	@echo "  rust/haiai             $(RUST_VERSION)"
+	@echo "  rust/haiai-cli         $(CLI_VERSION)"
+	@echo "  rust/hai-mcp           $(MCP_VERSION)"
+	@echo "  rust/hai-binding-core  $(BINDING_CORE_VERSION)"
+	@echo "  rust/haiinpm           $(HAIINPM_VERSION)"
+	@echo "  rust/haiipy            $(HAIIPY_VERSION)"
+	@echo "  rust/haiigo            $(HAIIGO_VERSION)"
+	@echo "  python                 $(PYTHON_VERSION)"
+	@echo "  node                   $(NODE_VERSION)"
+	@echo "  plugin                 $(PLUGIN_VERSION)"
 	@echo ""
 	@if [ "$(RUST_VERSION)" = "$(CLI_VERSION)" ] && \
 		[ "$(RUST_VERSION)" = "$(MCP_VERSION)" ] && \
+		[ "$(RUST_VERSION)" = "$(BINDING_CORE_VERSION)" ] && \
+		[ "$(RUST_VERSION)" = "$(HAIINPM_VERSION)" ] && \
+		[ "$(RUST_VERSION)" = "$(HAIIPY_VERSION)" ] && \
+		[ "$(RUST_VERSION)" = "$(HAIIGO_VERSION)" ] && \
 		[ "$(RUST_VERSION)" = "$(PYTHON_VERSION)" ] && \
 		[ "$(RUST_VERSION)" = "$(NODE_VERSION)" ] && \
 		[ "$(RUST_VERSION)" = "$(PLUGIN_VERSION)" ]; then \
@@ -72,6 +95,14 @@ check-versions:
 		echo "ERROR: haiai ($(RUST_VERSION)) != haiai-cli ($(CLI_VERSION))"; exit 1; fi
 	@if [ "$(RUST_VERSION)" != "$(MCP_VERSION)" ]; then \
 		echo "ERROR: haiai ($(RUST_VERSION)) != hai-mcp ($(MCP_VERSION))"; exit 1; fi
+	@if [ "$(RUST_VERSION)" != "$(BINDING_CORE_VERSION)" ]; then \
+		echo "ERROR: haiai ($(RUST_VERSION)) != hai-binding-core ($(BINDING_CORE_VERSION))"; exit 1; fi
+	@if [ "$(RUST_VERSION)" != "$(HAIINPM_VERSION)" ]; then \
+		echo "ERROR: haiai ($(RUST_VERSION)) != haiinpm ($(HAIINPM_VERSION))"; exit 1; fi
+	@if [ "$(RUST_VERSION)" != "$(HAIIPY_VERSION)" ]; then \
+		echo "ERROR: haiai ($(RUST_VERSION)) != haiipy ($(HAIIPY_VERSION))"; exit 1; fi
+	@if [ "$(RUST_VERSION)" != "$(HAIIGO_VERSION)" ]; then \
+		echo "ERROR: haiai ($(RUST_VERSION)) != haiigo ($(HAIIGO_VERSION))"; exit 1; fi
 	@if [ "$(RUST_VERSION)" != "$(PYTHON_VERSION)" ]; then \
 		echo "ERROR: haiai ($(RUST_VERSION)) != python ($(PYTHON_VERSION))"; exit 1; fi
 	@if [ "$(RUST_VERSION)" != "$(NODE_VERSION)" ]; then \

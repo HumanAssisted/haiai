@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	haiai "github.com/HumanAssisted/haiai-go"
@@ -33,29 +34,26 @@ func main() {
 	if err != nil {
 		log.Fatalf("registration failed: %v", err)
 	}
-	if reg.Registration == nil {
-		log.Fatal("registration failed: empty registration response")
+	if !reg.Success {
+		log.Fatal("registration failed: server returned success=false")
 	}
 
-	jacsID := reg.Registration.JacsID
+	jacsID := reg.JacsID
 	if jacsID == "" {
-		jacsID = reg.Registration.AgentID
+		jacsID = reg.AgentID
 	}
 	fmt.Printf("Agent registered: %s\n", jacsID)
 
-	privateKey, err := haiai.ParsePrivateKey(reg.PrivateKey)
+	// Read public key PEM for display/well-known generation.
+	pubPEM, err := os.ReadFile(reg.PublicKeyPath)
 	if err != nil {
-		log.Fatalf("parse generated private key: %v", err)
-	}
-	publicKey, err := haiai.ParsePublicKey(reg.PublicKey)
-	if err != nil {
-		log.Fatalf("parse generated public key: %v", err)
+		log.Fatalf("read public key from %s: %v", reg.PublicKeyPath, err)
 	}
 
+	// Create an authenticated client -- all crypto delegated to FFI.
 	client, err := haiai.NewClient(
 		haiai.WithEndpoint(HAIURL),
 		haiai.WithJACSID(jacsID),
-		haiai.WithPrivateKey(privateKey),
 	)
 	if err != nil {
 		log.Fatalf("build client from generated credentials: %v", err)
@@ -81,9 +79,13 @@ func main() {
 	fmt.Println(string(cardJSON))
 
 	fmt.Println("\n=== Step 3: Prepare register options with embedded card metadata ===")
+	// Build register options with the agent card metadata.
+	// In a real application, the agent JSON would come from the JACS config/data directory.
+	// For this demo, we construct a minimal one from the registration result.
+	agentJSON := fmt.Sprintf(`{"jacsId":"%s","jacsVersion":"1.0.0","jacsAgentName":"a2a-demo-agent"}`, jacsID)
 	merged, err := a2a.RegisterOptionsWithAgentCard(haiai.RegisterOptions{
-		AgentJSON:  reg.AgentJSON,
-		PublicKey:  string(reg.PublicKey),
+		AgentJSON:  agentJSON,
+		PublicKey:  string(pubPEM),
 		OwnerEmail: "you@example.com",
 	}, card)
 	if err != nil {
@@ -135,7 +137,7 @@ func main() {
 	}
 
 	fmt.Println("\n=== Step 6: Generate .well-known bundle ===")
-	publicKeyB64 := base64.RawURLEncoding.EncodeToString(publicKey)
+	publicKeyB64 := base64.RawURLEncoding.EncodeToString(pubPEM)
 	wellKnown := a2a.GenerateWellKnownDocuments(card, "", publicKeyB64, agentData)
 	for path, doc := range wellKnown {
 		docJSON, _ := json.MarshalIndent(doc, "", "  ")

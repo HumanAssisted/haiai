@@ -126,14 +126,13 @@ func TestAuthHeaderVerifiableByServer(t *testing.T) {
 	}
 }
 
-func TestCryptoBackendBuildAuthHeader(t *testing.T) {
-	stub := &stubCryptoBackend{
-		buildAuthHeader: func() (string, error) {
-			return "JACS backend-agent:1234567890:c2lnbmF0dXJl", nil
-		},
+func TestFFIBuildAuthHeader(t *testing.T) {
+	mockFFI := newMockFFIClient("http://localhost:9999", "backend-agent", "")
+	mockFFI.buildAuthHeaderFn = func() (string, error) {
+		return "JACS backend-agent:1234567890:c2lnbmF0dXJl", nil
 	}
 
-	header, err := stub.BuildAuthHeader()
+	header, err := mockFFI.BuildAuthHeader()
 	if err != nil {
 		t.Fatalf("BuildAuthHeader: %v", err)
 	}
@@ -148,16 +147,15 @@ func TestCryptoBackendBuildAuthHeader(t *testing.T) {
 	}
 }
 
-func TestCryptoBackendBuildAuthHeaderError(t *testing.T) {
-	stub := &stubCryptoBackend{
-		buildAuthHeader: func() (string, error) {
-			return "", errors.New("no key loaded")
-		},
+func TestFFIBuildAuthHeaderError(t *testing.T) {
+	mockFFI := newMockFFIClient("http://localhost:9999", "backend-agent", "")
+	mockFFI.buildAuthHeaderFn = func() (string, error) {
+		return "", errors.New("no key loaded")
 	}
 
-	_, err := stub.BuildAuthHeader()
+	_, err := mockFFI.BuildAuthHeader()
 	if err == nil {
-		t.Fatal("expected error from stub with no key")
+		t.Fatal("expected error from mock with no key")
 	}
 }
 

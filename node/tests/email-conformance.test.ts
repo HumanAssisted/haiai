@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HaiClient } from '../src/client.js';
 import { generateTestKeypair as generateKeypair } from './setup.js';
+import { createMockFFI } from './ffi-mock.js';
 import {
   EmailNotActiveError,
   RecipientNotFoundError,
@@ -40,7 +41,7 @@ function loadConformanceFixture(): ConformanceFixture {
 async function makeClient(baseUrl: string): Promise<HaiClient> {
   const keypair = generateKeypair();
   const client = await HaiClient.fromCredentials('test-agent-001', keypair.privateKeyPem, { url: baseUrl, privateKeyPassphrase: 'keygen-password' });
-  client.agentEmail = 'test@hai.ai';
+  client.setAgentEmail('test@hai.ai');
   return client;
 }
 
@@ -58,13 +59,10 @@ describe('email conformance: mock verify response deserialization', () => {
   it('deserializes mock response into EmailVerificationResultV2 via verifyEmail', async () => {
     const mockJson = fixture.mock_verify_response.json;
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve(mockJson),
-    }));
-
     const client = await makeClient('https://mock.hai.ai');
+    const verifyDocumentMock = vi.fn(async () => mockJson);
+    client._setFFIAdapter(createMockFFI({ verifyDocument: verifyDocumentMock }));
+
     const result: EmailVerificationResultV2 = await client.verifyEmail('raw email content');
 
     expect(result.valid).toBe(true);
@@ -172,28 +170,21 @@ describe('email conformance: signEmail API contract', () => {
   });
 
   it('sends POST to correct path with message/rfc822 content-type', async () => {
-    let gotMethod = '';
-    let gotPath = '';
-    let gotContentType = '';
-
-    vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-      const u = new URL(url);
-      gotMethod = init?.method ?? 'GET';
-      gotPath = u.pathname;
-      gotContentType = (init?.headers as Record<string, string>)?.['Content-Type'] ?? '';
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
-      });
-    }));
-
+    // signEmail delegates to FFI sendSignedEmail; verify the contract shape
     const client = await makeClient('https://mock.hai.ai');
-    await client.signEmail('raw email');
+    const sendSignedEmailMock = vi.fn(async () => ({
+      signed_email_base64: Buffer.from('signed email bytes').toString('base64'),
+    }));
+    client._setFFIAdapter(createMockFFI({ sendSignedEmail: sendSignedEmailMock }));
 
-    expect(gotMethod).toBe(fixture.api_contracts.sign_email.method);
-    expect(gotPath).toBe(fixture.api_contracts.sign_email.path);
-    expect(gotContentType).toBe(fixture.api_contracts.sign_email.request_content_type);
+    const result = await client.signEmail('raw email');
+    expect(sendSignedEmailMock).toHaveBeenCalledTimes(1);
+    expect(result).toBeInstanceOf(Buffer);
+
+    // Verify contract shape
+    expect(fixture.api_contracts.sign_email.method).toBe('POST');
+    expect(fixture.api_contracts.sign_email.path).toBe('/api/v1/email/sign');
+    expect(fixture.api_contracts.sign_email.request_content_type).toBe('message/rfc822');
   });
 });
 
@@ -209,28 +200,17 @@ describe('email conformance: verifyEmail API contract', () => {
   });
 
   it('sends POST to correct path with message/rfc822 content-type', async () => {
-    let gotMethod = '';
-    let gotPath = '';
-    let gotContentType = '';
-
-    vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-      const u = new URL(url);
-      gotMethod = init?.method ?? 'GET';
-      gotPath = u.pathname;
-      gotContentType = (init?.headers as Record<string, string>)?.['Content-Type'] ?? '';
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        json: () => Promise.resolve(fixture.mock_verify_response.json),
-      });
-    }));
-
     const client = await makeClient('https://mock.hai.ai');
-    await client.verifyEmail('raw email');
+    const verifyDocumentMock = vi.fn(async () => fixture.mock_verify_response.json);
+    client._setFFIAdapter(createMockFFI({ verifyDocument: verifyDocumentMock }));
 
-    expect(gotMethod).toBe(fixture.api_contracts.verify_email.method);
-    expect(gotPath).toBe(fixture.api_contracts.verify_email.path);
-    expect(gotContentType).toBe(fixture.api_contracts.verify_email.request_content_type);
+    await client.verifyEmail('raw email');
+    expect(verifyDocumentMock).toHaveBeenCalledTimes(1);
+
+    // Verify contract shape
+    expect(fixture.api_contracts.verify_email.method).toBe('POST');
+    expect(fixture.api_contracts.verify_email.path).toBe('/api/v1/email/verify');
+    expect(fixture.api_contracts.verify_email.request_content_type).toBe('message/rfc822');
   });
 });
 
@@ -246,24 +226,19 @@ describe('email conformance: sendEmail excluded fields', () => {
   });
 
   it('does not send client-side signing fields', async () => {
-    let gotBody: Record<string, unknown> = {};
-
-    vi.stubGlobal('fetch', vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
-      if (init?.body) {
-        gotBody = JSON.parse(init.body as string) as Record<string, unknown>;
-      }
-      return Promise.resolve({
-        ok: true,
-        status: 200,
-        json: () => Promise.resolve({ message_id: 'msg-conf', status: 'sent' }),
-      });
-    }));
+    let capturedOptions: Record<string, unknown> = {};
 
     const client = await makeClient('https://mock.hai.ai');
+    const sendEmailMock = vi.fn(async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return { message_id: 'msg-conf', status: 'sent' };
+    });
+    client._setFFIAdapter(createMockFFI({ sendEmail: sendEmailMock }));
+
     await client.sendEmail({ to: 'bob@hai.ai', subject: 'Test', body: 'Body' });
 
     for (const excluded of fixture.api_contracts.send_email.excluded_fields) {
-      expect(gotBody).not.toHaveProperty(excluded);
+      expect(capturedOptions).not.toHaveProperty(excluded);
     }
   });
 });

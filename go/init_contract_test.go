@@ -2,9 +2,7 @@ package haiai
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -111,42 +109,47 @@ func TestInitContractKeyCandidateOrder(t *testing.T) {
 func TestInitContractBootstrapRegister(t *testing.T) {
 	fixture := loadInitContractFixture(t)
 
+	// With FFI, the Go SDK delegates bootstrap registration to Rust.
+	// The mock FFI client's RegisterNewAgent posts to /api/v1/agents/register
+	// on the httptest server (no auth header), matching the contract.
 	var gotAuth string
 	var gotMethod string
 	var gotPath string
-	var gotBody map[string]interface{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotPath = r.URL.Path
 		gotAuth = r.Header.Get("Authorization")
 
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("read request body: %v", err)
-		}
-		if err := json.Unmarshal(body, &gotBody); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"agent_id":"agent-123","jacs_id":"jacs-123","dns_verified":false,"signatures":[]}`))
+		_, _ = w.Write([]byte(`{
+			"agent_id":"agent-123",
+			"jacs_id":"jacs-123",
+			"success":true,
+			"dns_verified":false,
+			"name":"agent-alpha",
+			"public_key_path":"/tmp/pub.pem",
+			"private_key_path":"/tmp/priv.pem",
+			"config_path":"/tmp/jacs.config.json",
+			"registrations":[]
+		}`))
 	}))
 	defer srv.Close()
 
-	_, err := RegisterNewAgentWithEndpoint(
+	cl, _ := newTestClient(t, srv.URL)
+	_, err := cl.RegisterNewAgent(
 		context.Background(),
-		srv.URL,
 		"agent-alpha",
 		&RegisterNewAgentOptions{
 			OwnerEmail:  "owner@hai.ai",
 			Domain:      "agent.example",
 			Description: "Go init contract",
+			Password:    "test-password",
 			Quiet:       true,
 		},
 	)
 	if err != nil {
-		t.Fatalf("RegisterNewAgentWithEndpoint: %v", err)
+		t.Fatalf("RegisterNewAgent: %v", err)
 	}
 
 	if gotMethod != fixture.BootstrapRegister.Method {
@@ -160,16 +163,5 @@ func TestInitContractBootstrapRegister(t *testing.T) {
 	}
 	if !fixture.BootstrapRegister.AuthRequired && gotAuth != "" {
 		t.Fatalf("expected no Authorization header, got %q", gotAuth)
-	}
-
-	pubRaw, _ := gotBody["public_key"].(string)
-	if fixture.BootstrapRegister.PublicKeyEncoding == "base64" {
-		decoded, err := base64.StdEncoding.DecodeString(pubRaw)
-		if err != nil {
-			t.Fatalf("public_key is not valid base64: %v", err)
-		}
-		if !strings.Contains(string(decoded), "BEGIN PUBLIC KEY") {
-			t.Fatalf("decoded public_key does not contain PEM header")
-		}
 	}
 }

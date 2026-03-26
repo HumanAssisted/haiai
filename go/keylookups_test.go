@@ -43,164 +43,85 @@ func keyHistoryResponseJSON() string {
 }
 
 // -----------------------------------------------------------------------
-// FetchKeyByEmail (standalone function)
+// Deprecated FromURL functions now return errors (no native HTTP fallback)
 // -----------------------------------------------------------------------
 
-func TestFetchKeyByEmailFromURL_CallsCorrectEndpoint(t *testing.T) {
-	var gotPath string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.EscapedPath()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(keyResponseJSON()))
-	}))
-	defer srv.Close()
-
-	key, err := FetchKeyByEmailFromURL(context.Background(), nil, srv.URL, "alice@hai.ai")
-	if err != nil {
-		t.Fatalf("FetchKeyByEmailFromURL: %v", err)
-	}
-	// NOTE: Go's url.PathEscape does not encode '@' because it is allowed in
-	// path segments per RFC 3986. The server-side path is decoded, so both
-	// alice@hai.ai and alice%40hai.ai resolve to the same handler.
-	if gotPath != "/api/agents/keys/alice@hai.ai" {
-		t.Fatalf("unexpected path: %s", gotPath)
-	}
-	if key.AgentID != "agent-abc" {
-		t.Fatalf("unexpected agent id: %s", key.AgentID)
-	}
-	if key.Algorithm != "Ed25519" {
-		t.Fatalf("unexpected algorithm: %s", key.Algorithm)
-	}
-}
-
-func TestFetchKeyByEmailFromURL_Returns404Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"error":"not found"}`))
-	}))
-	defer srv.Close()
-
-	_, err := FetchKeyByEmailFromURL(context.Background(), nil, srv.URL, "nobody@hai.ai")
+func TestFetchKeyByEmailFromURL_Deprecated(t *testing.T) {
+	_, err := FetchKeyByEmailFromURL(context.Background(), nil, "http://unused", "alice@hai.ai")
 	if err == nil {
-		t.Fatal("expected error on 404")
+		t.Fatal("expected error from deprecated FetchKeyByEmailFromURL")
 	}
-	if !strings.Contains(err.Error(), "no key found for email") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-// -----------------------------------------------------------------------
-// FetchKeyByDomain (standalone function)
-// -----------------------------------------------------------------------
-
-func TestFetchKeyByDomainFromURL_CallsCorrectEndpoint(t *testing.T) {
-	var gotPath string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.EscapedPath()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(keyResponseJSON()))
-	}))
-	defer srv.Close()
-
-	key, err := FetchKeyByDomainFromURL(context.Background(), nil, srv.URL, "example.com")
-	if err != nil {
-		t.Fatalf("FetchKeyByDomainFromURL: %v", err)
-	}
-	if gotPath != "/api/agents/keys/domain/example.com" {
-		t.Fatalf("unexpected path: %s", gotPath)
-	}
-	if key.AgentID != "agent-abc" {
-		t.Fatalf("unexpected agent id: %s", key.AgentID)
+	if !strings.Contains(err.Error(), "deprecated") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestFetchKeyByDomainFromURL_Returns404Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"error":"not found"}`))
-	}))
-	defer srv.Close()
-
-	_, err := FetchKeyByDomainFromURL(context.Background(), nil, srv.URL, "nonexistent.test")
+func TestFetchKeyByDomainFromURL_Deprecated(t *testing.T) {
+	_, err := FetchKeyByDomainFromURL(context.Background(), nil, "http://unused", "example.com")
 	if err == nil {
-		t.Fatal("expected error on 404")
+		t.Fatal("expected error from deprecated FetchKeyByDomainFromURL")
 	}
-	if !strings.Contains(err.Error(), "no verified agent for domain") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-// -----------------------------------------------------------------------
-// FetchAllKeys (standalone function)
-// -----------------------------------------------------------------------
-
-func TestFetchAllKeysFromURL_CallsCorrectEndpoint(t *testing.T) {
-	var gotPath string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.EscapedPath()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(keyHistoryResponseJSON()))
-	}))
-	defer srv.Close()
-
-	history, err := FetchAllKeysFromURL(context.Background(), nil, srv.URL, "agent-abc")
-	if err != nil {
-		t.Fatalf("FetchAllKeysFromURL: %v", err)
-	}
-	if gotPath != "/api/agents/keys/agent-abc/all" {
-		t.Fatalf("unexpected path: %s", gotPath)
-	}
-	if history.JacsID != "agent-abc" {
-		t.Fatalf("unexpected jacs_id: %s", history.JacsID)
-	}
-	if history.Total != 2 {
-		t.Fatalf("unexpected total: %d", history.Total)
-	}
-	if len(history.Keys) != 2 {
-		t.Fatalf("expected 2 keys, got %d", len(history.Keys))
+	if !strings.Contains(err.Error(), "deprecated") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestFetchAllKeysFromURL_EscapesJacsIDWithSlashes(t *testing.T) {
-	var gotPath string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.EscapedPath()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(keyHistoryResponseJSON()))
-	}))
-	defer srv.Close()
-
-	_, err := FetchAllKeysFromURL(context.Background(), nil, srv.URL, "agent/with/slashes")
-	if err != nil {
-		t.Fatalf("FetchAllKeysFromURL: %v", err)
-	}
-	if !strings.Contains(gotPath, "agent%2Fwith%2Fslashes") {
-		t.Fatalf("agent id should be escaped in path, got %q", gotPath)
-	}
-}
-
-func TestFetchAllKeysFromURL_Returns404Error(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"error":"not found"}`))
-	}))
-	defer srv.Close()
-
-	_, err := FetchAllKeysFromURL(context.Background(), nil, srv.URL, "missing-agent")
+func TestFetchAllKeysFromURL_Deprecated(t *testing.T) {
+	_, err := FetchAllKeysFromURL(context.Background(), nil, "http://unused", "agent-abc")
 	if err == nil {
-		t.Fatal("expected error on 404")
+		t.Fatal("expected error from deprecated FetchAllKeysFromURL")
 	}
-	if !strings.Contains(err.Error(), "agent not found") {
-		t.Fatalf("unexpected error message: %v", err)
+	if !strings.Contains(err.Error(), "deprecated") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 // -----------------------------------------------------------------------
-// Client methods (delegate to standalone via env)
+// Standalone functions without client return error
+// -----------------------------------------------------------------------
+
+func TestFetchKeyByEmail_NilClient_ReturnsError(t *testing.T) {
+	_, err := FetchKeyByEmail(context.Background(), nil, "alice@hai.ai")
+	if err == nil {
+		t.Fatal("expected error when client is nil")
+	}
+	if !strings.Contains(err.Error(), "Client required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestFetchKeyByDomain_NilClient_ReturnsError(t *testing.T) {
+	_, err := FetchKeyByDomain(context.Background(), nil, "example.com")
+	if err == nil {
+		t.Fatal("expected error when client is nil")
+	}
+	if !strings.Contains(err.Error(), "Client required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestFetchKeyByHash_NilClient_ReturnsError(t *testing.T) {
+	_, err := FetchKeyByHash(context.Background(), nil, "sha256:abc")
+	if err == nil {
+		t.Fatal("expected error when client is nil")
+	}
+	if !strings.Contains(err.Error(), "Client required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestFetchAllKeys_NilClient_ReturnsError(t *testing.T) {
+	_, err := FetchAllKeys(context.Background(), nil, "agent-abc")
+	if err == nil {
+		t.Fatal("expected error when client is nil")
+	}
+	if !strings.Contains(err.Error(), "Client required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------
+// Client methods (delegate to FFI via client)
 // -----------------------------------------------------------------------
 
 func TestClientFetchKeyByEmail(t *testing.T) {
@@ -267,39 +188,5 @@ func TestClientFetchAllKeys(t *testing.T) {
 	}
 	if history.Total != 2 {
 		t.Fatalf("unexpected total: %d", history.Total)
-	}
-}
-
-// -----------------------------------------------------------------------
-// AgentKeyHistory via FetchAllKeysFromURL (integration)
-// -----------------------------------------------------------------------
-
-func TestAgentKeyHistoryViaFetchAllKeys(t *testing.T) {
-	// AgentKeyHistory contains []PublicKeyInfo where PublicKey is []byte.
-	// Direct json.Unmarshal would try base64-decode on PEM strings and fail.
-	// FetchAllKeysFromURL uses an intermediate struct to handle this properly.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(keyHistoryResponseJSON()))
-	}))
-	defer srv.Close()
-
-	history, err := FetchAllKeysFromURL(context.Background(), nil, srv.URL, "agent-abc")
-	if err != nil {
-		t.Fatalf("FetchAllKeysFromURL: %v", err)
-	}
-	if history.JacsID != "agent-abc" {
-		t.Fatalf("unexpected jacs_id: %s", history.JacsID)
-	}
-	if history.Total != 2 {
-		t.Fatalf("unexpected total: %d", history.Total)
-	}
-	if len(history.Keys) != 2 {
-		t.Fatalf("expected 2 keys, got %d", len(history.Keys))
-	}
-	// The fixture provides both public_key (PEM) and public_key_raw_b64 ("Zm9v" = "foo").
-	// decodePublicKey prefers public_key_raw_b64, so we get the decoded raw bytes.
-	if string(history.Keys[0].PublicKey) != "foo" {
-		t.Fatalf("expected raw public key bytes 'foo' (from base64 Zm9v), got %q", string(history.Keys[0].PublicKey))
 	}
 }
