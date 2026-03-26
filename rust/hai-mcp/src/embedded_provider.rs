@@ -5,10 +5,14 @@ use anyhow::{anyhow, Context as _};
 use haiai::key_format::normalize_public_key_pem;
 use haiai::{HaiError, JacsProvider, Result as HaiResult, SignedPayload};
 use jacs::agent::boilerplate::BoilerPlate;
+use jacs::agent::document::DocumentTraits;
 use jacs::agent::Agent;
 use jacs::crypt::KeyManager;
+use jacs::email::JacsSigner;
+use jacs::error::JacsError;
+use jacs::simple::{SignedDocument, VerificationResult};
 use jacs_binding_core::AgentWrapper;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 const MISSING_JACS_CONFIG_MESSAGE: &str = "JACS_CONFIG environment variable is not set.\n\
 \n\
@@ -153,6 +157,105 @@ impl EmbeddedJacsProvider {
     }
 }
 
+/// Newtype wrapper that implements [`JacsSigner`] for an embedded `Agent`.
+///
+/// `jacs::email::sign_email` requires an `impl JacsSigner`. Only `SimpleAgent`
+/// implements it in jacs, but the underlying operations (`create_document_and_load`,
+/// `load_document`, `verify_document_signature`, `verify_hash`) are all available
+/// on `Agent`. This wrapper bridges the gap so the MCP server can sign emails
+/// the same way the CLI does via `LocalJacsProvider`.
+struct AgentSigner(Arc<StdMutex<Agent>>);
+
+impl JacsSigner for AgentSigner {
+    fn sign_message(&self, data: &Value) -> Result<SignedDocument, JacsError> {
+        let doc_content = json!({
+            "jacsType": "message",
+            "jacsLevel": "raw",
+            "content": data
+        });
+        let doc_string = doc_content.to_string();
+
+        let mut agent = self.0.lock().map_err(|e| JacsError::Internal {
+            message: format!("Failed to acquire agent lock: {e}"),
+        })?;
+
+        let jacs_doc = agent
+            .create_document_and_load(&doc_string, None, None)
+            .map_err(|e| JacsError::SigningFailed {
+                reason: format!("{e}"),
+            })?;
+
+        let raw = serde_json::to_string(&jacs_doc.value).map_err(|e| JacsError::Internal {
+            message: format!("Failed to serialize signed document: {e}"),
+        })?;
+
+        Ok(SignedDocument {
+            raw,
+            document_id: jacs_doc.id,
+            agent_id: agent.get_id().unwrap_or_default(),
+            timestamp: String::new(),
+        })
+    }
+
+    fn verify_with_key(
+        &self,
+        signed_document: &str,
+        public_key: Vec<u8>,
+    ) -> Result<VerificationResult, JacsError> {
+        let mut agent = self.0.lock().map_err(|e| JacsError::Internal {
+            message: format!("Failed to acquire agent lock: {e}"),
+        })?;
+
+        let jacs_doc = agent.load_document(signed_document).map_err(|e| {
+            JacsError::DocumentMalformed {
+                field: "document".to_string(),
+                reason: e.to_string(),
+            }
+        })?;
+
+        let document_key = jacs_doc.getkey();
+        let mut errors = Vec::new();
+
+        if let Err(e) =
+            agent.verify_document_signature(&document_key, None, None, Some(public_key), None)
+        {
+            errors.push(e.to_string());
+        }
+        if let Err(e) = agent.verify_hash(&jacs_doc.value) {
+            errors.push(format!("Hash verification failed: {e}"));
+        }
+
+        let valid = errors.is_empty();
+        let signer_id = jacs_doc
+            .value
+            .pointer("/jacsSignature/agentID")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let timestamp = jacs_doc
+            .value
+            .pointer("/jacsSignature/date")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let data = jacs_doc
+            .value
+            .get("content")
+            .cloned()
+            .unwrap_or_else(|| jacs_doc.value.clone());
+
+        Ok(VerificationResult {
+            valid,
+            data,
+            signer_id,
+            signer_name: None,
+            timestamp,
+            attachments: vec![],
+            errors,
+        })
+    }
+}
+
 impl JacsProvider for EmbeddedJacsProvider {
     fn jacs_id(&self) -> &str {
         &self.jacs_id
@@ -220,6 +323,12 @@ impl JacsProvider for EmbeddedJacsProvider {
             signed_document: serde_json::to_string(&envelope)?,
             agent_jacs_id: self.jacs_id.clone(),
         })
+    }
+
+    fn sign_email_locally(&self, raw_email: &[u8]) -> HaiResult<Vec<u8>> {
+        let signer = AgentSigner(Arc::clone(&self.inner));
+        jacs::email::sign_email(raw_email, &signer)
+            .map_err(|e| HaiError::Provider(format!("JACS email signing failed: {e}")))
     }
 }
 
