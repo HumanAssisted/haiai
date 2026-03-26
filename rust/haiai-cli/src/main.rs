@@ -32,6 +32,11 @@ struct Cli {
     #[arg(long, global = true, conflicts_with = "storage")]
     storage_env: Option<String>,
 
+    /// Write log output to a file (in addition to stderr). Useful for debugging
+    /// the MCP server when stderr is not visible.
+    #[arg(long, global = true)]
+    log_file: Option<String>,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -675,12 +680,34 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Mcp => {
-            tracing_subscriber::fmt()
-                .with_env_filter(
-                    std::env::var("RUST_LOG").unwrap_or_else(|_| "info,rmcp=warn".to_string()),
-                )
-                .with_writer(std::io::stderr)
-                .init();
+            {
+                use tracing_subscriber::layer::SubscriberExt;
+                use tracing_subscriber::util::SubscriberInitExt;
+
+                let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "info,rmcp=warn".parse().unwrap());
+
+                let stderr_layer = tracing_subscriber::fmt::layer()
+                    .with_writer(std::io::stderr);
+
+                let registry = tracing_subscriber::registry()
+                    .with(env_filter)
+                    .with(stderr_layer);
+
+                if let Some(ref log_path) = cli.log_file {
+                    let file = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(log_path)
+                        .with_context(|| format!("failed to open log file: {log_path}"))?;
+                    let file_layer = tracing_subscriber::fmt::layer()
+                        .with_ansi(false)
+                        .with_writer(std::sync::Mutex::new(file));
+                    registry.with(file_layer).init();
+                } else {
+                    registry.with(None::<tracing_subscriber::fmt::Layer<_>>).init();
+                };
+            }
 
             // Honor JACS_STORAGE env var and --storage / --storage-env flags for MCP document
             // operations (PRD Section 5.2).
@@ -1437,6 +1464,14 @@ mod tests {
     fn parse_mcp() {
         let cli = Cli::parse_from(["haiai", "mcp"]);
         assert!(matches!(cli.command, Commands::Mcp));
+        assert!(cli.log_file.is_none());
+    }
+
+    #[test]
+    fn parse_mcp_with_log_file() {
+        let cli = Cli::parse_from(["haiai", "--log-file", "/tmp/haiai-mcp.log", "mcp"]);
+        assert!(matches!(cli.command, Commands::Mcp));
+        assert_eq!(cli.log_file.as_deref(), Some("/tmp/haiai-mcp.log"));
     }
 
     #[test]
