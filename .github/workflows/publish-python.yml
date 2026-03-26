@@ -91,6 +91,7 @@ jobs:
         with:
           packages-dir: dist/
           verbose: true
+          skip-existing: true
 
   # ============================================================
   # Build haiai platform wheels (CLI binary + pure Python)
