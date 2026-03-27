@@ -41,11 +41,6 @@ function loadMCPContract(): MCPToolContract {
   return JSON.parse(readFileSync(fixturePath, 'utf-8')) as MCPToolContract;
 }
 
-/** Convert snake_case to camelCase (FFI adapter uses camelCase). */
-function toCamelCase(name: string): string {
-  return name.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
-}
-
 /**
  * Mapping from MCP tool names to the FFI adapter methods (camelCase)
  * that would back them. Each MCP tool maps to one or more FFI methods.

@@ -1212,6 +1212,15 @@ mod tests {
                     key
                 );
             }
+            // Reverse check: code properties must exist in fixture
+            for key in properties.keys() {
+                assert!(
+                    expected.properties.contains_key(key),
+                    "tool {} has property '{}' in code but not in fixture",
+                    expected.name,
+                    key
+                );
+            }
         }
     }
 
@@ -1240,6 +1249,28 @@ mod tests {
                 has_tool(name),
                 "tool '{name}' is in definition_values() but not in has_tool() match"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_has_match_arm_for_every_defined_tool() {
+        let context = build_context();
+        let def_names: Vec<String> = definition_values()
+            .iter()
+            .filter_map(|t| t["name"].as_str().map(String::from))
+            .collect();
+        for name in &def_names {
+            let result = dispatch(&context, name, None).await;
+            // We expect most tools to fail (missing params, no network, etc.)
+            // but the error must NOT be "unknown HAI tool" -- that means
+            // dispatch() has no match arm for this tool.
+            if let Err(ref err) = result {
+                let msg = format!("{:?}", err);
+                assert!(
+                    !msg.contains("unknown HAI tool"),
+                    "tool '{name}' hit the catch-all arm in dispatch() -- add a match arm"
+                );
+            }
         }
     }
 

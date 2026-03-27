@@ -1470,6 +1470,37 @@ mod tests {
             code_only
         );
 
+        // Sub-subcommand parity check
+        for cmd in fixture["commands"].as_array().unwrap() {
+            if let Some(subcmds) = cmd.get("subcommands").and_then(serde_json::Value::as_array) {
+                let name = cmd["name"].as_str().unwrap();
+                let fixture_subs: HashSet<String> = subcmds
+                    .iter()
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .collect();
+                let actual_subs: HashSet<String> = cli_cmd
+                    .find_subcommand(name)
+                    .unwrap_or_else(|| panic!("subcommand '{name}' not found"))
+                    .get_subcommands()
+                    .map(|s| s.get_name().to_string())
+                    .collect();
+                let fixture_only_subs: Vec<&String> =
+                    fixture_subs.difference(&actual_subs).collect();
+                assert!(
+                    fixture_only_subs.is_empty(),
+                    "Sub-subcommands of '{name}' in fixture but not in CLI: {:?}",
+                    fixture_only_subs
+                );
+                let code_only_subs: Vec<&String> =
+                    actual_subs.difference(&fixture_subs).collect();
+                assert!(
+                    code_only_subs.is_empty(),
+                    "Sub-subcommands of '{name}' in CLI but not in fixture: {:?}",
+                    code_only_subs
+                );
+            }
+        }
+
         // Total count check
         let declared = fixture["total_command_count"]
             .as_u64()
