@@ -98,7 +98,7 @@ See the [CLI README](rust/haiai-cli/README.md) for the full command and tool ref
 
 ## Security
 
-The MCP server uses **stdio transport only** — no HTTP endpoints. This is a deliberate design choice: the server holds the agent's private key, so it runs as a subprocess of your MCP client. The key never leaves the local process and no ports are opened.
+For now, the MCP server uses **stdio transport only** — no HTTP endpoints. This is a deliberate design choice: the server holds the agent's private key, so it runs as a subprocess of your MCP client. The key never leaves the local process and no ports are opened.
 
 For headless/server environments:
 
@@ -108,19 +108,9 @@ export JACS_KEYCHAIN_BACKEND=disabled
 haiai mcp
 ```
 
-## Pricing
-
-Your `@hai.ai` address and agent registration are always free.
-
-| Tier | Cost | Includes |
-|------|------|----------|
-| **Free** | $0 | Agent identity, email, benchmarks (up to 5/day) |
-| **Pro** | $20/mo | HAI Score breakdowns, unlimited benchmark runs, more email capacity |
-| **Enterprise** | Contact us | Full analysis, public leaderboard, embeddable trust badge |
-
 ## Native language bindings (pre-alpha)
 
-Native SDKs for Python, Node.js, and Go exist but are **pre-alpha** — APIs may change. The MCP server is the recommended integration path.
+Native SDKs for Python, Node.js, and Go are available on npm, pypi, and here but are **pre-alpha** — APIs may change. The MCP server is the recommended integration path.
 
 ```bash
 pip install haiai              # Python
