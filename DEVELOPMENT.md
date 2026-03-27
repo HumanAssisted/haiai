@@ -301,3 +301,62 @@ make release-all       # tag + push all releases (triggers CI publish)
 > **Python test deps:** Use `pip install -e ".[dev,mcp]"` not just `.[dev]` — MCP tests need the `mcp` package.
 
 > **FFI build requirements:** All language SDKs require a Rust toolchain to build from source.
+
+## Parity testing
+
+Every API surface is governed by a JSON fixture in `fixtures/`. Tests enforce bidirectional coverage: they fail if code adds something not in the fixture, or if the fixture declares something not in code. This catches drift in any direction.
+
+### Fixture contracts
+
+| Fixture | What it governs | Test location |
+|---------|----------------|---------------|
+| `mcp_tool_contract.json` | All 28 MCP tool names, properties, and required fields | `rust/hai-mcp/tests/integration.rs`, `python/tests/test_mcp_parity.py` |
+| `cli_command_parity.json` | All 29 CLI commands, args, and types | `rust/haiai-cli/src/main.rs` (mod tests) |
+| `ffi_method_parity.json` | All 68 FFI binding methods across 12 categories | Language-specific FFI adapter tests |
+| `mcp_cli_parity.json` | MCP-to-CLI mapping with intentional asymmetries | `rust/haiai-cli/src/main.rs` (mod tests) |
+| `contract_endpoints.json` | HTTP method + path + auth for each endpoint | Rust + Python + Node + Go contract tests |
+| `cross_lang_test.json` | Auth header format and canonical JSON cases | Rust + Python cross-language tests |
+| `email_conformance.json` | Email verification, content hash, FieldStatus enum | `rust/haiai/tests/email_conformance.rs` |
+
+### How bidirectional tests work
+
+Each parity test does two checks:
+
+1. **Fixture -> Code:** Every entry in the fixture must exist in the real implementation. Catches stale fixture entries.
+2. **Code -> Fixture:** Every item in the real implementation must appear in the fixture. Catches undeclared additions.
+
+Example: if you add `hai_foo` to the MCP server but don't add it to `mcp_tool_contract.json`, the test fails with "MCP tools exist but are not declared in fixture: hai_foo".
+
+### MCP vs CLI: intentional asymmetries
+
+MCP and CLI share most operations but are not 1:1. The `mcp_cli_parity.json` fixture has three sections:
+
+- **`paired`** -- Operations exposed in both (e.g., `hai_send_email` <-> `send-email`). Multiple MCP tools can map to one CLI command (all 6 template tools map to `template`).
+- **`mcp_only`** -- MCP tools with no CLI equivalent. Each entry has a `reason` (e.g., `hai_mark_read` -- "MCP-only read/unread management").
+- **`cli_only`** -- CLI commands with no MCP equivalent. Each entry has a `reason` (e.g., `init` -- "Local agent creation -- no API call").
+
+### Adding a new API operation
+
+1. **Rust client:** Add endpoint, types, and client method in `rust/haiai/`.
+2. **FFI:** Add method in `rust/hai-binding-core/`. Update `fixtures/ffi_method_parity.json`.
+3. **MCP tool:** Add tool in `rust/hai-mcp/src/hai_tools.rs`. Update `fixtures/mcp_tool_contract.json`.
+4. **CLI command:** Add command in `rust/haiai-cli/src/main.rs`. Update `fixtures/cli_command_parity.json`.
+5. **MCP<->CLI mapping:** Add entry to `fixtures/mcp_cli_parity.json` (`paired`, `mcp_only`, or `cli_only` with reason).
+6. **Language SDKs:** Add wrapper in Python/Node/Go that parses the new FFI JSON response.
+7. **Run `make test`** -- parity tests catch anything missed.
+
+### Adding an MCP-only or CLI-only operation
+
+Not every operation needs both surfaces. If an operation is intentionally one-sided:
+
+- Add it to `mcp_only` or `cli_only` in `mcp_cli_parity.json` with a reason.
+- Still update the relevant surface fixture (`mcp_tool_contract.json` or `cli_command_parity.json`).
+- The MCP<->CLI parity test verifies full coverage across both allowlists.
+
+### SKILL.md validation
+
+`rust/hai-mcp/tests/plugin_validation.rs` also validates that:
+- Every `hai_*`/`jacs_*` tool name in `skills/jacs/SKILL.md` exists in the real MCP server.
+- Every `haiai <subcommand>` documented in SKILL.md exists in the real CLI binary.
+
+This prevents documentation from referencing tools or commands that have been renamed or removed.
