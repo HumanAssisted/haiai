@@ -1,6 +1,6 @@
 [package]
 name = "haiai-cli"
-version = "0.2.0"
+version = "0.2.1"
 description = "HAIAI CLI: command-line interface for HAI.AI agent SDK"
 readme = "README.md"
 keywords = ["hai", "jacs", "agent", "cli", "mcp"]
@@ -16,8 +16,8 @@ name = "haiai"
 path = "src/main.rs"
 
 [dependencies]
-hai-mcp = { version = "=0.2.0", path = "../hai-mcp" }
-haiai = { version = "=0.2.0", path = "../haiai" }
+hai-mcp = { version = "=0.2.1", path = "../hai-mcp" }
+haiai = { version = "=0.2.1", path = "../haiai" }
 jacs = { version = "=0.9.12", features = ["keychain"] }
 jacs-mcp = { version = "=0.9.12", features = ["mcp"] }
 anyhow = "1"

@@ -1,6 +1,6 @@
 {
   "name": "@haiai/cli-linux-arm64",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Platform-specific binary for haiai CLI (Linux ARM64)",
   "os": ["linux"],
   "cpu": ["arm64"],

@@ -1,0 +1,125 @@
+{
+  "description": "CLI command parity contract. The haiai binary must expose exactly these subcommands. Tests verify bidirectional parity between this fixture and the Commands enum.",
+  "version": "1.0.0",
+  "total_command_count": 29,
+  "commands": [
+    {
+      "name": "init",
+      "args": ["name:string", "domain:string", "algorithm:string", "data_dir:string", "key_dir:string", "config_path:string"]
+    },
+    {
+      "name": "mcp",
+      "args": []
+    },
+    {
+      "name": "hello",
+      "args": []
+    },
+    {
+      "name": "register",
+      "args": ["owner_email:string", "description:string?"]
+    },
+    {
+      "name": "status",
+      "args": []
+    },
+    {
+      "name": "check-username",
+      "args": ["username:string"]
+    },
+    {
+      "name": "claim-username",
+      "args": ["username:string"]
+    },
+    {
+      "name": "send-email",
+      "args": ["to:string", "subject:string", "body:string", "cc:string[]", "bcc:string[]", "labels:string[]"]
+    },
+    {
+      "name": "list-messages",
+      "args": ["limit:u32", "offset:u32", "direction:string?", "is_read:bool?", "folder:string?", "label:string?"]
+    },
+    {
+      "name": "search-messages",
+      "args": ["q:string?", "from:string?", "to:string?", "is_read:bool?", "jacs_verified:bool?", "folder:string?", "label:string?", "limit:u32"]
+    },
+    {
+      "name": "reply-email",
+      "args": ["message_id:string", "body:string", "subject_override:string?"]
+    },
+    {
+      "name": "forward-email",
+      "args": ["message_id:string", "to:string", "comment:string?"]
+    },
+    {
+      "name": "archive-message",
+      "args": ["message_id:string"]
+    },
+    {
+      "name": "unarchive-message",
+      "args": ["message_id:string"]
+    },
+    {
+      "name": "list-contacts",
+      "args": []
+    },
+    {
+      "name": "email-status",
+      "args": []
+    },
+    {
+      "name": "update",
+      "args": ["set:string?"]
+    },
+    {
+      "name": "rotate",
+      "args": []
+    },
+    {
+      "name": "migrate",
+      "args": []
+    },
+    {
+      "name": "benchmark",
+      "args": ["name:string", "tier:string"]
+    },
+    {
+      "name": "doctor",
+      "args": []
+    },
+    {
+      "name": "store-document",
+      "args": ["path:string"]
+    },
+    {
+      "name": "list-documents",
+      "args": ["doc_type:string?"]
+    },
+    {
+      "name": "search-documents",
+      "args": ["query:string", "limit:usize"]
+    },
+    {
+      "name": "get-document",
+      "args": ["key:string"]
+    },
+    {
+      "name": "remove-document",
+      "args": ["key:string"]
+    },
+    {
+      "name": "self-knowledge",
+      "args": ["query:string", "limit:usize", "json:bool"]
+    },
+    {
+      "name": "template",
+      "args": [],
+      "subcommands": ["create", "list", "get", "update", "delete"]
+    },
+    {
+      "name": "keychain",
+      "args": ["agent_id:string"],
+      "subcommands": ["set", "get", "delete", "status"]
+    }
+  ]
+}

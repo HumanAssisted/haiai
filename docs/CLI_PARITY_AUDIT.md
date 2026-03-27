@@ -79,12 +79,20 @@ Audit of Python/Node CLI and MCP server commands versus Rust replacements, produ
 | `hai_verify_status` | Get verification status for current or specified agent |
 | `hai_create_agent` | Create a new JACS agent locally and optionally register with HAI |
 
+## Automated Enforcement
+
+MCP tool and CLI command parity are now enforced via shared fixtures and CI:
+
+- **MCP tools**: `fixtures/mcp_tool_contract.json` lists all 28 tools with properties and required fields. Rust tests in `hai-mcp` enforce bidirectional parity (fixture must match code, code must match fixture). Python and Node tests validate FFI adapter coverage against the same fixture.
+- **CLI commands**: `fixtures/cli_command_parity.json` lists all 29 subcommands. Rust tests in `haiai-cli` enforce bidirectional parity via Clap introspection.
+- **CI gating**: `scripts/ci/check_mcp_parity_fixture.sh` validates fixture structural integrity (JSON valid, counts match) and runs as a gating job before all test suites.
+
 ## Summary
 
 The Rust `haiai-cli` and `hai-mcp` are strict supersets of the Python/Node implementations:
 
-- **CLI**: 14 Rust commands vs 9 Python / 10 Node. All Python/Node commands have Rust equivalents (2 intentionally dropped as redundant with MCP).
-- **MCP**: 18 Rust tools vs 15 Python / 17 Node. All Python/Node tools have Rust equivalents (1 intentionally dropped, covered by jacs-mcp).
+- **CLI**: 29 Rust commands vs 9 Python / 10 Node. All Python/Node commands have Rust equivalents (2 intentionally dropped as redundant with MCP).
+- **MCP**: 28 Rust tools vs 15 Python / 17 Node. All Python/Node tools have Rust equivalents (1 intentionally dropped, covered by jacs-mcp).
 - **Architecture**: Rust CLI embeds the MCP server (`haiai mcp`), combining jacs-mcp and hai-mcp tools in one binary. Python/Node had separate CLI and MCP entry points.
 
 **Decision**: Safe to delete Python/Node CLI and MCP server files. The Rust binaries are the canonical implementations.

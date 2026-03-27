@@ -1423,11 +1423,84 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use std::collections::HashSet;
 
     #[test]
     fn cli_help_does_not_panic() {
         // Verify the CLI definition is well-formed and --help can render.
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn cli_commands_match_fixture() {
+        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/cli_command_parity.json");
+        let raw = std::fs::read_to_string(&fixture_path).expect("read cli_command_parity.json");
+        let fixture: serde_json::Value =
+            serde_json::from_str(&raw).expect("parse cli_command_parity.json");
+
+        // Extract fixture command names
+        let fixture_commands: HashSet<String> = fixture["commands"]
+            .as_array()
+            .expect("commands array")
+            .iter()
+            .filter_map(|c| c["name"].as_str().map(String::from))
+            .collect();
+
+        // Extract actual command names from Clap introspection
+        let cli_cmd = Cli::command();
+        let actual_commands: HashSet<String> = cli_cmd
+            .get_subcommands()
+            .map(|sub| sub.get_name().to_string())
+            .collect();
+
+        // Bidirectional check: fixture -> code
+        let fixture_only: Vec<&String> = fixture_commands.difference(&actual_commands).collect();
+        assert!(
+            fixture_only.is_empty(),
+            "Commands in fixture but not in CLI binary: {:?}",
+            fixture_only
+        );
+
+        // Bidirectional check: code -> fixture
+        let code_only: Vec<&String> = actual_commands.difference(&fixture_commands).collect();
+        assert!(
+            code_only.is_empty(),
+            "Commands in CLI binary but not in fixture: {:?}",
+            code_only
+        );
+
+        // Total count check
+        let declared = fixture["total_command_count"]
+            .as_u64()
+            .expect("total_command_count");
+        assert_eq!(
+            declared,
+            actual_commands.len() as u64,
+            "total_command_count ({declared}) != actual command count ({})",
+            actual_commands.len()
+        );
+    }
+
+    #[test]
+    fn cli_fixture_total_command_count_matches_entries() {
+        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/cli_command_parity.json");
+        let raw = std::fs::read_to_string(&fixture_path).expect("read cli_command_parity.json");
+        let fixture: serde_json::Value =
+            serde_json::from_str(&raw).expect("parse cli_command_parity.json");
+
+        let declared = fixture["total_command_count"]
+            .as_u64()
+            .expect("total_command_count");
+        let actual = fixture["commands"]
+            .as_array()
+            .expect("commands array")
+            .len() as u64;
+        assert_eq!(
+            declared, actual,
+            "cli_command_parity.json total_command_count ({declared}) != commands array length ({actual})"
+        );
     }
 
     #[test]
