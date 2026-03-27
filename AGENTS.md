@@ -85,6 +85,45 @@ Full parity map: `docs/haisdk/PARITY_MAP.md` (53 exposed, 18 excluded, 71 total)
 3. **All 10 packages share one version.** `make check-versions` to verify.
 4. **Releases are tag-triggered.** `rust/v*` -> crates.io, `python/v*` -> PyPI, `node/v*` -> npm. Use `make release-*`.
 5. **No HTTP clients outside Rust.** Python/Node/Go SDKs MUST NOT use httpx/fetch/net-http for API calls. All HTTP, retry, auth, and URL logic lives in `rust/haiai/`.
+6. **Fixture-first parity.** Every API surface (MCP tools, CLI commands, FFI methods) is governed by a JSON fixture in `fixtures/`. Update the fixture before (or alongside) code changes. Tests enforce bidirectional coverage -- see "Parity Enforcement" below.
+
+## Parity Enforcement
+
+Parity is enforced by JSON fixture contracts in `fixtures/`. Each fixture is the source of truth for one API surface. Tests are **bidirectional**: they fail if code adds something not in the fixture OR the fixture declares something not in code. This means you cannot add a new operation without updating the fixture, and you cannot leave stale entries in fixtures.
+
+### Fixtures and what they govern
+
+| Fixture | Surface | Tested in |
+|---------|---------|-----------|
+| `mcp_tool_contract.json` | MCP tools (28 tools) | `rust/hai-mcp/tests/integration.rs`, `python/tests/test_mcp_parity.py` |
+| `cli_command_parity.json` | CLI commands (29 commands) | `rust/haiai-cli/src/main.rs` (mod tests) |
+| `ffi_method_parity.json` | FFI binding methods (68 methods) | Language-specific FFI adapter tests |
+| `mcp_cli_parity.json` | MCP-to-CLI mapping | `rust/haiai-cli/src/main.rs` (mod tests) |
+| `contract_endpoints.json` | HTTP endpoint contracts | `rust/haiai/tests/contract_endpoints.rs`, Python/Node/Go contract tests |
+| `cross_lang_test.json` | Auth headers, canonical JSON | `rust/haiai/tests/cross_lang_contract.rs`, `python/tests/test_cross_lang_contract.py` |
+| `email_conformance.json` | Email verification contracts | `rust/haiai/tests/email_conformance.rs` |
+
+### MCP-to-CLI parity model
+
+MCP and CLI are intentionally **not** 1:1. The `mcp_cli_parity.json` fixture declares three sections:
+
+- **`paired`** -- MCP tools that have a CLI equivalent (e.g., `hai_send_email` <-> `send-email`)
+- **`mcp_only`** -- Tools intentionally MCP-only, with a reason (e.g., `hai_mark_read` -- MCP-only message management)
+- **`cli_only`** -- Commands intentionally CLI-only, with a reason (e.g., `init` -- local agent creation)
+
+Every real MCP tool and every real CLI command must appear in exactly one section. The test fails if any tool or command is undeclared, or if a fixture entry references something that doesn't exist.
+
+### How to add a new API operation
+
+1. **Add the Rust implementation** in `rust/haiai/` (endpoint, types, client method).
+2. **Add FFI method** in `rust/hai-binding-core/` -- update `ffi_method_parity.json`.
+3. **Add MCP tool** in `rust/hai-mcp/src/hai_tools.rs` -- update `mcp_tool_contract.json`.
+4. **Add CLI command** in `rust/haiai-cli/src/main.rs` -- update `cli_command_parity.json`.
+5. **Map MCP<->CLI** in `mcp_cli_parity.json` (add to `paired`, `mcp_only`, or `cli_only` with reason).
+6. **Update language SDKs** (Python/Node/Go wrappers parse the new FFI response).
+7. **Run `make test`** -- parity tests will catch anything you missed.
+
+If you add a tool to MCP but not CLI (or vice versa), you must add it to the appropriate `*_only` section with a reason explaining why.
 
 ## Local JACS Development
 

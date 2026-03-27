@@ -1,0 +1,51 @@
+{
+  "description": "MCP-to-CLI parity contract. Maps MCP tools to CLI commands and declares intentional asymmetries. Tests verify bidirectional coverage: every MCP tool and every CLI command must appear in exactly one of the three sections.",
+  "version": "1.0.0",
+  "paired": [
+    { "mcp_tool": "hai_hello", "cli_command": "hello" },
+    { "mcp_tool": "hai_check_username", "cli_command": "check-username" },
+    { "mcp_tool": "hai_claim_username", "cli_command": "claim-username" },
+    { "mcp_tool": "hai_agent_status", "cli_command": "status" },
+    { "mcp_tool": "hai_register_agent", "cli_command": "register" },
+    { "mcp_tool": "hai_send_email", "cli_command": "send-email" },
+    { "mcp_tool": "hai_list_messages", "cli_command": "list-messages" },
+    { "mcp_tool": "hai_search_messages", "cli_command": "search-messages" },
+    { "mcp_tool": "hai_reply_email", "cli_command": "reply-email" },
+    { "mcp_tool": "hai_forward_email", "cli_command": "forward-email" },
+    { "mcp_tool": "hai_archive_message", "cli_command": "archive-message" },
+    { "mcp_tool": "hai_unarchive_message", "cli_command": "unarchive-message" },
+    { "mcp_tool": "hai_list_contacts", "cli_command": "list-contacts" },
+    { "mcp_tool": "hai_get_email_status", "cli_command": "email-status" },
+    { "mcp_tool": "hai_self_knowledge", "cli_command": "self-knowledge" },
+    { "mcp_tool": "hai_create_email_template", "cli_command": "template" },
+    { "mcp_tool": "hai_list_email_templates", "cli_command": "template" },
+    { "mcp_tool": "hai_search_email_templates", "cli_command": "template" },
+    { "mcp_tool": "hai_get_email_template", "cli_command": "template" },
+    { "mcp_tool": "hai_update_email_template", "cli_command": "template" },
+    { "mcp_tool": "hai_delete_email_template", "cli_command": "template" }
+  ],
+  "mcp_only": [
+    { "name": "hai_verify_status", "reason": "MCP exposes per-agent lookup; CLI 'status' is self-only" },
+    { "name": "hai_generate_verify_link", "reason": "Client-side URL construction; not needed as CLI command" },
+    { "name": "hai_get_message", "reason": "MCP convenience for single-message fetch" },
+    { "name": "hai_delete_message", "reason": "MCP-only message management" },
+    { "name": "hai_mark_read", "reason": "MCP-only read/unread management" },
+    { "name": "hai_mark_unread", "reason": "MCP-only read/unread management" },
+    { "name": "hai_get_unread_count", "reason": "MCP convenience; CLI uses list-messages filters" }
+  ],
+  "cli_only": [
+    { "name": "init", "reason": "Local agent creation — no API call" },
+    { "name": "mcp", "reason": "Starts the MCP server itself" },
+    { "name": "update", "reason": "Local agent metadata update" },
+    { "name": "rotate", "reason": "Local key rotation" },
+    { "name": "migrate", "reason": "Local schema migration" },
+    { "name": "benchmark", "reason": "Benchmarking workflow" },
+    { "name": "doctor", "reason": "Local diagnostics" },
+    { "name": "store-document", "reason": "Local document storage" },
+    { "name": "list-documents", "reason": "Local document storage" },
+    { "name": "search-documents", "reason": "Local document storage" },
+    { "name": "get-document", "reason": "Local document storage" },
+    { "name": "remove-document", "reason": "Local document storage" },
+    { "name": "keychain", "reason": "OS keychain management" }
+  ]
+}

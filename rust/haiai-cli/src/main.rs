@@ -2404,4 +2404,141 @@ mod tests {
         let result = read_password_file("/nonexistent/path/to/pw.txt");
         assert!(result.is_err());
     }
+
+    #[test]
+    fn mcp_cli_parity_fixture_covers_all_surfaces() {
+        // Load the MCP-CLI parity fixture
+        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/mcp_cli_parity.json");
+        let raw = std::fs::read_to_string(&fixture_path).expect("read mcp_cli_parity.json");
+        let fixture: serde_json::Value =
+            serde_json::from_str(&raw).expect("parse mcp_cli_parity.json");
+
+        // --- Collect real MCP tool names ---
+        let real_mcp_tools: HashSet<String> = hai_mcp::hai_tools::definitions()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+
+        // --- Collect real CLI command names ---
+        let cli_cmd = Cli::command();
+        let real_cli_commands: HashSet<String> = cli_cmd
+            .get_subcommands()
+            .map(|sub| sub.get_name().to_string())
+            .collect();
+
+        // --- Extract fixture sections ---
+        let paired = fixture["paired"]
+            .as_array()
+            .expect("paired array");
+        let mcp_only = fixture["mcp_only"]
+            .as_array()
+            .expect("mcp_only array");
+        let cli_only = fixture["cli_only"]
+            .as_array()
+            .expect("cli_only array");
+
+        // Collect all MCP tools declared in the fixture (paired + mcp_only)
+        let mut fixture_mcp_tools: HashSet<String> = HashSet::new();
+        for entry in paired {
+            fixture_mcp_tools.insert(
+                entry["mcp_tool"].as_str().expect("mcp_tool string").to_string(),
+            );
+        }
+        for entry in mcp_only {
+            fixture_mcp_tools.insert(
+                entry["name"].as_str().expect("name string").to_string(),
+            );
+        }
+
+        // Collect all CLI commands declared in the fixture (paired + cli_only)
+        let mut fixture_cli_commands: HashSet<String> = HashSet::new();
+        for entry in paired {
+            fixture_cli_commands.insert(
+                entry["cli_command"].as_str().expect("cli_command string").to_string(),
+            );
+        }
+        for entry in cli_only {
+            fixture_cli_commands.insert(
+                entry["name"].as_str().expect("name string").to_string(),
+            );
+        }
+
+        // --- Verify every paired MCP tool exists in real MCP ---
+        for entry in paired {
+            let tool = entry["mcp_tool"].as_str().unwrap();
+            assert!(
+                real_mcp_tools.contains(tool),
+                "Paired MCP tool '{}' does not exist in hai-mcp definitions",
+                tool
+            );
+        }
+
+        // --- Verify every paired CLI command exists in real CLI ---
+        for entry in paired {
+            let cmd = entry["cli_command"].as_str().unwrap();
+            assert!(
+                real_cli_commands.contains(cmd),
+                "Paired CLI command '{}' does not exist in haiai-cli",
+                cmd
+            );
+        }
+
+        // --- Verify every mcp_only tool exists in real MCP ---
+        for entry in mcp_only {
+            let tool = entry["name"].as_str().unwrap();
+            assert!(
+                real_mcp_tools.contains(tool),
+                "mcp_only tool '{}' does not exist in hai-mcp definitions",
+                tool
+            );
+        }
+
+        // --- Verify every cli_only command exists in real CLI ---
+        for entry in cli_only {
+            let cmd = entry["name"].as_str().unwrap();
+            assert!(
+                real_cli_commands.contains(cmd),
+                "cli_only command '{}' does not exist in haiai-cli",
+                cmd
+            );
+        }
+
+        // --- Exhaustive coverage: no undeclared MCP tools ---
+        let undeclared_mcp: Vec<&String> =
+            real_mcp_tools.difference(&fixture_mcp_tools).collect();
+        assert!(
+            undeclared_mcp.is_empty(),
+            "MCP tools exist but are not declared in mcp_cli_parity.json: {:?}\n\
+             Add them to 'paired' or 'mcp_only'.",
+            undeclared_mcp
+        );
+
+        // --- Exhaustive coverage: no undeclared CLI commands ---
+        let undeclared_cli: Vec<&String> =
+            real_cli_commands.difference(&fixture_cli_commands).collect();
+        assert!(
+            undeclared_cli.is_empty(),
+            "CLI commands exist but are not declared in mcp_cli_parity.json: {:?}\n\
+             Add them to 'paired' or 'cli_only'.",
+            undeclared_cli
+        );
+
+        // --- No phantom entries in fixture ---
+        let phantom_mcp: Vec<&String> =
+            fixture_mcp_tools.difference(&real_mcp_tools).collect();
+        assert!(
+            phantom_mcp.is_empty(),
+            "mcp_cli_parity.json references MCP tools that don't exist: {:?}",
+            phantom_mcp
+        );
+
+        let phantom_cli: Vec<&String> =
+            fixture_cli_commands.difference(&real_cli_commands).collect();
+        assert!(
+            phantom_cli.is_empty(),
+            "mcp_cli_parity.json references CLI commands that don't exist: {:?}",
+            phantom_cli
+        );
+    }
 }
