@@ -15,7 +15,7 @@ Audit of Python/Node CLI and MCP server commands versus Rust replacements, produ
 | send-email | `send-email` | `send-email` | `send-email` | Full parity |
 | list-messages | `list-messages` | `list-messages` | `list-messages` | Full parity |
 | search-messages | -- | -- | `search-messages` | Rust-only addition |
-| email-status | `email-status` | `email-status` | -- (via `status`) | Rust uses MCP tool for detailed email status |
+| email-status | `email-status` | `email-status` | `email-status` | Full parity |
 | fetch-key | -- | `fetch-key` | -- | Node-only; intentionally dropped (use MCP or API directly) |
 | benchmark | `benchmark` | `benchmark` | `benchmark` | Full parity |
 | update | -- | -- | `update` | Rust-only addition: re-sign agent metadata |
@@ -29,7 +29,6 @@ Audit of Python/Node CLI and MCP server commands versus Rust replacements, produ
 | Command | Source | Reason |
 |---------|--------|--------|
 | `fetch-key` | Node CLI | Low-level utility; available via `hai_verify_status` MCP tool or API. Not needed in CLI. |
-| `email-status` | Python/Node CLI | Available via `hai_get_email_status` MCP tool. Rust CLI focuses on core workflows. |
 
 ### Rust-Only Additions (not in Python/Node)
 

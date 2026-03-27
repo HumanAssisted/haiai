@@ -1501,6 +1501,69 @@ mod tests {
             }
         }
 
+        // Argument-level parity check
+        // Collect the names of args defined on the top-level Cli struct
+        // (these are global/parent-level args that Clap propagates into
+        // subcommands). We exclude them from per-subcommand comparisons.
+        let top_level_arg_names: HashSet<String> = Cli::command()
+            .get_arguments()
+            .map(|a| a.get_id().as_str().to_string())
+            .collect();
+
+        for cmd in fixture["commands"].as_array().unwrap() {
+            let name = cmd["name"].as_str().unwrap();
+            if let Some(args) = cmd.get("args").and_then(serde_json::Value::as_array) {
+                if args.is_empty() {
+                    continue;
+                }
+                // Extract arg names from fixture (strip :type suffix, normalize
+                // snake_case to kebab-case for uniform comparison)
+                let fixture_arg_names: HashSet<String> = args
+                    .iter()
+                    .filter_map(|a| a.as_str())
+                    .map(|a| {
+                        a.split(':')
+                            .next()
+                            .unwrap_or(a)
+                            .replace('_', "-")
+                            .to_string()
+                    })
+                    .collect();
+
+                let subcmd = cli_cmd
+                    .find_subcommand(name)
+                    .unwrap_or_else(|| panic!("subcommand '{name}' not found"));
+                // Extract actual arg names, filtering out help/version
+                // (auto-generated) and top-level Cli args (global args that
+                // Clap propagates into subcommands).
+                // Normalize snake_case arg IDs to kebab-case for comparison.
+                let actual_arg_names: HashSet<String> = subcmd
+                    .get_arguments()
+                    .filter(|a| {
+                        let id = a.get_id().as_str();
+                        id != "help" && id != "version" && !top_level_arg_names.contains(id)
+                    })
+                    .map(|a| a.get_id().as_str().replace('_', "-"))
+                    .collect();
+
+                let fixture_only_args: Vec<&String> =
+                    fixture_arg_names.difference(&actual_arg_names).collect();
+                assert!(
+                    fixture_only_args.is_empty(),
+                    "Args for command '{name}' in fixture but not in CLI: {:?}",
+                    fixture_only_args
+                );
+
+                let code_only_args: Vec<&String> =
+                    actual_arg_names.difference(&fixture_arg_names).collect();
+                assert!(
+                    code_only_args.is_empty(),
+                    "Args for command '{name}' in CLI but not in fixture: {:?}",
+                    code_only_args
+                );
+            }
+        }
+
         // Total count check
         let declared = fixture["total_command_count"]
             .as_u64()
