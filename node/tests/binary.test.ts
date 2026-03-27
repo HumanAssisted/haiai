@@ -88,3 +88,137 @@ describe("binary wrapper", () => {
     expect(content).toContain("process.exit(1)");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Resolution logic tests (subprocess-based, real filesystem)
+// ---------------------------------------------------------------------------
+
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+
+const isWindows = process.platform === "win32";
+
+/** Create a stub haiai binary that prints the given version. */
+function makeStub(filePath: string, version: string): void {
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(
+    filePath,
+    `#!/bin/sh\necho "haiai ${version}"\n`,
+  );
+  require("fs").chmodSync(filePath, 0o755);
+}
+
+describe.skipIf(isWindows)("resolution logic", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(path.join(tmpdir(), "haiai-resolve-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("finds .cargo-local/bin/haiai from cwd", () => {
+    makeStub(path.join(tmpDir, ".cargo-local", "bin", "haiai"), "0.2.0");
+
+    const result = spawnSync(process.execPath, [binWrapper, "--version"], {
+      cwd: tmpDir,
+      env: { HAIAI_BINARY_PATH: "", PATH: "" },
+      timeout: 5000,
+    });
+
+    expect(result.stdout?.toString()).toContain("haiai 0.2.0");
+    expect(result.status).toBe(0);
+  });
+
+  it("finds .cargo-local/bin/haiai in ancestor directory", () => {
+    makeStub(path.join(tmpDir, ".cargo-local", "bin", "haiai"), "0.2.0");
+    const nested = path.join(tmpDir, "a", "b", "c");
+    mkdirSync(nested, { recursive: true });
+
+    const result = spawnSync(process.execPath, [binWrapper, "--version"], {
+      cwd: nested,
+      env: { HAIAI_BINARY_PATH: "", PATH: "" },
+      timeout: 5000,
+    });
+
+    expect(result.stdout?.toString()).toContain("haiai 0.2.0");
+    expect(result.status).toBe(0);
+  });
+
+  it("HAIAI_BINARY_PATH takes priority over .cargo-local", () => {
+    // cargo-local has 0.2.0
+    makeStub(path.join(tmpDir, ".cargo-local", "bin", "haiai"), "0.2.0");
+    // env override points to a different stub with a distinctive version
+    const envBin = path.join(tmpDir, "override", "haiai");
+    makeStub(envBin, "9.9.9");
+
+    const result = spawnSync(process.execPath, [binWrapper, "--version"], {
+      cwd: tmpDir,
+      env: { HAIAI_BINARY_PATH: envBin, PATH: "" },
+      timeout: 5000,
+    });
+
+    expect(result.stdout?.toString()).toContain("haiai 9.9.9");
+    expect(result.status).toBe(0);
+  });
+
+  it("rejects PATH binary with mismatched version", () => {
+    // No .cargo-local — force fallback to PATH
+    const pathDir = path.join(tmpDir, "pathbin");
+    makeStub(path.join(pathDir, "haiai"), "0.1.4");
+
+    const result = spawnSync(process.execPath, [binWrapper, "--version"], {
+      cwd: tmpDir,
+      env: { HAIAI_BINARY_PATH: "", PATH: `${pathDir}:/usr/bin` },
+      timeout: 5000,
+    });
+
+    const stderr = result.stderr?.toString() ?? "";
+    expect(stderr).toContain("skipping PATH binary");
+    expect(stderr).toContain("0.1.4");
+    expect(result.status).not.toBe(0);
+  });
+
+  it("accepts PATH binary with matching version", () => {
+    // No .cargo-local — force fallback to PATH
+    const pathDir = path.join(tmpDir, "pathbin");
+    makeStub(path.join(pathDir, "haiai"), "0.2.0");
+
+    const result = spawnSync(process.execPath, [binWrapper, "--version"], {
+      cwd: tmpDir,
+      env: { HAIAI_BINARY_PATH: "", PATH: `${pathDir}:/usr/bin` },
+      timeout: 5000,
+    });
+
+    expect(result.stdout?.toString()).toContain("haiai 0.2.0");
+    expect(result.status).toBe(0);
+  });
+
+  it("error message includes required SDK version", () => {
+    // Nothing available at all
+    const result = spawnSync(process.execPath, [binWrapper], {
+      cwd: tmpDir,
+      env: { HAIAI_BINARY_PATH: "", PATH: "" },
+      timeout: 5000,
+    });
+
+    const stderr = result.stderr?.toString() ?? "";
+    expect(stderr).toContain("v0.2");
+    expect(result.status).not.toBe(0);
+  });
+});
+
+describe("SDK_VERSION sync", () => {
+  it("SDK_VERSION in haiai.cjs matches package.json version", () => {
+    const wrapperContent = readFileSync(binWrapper, "utf-8");
+    const m = wrapperContent.match(/const SDK_VERSION = "(\d+\.\d+\.\d+)"/);
+    expect(m).not.toBeNull();
+
+    const pkgJson = JSON.parse(
+      readFileSync(path.resolve(__dirname, "..", "package.json"), "utf-8"),
+    );
+    expect(m![1]).toBe(pkgJson.version);
+  });
+});
