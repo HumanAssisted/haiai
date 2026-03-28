@@ -2,6 +2,7 @@
         build-python-ffi build-node-ffi \
         versions check-versions check-jacs-versions \
         bump-version bump-jacs-version \
+        generate-knowledge check-knowledge \
         release-node release-python release-rust release-all \
         release-delete-tags \
         retry-rust retry-python retry-node retry-everything \
@@ -56,6 +57,16 @@ build-python-ffi:
 
 build-node-ffi:
 	cd rust/haiinpm && npm install && npm run build
+
+# ============================================================================
+# KNOWLEDGE (self-knowledge document embedding)
+# ============================================================================
+
+generate-knowledge:
+	./scripts/generate_knowledge.sh
+
+check-knowledge:
+	./scripts/check_knowledge_freshness.sh
 
 # ============================================================================
 # VERSION INFO
@@ -298,6 +309,10 @@ help:
 	@echo "  make test-node       Run Node tests"
 	@echo "  make test-go         Run Go tests"
 	@echo "  make test-rust       Run Rust tests"
+	@echo ""
+	@echo "KNOWLEDGE:"
+	@echo "  make generate-knowledge  Regenerate self-knowledge docs (requires ../JACS)"
+	@echo "  make check-knowledge     Fail if self_knowledge_data.rs is stale"
 	@echo ""
 	@echo "RELEASE (via git tags, versions auto-detected, safe to re-run):"
 	@echo "  make release-rust    Tag rust/v<ver>   -> crates.io + CLI binaries"
