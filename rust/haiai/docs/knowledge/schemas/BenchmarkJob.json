@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "BenchmarkJob.json",
+  "title": "BenchmarkJob",
+  "description": "Schema for benchmark job configuration sent to agents",
+  "type": "object",
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "description": "Unique benchmark job identifier"
+    },
+    "tier": {
+      "type": "string",
+      "enum": ["free", "pro", "enterprise"],
+      "description": "Benchmark tier"
+    },
+    "scenario": {
+      "type": "object",
+      "description": "Scenario configuration for the benchmark"
+    }
+  },
+  "required": ["job_id", "tier"]
+}

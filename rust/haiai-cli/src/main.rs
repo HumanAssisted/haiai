@@ -1423,11 +1423,178 @@ async fn main() -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+    use std::collections::HashSet;
 
     #[test]
     fn cli_help_does_not_panic() {
         // Verify the CLI definition is well-formed and --help can render.
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn cli_commands_match_fixture() {
+        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/cli_command_parity.json");
+        let raw = std::fs::read_to_string(&fixture_path).expect("read cli_command_parity.json");
+        let fixture: serde_json::Value =
+            serde_json::from_str(&raw).expect("parse cli_command_parity.json");
+
+        // Extract fixture command names
+        let fixture_commands: HashSet<String> = fixture["commands"]
+            .as_array()
+            .expect("commands array")
+            .iter()
+            .filter_map(|c| c["name"].as_str().map(String::from))
+            .collect();
+
+        // Extract actual command names from Clap introspection
+        let cli_cmd = Cli::command();
+        let actual_commands: HashSet<String> = cli_cmd
+            .get_subcommands()
+            .map(|sub| sub.get_name().to_string())
+            .collect();
+
+        // Bidirectional check: fixture -> code
+        let fixture_only: Vec<&String> = fixture_commands.difference(&actual_commands).collect();
+        assert!(
+            fixture_only.is_empty(),
+            "Commands in fixture but not in CLI binary: {:?}",
+            fixture_only
+        );
+
+        // Bidirectional check: code -> fixture
+        let code_only: Vec<&String> = actual_commands.difference(&fixture_commands).collect();
+        assert!(
+            code_only.is_empty(),
+            "Commands in CLI binary but not in fixture: {:?}",
+            code_only
+        );
+
+        // Sub-subcommand parity check
+        for cmd in fixture["commands"].as_array().unwrap() {
+            if let Some(subcmds) = cmd.get("subcommands").and_then(serde_json::Value::as_array) {
+                let name = cmd["name"].as_str().unwrap();
+                let fixture_subs: HashSet<String> = subcmds
+                    .iter()
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .collect();
+                let actual_subs: HashSet<String> = cli_cmd
+                    .find_subcommand(name)
+                    .unwrap_or_else(|| panic!("subcommand '{name}' not found"))
+                    .get_subcommands()
+                    .map(|s| s.get_name().to_string())
+                    .collect();
+                let fixture_only_subs: Vec<&String> =
+                    fixture_subs.difference(&actual_subs).collect();
+                assert!(
+                    fixture_only_subs.is_empty(),
+                    "Sub-subcommands of '{name}' in fixture but not in CLI: {:?}",
+                    fixture_only_subs
+                );
+                let code_only_subs: Vec<&String> =
+                    actual_subs.difference(&fixture_subs).collect();
+                assert!(
+                    code_only_subs.is_empty(),
+                    "Sub-subcommands of '{name}' in CLI but not in fixture: {:?}",
+                    code_only_subs
+                );
+            }
+        }
+
+        // Argument-level parity check
+        // Collect the names of args defined on the top-level Cli struct
+        // (these are global/parent-level args that Clap propagates into
+        // subcommands). We exclude them from per-subcommand comparisons.
+        let top_level_arg_names: HashSet<String> = Cli::command()
+            .get_arguments()
+            .map(|a| a.get_id().as_str().to_string())
+            .collect();
+
+        for cmd in fixture["commands"].as_array().unwrap() {
+            let name = cmd["name"].as_str().unwrap();
+            if let Some(args) = cmd.get("args").and_then(serde_json::Value::as_array) {
+                if args.is_empty() {
+                    continue;
+                }
+                // Extract arg names from fixture (strip :type suffix, normalize
+                // snake_case to kebab-case for uniform comparison)
+                let fixture_arg_names: HashSet<String> = args
+                    .iter()
+                    .filter_map(|a| a.as_str())
+                    .map(|a| {
+                        a.split(':')
+                            .next()
+                            .unwrap_or(a)
+                            .replace('_', "-")
+                            .to_string()
+                    })
+                    .collect();
+
+                let subcmd = cli_cmd
+                    .find_subcommand(name)
+                    .unwrap_or_else(|| panic!("subcommand '{name}' not found"));
+                // Extract actual arg names, filtering out help/version
+                // (auto-generated) and top-level Cli args (global args that
+                // Clap propagates into subcommands).
+                // Normalize snake_case arg IDs to kebab-case for comparison.
+                let actual_arg_names: HashSet<String> = subcmd
+                    .get_arguments()
+                    .filter(|a| {
+                        let id = a.get_id().as_str();
+                        id != "help" && id != "version" && !top_level_arg_names.contains(id)
+                    })
+                    .map(|a| a.get_id().as_str().replace('_', "-"))
+                    .collect();
+
+                let fixture_only_args: Vec<&String> =
+                    fixture_arg_names.difference(&actual_arg_names).collect();
+                assert!(
+                    fixture_only_args.is_empty(),
+                    "Args for command '{name}' in fixture but not in CLI: {:?}",
+                    fixture_only_args
+                );
+
+                let code_only_args: Vec<&String> =
+                    actual_arg_names.difference(&fixture_arg_names).collect();
+                assert!(
+                    code_only_args.is_empty(),
+                    "Args for command '{name}' in CLI but not in fixture: {:?}",
+                    code_only_args
+                );
+            }
+        }
+
+        // Total count check
+        let declared = fixture["total_command_count"]
+            .as_u64()
+            .expect("total_command_count");
+        assert_eq!(
+            declared,
+            actual_commands.len() as u64,
+            "total_command_count ({declared}) != actual command count ({})",
+            actual_commands.len()
+        );
+    }
+
+    #[test]
+    fn cli_fixture_total_command_count_matches_entries() {
+        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/cli_command_parity.json");
+        let raw = std::fs::read_to_string(&fixture_path).expect("read cli_command_parity.json");
+        let fixture: serde_json::Value =
+            serde_json::from_str(&raw).expect("parse cli_command_parity.json");
+
+        let declared = fixture["total_command_count"]
+            .as_u64()
+            .expect("total_command_count");
+        let actual = fixture["commands"]
+            .as_array()
+            .expect("commands array")
+            .len() as u64;
+        assert_eq!(
+            declared, actual,
+            "cli_command_parity.json total_command_count ({declared}) != commands array length ({actual})"
+        );
     }
 
     #[test]
@@ -2236,5 +2403,142 @@ mod tests {
     fn read_password_file_missing_file_errors() {
         let result = read_password_file("/nonexistent/path/to/pw.txt");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn mcp_cli_parity_fixture_covers_all_surfaces() {
+        // Load the MCP-CLI parity fixture
+        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/mcp_cli_parity.json");
+        let raw = std::fs::read_to_string(&fixture_path).expect("read mcp_cli_parity.json");
+        let fixture: serde_json::Value =
+            serde_json::from_str(&raw).expect("parse mcp_cli_parity.json");
+
+        // --- Collect real MCP tool names ---
+        let real_mcp_tools: HashSet<String> = hai_mcp::hai_tools::definitions()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+
+        // --- Collect real CLI command names ---
+        let cli_cmd = Cli::command();
+        let real_cli_commands: HashSet<String> = cli_cmd
+            .get_subcommands()
+            .map(|sub| sub.get_name().to_string())
+            .collect();
+
+        // --- Extract fixture sections ---
+        let paired = fixture["paired"]
+            .as_array()
+            .expect("paired array");
+        let mcp_only = fixture["mcp_only"]
+            .as_array()
+            .expect("mcp_only array");
+        let cli_only = fixture["cli_only"]
+            .as_array()
+            .expect("cli_only array");
+
+        // Collect all MCP tools declared in the fixture (paired + mcp_only)
+        let mut fixture_mcp_tools: HashSet<String> = HashSet::new();
+        for entry in paired {
+            fixture_mcp_tools.insert(
+                entry["mcp_tool"].as_str().expect("mcp_tool string").to_string(),
+            );
+        }
+        for entry in mcp_only {
+            fixture_mcp_tools.insert(
+                entry["name"].as_str().expect("name string").to_string(),
+            );
+        }
+
+        // Collect all CLI commands declared in the fixture (paired + cli_only)
+        let mut fixture_cli_commands: HashSet<String> = HashSet::new();
+        for entry in paired {
+            fixture_cli_commands.insert(
+                entry["cli_command"].as_str().expect("cli_command string").to_string(),
+            );
+        }
+        for entry in cli_only {
+            fixture_cli_commands.insert(
+                entry["name"].as_str().expect("name string").to_string(),
+            );
+        }
+
+        // --- Verify every paired MCP tool exists in real MCP ---
+        for entry in paired {
+            let tool = entry["mcp_tool"].as_str().unwrap();
+            assert!(
+                real_mcp_tools.contains(tool),
+                "Paired MCP tool '{}' does not exist in hai-mcp definitions",
+                tool
+            );
+        }
+
+        // --- Verify every paired CLI command exists in real CLI ---
+        for entry in paired {
+            let cmd = entry["cli_command"].as_str().unwrap();
+            assert!(
+                real_cli_commands.contains(cmd),
+                "Paired CLI command '{}' does not exist in haiai-cli",
+                cmd
+            );
+        }
+
+        // --- Verify every mcp_only tool exists in real MCP ---
+        for entry in mcp_only {
+            let tool = entry["name"].as_str().unwrap();
+            assert!(
+                real_mcp_tools.contains(tool),
+                "mcp_only tool '{}' does not exist in hai-mcp definitions",
+                tool
+            );
+        }
+
+        // --- Verify every cli_only command exists in real CLI ---
+        for entry in cli_only {
+            let cmd = entry["name"].as_str().unwrap();
+            assert!(
+                real_cli_commands.contains(cmd),
+                "cli_only command '{}' does not exist in haiai-cli",
+                cmd
+            );
+        }
+
+        // --- Exhaustive coverage: no undeclared MCP tools ---
+        let undeclared_mcp: Vec<&String> =
+            real_mcp_tools.difference(&fixture_mcp_tools).collect();
+        assert!(
+            undeclared_mcp.is_empty(),
+            "MCP tools exist but are not declared in mcp_cli_parity.json: {:?}\n\
+             Add them to 'paired' or 'mcp_only'.",
+            undeclared_mcp
+        );
+
+        // --- Exhaustive coverage: no undeclared CLI commands ---
+        let undeclared_cli: Vec<&String> =
+            real_cli_commands.difference(&fixture_cli_commands).collect();
+        assert!(
+            undeclared_cli.is_empty(),
+            "CLI commands exist but are not declared in mcp_cli_parity.json: {:?}\n\
+             Add them to 'paired' or 'cli_only'.",
+            undeclared_cli
+        );
+
+        // --- No phantom entries in fixture ---
+        let phantom_mcp: Vec<&String> =
+            fixture_mcp_tools.difference(&real_mcp_tools).collect();
+        assert!(
+            phantom_mcp.is_empty(),
+            "mcp_cli_parity.json references MCP tools that don't exist: {:?}",
+            phantom_mcp
+        );
+
+        let phantom_cli: Vec<&String> =
+            fixture_cli_commands.difference(&real_cli_commands).collect();
+        assert!(
+            phantom_cli.is_empty(),
+            "mcp_cli_parity.json references CLI commands that don't exist: {:?}",
+            phantom_cli
+        );
     }
 }

@@ -1120,7 +1120,7 @@ mod tests {
     use haiai::NoopJacsProvider;
     use serde::Deserialize;
     use serde_json::Value;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashSet};
     use std::fs;
     use std::path::PathBuf;
 
@@ -1212,7 +1212,86 @@ mod tests {
                     key
                 );
             }
+            // Reverse check: code properties must exist in fixture
+            for key in properties.keys() {
+                assert!(
+                    expected.properties.contains_key(key),
+                    "tool {} has property '{}' in code but not in fixture",
+                    expected.name,
+                    key
+                );
+            }
         }
+    }
+
+    #[test]
+    fn fixture_contains_all_code_tools() {
+        let fixture = load_mcp_tool_contract_fixture();
+        let fixture_names: HashSet<String> =
+            fixture.required_tools.iter().map(|t| t.name.clone()).collect();
+        for tool in definition_values() {
+            let name = tool["name"].as_str().expect("tool name").to_string();
+            assert!(
+                fixture_names.contains(&name),
+                "tool '{name}' is in definition_values() but missing from mcp_tool_contract.json"
+            );
+        }
+    }
+
+    #[test]
+    fn has_tool_matches_definitions() {
+        let def_names: Vec<String> = definition_values()
+            .iter()
+            .filter_map(|t| t["name"].as_str().map(String::from))
+            .collect();
+        for name in &def_names {
+            assert!(
+                has_tool(name),
+                "tool '{name}' is in definition_values() but not in has_tool() match"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_has_match_arm_for_every_defined_tool() {
+        let context = build_context();
+        let def_names: Vec<String> = definition_values()
+            .iter()
+            .filter_map(|t| t["name"].as_str().map(String::from))
+            .collect();
+        for name in &def_names {
+            let result = dispatch(&context, name, None).await;
+            // We expect most tools to fail (missing params, no network, etc.)
+            // but the error must NOT be "unknown HAI tool" -- that means
+            // dispatch() has no match arm for this tool.
+            if let Err(ref err) = result {
+                let msg = format!("{:?}", err);
+                assert!(
+                    !msg.contains("unknown HAI tool"),
+                    "tool '{name}' hit the catch-all arm in dispatch() -- add a match arm"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fixture_total_tool_count_matches() {
+        let fixture_raw: Value = serde_json::from_str(
+            &fs::read_to_string(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../fixtures/mcp_tool_contract.json"),
+            )
+            .expect("read fixture"),
+        )
+        .expect("parse fixture");
+        let declared = fixture_raw["total_tool_count"]
+            .as_u64()
+            .expect("total_tool_count field missing");
+        let actual = definition_values().len() as u64;
+        assert_eq!(
+            declared, actual,
+            "mcp_tool_contract.json total_tool_count ({declared}) != definition_values().len() ({actual})"
+        );
     }
 
     #[test]

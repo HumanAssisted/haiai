@@ -93,6 +93,44 @@ declare -a README_TITLES=(
     "HAIAI Fixtures"
 )
 
+# ── Copy project guides ──────────────────────────────────────────
+
+declare -a GUIDE_SRCS=(
+    "$REPO_ROOT/DEVELOPMENT.md"
+    "$REPO_ROOT/AGENTS.md"
+    "$REPO_ROOT/CLAUDE.md"
+    "$REPO_ROOT/docs/HAIAI_LANGUAGE_SYNC_GUIDE.md"
+    "$REPO_ROOT/docs/haisdk/PARITY_MAP.md"
+    "$REPO_ROOT/docs/adr/0001-crypto-delegation-to-jacs.md"
+    "$REPO_ROOT/docs/A2A_INTEGRATION_ROADMAP.md"
+    "$REPO_ROOT/docs/CLI_PARITY_AUDIT.md"
+    "$REPO_ROOT/skills/jacs/SKILL.md"
+)
+
+declare -a GUIDE_NAMES=(
+    "development.md"
+    "agents.md"
+    "claude.md"
+    "language-sync-guide.md"
+    "parity-map.md"
+    "adr-crypto-delegation.md"
+    "a2a-integration-roadmap.md"
+    "cli-parity-audit.md"
+    "skill-definition.md"
+)
+
+declare -a GUIDE_TITLES=(
+    "Development Guide"
+    "Agent Rules"
+    "Project Instructions"
+    "Cross-Language Sync Guide"
+    "JACS Parity Map"
+    "ADR: Crypto Delegation to JACS"
+    "A2A Integration Roadmap"
+    "CLI Parity Audit"
+    "MCP Skill Definition"
+)
+
 readme_count=0
 for i in "${!README_SRCS[@]}"; do
     src="${README_SRCS[$i]}"
@@ -106,6 +144,36 @@ for i in "${!README_SRCS[@]}"; do
 done
 
 echo "Copied $readme_count SDK READMEs"
+
+# ── Copy project guides ──────────────────────────────────────────
+
+mkdir -p "$KNOWLEDGE_DIR/haiai-guides"
+guide_count=0
+for i in "${!GUIDE_SRCS[@]}"; do
+    src="${GUIDE_SRCS[$i]}"
+    name="${GUIDE_NAMES[$i]}"
+    if [ -f "$src" ]; then
+        cp "$src" "$KNOWLEDGE_DIR/haiai-guides/$name"
+        ((guide_count++))
+    else
+        echo "WARN: Guide not found: $src (skipping)" >&2
+    fi
+done
+
+echo "Copied $guide_count project guides"
+
+# ── Copy JSON schemas ────────────────────────────────────────────
+
+mkdir -p "$KNOWLEDGE_DIR/schemas"
+schema_count=0
+for schema_file in "$REPO_ROOT"/schemas/*.json; do
+    if [ -f "$schema_file" ]; then
+        cp "$schema_file" "$KNOWLEDGE_DIR/schemas/"
+        ((schema_count++))
+    fi
+done
+
+echo "Copied $schema_count JSON schemas"
 
 # ── Copy JACS root README ────────────────────────────────────────
 
@@ -154,6 +222,32 @@ ENTRY
     fi
 done
 
+# Project guide entries
+for i in "${!GUIDE_NAMES[@]}"; do
+    name="${GUIDE_NAMES[$i]}"
+    title="$(escape_rust_str "${GUIDE_TITLES[$i]}")"
+    dest="$KNOWLEDGE_DIR/haiai-guides/$name"
+    if [ -f "$dest" ]; then
+        cat >> "$DATA_FILE" << ENTRY
+    ("haiai-guides/$name", "$title",
+     include_str!("../docs/knowledge/haiai-guides/$name")),
+ENTRY
+    fi
+done
+
+# JSON schema entries
+for schema_file in "$KNOWLEDGE_DIR"/schemas/*.json; do
+    if [ -f "$schema_file" ]; then
+        basename="$(basename "$schema_file")"
+        # Derive title from filename: AgentEvent.json -> "Schema: AgentEvent"
+        title_part="${basename%.json}"
+        cat >> "$DATA_FILE" << ENTRY
+    ("schemas/$basename", "Schema: $title_part",
+     include_str!("../docs/knowledge/schemas/$basename")),
+ENTRY
+    fi
+done
+
 # JACS root README
 if [ -f "$KNOWLEDGE_DIR/jacs/README.md" ]; then
     cat >> "$DATA_FILE" << 'ENTRY'
@@ -165,7 +259,7 @@ fi
 # Close the array
 echo "];" >> "$DATA_FILE"
 
-total=$((${#JACSBOOK_PATHS[@]} + readme_count))
+total=$((${#JACSBOOK_PATHS[@]} + readme_count + guide_count + schema_count))
 if [ -f "$KNOWLEDGE_DIR/jacs/README.md" ]; then
     ((total++))
 fi

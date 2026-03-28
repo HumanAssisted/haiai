@@ -1,13 +1,8 @@
 {
-  "description": "Required shared HAIAI MCP tool surface. Languages may expose additional tools, but the tools listed here must keep names and input fields aligned.",
+  "description": "Canonical MCP tool parity contract. The Rust MCP server (hai-mcp) must expose exactly these tools with matching names, properties, and required fields. Other SDKs validate against this fixture to ensure cross-language parity.",
+  "version": "2.0.0",
+  "total_tool_count": 28,
   "required_tools": [
-    {
-      "name": "hai_hello",
-      "properties": {
-        "config_path": "string"
-      },
-      "required": []
-    },
     {
       "name": "hai_check_username",
       "properties": {
@@ -16,6 +11,29 @@
       "required": [
         "username"
       ]
+    },
+    {
+      "name": "hai_hello",
+      "properties": {
+        "include_test": "boolean",
+        "config_path": "string"
+      },
+      "required": []
+    },
+    {
+      "name": "hai_agent_status",
+      "properties": {
+        "config_path": "string"
+      },
+      "required": []
+    },
+    {
+      "name": "hai_verify_status",
+      "properties": {
+        "agent_id": "string",
+        "config_path": "string"
+      },
+      "required": []
     },
     {
       "name": "hai_claim_username",
@@ -32,15 +50,10 @@
     {
       "name": "hai_register_agent",
       "properties": {
+        "config_path": "string",
         "owner_email": "string",
-        "config_path": "string"
-      },
-      "required": []
-    },
-    {
-      "name": "hai_agent_status",
-      "properties": {
-        "config_path": "string"
+        "domain": "string",
+        "description": "string"
       },
       "required": []
     },
@@ -65,6 +78,7 @@
         "bcc": "array",
         "labels": "array",
         "in_reply_to": "string",
+        "agent_id": "string",
         "config_path": "string"
       },
       "required": [
@@ -83,6 +97,7 @@
         "folder": "string",
         "label": "string",
         "has_attachments": "boolean",
+        "agent_id": "string",
         "config_path": "string"
       },
       "required": []
@@ -91,6 +106,7 @@
       "name": "hai_get_message",
       "properties": {
         "message_id": "string",
+        "agent_id": "string",
         "config_path": "string"
       },
       "required": [
@@ -101,6 +117,7 @@
       "name": "hai_delete_message",
       "properties": {
         "message_id": "string",
+        "agent_id": "string",
         "config_path": "string"
       },
       "required": [
@@ -111,6 +128,7 @@
       "name": "hai_mark_read",
       "properties": {
         "message_id": "string",
+        "agent_id": "string",
         "config_path": "string"
       },
       "required": [
@@ -121,6 +139,7 @@
       "name": "hai_mark_unread",
       "properties": {
         "message_id": "string",
+        "agent_id": "string",
         "config_path": "string"
       },
       "required": [
@@ -143,6 +162,7 @@
         "has_attachments": "boolean",
         "limit": "number",
         "offset": "number",
+        "agent_id": "string",
         "config_path": "string"
       },
       "required": []
@@ -150,6 +170,7 @@
     {
       "name": "hai_get_unread_count",
       "properties": {
+        "agent_id": "string",
         "config_path": "string"
       },
       "required": []
@@ -157,6 +178,7 @@
     {
       "name": "hai_get_email_status",
       "properties": {
+        "agent_id": "string",
         "config_path": "string"
       },
       "required": []
@@ -167,6 +189,7 @@
         "message_id": "string",
         "body": "string",
         "subject_override": "string",
+        "agent_id": "string",
         "config_path": "string"
       },
       "required": [
@@ -180,6 +203,7 @@
         "message_id": "string",
         "to": "string",
         "comment": "string",
+        "agent_id": "string",
         "config_path": "string"
       },
       "required": [
@@ -191,6 +215,7 @@
       "name": "hai_archive_message",
       "properties": {
         "message_id": "string",
+        "agent_id": "string",
         "config_path": "string"
       },
       "required": [
@@ -201,6 +226,7 @@
       "name": "hai_unarchive_message",
       "properties": {
         "message_id": "string",
+        "agent_id": "string",
         "config_path": "string"
       },
       "required": [
@@ -210,6 +236,7 @@
     {
       "name": "hai_list_contacts",
       "properties": {
+        "agent_id": "string",
         "config_path": "string"
       },
       "required": []
@@ -220,7 +247,86 @@
         "query": "string",
         "limit": "number"
       },
-      "required": ["query"]
+      "required": [
+        "query"
+      ]
+    },
+    {
+      "name": "hai_create_email_template",
+      "properties": {
+        "name": "string",
+        "how_to_send": "string",
+        "how_to_respond": "string",
+        "goal": "string",
+        "rules": "string",
+        "agent_id": "string",
+        "config_path": "string"
+      },
+      "required": [
+        "name"
+      ]
+    },
+    {
+      "name": "hai_list_email_templates",
+      "properties": {
+        "q": "string",
+        "limit": "number",
+        "offset": "number",
+        "agent_id": "string",
+        "config_path": "string"
+      },
+      "required": []
+    },
+    {
+      "name": "hai_search_email_templates",
+      "properties": {
+        "q": "string",
+        "limit": "number",
+        "offset": "number",
+        "agent_id": "string",
+        "config_path": "string"
+      },
+      "required": [
+        "q"
+      ]
+    },
+    {
+      "name": "hai_get_email_template",
+      "properties": {
+        "template_id": "string",
+        "agent_id": "string",
+        "config_path": "string"
+      },
+      "required": [
+        "template_id"
+      ]
+    },
+    {
+      "name": "hai_update_email_template",
+      "properties": {
+        "template_id": "string",
+        "name": "string",
+        "how_to_send": "string",
+        "how_to_respond": "string",
+        "goal": "string",
+        "rules": "string",
+        "agent_id": "string",
+        "config_path": "string"
+      },
+      "required": [
+        "template_id"
+      ]
+    },
+    {
+      "name": "hai_delete_email_template",
+      "properties": {
+        "template_id": "string",
+        "agent_id": "string",
+        "config_path": "string"
+      },
+      "required": [
+        "template_id"
+      ]
     }
   ]
 }

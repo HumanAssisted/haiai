@@ -20,9 +20,18 @@ jobs:
           chmod +x scripts/ci/check_no_local_crypto.sh
           ./scripts/ci/check_no_local_crypto.sh
 
+  mcp-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate MCP tool and CLI command parity fixtures
+        run: |
+          chmod +x scripts/ci/check_mcp_parity_fixture.sh
+          ./scripts/ci/check_mcp_parity_fixture.sh
+
   test-python:
     runs-on: ubuntu-latest
-    needs: [crypto-policy]
+    needs: [crypto-policy, mcp-parity]
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -86,7 +95,7 @@ jobs:
 
   test-node:
     runs-on: ubuntu-latest
-    needs: [crypto-policy]
+    needs: [crypto-policy, mcp-parity]
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -157,7 +166,7 @@ jobs:
 
   test-go:
     runs-on: ubuntu-latest
-    needs: [crypto-policy]
+    needs: [crypto-policy, mcp-parity]
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -215,7 +224,7 @@ jobs:
 
   test-rust:
     runs-on: ubuntu-latest
-    needs: [crypto-policy]
+    needs: [crypto-policy, mcp-parity]
     timeout-minutes: 20
     strategy:
       fail-fast: false

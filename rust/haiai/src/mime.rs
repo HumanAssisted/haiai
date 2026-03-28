@@ -44,7 +44,15 @@ pub fn build_rfc5322_email(opts: &SendEmailOptions, from_email: &str) -> Result<
     } else {
         String::new()
     };
-    // BCC is NOT included in headers per RFC 5322 — envelope only
+    // BCC header is included during submission so the API can read envelope
+    // recipients from the MIME. JACS does not sign it (not in
+    // EmailSignatureHeaders), and the MTA strips it before delivery.
+    let bcc_header = if !opts.bcc.is_empty() {
+        let safe_bcc: Vec<String> = opts.bcc.iter().map(|a| sanitize_header(a)).collect();
+        format!("Bcc: {}\r\n", safe_bcc.join(", "))
+    } else {
+        String::new()
+    };
 
     if opts.attachments.is_empty() {
         // Simple text/plain email (no MIME multipart needed)
@@ -52,6 +60,7 @@ pub fn build_rfc5322_email(opts: &SendEmailOptions, from_email: &str) -> Result<
         email.push_str(&format!("From: <{}>\r\n", safe_from));
         email.push_str(&format!("To: {}\r\n", safe_to));
         email.push_str(&cc_header);
+        email.push_str(&bcc_header);
         email.push_str(&format!("Subject: {}\r\n", safe_subject));
         email.push_str(&format!("Date: {}\r\n", date_str));
         email.push_str(&format!("Message-ID: {}\r\n", message_id));
@@ -76,6 +85,7 @@ pub fn build_rfc5322_email(opts: &SendEmailOptions, from_email: &str) -> Result<
         email.push_str(&format!("From: <{}>\r\n", safe_from));
         email.push_str(&format!("To: {}\r\n", safe_to));
         email.push_str(&cc_header);
+        email.push_str(&bcc_header);
         email.push_str(&format!("Subject: {}\r\n", safe_subject));
         email.push_str(&format!("Date: {}\r\n", date_str));
         email.push_str(&format!("Message-ID: {}\r\n", message_id));

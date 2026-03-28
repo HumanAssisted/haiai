@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "AgentEvent.json",
+  "title": "AgentEvent",
+  "description": "Schema for HAI agent events sent over SSE/WebSocket connections",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "description": "Event type identifier"
+    },
+    "agent_id": {
+      "type": "string",
+      "description": "JACS agent identifier"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "required": ["type", "agent_id", "timestamp"]
+}

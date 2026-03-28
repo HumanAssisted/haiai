@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "HaiConfig.json",
+  "title": "HaiConfig",
+  "description": "Schema for HAI SDK client configuration",
+  "type": "object",
+  "properties": {
+    "base_url": {
+      "type": "string",
+      "format": "uri",
+      "default": "https://hai.ai",
+      "description": "HAI API base URL"
+    },
+    "agent_key_path": {
+      "type": "string",
+      "description": "Path to JACS agent private key file"
+    },
+    "agent_doc_path": {
+      "type": "string",
+      "description": "Path to JACS agent document file"
+    },
+    "timeout": {
+      "type": "integer",
+      "default": 30,
+      "description": "Request timeout in seconds"
+    }
+  },
+  "required": ["agent_key_path", "agent_doc_path"]
+}

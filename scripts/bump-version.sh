@@ -76,6 +76,8 @@ echo "  python/pyproject.toml"
 # Safety net: update __init__.py fallback version if it contains a hardcoded version string
 sed -i '' "s/__version__ = \"$CURRENT\"/__version__ = \"$NEW_VERSION\"/" python/src/haiai/__init__.py 2>/dev/null || true
 echo "  python/src/haiai/__init__.py (fallback version)"
+sed -i '' "s/_SDK_VERSION = \"$CURRENT\"/_SDK_VERSION = \"$NEW_VERSION\"/" python/src/haiai/_binary.py
+echo "  python/src/haiai/_binary.py (_SDK_VERSION)"
 
 # --- haiinpm package.json (napi-rs native binding) ---
 
@@ -97,6 +99,8 @@ echo ""
 echo "Node:"
 sed -i '' "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" node/package.json
 echo "  node/package.json: version"
+sed -i '' "s/const SDK_VERSION = \"$CURRENT\"/const SDK_VERSION = \"$NEW_VERSION\"/" node/bin/haiai.cjs
+echo "  node/bin/haiai.cjs (SDK_VERSION)"
 
 # --- Node haiinpm dependency version ---
 

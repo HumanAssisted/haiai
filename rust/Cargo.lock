@@ -1216,7 +1216,7 @@ dependencies = [
 
 [[package]]
 name = "hai-binding-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "haiai",
  "regex",
@@ -1228,7 +1228,7 @@ dependencies = [
 
 [[package]]
 name = "hai-mcp"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -1252,7 +1252,7 @@ dependencies = [
 
 [[package]]
 name = "haiai"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "base64",
@@ -1277,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "haiai-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "atty",
@@ -1297,7 +1297,7 @@ dependencies = [
 
 [[package]]
 name = "haiigo"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "hai-binding-core",
  "serde_json",
@@ -1306,7 +1306,7 @@ dependencies = [
 
 [[package]]
 name = "haiinpm"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "hai-binding-core",
  "napi",
@@ -1316,7 +1316,7 @@ dependencies = [
 
 [[package]]
 name = "haiipy"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "hai-binding-core",
  "pyo3",
@@ -1854,9 +1854,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jacs"
-version = "0.9.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd0af186de59437ea15da29d98c30559709b5a612bed03616927e58ef3aa11af"
+version = "0.9.13"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1919,9 +1917,7 @@ dependencies = [
 
 [[package]]
 name = "jacs-binding-core"
-version = "0.9.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78233aa6b8d5e52d1c7a30eeea6e57e7bc65bb885d79445cb183c1dc3c25bba2"
+version = "0.9.13"
 dependencies = [
  "base64",
  "jacs",
@@ -1935,9 +1931,7 @@ dependencies = [
 
 [[package]]
 name = "jacs-mcp"
-version = "0.9.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c2d965f04198c6acf0687e10663b0672473d06c1820c6ac4fd6d39dfd0c581c"
+version = "0.9.13"
 dependencies = [
  "anyhow",
  "chrono",
