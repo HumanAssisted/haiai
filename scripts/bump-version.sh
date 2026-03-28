@@ -57,6 +57,7 @@ echo ""
 echo "Rust inter-crate dependencies:"
 
 RUST_DEP_FILES=(
+  rust/hai-binding-core/Cargo.toml
   rust/haiai-cli/Cargo.toml
   rust/hai-mcp/Cargo.toml
 )

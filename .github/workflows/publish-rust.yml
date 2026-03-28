@@ -80,10 +80,33 @@ jobs:
 
       - name: Publish hai-binding-core to crates.io
         working-directory: rust/hai-binding-core
-        run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }} || echo "Already published (safe to ignore)"
+        run: |
+          cargo publish --token ${{ secrets.CRATES_IO_TOKEN }} 2>&1 | tee /tmp/publish-hai-binding-core.log
+          STATUS=${PIPESTATUS[0]}
+          if [ $STATUS -ne 0 ]; then
+            if grep -qE "already uploaded|already exists" /tmp/publish-hai-binding-core.log; then
+              echo "::warning::hai-binding-core already published (skipping)"
+            else
+              echo "::error::Failed to publish hai-binding-core"
+              exit 1
+            fi
+          fi
 
-      - name: Wait for crates.io index update
-        run: sleep 30
+      - name: Wait for hai-binding-core to appear on crates.io
+        run: |
+          VERSION="${{ needs.verify-version.outputs.version }}"
+          echo "Waiting for hai-binding-core v${VERSION} on crates.io..."
+          for i in $(seq 1 36); do
+            if cargo search hai-binding-core --limit 1 2>/dev/null | grep -q "\"${VERSION}\""; then
+              echo "hai-binding-core v${VERSION} found after $((i * 5))s"
+              break
+            fi
+            if [ $i -eq 36 ]; then
+              echo "::error::hai-binding-core v${VERSION} not found on crates.io after 180s"
+              exit 1
+            fi
+            sleep 5
+          done
 
       - name: Publish hai-mcp to crates.io
         working-directory: rust/hai-mcp
