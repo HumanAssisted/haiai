@@ -98,6 +98,12 @@ import { tmpdir } from "os";
 
 const isWindows = process.platform === "win32";
 
+/** Read SDK version from package.json so tests stay in sync after bumps. */
+const SDK_VERSION = JSON.parse(
+  readFileSync(path.resolve(__dirname, "..", "package.json"), "utf-8"),
+).version as string;
+const SDK_MAJOR_MINOR = SDK_VERSION.split(".").slice(0, 2).join(".");
+
 /** Create a stub haiai binary that prints the given version. */
 function makeStub(filePath: string, version: string): void {
   mkdirSync(path.dirname(filePath), { recursive: true });
@@ -120,7 +126,7 @@ describe.skipIf(isWindows)("resolution logic", () => {
   });
 
   it("finds .cargo-local/bin/haiai from cwd", () => {
-    makeStub(path.join(tmpDir, ".cargo-local", "bin", "haiai"), "0.2.0");
+    makeStub(path.join(tmpDir, ".cargo-local", "bin", "haiai"), SDK_VERSION);
 
     const result = spawnSync(process.execPath, [binWrapper, "--version"], {
       cwd: tmpDir,
@@ -128,12 +134,12 @@ describe.skipIf(isWindows)("resolution logic", () => {
       timeout: 5000,
     });
 
-    expect(result.stdout?.toString()).toContain("haiai 0.2.0");
+    expect(result.stdout?.toString()).toContain(`haiai ${SDK_VERSION}`);
     expect(result.status).toBe(0);
   });
 
   it("finds .cargo-local/bin/haiai in ancestor directory", () => {
-    makeStub(path.join(tmpDir, ".cargo-local", "bin", "haiai"), "0.2.0");
+    makeStub(path.join(tmpDir, ".cargo-local", "bin", "haiai"), SDK_VERSION);
     const nested = path.join(tmpDir, "a", "b", "c");
     mkdirSync(nested, { recursive: true });
 
@@ -143,13 +149,13 @@ describe.skipIf(isWindows)("resolution logic", () => {
       timeout: 5000,
     });
 
-    expect(result.stdout?.toString()).toContain("haiai 0.2.0");
+    expect(result.stdout?.toString()).toContain(`haiai ${SDK_VERSION}`);
     expect(result.status).toBe(0);
   });
 
   it("HAIAI_BINARY_PATH takes priority over .cargo-local", () => {
-    // cargo-local has 0.2.0
-    makeStub(path.join(tmpDir, ".cargo-local", "bin", "haiai"), "0.2.0");
+    // cargo-local has current SDK version
+    makeStub(path.join(tmpDir, ".cargo-local", "bin", "haiai"), SDK_VERSION);
     // env override points to a different stub with a distinctive version
     const envBin = path.join(tmpDir, "override", "haiai");
     makeStub(envBin, "9.9.9");
@@ -184,7 +190,7 @@ describe.skipIf(isWindows)("resolution logic", () => {
   it("accepts PATH binary with matching version", () => {
     // No .cargo-local — force fallback to PATH
     const pathDir = path.join(tmpDir, "pathbin");
-    makeStub(path.join(pathDir, "haiai"), "0.2.0");
+    makeStub(path.join(pathDir, "haiai"), SDK_VERSION);
 
     const result = spawnSync(process.execPath, [binWrapper, "--version"], {
       cwd: tmpDir,
@@ -192,7 +198,7 @@ describe.skipIf(isWindows)("resolution logic", () => {
       timeout: 5000,
     });
 
-    expect(result.stdout?.toString()).toContain("haiai 0.2.0");
+    expect(result.stdout?.toString()).toContain(`haiai ${SDK_VERSION}`);
     expect(result.status).toBe(0);
   });
 
@@ -205,7 +211,7 @@ describe.skipIf(isWindows)("resolution logic", () => {
     });
 
     const stderr = result.stderr?.toString() ?? "";
-    expect(stderr).toContain("v0.2");
+    expect(stderr).toContain(`v${SDK_MAJOR_MINOR}`);
     expect(result.status).not.toBe(0);
   });
 });
