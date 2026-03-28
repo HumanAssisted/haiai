@@ -21,6 +21,23 @@ brew install haiai
 cargo install haiai-cli
 ```
 
+### Shell script
+
+No package manager? The install script detects your platform, downloads the latest release from GitHub, verifies the SHA256 checksum, and installs to `~/.haiai/bin`. Handles upgrades and downgrades.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HumanAssisted/haiai/main/install.sh | sh
+```
+
+Pin a version or change the install directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HumanAssisted/haiai/main/install.sh | sh -s -- --version 0.2.1
+curl -fsSL https://raw.githubusercontent.com/HumanAssisted/haiai/main/install.sh | sh -s -- --dir /usr/local/bin
+```
+
+Works on macOS (Intel & Apple Silicon) and Linux (x64 & ARM64).
+
 This gives you the `haiai` binary — CLI and MCP server in one.
 
 ## Quickstart
