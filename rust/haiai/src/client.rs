@@ -77,6 +77,15 @@ impl WsConnection {
     }
 }
 
+/// Default request timeout in seconds.
+pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
+
+/// Default maximum retry count for transient failures.
+pub const DEFAULT_MAX_RETRIES: usize = 3;
+
+/// Default DNS-over-HTTPS resolver for email TXT record lookups.
+pub const DEFAULT_DNS_RESOLVER: &str = "https://dns.google/resolve";
+
 #[derive(Debug, Clone)]
 pub struct HaiClientOptions {
     pub base_url: String,
@@ -88,8 +97,8 @@ impl Default for HaiClientOptions {
     fn default() -> Self {
         Self {
             base_url: DEFAULT_BASE_URL.to_string(),
-            timeout: Duration::from_secs(30),
-            max_retries: 3,
+            timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+            max_retries: DEFAULT_MAX_RETRIES,
         }
     }
 }
@@ -657,8 +666,8 @@ impl<P: JacsProvider> HaiClient<P> {
             if has_external {
                 let slug = email_to_slug(from);
                 format!(
-                    "{}\n\nVerify this agent's reputation: https://hai.ai/agents/{}",
-                    options.body, slug
+                    "{}\n\nVerify this agent's reputation: {}/agents/{}",
+                    options.body, self.base_url, slug
                 )
             } else {
                 options.body.clone()
