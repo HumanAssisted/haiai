@@ -268,26 +268,15 @@ def load(config_path: str | None = None) -> None:
     # Validate password is configured (fail early)
     load_private_key_password()
 
-    # Load agent from binding-core using SimpleAgent (handles key loading)
+    # Load agent from binding-core using SimpleAgent (handles key loading).
+    # Pass the original config path directly — JACS resolves relative paths
+    # (jacs_data_directory, jacs_key_directory) relative to the config file.
     try:
         from jacs import SimpleAgent as _SimpleAgent
     except ImportError:
         from jacs.jacs import SimpleAgent as _SimpleAgent  # type: ignore[no-redef]
 
-    # Create a JACS-format config for SimpleAgent.load()
-    jacs_cfg_path = _create_jacs_config(
-        name=_config.name,
-        version=_config.version,
-        key_dir=str(key_dir),
-        jacs_id=_config.jacs_id,
-        config_dir=path.parent,
-    )
-
-    # Ensure data directory exists
-    data_dir = path.parent / "jacs_data"
-    data_dir.mkdir(parents=True, exist_ok=True)
-
-    native_agent = _SimpleAgent.load(jacs_cfg_path)
+    native_agent = _SimpleAgent.load(str(path.resolve()))
 
     # Wrap in adapter for JacsAgent API compatibility
     try:
