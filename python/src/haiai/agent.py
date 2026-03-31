@@ -425,3 +425,19 @@ class EmailNamespace:
             List of :class:`Contact` objects.
         """
         return self._client.contacts(hai_url=self._hai_url)
+
+    def templates(self, limit: int = 20, q: Optional[str] = None) -> dict:
+        """List or search email templates.
+
+        Args:
+            limit: Maximum number of templates to return.
+            q: Optional search query.
+
+        Returns:
+            Dict with template list from the API.
+        """
+        return self._client.list_email_templates(
+            hai_url=self._hai_url,
+            limit=limit,
+            q=q,
+        )
