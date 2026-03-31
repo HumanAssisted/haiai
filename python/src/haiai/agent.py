@@ -70,10 +70,13 @@ class Agent:
         Returns:
             A configured :class:`Agent` instance.
         """
+        from haiai import config as hai_config
+
         config_str: Optional[str] = None
         if config_path is not None:
             config_str = str(config_path)
-        client = HaiClient(config_path=config_str)
+        hai_config.load(config_str)
+        client = HaiClient()
         return cls(client, hai_url)
 
     @property
