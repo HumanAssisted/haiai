@@ -176,7 +176,7 @@ def _build_ffi_config() -> str:
 
     # Pick up config path from env
     config_path = os.environ.get("JACS_CONFIG_PATH", "./jacs.config.json")
-    config["config_path"] = config_path
+    config["jacs_config_path"] = config_path
 
     return json.dumps(config)
 
@@ -1634,8 +1634,28 @@ class HaiClient:
         })
         return data.get("labels", [])
 
+    def _ensure_agent_email(self, hai_url: str) -> None:
+        """Auto-discover agent_email from email status if not already set.
+
+        Mirrors the MCP server's ``prepare_email_client`` pattern:
+        call ``get_email_status`` to learn the agent's email, then
+        set it on the FFI client so ``contacts()`` and other
+        email-dependent calls succeed.
+        """
+        ffi = self._get_ffi()
+        if self._agent_email is not None:
+            return
+        try:
+            status = self.get_email_status(hai_url)
+            if status.email:
+                ffi.set_agent_email(status.email)
+                self._agent_email = status.email
+        except Exception:
+            pass
+
     def contacts(self, hai_url: str) -> list["Contact"]:
         """List contacts derived from email message history."""
+        self._ensure_agent_email(hai_url)
         ffi = self._get_ffi()
         items = ffi.contacts()
         result_items = items if isinstance(items, list) else items.get("contacts", [])

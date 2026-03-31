@@ -86,11 +86,19 @@ pub const DEFAULT_MAX_RETRIES: usize = 3;
 /// Default DNS-over-HTTPS resolver for email TXT record lookups.
 pub const DEFAULT_DNS_RESOLVER: &str = "https://dns.google/resolve";
 
+/// Header name for SDK client identification. The API repo defines its own
+/// matching constant -- keep them in sync.
+pub const HAI_CLIENT_HEADER: &str = "x-hai-client";
+
 #[derive(Debug, Clone)]
 pub struct HaiClientOptions {
     pub base_url: String,
     pub timeout: Duration,
     pub max_retries: usize,
+    /// SDK client identifier sent as the `X-HAI-Client` header.
+    /// Format: `haiai-{transport}/{version}`.
+    /// Defaults to `haiai-rust/{CARGO_PKG_VERSION}` when `None`.
+    pub client_identifier: Option<String>,
 }
 
 impl Default for HaiClientOptions {
@@ -99,6 +107,7 @@ impl Default for HaiClientOptions {
             base_url: DEFAULT_BASE_URL.to_string(),
             timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
             max_retries: DEFAULT_MAX_RETRIES,
+            client_identifier: None,
         }
     }
 }
@@ -135,8 +144,17 @@ impl<P: JacsProvider> HaiClient<P> {
             });
         }
 
+        let client_id = options.client_identifier.unwrap_or_else(|| {
+            format!("haiai-rust/{}", env!("CARGO_PKG_VERSION"))
+        });
+        let mut default_headers = reqwest::header::HeaderMap::new();
+        if let Ok(val) = reqwest::header::HeaderValue::from_str(&client_id) {
+            default_headers.insert(HAI_CLIENT_HEADER, val);
+        }
+
         let http = reqwest::Client::builder()
             .timeout(options.timeout)
+            .default_headers(default_headers)
             .build()?;
 
         Ok(Self {
@@ -2619,6 +2637,47 @@ mod tests {
     // ── Issue #17: reply endpoint in contract fixture ─────────────────
 
     #[test]
+    #[test]
+    fn test_hai_client_options_default_client_identifier_is_none() {
+        let opts = HaiClientOptions::default();
+        assert!(
+            opts.client_identifier.is_none(),
+            "default client_identifier should be None (resolved to haiai-rust/VERSION at construction)"
+        );
+    }
+
+    #[test]
+    fn test_hai_client_constructs_with_default_client_identifier() {
+        let provider = StaticJacsProvider::new("test-agent".to_string());
+        // Should not panic -- proves the default header construction path works
+        let _client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                client_identifier: None,
+                ..Default::default()
+            },
+        )
+        .expect("should create client with default client identifier");
+    }
+
+    #[test]
+    fn test_hai_client_constructs_with_custom_client_identifier() {
+        let provider = StaticJacsProvider::new("test-agent".to_string());
+        let _client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                client_identifier: Some("haiai-cli/0.2.2".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("should create client with custom client identifier");
+    }
+
+    #[test]
+    fn test_hai_client_header_constant_matches_expected_name() {
+        assert_eq!(HAI_CLIENT_HEADER, "x-hai-client");
+    }
+
     fn test_contract_fixture_contains_reply_endpoint() {
         let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")

@@ -292,10 +292,16 @@ impl HaiClientWrapper {
             .and_then(|v| v.as_u64())
             .unwrap_or(3) as usize;
 
+        let client_identifier = config
+            .get("client_type")
+            .and_then(|v| v.as_str())
+            .map(|ct| format!("haiai-{}/{}", ct, env!("CARGO_PKG_VERSION")));
+
         let options = HaiClientOptions {
             base_url,
             timeout: std::time::Duration::from_secs(timeout_secs),
             max_retries,
+            client_identifier,
         };
 
         Self::new(jacs, options)
@@ -1344,6 +1350,20 @@ mod tests {
         let wrapper = wrapper.unwrap();
         assert_eq!(wrapper.jacs_id().await, "test-id");
         assert_eq!(wrapper.base_url().await, "https://beta.hai.ai");
+    }
+
+    #[tokio::test]
+    async fn wrapper_from_config_json_with_client_type_works() {
+        use haiai::jacs::StaticJacsProvider;
+
+        let provider = StaticJacsProvider::new("test-id");
+        let config = r#"{"base_url": "https://beta.hai.ai", "client_type": "python"}"#;
+
+        let wrapper = HaiClientWrapper::from_config_json(config, Box::new(provider));
+        assert!(
+            wrapper.is_ok(),
+            "from_config_json with client_type should succeed"
+        );
     }
 
     #[tokio::test]

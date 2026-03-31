@@ -561,6 +561,7 @@ fn load_client() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
         .context("failed to load JACS agent from config")?;
     let options = HaiClientOptions {
         base_url: hai_url(),
+        client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
         ..Default::default()
     };
     let client = HaiClient::new(provider, options).context("failed to construct HaiClient")?;
@@ -762,6 +763,7 @@ async fn main() -> anyhow::Result<()> {
 
             let options = HaiClientOptions {
                 base_url: hai_url(),
+                client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
                 ..Default::default()
             };
             let client =
