@@ -234,6 +234,10 @@ pub type HaiBindingResult<T> = Result<T, HaiBindingError>;
 /// the three mutating methods acquire a write lock.
 pub struct HaiClientWrapper {
     inner: Arc<RwLock<HaiClient<Box<dyn JacsProvider>>>>,
+    /// The resolved client identifier string (e.g. "haiai-python/0.3.0").
+    /// Stored here for test verification since reqwest::Client doesn't
+    /// expose default headers after construction.
+    client_identifier: String,
 }
 
 impl fmt::Debug for HaiClientWrapper {
@@ -248,10 +252,14 @@ impl HaiClientWrapper {
         jacs: Box<dyn JacsProvider>,
         options: HaiClientOptions,
     ) -> HaiBindingResult<Self> {
+        let resolved_id = options.client_identifier.clone().unwrap_or_else(|| {
+            format!("haiai-rust/{}", env!("CARGO_PKG_VERSION"))
+        });
         let client = HaiClient::new(jacs, options)
             .map_err(HaiBindingError::from)?;
         Ok(Self {
             inner: Arc::new(RwLock::new(client)),
+            client_identifier: resolved_id,
         })
     }
 
@@ -378,6 +386,11 @@ impl HaiClientWrapper {
     // =========================================================================
     // Client state accessors
     // =========================================================================
+
+    /// Get the resolved client identifier (e.g. "haiai-python/0.3.0").
+    pub fn client_identifier(&self) -> &str {
+        &self.client_identifier
+    }
 
     /// Get the JACS ID.
     pub async fn jacs_id(&self) -> String {
@@ -1363,6 +1376,33 @@ mod tests {
         assert!(
             wrapper.is_ok(),
             "from_config_json with client_type should succeed"
+        );
+
+        let wrapper = wrapper.unwrap();
+        // Verify the client_type -> client_identifier transformation produced the correct prefix.
+        // The exact version suffix comes from CARGO_PKG_VERSION so we only assert the prefix.
+        assert!(
+            wrapper.client_identifier().starts_with("haiai-python/"),
+            "Expected client_identifier to start with 'haiai-python/', got: {}",
+            wrapper.client_identifier()
+        );
+    }
+
+    #[tokio::test]
+    async fn wrapper_without_client_type_defaults_to_rust() {
+        use haiai::jacs::StaticJacsProvider;
+
+        let provider = StaticJacsProvider::new("test-id");
+        let config = r#"{"base_url": "https://beta.hai.ai"}"#;
+
+        let wrapper = HaiClientWrapper::from_config_json(config, Box::new(provider))
+            .expect("from_config_json without client_type should succeed");
+
+        // Without client_type, should default to "haiai-rust/{version}"
+        assert!(
+            wrapper.client_identifier().starts_with("haiai-rust/"),
+            "Expected client_identifier to default to 'haiai-rust/', got: {}",
+            wrapper.client_identifier()
         );
     }
 

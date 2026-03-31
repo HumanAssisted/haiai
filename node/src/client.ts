@@ -140,7 +140,7 @@ export class HaiClient {
       max_retries: this.maxRetries,
     };
     if (this.configPath) {
-      ffiConfig.config_path = this.configPath;
+      ffiConfig.jacs_config_path = this.configPath;
     }
     if (this.config?.jacsId) {
       ffiConfig.jacs_id = this.config.jacsId;

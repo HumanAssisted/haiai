@@ -150,6 +150,11 @@ impl<P: JacsProvider> HaiClient<P> {
         let mut default_headers = reqwest::header::HeaderMap::new();
         if let Ok(val) = reqwest::header::HeaderValue::from_str(&client_id) {
             default_headers.insert(HAI_CLIENT_HEADER, val);
+        } else {
+            eprintln!(
+                "WARNING: Invalid X-HAI-Client header value '{}', telemetry will not be sent",
+                client_id
+            );
         }
 
         let http = reqwest::Client::builder()
@@ -2637,7 +2642,6 @@ mod tests {
     // ── Issue #17: reply endpoint in contract fixture ─────────────────
 
     #[test]
-    #[test]
     fn test_hai_client_options_default_client_identifier_is_none() {
         let opts = HaiClientOptions::default();
         assert!(
@@ -2678,6 +2682,82 @@ mod tests {
         assert_eq!(HAI_CLIENT_HEADER, "x-hai-client");
     }
 
+    #[tokio::test]
+    async fn test_hai_client_sends_x_hai_client_header_in_requests() {
+        // Use a mock server to verify the header is actually sent in HTTP requests.
+        // This test would FAIL if the default_headers insertion were removed,
+        // proving it is not vacuous.
+        let server = httpmock::MockServer::start_async().await;
+
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::GET)
+                    .path("/health")
+                    .header_exists(HAI_CLIENT_HEADER);
+                then.status(200).body("ok");
+            })
+            .await;
+
+        let provider = StaticJacsProvider::new("header-test-agent".to_string());
+        let client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: server.base_url(),
+                client_identifier: None, // defaults to haiai-rust/{version}
+                ..Default::default()
+            },
+        )
+        .expect("should create client");
+
+        // Make a raw HTTP request through the client's reqwest::Client
+        // (which has the default headers set)
+        let resp = client
+            .http
+            .get(format!("{}/health", server.base_url()))
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(resp.status(), 200);
+        mock.assert_async().await; // Verifies the mock was hit with the expected header
+    }
+
+    #[tokio::test]
+    async fn test_hai_client_sends_custom_client_identifier_header() {
+        let server = httpmock::MockServer::start_async().await;
+
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::GET)
+                    .path("/health")
+                    .header(HAI_CLIENT_HEADER, "haiai-cli/1.0.0");
+                then.status(200).body("ok");
+            })
+            .await;
+
+        let provider = StaticJacsProvider::new("header-test-agent".to_string());
+        let client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: server.base_url(),
+                client_identifier: Some("haiai-cli/1.0.0".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("should create client");
+
+        let resp = client
+            .http
+            .get(format!("{}/health", server.base_url()))
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(resp.status(), 200);
+        mock.assert_async().await; // Verifies mock matched on the exact header value
+    }
+
+    #[test]
     fn test_contract_fixture_contains_reply_endpoint() {
         let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
