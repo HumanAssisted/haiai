@@ -2446,7 +2446,13 @@ def generate_verify_link(
     base_url: str = DEFAULT_BASE_URL,
     hosted: Optional[bool] = None,
 ) -> str:
-    """Build a verification URL for a signed JACS document."""
+    """Build a verification URL for a signed JACS document.
+
+    TODO: This link cannot be embedded in the email it verifies — the signed body would need to
+    contain its own base64 encoding (chicken-and-egg), and hosting the content behind a token
+    creates a public access path to private messages. Per-message verification is therefore
+    recipient-initiated: paste the raw email at /verify.
+    """
     base = base_url.rstrip("/")
 
     if hosted is None:

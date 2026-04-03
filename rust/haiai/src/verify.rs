@@ -4,6 +4,10 @@ use crate::error::{HaiError, Result};
 pub const MAX_VERIFY_URL_LEN: usize = 2048;
 pub const MAX_VERIFY_DOCUMENT_BYTES: usize = 1515;
 
+// TODO: This link cannot be embedded in the email it verifies — the signed body would need to
+// contain its own base64 encoding (chicken-and-egg), and hosting the content behind a token
+// creates a public access path to private messages. Per-message verification is therefore
+// recipient-initiated: paste the raw email at /verify.
 pub fn generate_verify_link(document: &str, base_url: Option<&str>) -> Result<String> {
     let base = base_url.unwrap_or(DEFAULT_BASE_URL).trim_end_matches('/');
     let encoded = encode_verify_payload(document);
@@ -18,6 +22,8 @@ pub fn generate_verify_link(document: &str, base_url: Option<&str>) -> Result<St
     Ok(full_url)
 }
 
+// TODO: Same constraint as generate_verify_link — hosting content behind a token creates a
+// public access path to private messages. Per-message verification is recipient-initiated.
 pub fn generate_verify_link_hosted(document: &str, base_url: Option<&str>) -> Result<String> {
     let base = base_url.unwrap_or(DEFAULT_BASE_URL).trim_end_matches('/');
     let doc_id = extract_document_id(document).map_err(|_| HaiError::MissingHostedDocumentId)?;
