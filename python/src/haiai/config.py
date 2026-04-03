@@ -276,7 +276,14 @@ def load(config_path: str | None = None) -> None:
     except ImportError:
         from jacs.jacs import SimpleAgent as _SimpleAgent  # type: ignore[no-redef]
 
-    native_agent = _SimpleAgent.load(str(path.resolve()))
+    jacs_config_path = _create_jacs_config(
+        name=raw["jacsAgentName"],
+        version=raw["jacsAgentVersion"],
+        key_dir=str(key_dir),
+        jacs_id=raw.get("jacsId"),
+        config_dir=path.parent,
+    )
+    native_agent = _SimpleAgent.load(jacs_config_path)
 
     # Wrap in adapter for JacsAgent API compatibility
     try:
