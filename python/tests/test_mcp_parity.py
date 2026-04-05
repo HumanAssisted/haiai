@@ -33,8 +33,6 @@ FIXTURES_DIR = Path(__file__).resolve().parents[2] / "fixtures"
 # that would back them.  Each MCP tool maps to one or more FFI methods.
 MCP_TOOL_TO_FFI_METHODS: dict[str, list[str]] = {
     "hai_hello": ["hello"],
-    "hai_check_username": ["check_username"],
-    "hai_claim_username": ["claim_username"],
     "hai_register_agent": ["register"],
     "hai_agent_status": ["verify_status"],
     "hai_verify_status": ["verify_status"],

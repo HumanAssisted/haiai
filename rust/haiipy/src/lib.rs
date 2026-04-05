@@ -91,21 +91,6 @@ impl HaiClient {
         }).map_err(to_py_err)
     }
 
-    fn check_username<'py>(&self, py: Python<'py>, username: String) -> PyResult<Bound<'py, PyAny>> {
-        let client = self.inner.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            client.check_username(&username).await.map_err(to_py_err)
-        })
-    }
-
-    fn check_username_sync(&self, py: Python, username: String) -> PyResult<String> {
-        check_not_async()?;
-        let client = self.inner.clone();
-        py.detach(|| {
-            RT.block_on(async { client.check_username(&username).await })
-        }).map_err(to_py_err)
-    }
-
     fn register<'py>(&self, py: Python<'py>, options_json: String) -> PyResult<Bound<'py, PyAny>> {
         let client = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -201,21 +186,6 @@ impl HaiClient {
     // =========================================================================
     // Username
     // =========================================================================
-
-    fn claim_username<'py>(&self, py: Python<'py>, agent_id: String, username: String) -> PyResult<Bound<'py, PyAny>> {
-        let client = self.inner.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            client.claim_username(&agent_id, &username).await.map_err(to_py_err)
-        })
-    }
-
-    fn claim_username_sync(&self, py: Python, agent_id: String, username: String) -> PyResult<String> {
-        check_not_async()?;
-        let client = self.inner.clone();
-        py.detach(|| {
-            RT.block_on(async { client.claim_username(&agent_id, &username).await })
-        }).map_err(to_py_err)
-    }
 
     fn update_username<'py>(&self, py: Python<'py>, agent_id: String, username: String) -> PyResult<Bound<'py, PyAny>> {
         let client = self.inner.clone();

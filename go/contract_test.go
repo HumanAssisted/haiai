@@ -18,10 +18,9 @@ type endpointContract struct {
 }
 
 type sdkContract struct {
-	BaseURL       string           `json:"base_url"`
-	Hello         endpointContract `json:"hello"`
-	CheckUsername endpointContract `json:"check_username"`
-	SubmitResp    endpointContract `json:"submit_response"`
+	BaseURL    string           `json:"base_url"`
+	Hello      endpointContract `json:"hello"`
+	SubmitResp endpointContract `json:"submit_response"`
 }
 
 func loadContractFixture(t *testing.T) sdkContract {

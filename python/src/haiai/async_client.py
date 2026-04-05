@@ -365,20 +365,6 @@ class AsyncHaiClient:
     # username APIs
     # ------------------------------------------------------------------
 
-    async def check_username(self, hai_url: str, username: str) -> dict[str, Any]:
-        """Check if a username is available for @hai.ai email."""
-        ffi = self._get_ffi()
-        return await ffi.check_username(username)
-
-    async def claim_username(
-        self, hai_url: str, agent_id: str, username: str
-    ) -> dict[str, Any]:
-        """Claim a username for an agent and cache returned @hai.ai email."""
-        ffi = self._get_ffi()
-        data = await ffi.claim_username(agent_id, username)
-        self._agent_email = data.get("email")
-        return data
-
     async def update_username(
         self, hai_url: str, agent_id: str, username: str
     ) -> dict[str, Any]:
@@ -567,7 +553,7 @@ class AsyncHaiClient:
         """Send an email from this agent's @hai.ai address."""
         if self._agent_email is None:
             raise HaiError(
-                "agent email not set -- call claim_username() first or set_agent_email()"
+                "agent email not set -- register with a username first or call set_agent_email()"
             )
 
         ffi = self._get_ffi()
@@ -617,7 +603,7 @@ class AsyncHaiClient:
         """
         if self._agent_email is None:
             raise HaiError(
-                "agent email not set -- call claim_username() first or set_agent_email()"
+                "agent email not set -- register with a username first or call set_agent_email()"
             )
 
         ffi = self._get_ffi()

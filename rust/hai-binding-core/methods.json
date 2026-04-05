@@ -13,14 +13,6 @@
       "notes": "Smoke test method. First method implemented in binding-core."
     },
     {
-      "name": "check_username",
-      "category": "async",
-      "group": "username",
-      "params": { "username": "string" },
-      "returns": "CheckUsernameResult",
-      "auth_required": false
-    },
-    {
       "name": "register",
       "category": "async",
       "group": "registration",
@@ -79,15 +71,6 @@
       "auth_required": true
     },
     {
-      "name": "claim_username",
-      "category": "async",
-      "group": "username",
-      "params": { "agent_id": "string", "username": "string" },
-      "returns": "ClaimUsernameResult",
-      "auth_required": true,
-      "notes": "WRITE LOCK required (&mut self). Auto-stores email from response."
-    },
-    {
       "name": "update_username",
       "category": "async",
       "group": "username",
@@ -110,7 +93,7 @@
       "params": { "options_json": "SendEmailOptions (JSON)" },
       "returns": "SendEmailResult",
       "auth_required": true,
-      "notes": "Requires agent_email to be set (call claim_username first)."
+      "notes": "Requires agent_email to be set (register with a username first)."
     },
     {
       "name": "send_signed_email",
@@ -625,13 +608,13 @@
     }
   ],
   "summary": {
-    "async_methods": 51,
+    "async_methods": 49,
     "streaming_methods": 6,
     "callback_methods": 2,
     "sync_methods": 11,
     "mutating_methods": 2,
     "excluded_methods": 5,
-    "total_public_methods": 77,
-    "binding_core_scope": "51 async + 6 streaming + 11 sync + 2 mutating = 70 methods"
+    "total_public_methods": 75,
+    "binding_core_scope": "49 async + 6 streaming + 11 sync + 2 mutating = 68 methods"
   }
 }

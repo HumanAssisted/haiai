@@ -239,7 +239,7 @@ class HaiClient:
 
     @property
     def agent_email(self) -> Optional[str]:
-        """The agent's ``@hai.ai`` email address, set after ``claim_username``."""
+        """The agent's ``@hai.ai`` email address, set after registration."""
         return self._agent_email
 
     # ------------------------------------------------------------------
@@ -958,40 +958,8 @@ class HaiClient:
         )
 
     # ------------------------------------------------------------------
-    # check_username / claim_username
+    # Username management
     # ------------------------------------------------------------------
-
-    def check_username(self, hai_url: str, username: str) -> dict[str, Any]:
-        """Check if a username is available for @hai.ai email.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            username: Desired username to check.
-
-        Returns:
-            Dict with ``available`` (bool), ``username`` (str), and
-            optional ``reason`` (str).
-        """
-        ffi = self._get_ffi()
-        return ffi.check_username(username)
-
-    def claim_username(
-        self, hai_url: str, agent_id: str, username: str
-    ) -> dict[str, Any]:
-        """Claim a username for an agent, getting ``{username}@hai.ai`` email.
-
-        Args:
-            hai_url: Base URL of the HAI server.
-            agent_id: Agent ID to claim the username for.
-            username: Desired username.
-
-        Returns:
-            Dict with ``username``, ``email``, and ``agent_id``.
-        """
-        ffi = self._get_ffi()
-        data = ffi.claim_username(agent_id, username)
-        self._agent_email = data.get("email")
-        return data
 
     def update_username(
         self, hai_url: str, agent_id: str, username: str
@@ -1313,7 +1281,7 @@ class HaiClient:
     ) -> SendEmailResult:
         """Send an email from this agent's @hai.ai address."""
         if self._agent_email is None:
-            raise HaiError("agent email not set -- call claim_username first")
+            raise HaiError("agent email not set -- register with a username first")
 
         ffi = self._get_ffi()
         options: dict[str, Any] = {
@@ -1375,7 +1343,7 @@ class HaiClient:
         signature, countersigns, and delivers.
         """
         if self._agent_email is None:
-            raise HaiError("agent email not set -- call claim_username first")
+            raise HaiError("agent email not set -- register with a username first")
 
         ffi = self._get_ffi()
         options: dict[str, Any] = {
@@ -2075,16 +2043,6 @@ def status(hai_url: str) -> HaiStatusResult:
     return _get_client().status(hai_url)
 
 
-def check_username(hai_url: str, username: str) -> dict[str, Any]:
-    """Check if a username is available for @hai.ai email."""
-    return _get_client().check_username(hai_url, username)
-
-
-def claim_username(hai_url: str, agent_id: str, username: str) -> dict[str, Any]:
-    """Claim a username for an agent."""
-    return _get_client().claim_username(hai_url, agent_id, username)
-
-
 def update_username(hai_url: str, agent_id: str, username: str) -> dict[str, Any]:
     """Update (rename) a claimed username for an agent."""
     return _get_client().update_username(hai_url, agent_id, username)
@@ -2563,9 +2521,7 @@ def register_new_agent(
     if not quiet:
         print(f"\nAgent created and submitted for registration!")
         print(f"  -> Check your email ({owner_email}) for a verification link")
-        print(f"  -> Click the link and log into hai.ai to complete registration")
-        print(f"  -> After verification, claim a @hai.ai username with:")
-        print(f"     client.claim_username('{hai_url}', '{agent_id}', 'my-agent')")
+        print(f"  -> Your agent is registered with username from your reservation")
         print(f"  -> Config saved to {config_path}")
         print(f"  -> Keys saved to {key_directory}")
         print(

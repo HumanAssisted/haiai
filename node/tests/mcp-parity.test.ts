@@ -47,8 +47,6 @@ function loadMCPContract(): MCPToolContract {
  */
 const MCP_TOOL_TO_FFI_METHODS: Record<string, string[]> = {
   hai_hello: ['hello'],
-  hai_check_username: ['checkUsername'],
-  hai_claim_username: ['claimUsername'],
   hai_register_agent: ['register'],
   hai_agent_status: ['verifyStatus'],
   hai_verify_status: ['verifyStatus'],

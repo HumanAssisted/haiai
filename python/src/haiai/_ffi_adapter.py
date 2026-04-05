@@ -110,13 +110,6 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    def check_username(self, username: str) -> dict[str, Any]:
-        try:
-            raw = self._native.check_username_sync(username)
-            return json.loads(raw)
-        except RuntimeError as err:
-            raise map_ffi_error(err) from err
-
     def register(self, options: dict[str, Any]) -> dict[str, Any]:
         try:
             raw = self._native.register_sync(json.dumps(options))
@@ -160,13 +153,6 @@ class FFIAdapter:
             raise map_ffi_error(err) from err
 
     # --- Username ---
-
-    def claim_username(self, agent_id: str, username: str) -> dict[str, Any]:
-        try:
-            raw = self._native.claim_username_sync(agent_id, username)
-            return json.loads(raw)
-        except RuntimeError as err:
-            raise map_ffi_error(err) from err
 
     def update_username(self, agent_id: str, username: str) -> dict[str, Any]:
         try:
@@ -634,13 +620,6 @@ class AsyncFFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    async def check_username(self, username: str) -> dict[str, Any]:
-        try:
-            raw = await self._native.check_username(username)
-            return json.loads(raw)
-        except RuntimeError as err:
-            raise map_ffi_error(err) from err
-
     async def register(self, options: dict[str, Any]) -> dict[str, Any]:
         try:
             raw = await self._native.register(json.dumps(options))
@@ -684,13 +663,6 @@ class AsyncFFIAdapter:
             raise map_ffi_error(err) from err
 
     # --- Username ---
-
-    async def claim_username(self, agent_id: str, username: str) -> dict[str, Any]:
-        try:
-            raw = await self._native.claim_username(agent_id, username)
-            return json.loads(raw)
-        except RuntimeError as err:
-            raise map_ffi_error(err) from err
 
     async def update_username(self, agent_id: str, username: str) -> dict[str, Any]:
         try:

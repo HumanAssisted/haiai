@@ -15,7 +15,6 @@ interface EndpointContract {
 interface ContractFixture {
   base_url: string;
   hello: EndpointContract;
-  check_username: EndpointContract;
   submit_response: EndpointContract;
 }
 
@@ -86,13 +85,6 @@ describe('mock API contract (node)', () => {
     expect(contract.hello.method).toBe('POST');
     expect(contract.hello.auth_required).toBe(true);
     expect(contract.hello.path).toContain('/hello');
-  });
-
-  it('checkUsername fixture data is well-formed', () => {
-    const contract = loadContractFixture();
-    expect(contract.check_username.method).toBe('GET');
-    expect(contract.check_username.auth_required).toBe(false);
-    expect(contract.check_username.path).toContain('/username/check');
   });
 
   it('submitResponse fixture data is well-formed', () => {

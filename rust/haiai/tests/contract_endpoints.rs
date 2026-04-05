@@ -18,7 +18,6 @@ struct EndpointContract {
 struct ContractFixture {
     base_url: String,
     hello: EndpointContract,
-    check_username: EndpointContract,
     submit_response: EndpointContract,
 }
 
@@ -79,36 +78,6 @@ async fn hello_uses_shared_method_path_auth_contract() {
     client.hello(false).await.expect("hello response");
 
     hello.assert_async().await;
-}
-
-#[tokio::test]
-async fn check_username_uses_shared_method_path_auth_contract() {
-    let fixture = load_contract_fixture();
-    let server = MockServer::start_async().await;
-
-    let mock = server
-        .mock_async(|when, then| {
-            let when = when
-                .method(method_from_fixture(&fixture.check_username.method))
-                .path(fixture.check_username.path.clone())
-                .query_param("username", "alice");
-            let _when = if fixture.check_username.auth_required {
-                when.header_exists("authorization")
-            } else {
-                when
-            };
-            then.status(200)
-                .json_body(json!({ "available": true, "username": "alice" }));
-        })
-        .await;
-
-    let client = make_client(&server.base_url());
-    client
-        .check_username("alice")
-        .await
-        .expect("check username response");
-
-    mock.assert_async().await;
 }
 
 #[tokio::test]

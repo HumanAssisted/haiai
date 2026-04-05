@@ -123,16 +123,6 @@ pub struct MigrateAgentResult {
     pub patched_fields: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CheckUsernameResult {
-    #[serde(default)]
-    pub available: bool,
-    #[serde(default)]
-    pub username: String,
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RegisterAgentOptions {
     pub agent_json: String,
@@ -204,16 +194,6 @@ pub struct JobResponseResult {
     pub job_id: String,
     #[serde(default)]
     pub message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClaimUsernameResult {
-    #[serde(default)]
-    pub username: String,
-    #[serde(default)]
-    pub email: String,
-    #[serde(default)]
-    pub agent_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

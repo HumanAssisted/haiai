@@ -4,7 +4,6 @@
   "methods": {
     "registration_and_identity": [
       {"name": "hello", "args": ["include_test:bool"], "returns": "json"},
-      {"name": "check_username", "args": ["username:string"], "returns": "json"},
       {"name": "register", "args": ["options_json:string"], "returns": "json"},
       {"name": "register_new_agent", "args": ["options_json:string"], "returns": "json"},
       {"name": "rotate_keys", "args": ["options_json:string"], "returns": "json"},
@@ -13,7 +12,6 @@
       {"name": "verify_status", "args": ["agent_id:string?"], "returns": "json"}
     ],
     "username": [
-      {"name": "claim_username", "args": ["agent_id:string", "username:string"], "returns": "json"},
       {"name": "update_username", "args": ["agent_id:string", "username:string"], "returns": "json"},
       {"name": "delete_username", "args": ["agent_id:string"], "returns": "json"}
     ],
@@ -109,5 +107,5 @@
     "ProviderError"
   ],
   "error_format": "{ErrorKind}: {message}",
-  "total_method_count": 68
+  "total_method_count": 66
 }

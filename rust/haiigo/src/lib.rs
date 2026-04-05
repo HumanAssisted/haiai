@@ -253,7 +253,6 @@ pub extern "C" fn hai_hello(handle: HaiClientHandle, include_test: bool) -> *mut
     result.unwrap_or_else(|_| panic_json())
 }
 
-ffi_method_str!(hai_check_username, check_username);
 ffi_method_str!(hai_register, register);
 ffi_method_str!(hai_register_new_agent, register_new_agent);
 ffi_method_str!(hai_rotate_keys, rotate_keys);
@@ -282,25 +281,6 @@ pub extern "C" fn hai_verify_status(handle: HaiClientHandle, agent_id: *const c_
 // =============================================================================
 // FFI Methods — Username
 // =============================================================================
-
-#[no_mangle]
-pub extern "C" fn hai_claim_username(handle: HaiClientHandle, agent_id: *const c_char, username: *const c_char) -> *mut c_char {
-    if handle.is_null() {
-        return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
-    }
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        let client = unsafe { &*handle }.clone();
-        let agent_id = unsafe { c_str_to_string(agent_id) };
-        let username = unsafe { c_str_to_string(username) };
-        let (tx, rx) = std::sync::mpsc::channel();
-        RT.spawn(async move {
-            let r = client.claim_username(&agent_id, &username).await;
-            let _ = tx.send(r);
-        });
-        to_c_string(result_to_json(rx.recv().unwrap()))
-    }));
-    result.unwrap_or_else(|_| panic_json())
-}
 
 #[no_mangle]
 pub extern "C" fn hai_update_username(handle: HaiClientHandle, agent_id: *const c_char, username: *const c_char) -> *mut c_char {

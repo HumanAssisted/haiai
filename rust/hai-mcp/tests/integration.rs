@@ -488,18 +488,6 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     assert_eq!(export_json["success"].as_bool(), Some(true));
     assert!(export_json["agent_id"].as_str().is_some());
 
-    let check_username = session.call_tool(
-        11,
-        "hai_check_username",
-        json!({
-            "username": "demo-agent"
-        }),
-    );
-    assert_eq!(
-        check_username["structuredContent"]["check_username"]["available"].as_bool(),
-        Some(true)
-    );
-
     let email_status = session.call_tool(
         12,
         "hai_get_email_status",
