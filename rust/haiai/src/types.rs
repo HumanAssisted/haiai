@@ -132,6 +132,8 @@ pub struct RegisterAgentOptions {
     pub owner_email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// One-time registration key from the dashboard (for one-step registration)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registration_key: Option<String>,

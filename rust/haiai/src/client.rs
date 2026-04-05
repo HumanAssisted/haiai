@@ -285,6 +285,9 @@ impl<P: JacsProvider> HaiClient<P> {
         if let Some(domain) = &options.domain {
             payload.insert("domain".to_string(), Value::String(domain.clone()));
         }
+        if let Some(description) = &options.description {
+            payload.insert("description".to_string(), Value::String(description.clone()));
+        }
         if let Some(registration_key) = &options.registration_key {
             payload.insert(
                 "registration_key".to_string(),

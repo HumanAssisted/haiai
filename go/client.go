@@ -701,7 +701,7 @@ func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions
 	email := c.agentEmail
 	c.mu.RUnlock()
 	if email == "" {
-		return nil, fmt.Errorf("%w: agent email not set — agent email not set — register agent first", ErrEmailNotActive)
+		return nil, fmt.Errorf("%w: agent email not set — register agent first", ErrEmailNotActive)
 	}
 
 	// Encode attachment data to base64 for JSON serialization
@@ -775,7 +775,7 @@ func (c *Client) SendSignedEmail(ctx context.Context, opts SendEmailOptions) (*S
 	email := c.agentEmail
 	c.mu.RUnlock()
 	if email == "" {
-		return nil, fmt.Errorf("%w: agent email not set — agent email not set — register agent first", ErrEmailNotActive)
+		return nil, fmt.Errorf("%w: agent email not set — register agent first", ErrEmailNotActive)
 	}
 
 	// Encode attachment data to base64 for JSON serialization

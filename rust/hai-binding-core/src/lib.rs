@@ -543,6 +543,7 @@ impl HaiClientWrapper {
             public_key_pem: Some(pub_key_pem),
             owner_email: v.get("owner_email").and_then(|v| v.as_str()).map(String::from),
             domain: v.get("domain").and_then(|v| v.as_str()).map(String::from),
+            description: v.get("description").and_then(|v| v.as_str()).map(String::from),
             registration_key: v.get("registration_key").and_then(|v| v.as_str()).map(String::from),
             is_mediator: None,
         };

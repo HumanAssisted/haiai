@@ -146,6 +146,7 @@ async fn register_posts_bootstrap_payload() {
             public_key_pem: Some("public-key-pem".to_string()),
             owner_email: Some("owner@example.com".to_string()),
             domain: Some("agent.example.com".to_string()),
+            description: Some("Agent registered via Rust test".to_string()),
             ..Default::default()
         })
         .await
