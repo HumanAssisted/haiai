@@ -86,7 +86,7 @@ async fn email_integration_lifecycle() {
                 env::var("HAI_OWNER_EMAIL").unwrap_or_else(|_| "jonathan@hai.io".to_string()),
             ),
             domain: None,
-            description: Some("Rust integration test agent".to_string()),
+            ..Default::default()
         })
         .await
         .expect("register agent");

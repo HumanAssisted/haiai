@@ -384,12 +384,6 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
 
 fn response_for_request(request: &RecordedRequest) -> Value {
     match (request.method.as_str(), request.path.as_str()) {
-        ("GET", path) if path.starts_with("/api/v1/agents/username/check?username=demo-agent") => {
-            json!({
-                "username": "demo-agent",
-                "available": true
-            })
-        }
         ("POST", "/api/v1/agents/register") => {
             json!({
                 "success": true,
@@ -516,16 +510,6 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
         "self_knowledge should return ranked results: {sk_text}"
     );
 
-    server.assert_request(
-        |request| {
-            request.method == "GET"
-                && request
-                    .path
-                    .starts_with("/api/v1/agents/username/check?username=demo-agent")
-                && !request.headers.contains_key("authorization")
-        },
-        "GET /api/v1/agents/username/check?username=demo-agent",
-    );
     server.assert_request(
         |request| {
             request.method == "GET"

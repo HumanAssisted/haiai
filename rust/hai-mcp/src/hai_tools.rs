@@ -540,7 +540,6 @@ async fn call_register_agent(context: &HaiServerContext, args: &Value) -> ToolRe
             public_key_pem: Some(public_key_pem),
             owner_email: optional_string(args, "owner_email").map(ToString::to_string),
             domain: optional_string(args, "domain").map(ToString::to_string),
-            description: optional_string(args, "description").map(ToString::to_string),
             registration_key: optional_string(args, "registration_key").map(ToString::to_string),
             is_mediator: None,
         })

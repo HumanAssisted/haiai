@@ -146,7 +146,7 @@ async fn register_posts_bootstrap_payload() {
             public_key_pem: Some("public-key-pem".to_string()),
             owner_email: Some("owner@example.com".to_string()),
             domain: Some("agent.example.com".to_string()),
-            description: Some("Agent registered via Rust test".to_string()),
+            ..Default::default()
         })
         .await
         .expect("register");
@@ -193,7 +193,7 @@ async fn register_is_unauthenticated() {
             public_key_pem: Some("pub-key".to_string()),
             owner_email: Some("owner@hai.ai".to_string()),
             domain: None,
-            description: None,
+            ..Default::default()
         })
         .await
         .expect("register should succeed without auth");
@@ -242,7 +242,7 @@ async fn register_omits_private_key() {
             public_key_pem: Some("-----BEGIN PUBLIC KEY-----\nfake\n-----END PUBLIC KEY-----".to_string()),
             owner_email: Some("owner@hai.ai".to_string()),
             domain: None,
-            description: None,
+            ..Default::default()
         })
         .await
         .expect("register should succeed without private key");

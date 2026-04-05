@@ -126,7 +126,7 @@ async fn register_bootstrap_matches_shared_fixture() {
             public_key_pem: Some("public-key-pem".to_string()),
             owner_email: Some("owner@example.com".to_string()),
             domain: Some("agent.example.com".to_string()),
-            description: Some("Cross-language bootstrap contract".to_string()),
+            ..Default::default()
         })
         .await
         .expect("register");

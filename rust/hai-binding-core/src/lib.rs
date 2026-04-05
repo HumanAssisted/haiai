@@ -543,7 +543,6 @@ impl HaiClientWrapper {
             public_key_pem: Some(pub_key_pem),
             owner_email: v.get("owner_email").and_then(|v| v.as_str()).map(String::from),
             domain: v.get("domain").and_then(|v| v.as_str()).map(String::from),
-            description: v.get("description").and_then(|v| v.as_str()).map(String::from),
             registration_key: v.get("registration_key").and_then(|v| v.as_str()).map(String::from),
             is_mediator: None,
         };
@@ -1873,6 +1872,49 @@ mod tests {
     #[tokio::test]
     async fn register_new_agent_method_exists_on_wrapper() {
         let _method_exists = HaiClientWrapper::register_new_agent;
+    }
+
+    #[tokio::test]
+    async fn register_new_agent_rejects_missing_agent_name() {
+        let config = r#"{"jacs_id": "reg-test"}"#;
+        let wrapper = HaiClientWrapper::from_config_json_auto(config).unwrap();
+        let result = wrapper
+            .register_new_agent(r#"{"password": "secret123"}"#)
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::InvalidArgument);
+        assert!(
+            err.message.contains("agent_name"),
+            "error should mention agent_name: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn register_new_agent_rejects_missing_password() {
+        let config = r#"{"jacs_id": "reg-test"}"#;
+        let wrapper = HaiClientWrapper::from_config_json_auto(config).unwrap();
+        let result = wrapper
+            .register_new_agent(r#"{"agent_name": "test-bot"}"#)
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::InvalidArgument);
+        assert!(
+            err.message.contains("password"),
+            "error should mention password: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn register_new_agent_rejects_invalid_json() {
+        let config = r#"{"jacs_id": "reg-test"}"#;
+        let wrapper = HaiClientWrapper::from_config_json_auto(config).unwrap();
+        let result = wrapper.register_new_agent("not valid json").await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, ErrorKind::SerializationFailed);
     }
 
     #[tokio::test]
