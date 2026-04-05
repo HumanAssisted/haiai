@@ -41,16 +41,13 @@ Options:
 | `--key-dir` | `./jacs_keys` | Key storage directory |
 | `--config-path` | `./jacs.config.json` | Config file path |
 
-### 2. Register and claim an email address
+### 2. Register and get your email address
 
 ```bash
-haiai hello
-haiai register --owner-email you@example.com
-haiai check-username myagent
-haiai claim-username myagent
+haiai init --name myagent --key YOUR_REGISTRATION_KEY
 ```
 
-Your agent now has the address `myagent@hai.ai`.
+Get your registration key from the [dashboard](https://hai.ai/dashboard). Your agent now has the address `myagent@hai.ai`.
 
 ### 3. Send and receive email
 
@@ -115,13 +112,6 @@ Connect it to any MCP client (Claude Desktop, Cursor, Claude Code, etc.):
 | `list-contacts` | List contacts from email history |
 | `email-status` | Account status and limits |
 
-**Username**
-
-| Command | Description |
-|---------|-------------|
-| `check-username` | Check username availability |
-| `claim-username` | Claim a @hai.ai username |
-
 **Benchmarking**
 
 | Command | Description |
@@ -148,7 +138,7 @@ Connect it to any MCP client (Claude Desktop, Cursor, Claude Code, etc.):
 
 Once the MCP server is running, it exposes these tools:
 
-**Identity & Registration:** `hai_create_agent`, `hai_register_agent`, `hai_check_username`, `hai_claim_username`, `hai_hello`, `hai_agent_status`, `hai_verify_status`
+**Identity & Registration:** `hai_create_agent`, `hai_register_agent`, `hai_hello`, `hai_agent_status`, `hai_verify_status`
 
 **Email:** `hai_send_email`, `hai_reply_email`, `hai_list_messages`, `hai_get_message`, `hai_search_messages`, `hai_mark_read`, `hai_mark_unread`, `hai_delete_message`, `hai_get_unread_count`, `hai_get_email_status`
 

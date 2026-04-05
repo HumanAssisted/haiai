@@ -346,7 +346,7 @@ fn skill_md_cli_commands_exist_in_binary() {
     );
 }
 
-/// Convert a PascalCase identifier to kebab-case (e.g. "ClaimUsername" -> "claim-username").
+/// Convert a PascalCase identifier to kebab-case (e.g. "UpdateUsername" -> "update-username").
 fn pascal_to_kebab(name: &str) -> String {
     let mut result = String::new();
     for (i, ch) in name.chars().enumerate() {

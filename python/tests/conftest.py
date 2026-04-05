@@ -198,9 +198,6 @@ class MockFFIAdapter:
     def hello(self, include_test: bool = False) -> dict:
         return self._record("hello", include_test)
 
-    def check_username(self, username: str) -> dict:
-        return self._record("check_username", username)
-
     def register(self, options: dict) -> dict:
         return self._record("register", options)
 
@@ -217,9 +214,6 @@ class MockFFIAdapter:
         return self._record("verify_status", agent_id)
 
     # Username
-    def claim_username(self, agent_id: str, username: str) -> dict:
-        return self._record("claim_username", agent_id, username)
-
     def update_username(self, agent_id: str, username: str) -> dict:
         return self._record("update_username", agent_id, username)
 
@@ -431,17 +425,11 @@ class MockAsyncFFIAdapter(MockFFIAdapter):
     async def hello(self, include_test: bool = False) -> dict:  # type: ignore[override]
         return self._record("hello", include_test)
 
-    async def check_username(self, username: str) -> dict:  # type: ignore[override]
-        return self._record("check_username", username)
-
     async def register(self, options: dict) -> dict:  # type: ignore[override]
         return self._record("register", options)
 
     async def verify_status(self, agent_id: str | None = None) -> dict:  # type: ignore[override]
         return self._record("verify_status", agent_id)
-
-    async def claim_username(self, agent_id: str, username: str) -> dict:  # type: ignore[override]
-        return self._record("claim_username", agent_id, username)
 
     async def update_username(self, agent_id: str, username: str) -> dict:  # type: ignore[override]
         return self._record("update_username", agent_id, username)

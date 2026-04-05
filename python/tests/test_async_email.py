@@ -88,45 +88,6 @@ async def test_async_send_email_attachment_payload_no_client_signing(
 
 
 @pytest.mark.asyncio
-async def test_async_check_username_calls_ffi(
-    loaded_config: None,
-) -> None:
-    client = AsyncHaiClient()
-    mock_ffi = client._get_ffi()
-    mock_ffi.responses["check_username"] = {
-        "available": True,
-        "username": "alice",
-        "reason": None,
-    }
-
-    result = await client.check_username(BASE_URL, "alice")
-    assert mock_ffi.calls[0][0] == "check_username"
-    assert mock_ffi.calls[0][1][0] == "alice"
-    assert result["available"] is True
-    assert result["username"] == "alice"
-
-
-@pytest.mark.asyncio
-async def test_async_claim_username_sets_agent_email(
-    loaded_config: None,
-) -> None:
-    client = AsyncHaiClient()
-    mock_ffi = client._get_ffi()
-    mock_ffi.responses["claim_username"] = {
-        "username": "myagent",
-        "email": "myagent@hai.ai",
-        "agent_id": "agent/with/slash",
-    }
-
-    result = await client.claim_username(BASE_URL, "agent/with/slash", "myagent")
-    assert mock_ffi.calls[0][0] == "claim_username"
-    assert mock_ffi.calls[0][1][0] == "agent/with/slash"
-    assert mock_ffi.calls[0][1][1] == "myagent"
-    assert result["email"] == "myagent@hai.ai"
-    assert client.agent_email == "myagent@hai.ai"
-
-
-@pytest.mark.asyncio
 async def test_async_update_and_delete_username(
     loaded_config: None,
 ) -> None:

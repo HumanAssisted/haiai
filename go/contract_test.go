@@ -70,39 +70,6 @@ func TestHelloContract(t *testing.T) {
 	}
 }
 
-func TestCheckUsernameContract(t *testing.T) {
-	contract := loadContractFixture(t)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != contract.CheckUsername.Method {
-			t.Fatalf("unexpected method: %s", r.Method)
-		}
-		if r.URL.Path != contract.CheckUsername.Path {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-		if got := r.URL.Query().Get("username"); got != "alice" {
-			t.Fatalf("unexpected username query: %q", got)
-		}
-
-		auth := r.Header.Get("Authorization")
-		if contract.CheckUsername.AuthRequired && auth == "" {
-			t.Fatal("expected Authorization header")
-		}
-		if !contract.CheckUsername.AuthRequired && auth != "" {
-			t.Fatalf("expected no Authorization header, got %q", auth)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"available":true,"username":"alice"}`))
-	}))
-	defer srv.Close()
-
-	cl, _ := newTestClient(t, srv.URL)
-	if _, err := cl.CheckUsername(context.Background(), "alice"); err != nil {
-		t.Fatalf("CheckUsername: %v", err)
-	}
-}
-
 func TestSubmitResponseContract(t *testing.T) {
 	contract := loadContractFixture(t)
 	jobID := "job-123"

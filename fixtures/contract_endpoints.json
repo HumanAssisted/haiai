@@ -14,5 +14,10 @@
     "method": "POST",
     "path": "/api/agents/{agent_id}/email/messages/{message_id}/labels",
     "auth_required": true
+  },
+  "reply": {
+    "method": "POST",
+    "path": "/api/agents/{agent_id}/email/reply",
+    "auth_required": true
   }
 }

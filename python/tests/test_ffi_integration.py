@@ -223,7 +223,7 @@ class TestClientDelegatesToFFI:
         from haiai.client import HaiClient
 
         client = HaiClient()
-        # send_email requires agent_email to be set (normally set by claim_username)
+        # send_email requires agent_email to be set (normally set during registration)
         client._agent_email = "test@hai.ai"
         mock_ffi = client._get_ffi()
         mock_ffi.responses["send_email"] = {
@@ -254,19 +254,6 @@ class TestClientDelegatesToFFI:
 
         assert mock_ffi.calls[0][0] == "list_messages"
         assert result == []
-
-    def test_check_username_delegates_to_ffi(
-        self, loaded_config: None
-    ) -> None:
-        from haiai.client import HaiClient
-
-        client = HaiClient()
-        mock_ffi = client._get_ffi()
-        mock_ffi.responses["check_username"] = {"available": True, "username": "alice"}
-
-        result = client.check_username("https://api.hai.ai", "alice")
-
-        assert mock_ffi.calls[0][0] == "check_username"
 
     def test_verify_document_delegates_to_ffi(
         self, loaded_config: None

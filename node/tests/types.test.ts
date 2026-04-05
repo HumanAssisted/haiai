@@ -16,8 +16,6 @@ import type {
   JobResponseResult,
   VerifyAgentResult,
   RegistrationEntry,
-  CheckUsernameResult,
-  ClaimUsernameResult,
   TranscriptMessage,
   ConversationTurn,
   AgentCapability,
@@ -218,24 +216,6 @@ describe('type definitions', () => {
       signedAt: '2024-01-01T00:00:00Z',
     };
     expect(entry.algorithm).toBe('Ed25519');
-  });
-
-  it('CheckUsernameResult has correct shape', () => {
-    const result: CheckUsernameResult = {
-      available: true,
-      username: 'my-agent',
-    };
-    expect(result.available).toBe(true);
-    expect(result.reason).toBeUndefined();
-  });
-
-  it('ClaimUsernameResult has correct shape', () => {
-    const result: ClaimUsernameResult = {
-      username: 'my-agent',
-      email: 'my-agent@hai.ai',
-      agentId: 'agent-1',
-    };
-    expect(result.email).toBe('my-agent@hai.ai');
   });
 
   it('AgentCapability accepts known and custom strings', () => {

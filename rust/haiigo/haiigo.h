@@ -54,7 +54,6 @@ void hai_free_string(char *s);
  * -------------------------------------------------------------------------- */
 
 char *hai_hello(HaiClientHandle handle, bool include_test);
-char *hai_check_username(HaiClientHandle handle, const char *username);
 char *hai_register(HaiClientHandle handle, const char *options_json);
 char *hai_rotate_keys(HaiClientHandle handle, const char *options_json);
 char *hai_update_agent(HaiClientHandle handle, const char *agent_data);
@@ -65,7 +64,6 @@ char *hai_verify_status(HaiClientHandle handle, const char *agent_id);
  * Username
  * -------------------------------------------------------------------------- */
 
-char *hai_claim_username(HaiClientHandle handle, const char *agent_id, const char *username);
 char *hai_update_username(HaiClientHandle handle, const char *agent_id, const char *username);
 char *hai_delete_username(HaiClientHandle handle, const char *agent_id);
 

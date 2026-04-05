@@ -13,8 +13,6 @@ import type {
   JobResponseResult,
   VerifyAgentResult,
   RegistrationEntry,
-  CheckUsernameResult,
-  ClaimUsernameResult,
   UpdateUsernameResult,
   DeleteUsernameResult,
   TranscriptMessage,
@@ -692,50 +690,6 @@ export class HaiClient {
         await handler(job);
       }
     }
-  }
-
-  // ---------------------------------------------------------------------------
-  // checkUsername()
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Check if a username is available for claiming.
-   * This is a public endpoint and does not require authentication.
-   *
-   * @param username - The username to check
-   * @returns Availability result
-   */
-  async checkUsername(username: string): Promise<CheckUsernameResult> {
-    const data = await this.ffi.checkUsername(username);
-
-    return {
-      available: (data.available as boolean) ?? false,
-      username: (data.username as string) || username,
-      reason: (data.reason as string) || undefined,
-    };
-  }
-
-  // ---------------------------------------------------------------------------
-  // claimUsername()
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Claim a username for an agent. Requires JACS auth.
-   *
-   * @param agentId - The JACS ID of the agent to claim the username for
-   * @param username - The username to claim
-   * @returns Claim result with the assigned email
-   */
-  async claimUsername(agentId: string, username: string): Promise<ClaimUsernameResult> {
-    const data = await this.ffi.claimUsername(agentId, username);
-
-    this.agentEmail = (data.email as string) || '';
-
-    return {
-      username: (data.username as string) || username,
-      email: (data.email as string) || '',
-      agentId: (data.agent_id as string) || (data.agentId as string) || agentId,
-    };
   }
 
   /**

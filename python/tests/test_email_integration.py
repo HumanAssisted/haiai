@@ -60,9 +60,8 @@ def registered_client():
 
         client = HaiClient()
 
-        # Claim username to provision the @hai.ai email address.
-        claim = client.claim_username(API_URL, result.agent_id, agent_name)
-        assert claim.get("email"), "claim_username should return an email address"
+        # Username is now claimed during registration (one-step flow).
+        # The agent email is {agent_name}@hai.ai.
 
         yield client, agent_name, result
 

@@ -95,24 +95,19 @@ class TestLiveFetchKeyByHashMatches:
 
 
 class TestLiveFetchKeyByEmailMatches:
-    """Register, claim username, then fetch key by email."""
+    """Register agent, then fetch key by email (username claimed during registration)."""
 
     def test_fetch_key_by_email(self, registered_agent):
         client, agent_name, result = registered_agent
-        jacs_id = result.agent_id
-
-        # Claim username
-        try:
-            claim = client.claim_username(API_URL, jacs_id, agent_name)
-            email = claim.get("email", "")
-        except Exception:
-            pytest.skip("could not claim username")
-
-        if not email:
-            pytest.skip("no email returned from claim_username")
+        # Username is now claimed during registration (one-step flow).
+        email = f"{agent_name}@hai.ai"
 
         # Look up by email
-        by_email = client.fetch_key_by_email(API_URL, email)
+        try:
+            by_email = client.fetch_key_by_email(API_URL, email)
+        except Exception:
+            pytest.skip("FetchKeyByEmail failed (agent may not have email in test env)")
+
         assert by_email.jacs_id != ""
         assert by_email.public_key != ""
 

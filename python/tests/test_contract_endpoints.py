@@ -41,18 +41,6 @@ def test_hello_contract_calls_ffi(
     assert mock_ffi.calls[0][0] == "hello"
 
 
-def test_check_username_contract_calls_ffi() -> None:
-    contract = _load_contract()
-    client = HaiClient()
-    mock_ffi = client._get_ffi()
-    mock_ffi.responses["check_username"] = {"available": True, "username": "alice"}
-
-    client.check_username(contract["base_url"], "alice")
-
-    assert mock_ffi.calls[0][0] == "check_username"
-    assert mock_ffi.calls[0][1][0] == "alice"
-
-
 def test_submit_response_contract_calls_ffi(
     loaded_config: None,
 ) -> None:

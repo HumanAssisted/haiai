@@ -296,10 +296,6 @@ func (r *recordingFFIClient) Hello(includeTest bool) (json.RawMessage, error) {
 	*r.calls = append(*r.calls, "Hello")
 	return r.inner.Hello(includeTest)
 }
-func (r *recordingFFIClient) CheckUsername(username string) (json.RawMessage, error) {
-	*r.calls = append(*r.calls, "CheckUsername")
-	return r.inner.CheckUsername(username)
-}
 func (r *recordingFFIClient) Register(optionsJSON string) (json.RawMessage, error) {
 	*r.calls = append(*r.calls, "Register")
 	return r.inner.Register(optionsJSON)
@@ -323,10 +319,6 @@ func (r *recordingFFIClient) SubmitResponse(paramsJSON string) (json.RawMessage,
 func (r *recordingFFIClient) VerifyStatus(agentID string) (json.RawMessage, error) {
 	*r.calls = append(*r.calls, "VerifyStatus")
 	return r.inner.VerifyStatus(agentID)
-}
-func (r *recordingFFIClient) ClaimUsername(agentID, username string) (json.RawMessage, error) {
-	*r.calls = append(*r.calls, "ClaimUsername")
-	return r.inner.ClaimUsername(agentID, username)
 }
 func (r *recordingFFIClient) UpdateUsername(agentID, username string) (json.RawMessage, error) {
 	*r.calls = append(*r.calls, "UpdateUsername")

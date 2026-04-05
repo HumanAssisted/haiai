@@ -63,8 +63,6 @@ def test_haiai_step2_modules_import() -> None:
 def test_haiai_exports_all_platform_convenience_functions() -> None:
     """Every platform operation convenience function must be importable from haiai."""
     from haiai import (
-        check_username,
-        claim_username,
         get_message,
         delete_message,
         mark_unread,
@@ -82,8 +80,6 @@ def test_haiai_exports_all_platform_convenience_functions() -> None:
     )
 
     for fn in [
-        check_username,
-        claim_username,
         get_message,
         delete_message,
         mark_unread,
@@ -107,8 +103,6 @@ def test_haiai_all_includes_new_exports() -> None:
     import haiai
 
     expected = [
-        "check_username",
-        "claim_username",
         "get_message",
         "delete_message",
         "mark_unread",

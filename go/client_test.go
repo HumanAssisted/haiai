@@ -10,31 +10,6 @@ import (
 	"testing"
 )
 
-func TestCheckUsernameEncodesQuery(t *testing.T) {
-	username := "alice+ops test@hai.ai"
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/agents/username/check" {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-		if got := r.URL.Query().Get("username"); got != username {
-			t.Fatalf("username query not preserved; got %q", got)
-		}
-		if strings.Contains(r.URL.RawQuery, " ") {
-			t.Fatalf("raw query should be URL-encoded, got %q", r.URL.RawQuery)
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"available":true,"username":"alice"}`))
-	}))
-	defer srv.Close()
-
-	cl, _ := newTestClient(t, srv.URL)
-	if _, err := cl.CheckUsername(context.Background(), username); err != nil {
-		t.Fatalf("CheckUsername: %v", err)
-	}
-}
-
 func TestListMessagesEncodesQuery(t *testing.T) {
 	direction := "inbound"
 
@@ -84,26 +59,6 @@ func TestMarkReadEscapesPathSegments(t *testing.T) {
 	}
 	if !strings.Contains(requestURI, "msg%2Fabc+1") && !strings.Contains(requestURI, "msg%2Fabc%2B1") {
 		t.Fatalf("message id should be escaped in request URI, got %q", requestURI)
-	}
-}
-
-func TestClaimUsernameEscapesAgentID(t *testing.T) {
-	agentID := "agent/with/slashes"
-	var requestURI string
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestURI = r.RequestURI
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"username":"u","email":"u@hai.ai","agent_id":"agent/with/slashes"}`))
-	}))
-	defer srv.Close()
-
-	cl, _ := newTestClient(t, srv.URL)
-	if _, err := cl.ClaimUsername(context.Background(), agentID, "u"); err != nil {
-		t.Fatalf("ClaimUsername: %v", err)
-	}
-	if !strings.Contains(requestURI, "/api/v1/agents/agent%2Fwith%2Fslashes/username") {
-		t.Fatalf("agent id should be escaped in request URI, got %q", requestURI)
 	}
 }
 

@@ -40,12 +40,10 @@ This generates a JACS keypair and config. No separate install needed.
 ### 2. Register and get your email address
 
 ```bash
-haiai hello
-haiai register --owner-email you@example.com
-haiai claim-username myagent
+haiai init --name myagent --key YOUR_REGISTRATION_KEY
 ```
 
-Your agent now has the address `myagent@hai.ai`.
+Get your registration key from the [dashboard](https://hai.ai/dashboard) after reserving your username. Your agent now has the address `myagent@hai.ai`.
 
 ### 3. Send and receive email
 

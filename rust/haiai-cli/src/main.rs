@@ -649,7 +649,7 @@ async fn main() -> anyhow::Result<()> {
                     );
                 }
                 let k = key.as_ref().unwrap();
-                if !k.starts_with("hk_") || k.len() != 67 {
+                if !k.starts_with("hk_") || k.len() != 67 || !k[3..].chars().all(|c| c.is_ascii_hexdigit()) {
                     anyhow::bail!(
                         "Invalid registration key format. Keys start with 'hk_' followed by 64 hex characters."
                     );
@@ -1029,7 +1029,7 @@ async fn main() -> anyhow::Result<()> {
             if result.registered_with_hai {
                 println!("  Re-registered: yes");
             } else {
-                println!("  Re-registered: no (run `haiai register` to register manually)");
+                println!("  Re-registered: no (run `haiai init --name <name> --key <key>` to re-register)");
             }
         }
 
@@ -1049,7 +1049,7 @@ async fn main() -> anyhow::Result<()> {
             if result.registered_with_hai {
                 println!("  Re-registered:  yes");
             } else {
-                println!("  Re-registered:  no (run `haiai register` to register manually)");
+                println!("  Re-registered:  no (run `haiai init --name <name> --key <key>` to re-register)");
             }
         }
 

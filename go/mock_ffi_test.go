@@ -139,13 +139,6 @@ func (m *mockFFIClient) Hello(includeTest bool) (json.RawMessage, error) {
 	return m.doPost("/api/v1/agents/hello", body)
 }
 
-func (m *mockFFIClient) CheckUsername(username string) (json.RawMessage, error) {
-	query := neturl.Values{}
-	query.Set("username", username)
-	path := "/api/v1/agents/username/check?" + query.Encode()
-	return m.doGetNoAuth(path)
-}
-
 func (m *mockFFIClient) doGetNoAuth(path string) (json.RawMessage, error) {
 	req, err := http.NewRequest(http.MethodGet, m.baseURL+path, nil)
 	if err != nil {
@@ -208,11 +201,6 @@ func (m *mockFFIClient) VerifyStatus(agentID string) (json.RawMessage, error) {
 }
 
 // --- Username ---
-
-func (m *mockFFIClient) ClaimUsername(agentID, username string) (json.RawMessage, error) {
-	path := fmt.Sprintf("/api/v1/agents/%s/username", urlEncode(agentID))
-	return m.doPost(path, map[string]string{"username": username})
-}
 
 func (m *mockFFIClient) UpdateUsername(agentID, username string) (json.RawMessage, error) {
 	path := fmt.Sprintf("/api/v1/agents/%s/username", urlEncode(agentID))

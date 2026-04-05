@@ -551,9 +551,8 @@ fn rejects_runtime_hai_url_override_before_network_request() {
 
     let result = session.call_tool_allow_error(
         30,
-        "hai_check_username",
+        "hai_agent_status",
         json!({
-            "username": "demo-agent",
             "hai_url": "http://127.0.0.1:9"
         }),
     );

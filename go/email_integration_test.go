@@ -65,12 +65,9 @@ func TestEmailIntegration(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	// ── 0. Claim username (provisions the @hai.ai email address) ─────────
-	claimResult, err := client.ClaimUsername(ctx, haiAgentID, agentName)
-	if err != nil {
-		t.Fatalf("ClaimUsername: %v", err)
-	}
-	t.Logf("Claimed username: %s, email=%s", claimResult.Username, claimResult.Email)
+	// Username is now claimed during registration (one-step flow).
+	// The agent email is {agentName}@hai.ai.
+	t.Logf("Agent registered with username: %s", agentName)
 
 	subject := fmt.Sprintf("go-integ-test-%d", time.Now().UnixMilli())
 	body := "Hello from Go integration test!"

@@ -228,10 +228,10 @@ pub type HaiBindingResult<T> = Result<T, HaiBindingError>;
 
 /// Thread-safe wrapper around `HaiClient` for FFI consumption.
 ///
-/// Uses `Arc<RwLock<...>>` because `HaiClient` has three `&mut self` methods
-/// (`claim_username`, `set_hai_agent_id`, `set_agent_email`) that require
-/// interior mutability. Standard read-only methods acquire a read lock;
-/// the three mutating methods acquire a write lock.
+/// Uses `Arc<RwLock<...>>` because `HaiClient` has `&mut self` methods
+/// (`set_hai_agent_id`, `set_agent_email`) that require interior mutability.
+/// Standard read-only methods acquire a read lock; mutating methods acquire
+/// a write lock.
 pub struct HaiClientWrapper {
     inner: Arc<RwLock<HaiClient<Box<dyn JacsProvider>>>>,
     /// The resolved client identifier string (e.g. "haiai-python/0.3.0").

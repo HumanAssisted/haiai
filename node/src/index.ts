@@ -120,8 +120,6 @@ export type {
   JobResponseResult,
   VerifyAgentResult,
   RegistrationEntry,
-  CheckUsernameResult,
-  ClaimUsernameResult,
   UpdateUsernameResult,
   DeleteUsernameResult,
   JobResponse,
