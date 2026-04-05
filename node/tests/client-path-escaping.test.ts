@@ -13,18 +13,6 @@ describe('client path escaping', () => {
     vi.restoreAllMocks();
   });
 
-  it('escapes claimUsername agentId path segments', async () => {
-    const client = await makeClient();
-    const claimUsernameMock = vi.fn(async (agentId: string, _username: string) => {
-      // FFI adapter receives the raw agentId; Rust handles escaping
-      expect(agentId).toBe('agent/../escape');
-      return { username: 'agent', email: 'agent@hai.ai', agent_id: 'agent/../escape' };
-    });
-    client._setFFIAdapter(createMockFFI({ claimUsername: claimUsernameMock }));
-
-    await client.claimUsername('agent/../escape', 'agent');
-  });
-
   it('escapes submitResponse jobId path segments', async () => {
     const client = await makeClient();
     const submitResponseMock = vi.fn(async (params: Record<string, unknown>) => {

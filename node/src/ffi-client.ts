@@ -33,7 +33,6 @@ import {
 interface NativeHaiClient {
   // Registration & Identity
   hello(includeTest: boolean): Promise<string>;
-  checkUsername(username: string): Promise<string>;
   register(optionsJson: string): Promise<string>;
   registerNewAgent(optionsJson: string): Promise<string>;
   rotateKeys(optionsJson: string): Promise<string>;
@@ -42,7 +41,6 @@ interface NativeHaiClient {
   verifyStatus(agentId?: string | null): Promise<string>;
 
   // Username
-  claimUsername(agentId: string, username: string): Promise<string>;
   updateUsername(agentId: string, username: string): Promise<string>;
   deleteUsername(agentId: string): Promise<string>;
 
@@ -271,15 +269,6 @@ export class FFIClientAdapter {
     }
   }
 
-  async checkUsername(username: string): Promise<Record<string, unknown>> {
-    try {
-      const json = await this.native.checkUsername(username);
-      return JSON.parse(json) as Record<string, unknown>;
-    } catch (err) {
-      throw mapFFIError(err);
-    }
-  }
-
   async register(options: Record<string, unknown>): Promise<Record<string, unknown>> {
     try {
       const json = await this.native.register(JSON.stringify(options));
@@ -337,15 +326,6 @@ export class FFIClientAdapter {
   // ---------------------------------------------------------------------------
   // Username
   // ---------------------------------------------------------------------------
-
-  async claimUsername(agentId: string, username: string): Promise<Record<string, unknown>> {
-    try {
-      const json = await this.native.claimUsername(agentId, username);
-      return JSON.parse(json) as Record<string, unknown>;
-    } catch (err) {
-      throw mapFFIError(err);
-    }
-  }
 
   async updateUsername(agentId: string, username: string): Promise<Record<string, unknown>> {
     try {

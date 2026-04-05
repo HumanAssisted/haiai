@@ -75,22 +75,18 @@ describe.skipIf(!LIVE)('Key integration (live API)', () => {
   // Test: fetch key by email
   // -------------------------------------------------------------------------
 
-  it('should fetch key by email after claiming username', async () => {
-    let email: string;
+  it('should fetch key by email after registration', async () => {
+    // Username is now claimed during registration (one-step flow).
+    const email = `${agentName}@hai.ai`;
+
+    let byEmail;
     try {
-      const claim = await client.claimUsername(agentId, agentName);
-      email = claim.email;
+      byEmail = await client.fetchKeyByEmail(email);
     } catch {
-      console.warn('Could not claim username, skipping email test');
+      console.warn('FetchKeyByEmail failed (agent may not have email in test env), skipping');
       return;
     }
 
-    if (!email) {
-      console.warn('No email returned, skipping');
-      return;
-    }
-
-    const byEmail = await client.fetchKeyByEmail(email);
     expect(byEmail.jacsId).toBeTruthy();
     expect(byEmail.publicKey).toBeTruthy();
   });

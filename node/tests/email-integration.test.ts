@@ -53,10 +53,9 @@ describe.skipIf(!LIVE)('Email integration (live API)', () => {
     expect(result.agentId).toBeTruthy();
     console.log(`Registered agent: jacsId=${result.jacsId}, agentId=${result.agentId}`);
 
-    // 4. Claim a username to provision the @hai.ai email address.
-    const claim = await client.claimUsername(client.haiAgentId, agentName);
-    expect(claim.email).toContain('@hai.ai');
-    console.log(`Claimed username: ${claim.username}, email=${claim.email}`);
+    // Username is now claimed during registration (one-step flow).
+    // The agent email is {agentName}@hai.ai.
+    console.log(`Agent registered with username: ${agentName}`);
   }, 30_000);
 
   // -------------------------------------------------------------------------

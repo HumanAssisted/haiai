@@ -51,19 +51,6 @@ describe('mock API contract (node)', () => {
     expect(helloMock).toHaveBeenCalledTimes(1);
   });
 
-  it('checkUsername uses the shared method/path/auth contract', async () => {
-    const contract = loadContractFixture();
-    const client = await makeClient(contract.base_url);
-
-    const checkUsernameMock = vi.fn(async (username: string) => {
-      expect(username).toBe('alice');
-      return { available: true, username: 'alice' };
-    });
-    client._setFFIAdapter(createMockFFI({ checkUsername: checkUsernameMock }));
-
-    await client.checkUsername('alice');
-  });
-
   it('submitResponse uses the shared method/path/auth contract', async () => {
     const contract = loadContractFixture();
     const client = await makeClient(contract.base_url);

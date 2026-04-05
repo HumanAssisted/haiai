@@ -90,7 +90,7 @@ export class HaiClient {
   private serverPublicKeys: Record<string, string> = {};
   /** HAI-assigned agent UUID, set after register(). Used for email URL paths. */
   private _haiAgentId: string | null = null;
-  /** Agent's @hai.ai email address, set after claimUsername(). */
+  /** Agent's @hai.ai email address, set after registration. */
   private agentEmail?: string;
   /** Agent key cache: maps cache key -> { value, cachedAt (ms since epoch) }. */
   private keyCache = new Map<string, { value: PublicKeyInfo; cachedAt: number }>();
@@ -265,7 +265,7 @@ export class HaiClient {
     return this._connected;
   }
 
-  /** Get the agent's @hai.ai email address (set after claimUsername). */
+  /** Get the agent's @hai.ai email address (set after registration). */
   getAgentEmail(): string | undefined {
     return this.agentEmail;
   }
@@ -831,10 +831,7 @@ export class HaiClient {
     if (!options.quiet) {
       const agentId = (data.agent_id as string) || (data.agentId as string) || '';
       console.log(`\nAgent created and submitted for registration!`);
-      console.log(`  -> Check your email (${options.ownerEmail}) for a verification link`);
-      console.log(`  -> Click the link and log into hai.ai to complete registration`);
-      console.log(`  -> After verification, claim a @hai.ai username with:`);
-      console.log(`     client.claimUsername('${agentId}', 'my-agent')`);
+      console.log(`  -> Your agent is registered with username from your reservation`);
       console.log(`  -> Save your config and private key to a secure, access-controlled location`);
 
       if (options.domain) {
@@ -1144,7 +1141,7 @@ export class HaiClient {
    */
   async sendEmail(options: SendEmailOptions): Promise<SendEmailResult> {
     if (!this.agentEmail) {
-      throw new Error('agent email not set — call claimUsername first');
+      throw new Error('agent email not set — register agent first');
     }
 
     const emailOptions: Record<string, unknown> = {
@@ -1198,7 +1195,7 @@ export class HaiClient {
    */
   async sendSignedEmail(options: SendEmailOptions): Promise<SendEmailResult> {
     if (!this.agentEmail) {
-      throw new Error('agent email not set — call claimUsername first');
+      throw new Error('agent email not set — register agent first');
     }
 
     const emailOptions: Record<string, unknown> = {

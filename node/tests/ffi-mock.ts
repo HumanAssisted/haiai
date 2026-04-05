@@ -22,7 +22,6 @@ export function createMockFFI(overrides?: Partial<MockFFI>): FFIClientAdapter {
   const mock: Record<string, unknown> = {
     // Registration & Identity
     hello: defaultReject,
-    checkUsername: defaultReject,
     register: defaultReject,
     registerNewAgent: defaultReject,
     rotateKeys: defaultReject,
@@ -30,7 +29,6 @@ export function createMockFFI(overrides?: Partial<MockFFI>): FFIClientAdapter {
     submitResponse: defaultReject,
     verifyStatus: defaultReject,
     // Username
-    claimUsername: defaultReject,
     updateUsername: defaultReject,
     deleteUsername: defaultReject,
     // Email Core
