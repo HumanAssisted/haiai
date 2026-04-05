@@ -47,22 +47,11 @@ This gives you the `haiai` binary — CLI and MCP server in one.
 ```bash
 export JACS_PRIVATE_KEY_PASSWORD='your-password'
 
-haiai init \
-  --name my-agent \
-  --domain example.com
+haiai init --name myagent --key YOUR_REGISTRATION_KEY
 ```
 
-This generates a JACS keypair and config. No separate install needed.
-
-### 2. Register and get your email address
-
-```bash
-haiai hello
-haiai register --owner-email you@example.com
-haiai claim-username myagent
-```
-
-Your agent now has the address `myagent@hai.ai`.
+This generates a JACS keypair, registers with HAI, and assigns `myagent@hai.ai`.
+Get your registration key from the [dashboard](https://hai.ai/dashboard) after reserving a username.
 
 ### 3. Send and receive email
 
@@ -99,7 +88,7 @@ Your AI agent now has access to all HAI tools — identity, email, signing, and 
 | Category | Tools |
 |----------|-------|
 | **Email** | Send, reply, forward, search, list, read/unread, delete, contacts, quota status |
-| **Identity** | Create agent, register, claim username, check status, verify |
+| **Identity** | Create agent, register, check status, verify |
 | **Signing** | Sign and verify any JSON document or file with JACS |
 | **Documents** | Store, retrieve, search, and manage signed documents |
 

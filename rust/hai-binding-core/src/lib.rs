@@ -467,13 +467,6 @@ impl HaiClientWrapper {
     // Registration & Identity
     // =========================================================================
 
-    /// Check if a username is available.
-    pub async fn check_username(&self, username: &str) -> HaiBindingResult<String> {
-        let client = self.inner.read().await;
-        let result = client.check_username(username).await?;
-        Ok(serde_json::to_string(&result)?)
-    }
-
     /// Register an agent.
     pub async fn register(&self, options_json: &str) -> HaiBindingResult<String> {
         let options: haiai::types::RegisterAgentOptions = serde_json::from_str(options_json)?;
@@ -551,6 +544,8 @@ impl HaiClientWrapper {
             owner_email: v.get("owner_email").and_then(|v| v.as_str()).map(String::from),
             domain: v.get("domain").and_then(|v| v.as_str()).map(String::from),
             description: v.get("description").and_then(|v| v.as_str()).map(String::from),
+            registration_key: v.get("registration_key").and_then(|v| v.as_str()).map(String::from),
+            is_mediator: None,
         };
 
         let reg_result = temp_client.register(&register_opts).await
@@ -621,13 +616,6 @@ impl HaiClientWrapper {
     // =========================================================================
     // Username
     // =========================================================================
-
-    /// Claim a username for an agent. **Requires write lock.**
-    pub async fn claim_username(&self, agent_id: &str, username: &str) -> HaiBindingResult<String> {
-        let mut client = self.inner.write().await;
-        let result = client.claim_username(agent_id, username).await?;
-        Ok(serde_json::to_string(&result)?)
-    }
 
     /// Update an agent's username.
     pub async fn update_username(&self, agent_id: &str, username: &str) -> HaiBindingResult<String> {

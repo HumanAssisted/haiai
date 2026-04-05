@@ -322,6 +322,15 @@ impl<P: JacsProvider> HaiClient<P> {
                 Value::String(description.clone()),
             );
         }
+        if let Some(registration_key) = &options.registration_key {
+            payload.insert(
+                "registration_key".to_string(),
+                Value::String(registration_key.clone()),
+            );
+        }
+        if let Some(is_mediator) = options.is_mediator {
+            payload.insert("is_mediator".to_string(), Value::Bool(is_mediator));
+        }
 
         let body = Value::Object(payload);
         let response = self

@@ -1,17 +1,8 @@
 {
   "description": "Canonical MCP tool parity contract. The Rust MCP server (hai-mcp) must expose exactly these tools with matching names, properties, and required fields. Other SDKs validate against this fixture to ensure cross-language parity.",
   "version": "2.0.0",
-  "total_tool_count": 28,
+  "total_tool_count": 26,
   "required_tools": [
-    {
-      "name": "hai_check_username",
-      "properties": {
-        "username": "string"
-      },
-      "required": [
-        "username"
-      ]
-    },
     {
       "name": "hai_hello",
       "properties": {
@@ -36,24 +27,13 @@
       "required": []
     },
     {
-      "name": "hai_claim_username",
-      "properties": {
-        "agent_id": "string",
-        "username": "string",
-        "config_path": "string"
-      },
-      "required": [
-        "agent_id",
-        "username"
-      ]
-    },
-    {
       "name": "hai_register_agent",
       "properties": {
         "config_path": "string",
         "owner_email": "string",
         "domain": "string",
-        "description": "string"
+        "description": "string",
+        "registration_key": "string"
       },
       "required": []
     },

@@ -3,10 +3,8 @@
   "version": "1.0.0",
   "paired": [
     { "mcp_tool": "hai_hello", "cli_command": "hello" },
-    { "mcp_tool": "hai_check_username", "cli_command": "check-username" },
-    { "mcp_tool": "hai_claim_username", "cli_command": "claim-username" },
     { "mcp_tool": "hai_agent_status", "cli_command": "status" },
-    { "mcp_tool": "hai_register_agent", "cli_command": "register" },
+    { "mcp_tool": "hai_register_agent", "cli_command": "init" },
     { "mcp_tool": "hai_send_email", "cli_command": "send-email" },
     { "mcp_tool": "hai_list_messages", "cli_command": "list-messages" },
     { "mcp_tool": "hai_search_messages", "cli_command": "search-messages" },
@@ -34,7 +32,6 @@
     { "name": "hai_get_unread_count", "reason": "MCP convenience; CLI uses list-messages filters" }
   ],
   "cli_only": [
-    { "name": "init", "reason": "Local agent creation — no API call" },
     { "name": "mcp", "reason": "Starts the MCP server itself" },
     { "name": "update", "reason": "Local agent metadata update" },
     { "name": "rotate", "reason": "Local key rotation" },
