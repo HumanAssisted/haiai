@@ -455,14 +455,14 @@ class HaiClient:
     # testconnection
     # ------------------------------------------------------------------
 
-    def testconnection(self, hai_url: str) -> bool:
+    def testconnection(self, hai_url: Optional[str] = None) -> bool:
         """Test connectivity to the HAI server.
 
         Uses the FFI-backed hello() method as a single authenticated health
         check.  Returns True on success, False on any error.
 
         Args:
-            hai_url: Base URL of the HAI server (kept for backward compat).
+            hai_url: Base URL of the HAI server (optional, unused by FFI).
 
         Returns:
             True if the server is reachable.
@@ -480,13 +480,13 @@ class HaiClient:
 
     def hello_world(
         self,
-        hai_url: str,
+        hai_url: Optional[str] = None,
         include_test: bool = False,
     ) -> HelloWorldResult:
         """Send a JACS-signed hello request to HAI and get a signed ACK.
 
         Args:
-            hai_url: Base URL of the HAI server.
+            hai_url: Base URL of the HAI server (defaults to DEFAULT_BASE_URL).
             include_test: If True, include a test scenario preview.
 
         Returns:
@@ -496,6 +496,7 @@ class HaiClient:
             HaiAuthError: If JACS config is not loaded.
             HaiApiError: On any non-2xx response.
         """
+        hai_url = hai_url or DEFAULT_BASE_URL
         ffi = self._get_ffi()
         data = ffi.hello(include_test)
 
@@ -559,7 +560,7 @@ class HaiClient:
 
     def register(
         self,
-        hai_url: str,
+        hai_url: Optional[str] = None,
         agent_json: Optional[str] = None,
         public_key: Optional[str] = None,
         preview: bool = False,
@@ -568,7 +569,7 @@ class HaiClient:
         """Register a JACS agent with HAI.
 
         Args:
-            hai_url: Base URL of the HAI server.
+            hai_url: Base URL of the HAI server (defaults to DEFAULT_BASE_URL).
             agent_json: Signed JACS agent document as a JSON string.
             public_key: PEM-encoded public key (optional).
             preview: If True, return preview without actually registering.
@@ -581,6 +582,7 @@ class HaiClient:
             RegistrationError: If registration fails.
             HaiAuthError: If auth fails.
         """
+        hai_url = hai_url or DEFAULT_BASE_URL
         from haiai.config import get_config
 
         cfg = get_config()
@@ -885,11 +887,11 @@ class HaiClient:
     # status
     # ------------------------------------------------------------------
 
-    def status(self, hai_url: str) -> HaiStatusResult:
+    def status(self, hai_url: Optional[str] = None) -> HaiStatusResult:
         """Check registration/verification status of the current agent.
 
         Args:
-            hai_url: Base URL of the HAI server.
+            hai_url: Base URL of the HAI server (optional, unused by FFI).
 
         Returns:
             HaiStatusResult with verification details.
@@ -923,13 +925,13 @@ class HaiClient:
 
     def get_agent_attestation(
         self,
-        hai_url: str,
-        agent_id: str,
+        hai_url: Optional[str] = None,
+        agent_id: str = "",
     ) -> HaiStatusResult:
         """Get HAI attestation status for any agent by ID.
 
         Args:
-            hai_url: Base URL of the HAI server.
+            hai_url: Base URL of the HAI server (optional, unused by FFI).
             agent_id: JACS agent ID to check.
 
         Returns:
@@ -962,21 +964,27 @@ class HaiClient:
     # ------------------------------------------------------------------
 
     def update_username(
-        self, hai_url: str, agent_id: str, username: str
+        self, hai_url: Optional[str] = None, agent_id: str = "", username: str = ""
     ) -> dict[str, Any]:
         """Update (rename) a claimed username for an agent."""
+        if not agent_id:
+            raise ValueError("'agent_id' is required")
+        if not username:
+            raise ValueError("'username' is required")
         ffi = self._get_ffi()
         return ffi.update_username(agent_id, username)
 
-    def delete_username(self, hai_url: str, agent_id: str) -> dict[str, Any]:
+    def delete_username(self, hai_url: Optional[str] = None, agent_id: str = "") -> dict[str, Any]:
         """Delete a claimed username for an agent."""
+        if not agent_id:
+            raise ValueError("'agent_id' is required")
         ffi = self._get_ffi()
         return ffi.delete_username(agent_id)
 
     def verify_document(
         self,
-        hai_url: str,
-        document: Union[str, dict[str, Any]],
+        hai_url: Optional[str] = None,
+        document: Union[str, dict[str, Any]] = "",
     ) -> dict[str, Any]:
         """Verify a signed JACS document via HAI's public verify endpoint."""
         ffi = self._get_ffi()
@@ -985,17 +993,19 @@ class HaiClient:
 
     def get_verification(
         self,
-        hai_url: str,
-        agent_id: str,
+        hai_url: Optional[str] = None,
+        agent_id: str = "",
     ) -> dict[str, Any]:
         """Get advanced 3-level verification status for an agent."""
+        if not agent_id:
+            raise ValueError("'agent_id' is required")
         ffi = self._get_ffi()
         return ffi.get_verification(agent_id)
 
     def verify_agent_document(
         self,
-        hai_url: str,
-        agent_json: Union[str, dict[str, Any]],
+        hai_url: Optional[str] = None,
+        agent_json: Union[str, dict[str, Any]] = "",
         *,
         public_key: Optional[str] = None,
         domain: Optional[str] = None,
@@ -1017,26 +1027,28 @@ class HaiClient:
 
     def create_attestation(
         self,
-        hai_url: str,
-        agent_id: str,
-        subject: dict,
-        claims: list,
+        hai_url: Optional[str] = None,
+        agent_id: str = "",
+        subject: Optional[dict] = None,
+        claims: Optional[list] = None,
         evidence: list | None = None,
     ) -> dict:
         """Create a signed attestation document for a registered agent."""
+        if not agent_id:
+            raise ValueError("'agent_id' is required")
         ffi = self._get_ffi()
         params = {
             "agent_id": agent_id,
-            "subject": subject,
-            "claims": claims,
+            "subject": subject or {},
+            "claims": claims or [],
             "evidence": evidence or [],
         }
         return ffi.create_attestation(params)
 
     def list_attestations(
         self,
-        hai_url: str,
-        agent_id: str,
+        hai_url: Optional[str] = None,
+        agent_id: str = "",
         limit: int = 20,
         offset: int = 0,
     ) -> dict:
@@ -1047,9 +1059,9 @@ class HaiClient:
 
     def get_attestation(
         self,
-        hai_url: str,
-        agent_id: str,
-        doc_id: str,
+        hai_url: Optional[str] = None,
+        agent_id: str = "",
+        doc_id: str = "",
     ) -> dict:
         """Get a specific attestation document."""
         ffi = self._get_ffi()
@@ -1057,8 +1069,8 @@ class HaiClient:
 
     def verify_attestation(
         self,
-        hai_url: str,
-        document: str,
+        hai_url: Optional[str] = None,
+        document: str = "",
     ) -> dict:
         """Verify an attestation document via HAI."""
         ffi = self._get_ffi()
@@ -1070,7 +1082,7 @@ class HaiClient:
 
     def benchmark(
         self,
-        hai_url: str,
+        hai_url: Optional[str] = None,
         name: str = "mediator",
         tier: str = "free",
         timeout: Optional[float] = None,
@@ -1107,13 +1119,13 @@ class HaiClient:
 
     def free_run(
         self,
-        hai_url: str,
+        hai_url: Optional[str] = None,
         transport: str = "sse",
     ) -> FreeChaoticResult:
         """Run a free benchmark.
 
         Args:
-            hai_url: Base URL of the HAI server.
+            hai_url: Base URL of the HAI server (optional, unused by FFI).
             transport: Transport protocol: "sse" (default) or "ws".
 
         Returns:
@@ -1139,7 +1151,7 @@ class HaiClient:
 
     def pro_run(
         self,
-        hai_url: str,
+        hai_url: Optional[str] = None,
         transport: str = "sse",
     ) -> BaselineRunResult:
         """Run a pro tier benchmark ($20/month).
@@ -1148,7 +1160,7 @@ class HaiClient:
         matching the Node and Go SDK patterns.
 
         Args:
-            hai_url: Base URL of the HAI server (kept for backward compat).
+            hai_url: Base URL of the HAI server (optional, unused by FFI).
             transport: Transport type for the benchmark run (default: "sse").
 
         Returns:
@@ -1198,9 +1210,9 @@ class HaiClient:
 
     def submit_benchmark_response(
         self,
-        hai_url: str,
-        job_id: str,
-        message: str,
+        hai_url: Optional[str] = None,
+        job_id: str = "",
+        message: str = "",
         metadata: Optional[dict[str, Any]] = None,
         processing_time_ms: int = 0,
     ) -> JobResponseResult:
@@ -1208,6 +1220,8 @@ class HaiClient:
 
         The response is wrapped as a JACS-signed document.
         """
+        if not job_id:
+            raise ValueError("'job_id' is required")
         ffi = self._get_ffi()
         response_body: dict[str, Any] = {"message": message}
         if metadata is not None:
@@ -1269,10 +1283,10 @@ class HaiClient:
 
     def send_email(
         self,
-        hai_url: str,
-        to: str,
-        subject: str,
-        body: str,
+        hai_url: Optional[str] = None,
+        to: str = "",
+        subject: str = "",
+        body: str = "",
         in_reply_to: Optional[str] = None,
         attachments: Optional[list[dict[str, Any]]] = None,
         cc: Optional[list[str]] = None,
@@ -1280,6 +1294,12 @@ class HaiClient:
         labels: Optional[list[str]] = None,
     ) -> SendEmailResult:
         """Send an email from this agent's @hai.ai address."""
+        if not to:
+            raise ValueError("'to' is required")
+        if not subject:
+            raise ValueError("'subject' is required")
+        if not body:
+            raise ValueError("'body' is required")
         if self._agent_email is None:
             raise HaiError("agent email not set -- register with a username first")
 
@@ -1313,11 +1333,13 @@ class HaiClient:
             status=data.get("status", "sent"),
         )
 
-    def sign_email(self, hai_url: str, raw_email: bytes) -> bytes:
+    def sign_email(self, hai_url: Optional[str] = None, raw_email: bytes = b"") -> bytes:
         """Sign a raw RFC 5822 email via the HAI server."""
         import email.message
         if isinstance(raw_email, email.message.EmailMessage):
             raw_email = raw_email.as_bytes()
+        if not raw_email:
+            raise ValueError("'raw_email' is required")
 
         ffi = self._get_ffi()
         b64_input = base64.b64encode(raw_email).decode("ascii")
@@ -1326,10 +1348,10 @@ class HaiClient:
 
     def send_signed_email(
         self,
-        hai_url: str,
-        to: str,
-        subject: str,
-        body: str,
+        hai_url: Optional[str] = None,
+        to: str = "",
+        subject: str = "",
+        body: str = "",
         in_reply_to: Optional[str] = None,
         attachments: Optional[list[dict[str, Any]]] = None,
         cc: Optional[list[str]] = None,
@@ -1342,6 +1364,12 @@ class HaiClient:
         FFI layer, and submits to the HAI API. The server validates the
         signature, countersigns, and delivers.
         """
+        if not to:
+            raise ValueError("'to' is required")
+        if not subject:
+            raise ValueError("'subject' is required")
+        if not body:
+            raise ValueError("'body' is required")
         if self._agent_email is None:
             raise HaiError("agent email not set -- register with a username first")
 
@@ -1375,11 +1403,13 @@ class HaiClient:
             status=data.get("status", "sent"),
         )
 
-    def verify_email(self, hai_url: str, raw_email: bytes) -> EmailVerificationResultV2:
+    def verify_email(self, hai_url: Optional[str] = None, raw_email: bytes = b"") -> EmailVerificationResultV2:
         """Verify a JACS-signed email via the HAI API."""
         import email.message
         if isinstance(raw_email, email.message.EmailMessage):
             raw_email = raw_email.as_bytes()
+        if not raw_email:
+            raise ValueError("'raw_email' is required")
 
         ffi = self._get_ffi()
         b64_input = base64.b64encode(raw_email).decode("ascii")
@@ -1417,7 +1447,7 @@ class HaiClient:
 
     def list_messages(
         self,
-        hai_url: str,
+        hai_url: Optional[str] = None,
         limit: int = 20,
         offset: int = 0,
         direction: Optional[str] = None,
@@ -1450,39 +1480,47 @@ class HaiClient:
         messages = items if isinstance(items, list) else items.get("messages", [])
         return [EmailMessage.from_dict(m) for m in messages]
 
-    def mark_read(self, hai_url: str, message_id: str) -> bool:
+    def mark_read(self, hai_url: Optional[str] = None, message_id: str = "") -> bool:
         """Mark an email message as read."""
+        if not message_id:
+            raise ValueError("'message_id' is required")
         ffi = self._get_ffi()
         ffi.mark_read(message_id)
         return True
 
-    def get_email_status(self, hai_url: str) -> EmailStatus:
+    def get_email_status(self, hai_url: Optional[str] = None) -> EmailStatus:
         """Get email rate-limit and reputation status."""
         ffi = self._get_ffi()
         data = ffi.get_email_status()
         return self._parse_email_status(data)
 
-    def get_message(self, hai_url: str, message_id: str) -> EmailMessage:
+    def get_message(self, hai_url: Optional[str] = None, message_id: str = "") -> EmailMessage:
         """Get a single email message by ID."""
+        if not message_id:
+            raise ValueError("'message_id' is required")
         ffi = self._get_ffi()
         m = ffi.get_message(message_id)
         return EmailMessage.from_dict(m)
 
-    def delete_message(self, hai_url: str, message_id: str) -> bool:
+    def delete_message(self, hai_url: Optional[str] = None, message_id: str = "") -> bool:
         """Delete an email message."""
+        if not message_id:
+            raise ValueError("'message_id' is required")
         ffi = self._get_ffi()
         ffi.delete_message(message_id)
         return True
 
-    def mark_unread(self, hai_url: str, message_id: str) -> bool:
+    def mark_unread(self, hai_url: Optional[str] = None, message_id: str = "") -> bool:
         """Mark an email message as unread."""
+        if not message_id:
+            raise ValueError("'message_id' is required")
         ffi = self._get_ffi()
         ffi.mark_unread(message_id)
         return True
 
     def search_messages(
         self,
-        hai_url: str,
+        hai_url: Optional[str] = None,
         q: Optional[str] = None,
         direction: Optional[str] = None,
         from_address: Optional[str] = None,
@@ -1527,19 +1565,23 @@ class HaiClient:
         messages = items if isinstance(items, list) else items.get("messages", [])
         return [EmailMessage.from_dict(m) for m in messages]
 
-    def get_unread_count(self, hai_url: str) -> int:
+    def get_unread_count(self, hai_url: Optional[str] = None) -> int:
         """Get the number of unread email messages."""
         ffi = self._get_ffi()
         return ffi.get_unread_count()
 
     def reply(
         self,
-        hai_url: str,
-        message_id: str,
-        body: str,
+        hai_url: Optional[str] = None,
+        message_id: str = "",
+        body: str = "",
         subject: Optional[str] = None,
     ) -> SendEmailResult:
         """Reply to an email message. Always JACS-signed."""
+        if not message_id:
+            raise ValueError("'message_id' is required")
+        if not body:
+            raise ValueError("'body' is required")
         original = self.get_message(hai_url, message_id)
         # Sanitize: strip CR/LF that may be present from email header folding.
         clean_subject = (original.subject or "").replace("\r", "").replace("\n", "")
@@ -1554,12 +1596,16 @@ class HaiClient:
 
     def forward(
         self,
-        hai_url: str,
-        message_id: str,
-        to: str,
+        hai_url: Optional[str] = None,
+        message_id: str = "",
+        to: str = "",
         comment: Optional[str] = None,
     ) -> SendEmailResult:
         """Forward an email message to another recipient."""
+        if not message_id:
+            raise ValueError("'message_id' is required")
+        if not to:
+            raise ValueError("'to' is required")
         ffi = self._get_ffi()
         params: dict[str, Any] = {
             "message_id": message_id,
@@ -1574,26 +1620,32 @@ class HaiClient:
             status=data.get("status", ""),
         )
 
-    def archive(self, hai_url: str, message_id: str) -> bool:
+    def archive(self, hai_url: Optional[str] = None, message_id: str = "") -> bool:
         """Archive an email message."""
+        if not message_id:
+            raise ValueError("'message_id' is required")
         ffi = self._get_ffi()
         ffi.archive(message_id)
         return True
 
-    def unarchive(self, hai_url: str, message_id: str) -> bool:
+    def unarchive(self, hai_url: Optional[str] = None, message_id: str = "") -> bool:
         """Unarchive an email message."""
+        if not message_id:
+            raise ValueError("'message_id' is required")
         ffi = self._get_ffi()
         ffi.unarchive(message_id)
         return True
 
     def update_labels(
         self,
-        hai_url: str,
-        message_id: str,
+        hai_url: Optional[str] = None,
+        message_id: str = "",
         add: Optional[list[str]] = None,
         remove: Optional[list[str]] = None,
     ) -> list[str]:
         """Update labels on an email message."""
+        if not message_id:
+            raise ValueError("'message_id' is required")
         ffi = self._get_ffi()
         data = ffi.update_labels({
             "message_id": message_id,
@@ -1602,7 +1654,7 @@ class HaiClient:
         })
         return data.get("labels", [])
 
-    def _ensure_agent_email(self, hai_url: str) -> None:
+    def _ensure_agent_email(self, hai_url: Optional[str] = None) -> None:
         """Auto-discover agent_email from email status if not already set.
 
         Mirrors the MCP server's ``prepare_email_client`` pattern:
@@ -1621,7 +1673,7 @@ class HaiClient:
         except Exception:
             pass
 
-    def contacts(self, hai_url: str) -> list["Contact"]:
+    def contacts(self, hai_url: Optional[str] = None) -> list["Contact"]:
         """List contacts derived from email message history."""
         self._ensure_agent_email(hai_url)
         ffi = self._get_ffi()
@@ -1644,8 +1696,8 @@ class HaiClient:
 
     def create_email_template(
         self,
-        hai_url: str,
-        name: str,
+        hai_url: Optional[str] = None,
+        name: str = "",
         how_to_send: Optional[str] = None,
         how_to_respond: Optional[str] = None,
         goal: Optional[str] = None,
@@ -1666,7 +1718,7 @@ class HaiClient:
 
     def list_email_templates(
         self,
-        hai_url: str,
+        hai_url: Optional[str] = None,
         limit: int = 20,
         offset: int = 0,
         q: Optional[str] = None,
@@ -1678,15 +1730,15 @@ class HaiClient:
             options["q"] = q
         return ffi.list_email_templates(options)
 
-    def get_email_template(self, hai_url: str, template_id: str) -> dict:
+    def get_email_template(self, hai_url: Optional[str] = None, template_id: str = "") -> dict:
         """Get a single email template by ID."""
         ffi = self._get_ffi()
         return ffi.get_email_template(template_id)
 
     def update_email_template(
         self,
-        hai_url: str,
-        template_id: str,
+        hai_url: Optional[str] = None,
+        template_id: str = "",
         name: Optional[str] = None,
         how_to_send: Optional[str] = None,
         how_to_respond: Optional[str] = None,
@@ -1708,7 +1760,7 @@ class HaiClient:
             options["rules"] = rules
         return ffi.update_email_template(template_id, options)
 
-    def delete_email_template(self, hai_url: str, template_id: str) -> None:
+    def delete_email_template(self, hai_url: Optional[str] = None, template_id: str = "") -> None:
         """Delete an email template."""
         ffi = self._get_ffi()
         ffi.delete_email_template(template_id)
@@ -1719,11 +1771,13 @@ class HaiClient:
 
     def fetch_remote_key(
         self,
-        hai_url: str,
-        jacs_id: str,
+        hai_url: Optional[str] = None,
+        jacs_id: str = "",
         version: str = "latest",
     ) -> PublicKeyInfo:
         """Fetch another agent's public key from HAI."""
+        if not jacs_id:
+            raise ValueError("'jacs_id' is required")
         cache_key = f"remote:{jacs_id}:{version}"
         cached = self._get_cached_key(cache_key)
         if cached is not None:
@@ -1737,10 +1791,12 @@ class HaiClient:
 
     def fetch_key_by_hash(
         self,
-        hai_url: str,
-        public_key_hash: str,
+        hai_url: Optional[str] = None,
+        public_key_hash: str = "",
     ) -> PublicKeyInfo:
         """Fetch an agent's public key by its SHA-256 hash."""
+        if not public_key_hash:
+            raise ValueError("'public_key_hash' is required")
         cache_key = f"hash:{public_key_hash}"
         cached = self._get_cached_key(cache_key)
         if cached is not None:
@@ -1754,10 +1810,12 @@ class HaiClient:
 
     def fetch_key_by_email(
         self,
-        hai_url: str,
-        email: str,
+        hai_url: Optional[str] = None,
+        email: str = "",
     ) -> PublicKeyInfo:
         """Fetch an agent's public key by their ``@hai.ai`` email address."""
+        if not email:
+            raise ValueError("'email' is required")
         cache_key = f"email:{email}"
         cached = self._get_cached_key(cache_key)
         if cached is not None:
@@ -1771,10 +1829,12 @@ class HaiClient:
 
     def fetch_key_by_domain(
         self,
-        hai_url: str,
-        domain: str,
+        hai_url: Optional[str] = None,
+        domain: str = "",
     ) -> PublicKeyInfo:
         """Fetch the latest DNS-verified agent key for a domain."""
+        if not domain:
+            raise ValueError("'domain' is required")
         cache_key = f"domain:{domain}"
         cached = self._get_cached_key(cache_key)
         if cached is not None:
@@ -1788,10 +1848,12 @@ class HaiClient:
 
     def fetch_all_keys(
         self,
-        hai_url: str,
-        jacs_id: str,
+        hai_url: Optional[str] = None,
+        jacs_id: str = "",
     ) -> dict:
         """Fetch all key versions for an agent."""
+        if not jacs_id:
+            raise ValueError("'jacs_id' is required")
         ffi = self._get_ffi()
         return ffi.fetch_all_keys(jacs_id)
 
@@ -1801,19 +1863,20 @@ class HaiClient:
 
     def connect(
         self,
-        hai_url: str,
+        hai_url: Optional[str] = None,
         *,
         transport: str = "sse",
     ) -> Iterator[HaiEvent]:
         """Connect to HAI and yield events.
 
         Args:
-            hai_url: Base URL of the HAI server.
+            hai_url: Base URL of the HAI server (defaults to DEFAULT_BASE_URL).
             transport: ``"sse"`` or ``"ws"``.
 
         Yields:
             HaiEvent instances.
         """
+        hai_url = hai_url or DEFAULT_BASE_URL
         if transport not in ("sse", "ws"):
             raise ValueError(f"transport must be 'sse' or 'ws', got '{transport}'")
 
@@ -2019,18 +2082,18 @@ def _get_client() -> HaiClient:
     return _client
 
 
-def testconnection(hai_url: str) -> bool:
+def testconnection(hai_url: Optional[str] = None) -> bool:
     """Test connectivity to the HAI server."""
     return _get_client().testconnection(hai_url)
 
 
-def hello_world(hai_url: str, include_test: bool = False) -> HelloWorldResult:
+def hello_world(hai_url: Optional[str] = None, include_test: bool = False) -> HelloWorldResult:
     """Perform a hello world exchange with HAI."""
     return _get_client().hello_world(hai_url, include_test)
 
 
 def register(
-    hai_url: str,
+    hai_url: Optional[str] = None,
     preview: bool = False,
     owner_email: Optional[str] = None,
 ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
@@ -2038,23 +2101,23 @@ def register(
     return _get_client().register(hai_url, preview=preview, owner_email=owner_email)
 
 
-def status(hai_url: str) -> HaiStatusResult:
+def status(hai_url: Optional[str] = None) -> HaiStatusResult:
     """Check registration status of the current agent."""
     return _get_client().status(hai_url)
 
 
-def update_username(hai_url: str, agent_id: str, username: str) -> dict[str, Any]:
+def update_username(hai_url: Optional[str] = None, agent_id: str = "", username: str = "") -> dict[str, Any]:
     """Update (rename) a claimed username for an agent."""
     return _get_client().update_username(hai_url, agent_id, username)
 
 
-def delete_username(hai_url: str, agent_id: str) -> dict[str, Any]:
+def delete_username(hai_url: Optional[str] = None, agent_id: str = "") -> dict[str, Any]:
     """Delete a claimed username for an agent."""
     return _get_client().delete_username(hai_url, agent_id)
 
 
 def benchmark(
-    hai_url: str,
+    hai_url: Optional[str] = None,
     name: str = "mediator",
     tier: str = "free",
 ) -> BenchmarkResult:
@@ -2063,14 +2126,14 @@ def benchmark(
 
 
 def free_run(
-    hai_url: str, transport: str = "sse"
+    hai_url: Optional[str] = None, transport: str = "sse"
 ) -> FreeChaoticResult:
     """Run a free benchmark."""
     return _get_client().free_run(hai_url, transport)
 
 
 def pro_run(
-    hai_url: str, transport: str = "sse",
+    hai_url: Optional[str] = None, transport: str = "sse",
 ) -> BaselineRunResult:
     """Run a pro tier benchmark ($20/month)."""
     return _get_client().pro_run(hai_url, transport)
@@ -2097,9 +2160,9 @@ certified_run = enterprise_run
 
 
 def submit_benchmark_response(
-    hai_url: str,
-    job_id: str,
-    message: str,
+    hai_url: Optional[str] = None,
+    job_id: str = "",
+    message: str = "",
     metadata: Optional[dict[str, Any]] = None,
     processing_time_ms: int = 0,
 ) -> JobResponseResult:
@@ -2123,7 +2186,7 @@ def sign_benchmark_result(
 
 
 def connect(
-    hai_url: str,
+    hai_url: Optional[str] = None,
     *,
     transport: str = "sse",
 ) -> Iterator[HaiEvent]:
@@ -2137,10 +2200,10 @@ def disconnect() -> None:
 
 
 def send_email(
-    hai_url: str,
-    to: str,
-    subject: str,
-    body: str,
+    hai_url: Optional[str] = None,
+    to: str = "",
+    subject: str = "",
+    body: str = "",
     in_reply_to: Optional[str] = None,
     attachments: Optional[list[dict[str, Any]]] = None,
     cc: Optional[list[str]] = None,
@@ -2154,16 +2217,16 @@ def send_email(
     )
 
 
-def sign_email(hai_url: str, raw_email: bytes) -> bytes:
+def sign_email(hai_url: Optional[str] = None, raw_email: bytes = b"") -> bytes:
     """Sign a raw RFC 5322 email with a JACS attachment via the HAI API."""
     return _get_client().sign_email(hai_url, raw_email)
 
 
 def send_signed_email(
-    hai_url: str,
-    to: str,
-    subject: str,
-    body: str,
+    hai_url: Optional[str] = None,
+    to: str = "",
+    subject: str = "",
+    body: str = "",
     in_reply_to: Optional[str] = None,
     attachments: Optional[list[dict[str, Any]]] = None,
     cc: Optional[list[str]] = None,
@@ -2177,13 +2240,13 @@ def send_signed_email(
     )
 
 
-def verify_email(hai_url: str, raw_email: bytes) -> EmailVerificationResultV2:
+def verify_email(hai_url: Optional[str] = None, raw_email: bytes = b"") -> EmailVerificationResultV2:
     """Verify a JACS-signed email via the HAI API."""
     return _get_client().verify_email(hai_url, raw_email)
 
 
 def list_messages(
-    hai_url: str,
+    hai_url: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
     direction: Optional[str] = None,
@@ -2202,33 +2265,33 @@ def list_messages(
     )
 
 
-def mark_read(hai_url: str, message_id: str) -> bool:
+def mark_read(hai_url: Optional[str] = None, message_id: str = "") -> bool:
     """Mark an email message as read."""
     return _get_client().mark_read(hai_url, message_id)
 
 
-def get_email_status(hai_url: str) -> EmailStatus:
+def get_email_status(hai_url: Optional[str] = None) -> EmailStatus:
     """Get email rate-limit and reputation status."""
     return _get_client().get_email_status(hai_url)
 
 
-def get_message(hai_url: str, message_id: str) -> EmailMessage:
+def get_message(hai_url: Optional[str] = None, message_id: str = "") -> EmailMessage:
     """Get a single email message by ID."""
     return _get_client().get_message(hai_url, message_id)
 
 
-def delete_message(hai_url: str, message_id: str) -> bool:
+def delete_message(hai_url: Optional[str] = None, message_id: str = "") -> bool:
     """Delete an email message."""
     return _get_client().delete_message(hai_url, message_id)
 
 
-def mark_unread(hai_url: str, message_id: str) -> bool:
+def mark_unread(hai_url: Optional[str] = None, message_id: str = "") -> bool:
     """Mark an email message as unread."""
     return _get_client().mark_unread(hai_url, message_id)
 
 
 def search_messages(
-    hai_url: str,
+    hai_url: Optional[str] = None,
     q: Optional[str] = None,
     direction: Optional[str] = None,
     from_address: Optional[str] = None,
@@ -2253,15 +2316,15 @@ def search_messages(
     )
 
 
-def get_unread_count(hai_url: str) -> int:
+def get_unread_count(hai_url: Optional[str] = None) -> int:
     """Get the number of unread email messages."""
     return _get_client().get_unread_count(hai_url)
 
 
 def reply(
-    hai_url: str,
-    message_id: str,
-    body: str,
+    hai_url: Optional[str] = None,
+    message_id: str = "",
+    body: str = "",
     subject: Optional[str] = None,
 ) -> SendEmailResult:
     """Reply to an email message."""
@@ -2269,33 +2332,33 @@ def reply(
 
 
 def forward(
-    hai_url: str,
-    message_id: str,
-    to: str,
+    hai_url: Optional[str] = None,
+    message_id: str = "",
+    to: str = "",
     comment: Optional[str] = None,
 ) -> SendEmailResult:
     """Forward an email message to another recipient."""
     return _get_client().forward(hai_url, message_id, to, comment)
 
 
-def archive(hai_url: str, message_id: str) -> bool:
+def archive(hai_url: Optional[str] = None, message_id: str = "") -> bool:
     """Archive an email message."""
     return _get_client().archive(hai_url, message_id)
 
 
-def unarchive(hai_url: str, message_id: str) -> bool:
+def unarchive(hai_url: Optional[str] = None, message_id: str = "") -> bool:
     """Unarchive an email message."""
     return _get_client().unarchive(hai_url, message_id)
 
 
-def contacts(hai_url: str) -> list:
+def contacts(hai_url: Optional[str] = None) -> list:
     """List contacts derived from email history."""
     return _get_client().contacts(hai_url)
 
 
 def update_labels(
-    hai_url: str,
-    message_id: str,
+    hai_url: Optional[str] = None,
+    message_id: str = "",
     add: Optional[list[str]] = None,
     remove: Optional[list[str]] = None,
 ) -> list[str]:
@@ -2317,50 +2380,50 @@ def rotate_keys(
 
 
 def fetch_remote_key(
-    hai_url: str,
-    jacs_id: str,
+    hai_url: Optional[str] = None,
+    jacs_id: str = "",
     version: str = "latest",
 ) -> PublicKeyInfo:
     """Fetch another agent's public key from HAI."""
     return _get_client().fetch_remote_key(hai_url, jacs_id, version)
 
 
-def fetch_key_by_hash(hai_url: str, public_key_hash: str) -> PublicKeyInfo:
+def fetch_key_by_hash(hai_url: Optional[str] = None, public_key_hash: str = "") -> PublicKeyInfo:
     """Fetch an agent's public key by its SHA-256 hash."""
     return _get_client().fetch_key_by_hash(hai_url, public_key_hash)
 
 
-def fetch_key_by_email(hai_url: str, email: str) -> PublicKeyInfo:
+def fetch_key_by_email(hai_url: Optional[str] = None, email: str = "") -> PublicKeyInfo:
     """Fetch an agent's public key by their ``@hai.ai`` email address."""
     return _get_client().fetch_key_by_email(hai_url, email)
 
 
-def fetch_key_by_domain(hai_url: str, domain: str) -> PublicKeyInfo:
+def fetch_key_by_domain(hai_url: Optional[str] = None, domain: str = "") -> PublicKeyInfo:
     """Fetch the latest DNS-verified agent key for a domain."""
     return _get_client().fetch_key_by_domain(hai_url, domain)
 
 
-def fetch_all_keys(hai_url: str, jacs_id: str) -> dict:
+def fetch_all_keys(hai_url: Optional[str] = None, jacs_id: str = "") -> dict:
     """Fetch all key versions for an agent."""
     return _get_client().fetch_all_keys(hai_url, jacs_id)
 
 
 def verify_document(
-    hai_url: str,
-    document: Union[str, dict[str, Any]],
+    hai_url: Optional[str] = None,
+    document: Union[str, dict[str, Any]] = "",
 ) -> dict[str, Any]:
     """Verify a signed JACS document via HAI's public verify endpoint."""
     return _get_client().verify_document(hai_url, document)
 
 
-def get_verification(hai_url: str, agent_id: str) -> dict[str, Any]:
+def get_verification(hai_url: Optional[str] = None, agent_id: str = "") -> dict[str, Any]:
     """Get advanced 3-level verification status for an agent."""
     return _get_client().get_verification(hai_url, agent_id)
 
 
 def verify_agent_document(
-    hai_url: str,
-    agent_json: Union[str, dict[str, Any]],
+    hai_url: Optional[str] = None,
+    agent_json: Union[str, dict[str, Any]] = "",
     *,
     public_key: Optional[str] = None,
     domain: Optional[str] = None,

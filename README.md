@@ -114,9 +114,9 @@ export JACS_KEYCHAIN_BACKEND=disabled
 haiai mcp
 ```
 
-## Native language bindings (pre-alpha)
+## Native language bindings (beta)
 
-Native SDKs for Python, Node.js, and Go are available on npm, pypi, and here but are **pre-alpha** — APIs may change. The MCP server is the recommended integration path.
+Native SDKs for Python, Node.js, and Go are available on npm, pypi, and here and are in **beta** — APIs may change. The MCP server is the recommended integration path.
 
 ```bash
 pip install haiai              # Python

@@ -305,7 +305,7 @@ func TestListMessagesSendsDateFilters(t *testing.T) {
 }
 
 // ===========================================================================
-// MEDIUM #19: Key lookups should use DefaultEndpoint, not DefaultKeysEndpoint
+// MEDIUM #19: Key lookups use DefaultEndpoint (DefaultKeysEndpoint was removed)
 // ===========================================================================
 
 func TestFetchKeyByEmailDefaultsToMainEndpoint(t *testing.T) {

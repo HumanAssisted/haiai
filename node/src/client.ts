@@ -623,6 +623,8 @@ export class HaiClient {
   // ---------------------------------------------------------------------------
   // connect() -- SSE/WS streaming (stays native)
   // TODO(DRY_FFI_PHASE2): migrate to FFI streaming
+  // Tracked in docs/0403INCONCISTANCIES.md item M11.
+  // SSE/WS currently uses native Node implementation; may diverge from Rust core.
   // ---------------------------------------------------------------------------
 
   /**
