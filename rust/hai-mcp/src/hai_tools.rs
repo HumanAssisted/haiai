@@ -622,6 +622,10 @@ async fn prepare_email_client(
     if client.agent_email().is_none() {
         if let Ok(status) = client.get_email_status().await {
             if !status.email.is_empty() {
+                // Persist to config so future restarts skip this round-trip.
+                if let Ok(wp) = context.local_provider(None) {
+                    let _ = wp.update_config_email(&status.email);
+                }
                 context.remember_agent_email(client.jacs_id(), &status.email);
                 client.set_agent_email(status.email);
             }
@@ -771,6 +775,10 @@ async fn call_get_email_status(context: &HaiServerContext, args: &Value) -> Tool
     let client = prepare_email_client(context, args).await?;
     let result = client.get_email_status().await.map_err(tool_message)?;
     context.remember_agent_email(client.jacs_id(), &result.email);
+    // Persist the discovered email to config so it survives MCP restarts.
+    if let Ok(wp) = context.local_provider(None) {
+        let _ = wp.update_config_email(&result.email);
+    }
 
     Ok(success_tool_result(
         format!(

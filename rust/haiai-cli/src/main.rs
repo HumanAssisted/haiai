@@ -544,24 +544,47 @@ fn ensure_agent_password(quiet: bool, password_file: Option<&str>) -> anyhow::Re
 fn load_client() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
     let provider = LocalJacsProvider::from_config_path(None, None)
         .context("failed to load JACS agent from config")?;
+    let cached_email = provider.agent_email_from_config();
     let options = HaiClientOptions {
         base_url: hai_url(),
         client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
         ..Default::default()
     };
-    let client = HaiClient::new(provider, options).context("failed to construct HaiClient")?;
+    let mut client =
+        HaiClient::new(provider, options).context("failed to construct HaiClient")?;
+    if let Some(email) = cached_email {
+        client.set_agent_email(email);
+    }
     Ok(client)
 }
 
-/// Load client and resolve the agent email address from the server.
-/// Required for commands that need agent_email (send, reply, forward, contacts).
+/// Load client and resolve the agent email address.
+/// Uses cached email from config; falls back to server and persists on first fetch.
 async fn load_client_with_email() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
-    let mut client = load_client()?;
-    if client.agent_email().is_none() {
-        if let Ok(status) = client.get_email_status().await {
-            if !status.email.is_empty() {
-                client.set_agent_email(status.email);
+    let provider = LocalJacsProvider::from_config_path(None, None)
+        .context("failed to load JACS agent from config")?;
+    let cached_email = provider.agent_email_from_config();
+    let config_path = provider.config_path().to_path_buf();
+    let options = HaiClientOptions {
+        base_url: hai_url(),
+        client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
+        ..Default::default()
+    };
+    let mut client =
+        HaiClient::new(provider, options).context("failed to construct HaiClient")?;
+
+    if let Some(email) = cached_email {
+        client.set_agent_email(email);
+    } else if let Ok(status) = client.get_email_status().await {
+        if !status.email.is_empty() {
+            let write_provider = LocalJacsProvider::from_config_path(
+                Some(config_path.as_path()),
+                None,
+            );
+            if let Ok(wp) = write_provider {
+                let _ = wp.update_config_email(&status.email);
             }
+            client.set_agent_email(status.email);
         }
     }
     Ok(client)
@@ -731,6 +754,16 @@ async fn main() -> anyhow::Result<()> {
                     Ok(response) => {
                         println!("Agent '{}' registered. Email: {}@hai.ai", name_lower, name_lower);
                         println!("  Registration ID: {}", response.agent_id);
+                        // Persist the email address to config so future
+                        // invocations skip the GET /email/status round-trip.
+                        if let Some(ref email) = response.email {
+                            if let Ok(wp) = LocalJacsProvider::from_config_path(
+                                Some(std::path::Path::new(&result.config_path)),
+                                None,
+                            ) {
+                                let _ = wp.update_config_email(email);
+                            }
+                        }
                     }
                     Err(e) => {
                         let msg = e.to_string();
@@ -796,7 +829,12 @@ async fn main() -> anyhow::Result<()> {
             let default_config_path = Some(shared_agent.config_path().display().to_string());
 
             let context =
-                HaiServerContext::from_process_env(fallback_jacs_id, default_config_path, provider);
+                HaiServerContext::from_process_env(fallback_jacs_id.clone(), default_config_path, provider);
+            // Pre-populate the email cache from the config file so the MCP
+            // skips the GET /email/status round-trip when email is known.
+            if let Some(email) = shared_agent.agent_email() {
+                context.remember_agent_email(&fallback_jacs_id, email);
+            }
             let server =
                 HaiMcpServer::new(JacsMcpServer::new(shared_agent.agent_wrapper()), context);
 

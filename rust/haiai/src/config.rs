@@ -15,6 +15,8 @@ pub struct AgentConfig {
     pub jacs_id: Option<String>,
     pub jacs_private_key_path: Option<PathBuf>,
     pub source_path: PathBuf,
+    /// Cached @hai.ai email address for this agent.
+    pub agent_email: Option<String>,
 }
 
 /// Load `jacs.config.json`.
@@ -70,6 +72,8 @@ pub fn load_config(path: Option<&Path>) -> Result<AgentConfig> {
         }
     });
 
+    let agent_email = get_string(&data, &["agent_email", "agentEmail"]);
+
     Ok(AgentConfig {
         jacs_agent_name,
         jacs_agent_version,
@@ -77,6 +81,7 @@ pub fn load_config(path: Option<&Path>) -> Result<AgentConfig> {
         jacs_id,
         jacs_private_key_path,
         source_path,
+        agent_email,
     })
 }
 
@@ -372,5 +377,33 @@ mod tests {
         if let Some(val) = orig {
             env::set_var("JACS_STORAGE", val);
         }
+    }
+
+    #[test]
+    fn load_config_reads_agent_email() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("jacs.config.json");
+        fs::write(
+            &config_path,
+            r#"{"jacsAgentName": "bot", "jacsId": "a-1", "agent_email": "bot@hai.ai"}"#,
+        )
+        .expect("write config");
+
+        let cfg = load_config(Some(&config_path)).expect("load");
+        assert_eq!(cfg.agent_email, Some("bot@hai.ai".to_string()));
+    }
+
+    #[test]
+    fn load_config_agent_email_absent_is_none() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("jacs.config.json");
+        fs::write(
+            &config_path,
+            r#"{"jacsAgentName": "bot", "jacsId": "a-1"}"#,
+        )
+        .expect("write config");
+
+        let cfg = load_config(Some(&config_path)).expect("load");
+        assert_eq!(cfg.agent_email, None);
     }
 }

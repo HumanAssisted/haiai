@@ -25,6 +25,8 @@ Alternatively, run from a directory that contains jacs.config.json (current dire
 pub struct LoadedSharedAgent {
     inner: Arc<StdMutex<Agent>>,
     config_path: PathBuf,
+    /// `agent_email` extracted from the config file at load time.
+    agent_email: Option<String>,
 }
 
 impl LoadedSharedAgent {
@@ -69,17 +71,26 @@ impl LoadedSharedAgent {
         config.apply_env_overrides();
         config.set_config_dir(saved_config_dir);
 
+        // Extract agent_email before config is consumed by Agent::from_config.
+        let agent_email = config.agent_email.clone();
+
         let agent = Agent::from_config(config, None)
             .map_err(|error| anyhow!("Failed to load agent: {}", error))?;
 
         Ok(Self {
             inner: Arc::new(StdMutex::new(agent)),
             config_path,
+            agent_email,
         })
     }
 
     pub fn config_path(&self) -> &Path {
         &self.config_path
+    }
+
+    /// The `agent_email` extracted from the config file at load time, if present.
+    pub fn agent_email(&self) -> Option<&str> {
+        self.agent_email.as_deref()
     }
 
     pub fn agent_wrapper(&self) -> AgentWrapper {

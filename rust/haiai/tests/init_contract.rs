@@ -58,6 +58,7 @@ fn private_key_candidate_order_matches_shared_fixture() {
         jacs_id: Some("agent-alpha-id".to_string()),
         jacs_private_key_path: None,
         source_path: PathBuf::from("/tmp/shared-key-order/jacs.config.json"),
+        agent_email: None,
     };
 
     let candidates = resolve_private_key_candidates(&cfg);

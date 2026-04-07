@@ -24,7 +24,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 sha2 = "0.10"
 
 # Local development: uncomment to build against local JACS instead of crates.io.
-# [patch.crates-io]
-# jacs = { path = "../../JACS/jacs" }
-# jacs-binding-core = { path = "../../JACS/binding-core" }
-# jacs-mcp = { path = "../../JACS/jacs-mcp" }
+[patch.crates-io]
+jacs = { path = "../../JACS/jacs" }
+jacs-binding-core = { path = "../../JACS/binding-core" }
+jacs-mcp = { path = "../../JACS/jacs-mcp" }
