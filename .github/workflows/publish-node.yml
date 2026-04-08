@@ -224,6 +224,20 @@ jobs:
       - name: Switch to production dependencies
         run: cd node && npm run deps:prod
 
+      - name: Wait for haiinpm to appear on npm registry
+        run: |
+          echo "Waiting for haiinpm@${VERSION} on npm..."
+          for i in $(seq 1 30); do
+            if npm view "haiinpm@${VERSION}" version 2>/dev/null | grep -q "${VERSION}"; then
+              echo "haiinpm@${VERSION} found after $((i * 10))s"
+              exit 0
+            fi
+            echo "Attempt $i/30 — not yet available, waiting 10s..."
+            sleep 10
+          done
+          echo "::error::haiinpm@${VERSION} not found on npm after 300s"
+          exit 1
+
       - name: Install dependencies
         run: |
           cd node
