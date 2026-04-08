@@ -144,6 +144,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - name: Remove local dev patches
+        run: node -e "const f='rust/Cargo.toml';let t=require('fs').readFileSync(f,'utf8').replace(/\r\n/g,'\n');t=t.replace(/\n*(#[^\n]*\n)*\[patch[\s\S]*$/,'\n');require('fs').writeFileSync(f,t)"
       - name: Build haiinpm native addon
         run: |
           cd rust/haiinpm

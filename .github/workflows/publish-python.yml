@@ -61,6 +61,8 @@ jobs:
           targets: ${{ matrix.maturin_target }}
       - name: Install maturin
         run: pip install maturin
+      - name: Remove local dev patches
+        run: node -e "const f='rust/Cargo.toml';let t=require('fs').readFileSync(f,'utf8').replace(/\r\n/g,'\n');t=t.replace(/\n*(#[^\n]*\n)*\[patch[\s\S]*$/,'\n');require('fs').writeFileSync(f,t)"
       - name: Build haiipy wheel
         run: |
           cd rust/haiipy
