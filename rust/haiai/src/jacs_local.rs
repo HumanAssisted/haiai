@@ -494,7 +494,7 @@ impl JacsProvider for LocalJacsProvider {
     #[cfg(feature = "jacs-crate")]
     fn rotate(&self) -> Result<RotationResult> {
         let simple = self.load_simple_agent()?;
-        let jacs_result = simple::advanced::rotate(&simple)
+        let jacs_result = simple::advanced::rotate(&simple, None)
             .map_err(|e| HaiError::Provider(format!("JACS key rotation failed: {e}")))?;
 
         // Reload the agent so in-memory state reflects the rotated keys
