@@ -65,8 +65,6 @@ func loadMCPContract(t *testing.T) *mcpToolContract {
 // (e.g. hai_generate_verify_link, hai_self_knowledge) map to an empty slice.
 var mcpToolToFFIMethods = map[string][]string{
 	"hai_hello":                  {"Hello"},
-	"hai_check_username":         {"CheckUsername"},
-	"hai_claim_username":         {"ClaimUsername"},
 	"hai_register_agent":         {"Register"},
 	"hai_agent_status":           {"VerifyStatus"},
 	"hai_verify_status":          {"VerifyStatus"},

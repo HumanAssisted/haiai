@@ -228,12 +228,16 @@ pub type HaiBindingResult<T> = Result<T, HaiBindingError>;
 
 /// Thread-safe wrapper around `HaiClient` for FFI consumption.
 ///
-/// Uses `Arc<RwLock<...>>` because `HaiClient` has three `&mut self` methods
-/// (`claim_username`, `set_hai_agent_id`, `set_agent_email`) that require
-/// interior mutability. Standard read-only methods acquire a read lock;
-/// the three mutating methods acquire a write lock.
+/// Uses `Arc<RwLock<...>>` because `HaiClient` has `&mut self` methods
+/// (`set_hai_agent_id`, `set_agent_email`) that require interior mutability.
+/// Standard read-only methods acquire a read lock; mutating methods acquire
+/// a write lock.
 pub struct HaiClientWrapper {
     inner: Arc<RwLock<HaiClient<Box<dyn JacsProvider>>>>,
+    /// The resolved client identifier string (e.g. "haiai-python/0.3.0").
+    /// Stored here for test verification since reqwest::Client doesn't
+    /// expose default headers after construction.
+    client_identifier: String,
 }
 
 impl fmt::Debug for HaiClientWrapper {
@@ -248,10 +252,14 @@ impl HaiClientWrapper {
         jacs: Box<dyn JacsProvider>,
         options: HaiClientOptions,
     ) -> HaiBindingResult<Self> {
+        let resolved_id = options.client_identifier.clone().unwrap_or_else(|| {
+            format!("haiai-rust/{}", env!("CARGO_PKG_VERSION"))
+        });
         let client = HaiClient::new(jacs, options)
             .map_err(HaiBindingError::from)?;
         Ok(Self {
             inner: Arc::new(RwLock::new(client)),
+            client_identifier: resolved_id,
         })
     }
 
@@ -292,10 +300,16 @@ impl HaiClientWrapper {
             .and_then(|v| v.as_u64())
             .unwrap_or(3) as usize;
 
+        let client_identifier = config
+            .get("client_type")
+            .and_then(|v| v.as_str())
+            .map(|ct| format!("haiai-{}/{}", ct, env!("CARGO_PKG_VERSION")));
+
         let options = HaiClientOptions {
             base_url,
             timeout: std::time::Duration::from_secs(timeout_secs),
             max_retries,
+            client_identifier,
         };
 
         Self::new(jacs, options)
@@ -373,6 +387,11 @@ impl HaiClientWrapper {
     // Client state accessors
     // =========================================================================
 
+    /// Get the resolved client identifier (e.g. "haiai-python/0.3.0").
+    pub fn client_identifier(&self) -> &str {
+        &self.client_identifier
+    }
+
     /// Get the JACS ID.
     pub async fn jacs_id(&self) -> String {
         let client = self.inner.read().await;
@@ -447,13 +466,6 @@ impl HaiClientWrapper {
     // =========================================================================
     // Registration & Identity
     // =========================================================================
-
-    /// Check if a username is available.
-    pub async fn check_username(&self, username: &str) -> HaiBindingResult<String> {
-        let client = self.inner.read().await;
-        let result = client.check_username(username).await?;
-        Ok(serde_json::to_string(&result)?)
-    }
 
     /// Register an agent.
     pub async fn register(&self, options_json: &str) -> HaiBindingResult<String> {
@@ -532,6 +544,8 @@ impl HaiClientWrapper {
             owner_email: v.get("owner_email").and_then(|v| v.as_str()).map(String::from),
             domain: v.get("domain").and_then(|v| v.as_str()).map(String::from),
             description: v.get("description").and_then(|v| v.as_str()).map(String::from),
+            registration_key: v.get("registration_key").and_then(|v| v.as_str()).map(String::from),
+            is_mediator: None,
         };
 
         let reg_result = temp_client.register(&register_opts).await
@@ -602,13 +616,6 @@ impl HaiClientWrapper {
     // =========================================================================
     // Username
     // =========================================================================
-
-    /// Claim a username for an agent. **Requires write lock.**
-    pub async fn claim_username(&self, agent_id: &str, username: &str) -> HaiBindingResult<String> {
-        let mut client = self.inner.write().await;
-        let result = client.claim_username(agent_id, username).await?;
-        Ok(serde_json::to_string(&result)?)
-    }
 
     /// Update an agent's username.
     pub async fn update_username(&self, agent_id: &str, username: &str) -> HaiBindingResult<String> {
@@ -1347,6 +1354,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn wrapper_from_config_json_with_client_type_works() {
+        use haiai::jacs::StaticJacsProvider;
+
+        let provider = StaticJacsProvider::new("test-id");
+        let config = r#"{"base_url": "https://beta.hai.ai", "client_type": "python"}"#;
+
+        let wrapper = HaiClientWrapper::from_config_json(config, Box::new(provider));
+        assert!(
+            wrapper.is_ok(),
+            "from_config_json with client_type should succeed"
+        );
+
+        let wrapper = wrapper.unwrap();
+        // Verify the client_type -> client_identifier transformation produced the correct prefix.
+        // The exact version suffix comes from CARGO_PKG_VERSION so we only assert the prefix.
+        assert!(
+            wrapper.client_identifier().starts_with("haiai-python/"),
+            "Expected client_identifier to start with 'haiai-python/', got: {}",
+            wrapper.client_identifier()
+        );
+    }
+
+    #[tokio::test]
+    async fn wrapper_without_client_type_defaults_to_rust() {
+        use haiai::jacs::StaticJacsProvider;
+
+        let provider = StaticJacsProvider::new("test-id");
+        let config = r#"{"base_url": "https://beta.hai.ai"}"#;
+
+        let wrapper = HaiClientWrapper::from_config_json(config, Box::new(provider))
+            .expect("from_config_json without client_type should succeed");
+
+        // Without client_type, should default to "haiai-rust/{version}"
+        assert!(
+            wrapper.client_identifier().starts_with("haiai-rust/"),
+            "Expected client_identifier to default to 'haiai-rust/', got: {}",
+            wrapper.client_identifier()
+        );
+    }
+
+    #[tokio::test]
     async fn wrapper_from_config_json_invalid_json_returns_config_failed() {
         use haiai::jacs::StaticJacsProvider;
 
@@ -1825,6 +1873,49 @@ mod tests {
     #[tokio::test]
     async fn register_new_agent_method_exists_on_wrapper() {
         let _method_exists = HaiClientWrapper::register_new_agent;
+    }
+
+    #[tokio::test]
+    async fn register_new_agent_rejects_missing_agent_name() {
+        let config = r#"{"jacs_id": "reg-test"}"#;
+        let wrapper = HaiClientWrapper::from_config_json_auto(config).unwrap();
+        let result = wrapper
+            .register_new_agent(r#"{"password": "secret123"}"#)
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::InvalidArgument);
+        assert!(
+            err.message.contains("agent_name"),
+            "error should mention agent_name: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn register_new_agent_rejects_missing_password() {
+        let config = r#"{"jacs_id": "reg-test"}"#;
+        let wrapper = HaiClientWrapper::from_config_json_auto(config).unwrap();
+        let result = wrapper
+            .register_new_agent(r#"{"agent_name": "test-bot"}"#)
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.kind, ErrorKind::InvalidArgument);
+        assert!(
+            err.message.contains("password"),
+            "error should mention password: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn register_new_agent_rejects_invalid_json() {
+        let config = r#"{"jacs_id": "reg-test"}"#;
+        let wrapper = HaiClientWrapper::from_config_json_auto(config).unwrap();
+        let result = wrapper.register_new_agent("not valid json").await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, ErrorKind::SerializationFailed);
     }
 
     #[tokio::test]

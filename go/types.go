@@ -218,20 +218,6 @@ type JacsSignatureBlock struct {
 	Signature string `json:"signature"`
 }
 
-// CheckUsernameResult is the response from checking username availability.
-type CheckUsernameResult struct {
-	Available bool   `json:"available"`
-	Username  string `json:"username"`
-	Reason    string `json:"reason,omitempty"`
-}
-
-// ClaimUsernameResult is the response from claiming a username.
-type ClaimUsernameResult struct {
-	Username string `json:"username"`
-	Email    string `json:"email"`
-	AgentID  string `json:"agent_id"`
-}
-
 // UpdateUsernameResult is the response from updating a claimed username.
 type UpdateUsernameResult struct {
 	Username         string `json:"username"`

@@ -17,31 +17,6 @@ fn make_client(base_url: &str, jacs_id: &str) -> HaiClient<StaticJacsProvider> {
 }
 
 #[tokio::test]
-async fn claim_username_escapes_agent_id_path_segment() {
-    let server = MockServer::start_async().await;
-
-    let mock = server
-        .mock_async(|when, then| {
-            when.method(POST)
-                .path("/api/v1/agents/agent%2F..%2Fescape/username");
-            then.status(200).json_body(json!({
-                "username": "agent",
-                "email": "agent@hai.ai",
-                "agent_id": "agent/../escape"
-            }));
-        })
-        .await;
-
-    let mut client = make_client(&server.base_url(), "agent/with/slash");
-    client
-        .claim_username("agent/../escape", "agent")
-        .await
-        .expect("claim username");
-
-    mock.assert_async().await;
-}
-
-#[tokio::test]
 async fn submit_response_escapes_job_id_path_segment() {
     let server = MockServer::start_async().await;
 

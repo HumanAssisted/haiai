@@ -10,8 +10,6 @@ Audit of Python/Node CLI and MCP server commands versus Rust replacements, produ
 | hello | `hello` | `hello` | `hello` | Full parity |
 | register | `register` | `register` | `register` | Full parity |
 | status | `status` | `status` | `status` | Full parity |
-| check-username | `check-username` | `check-username` | `check-username` | Full parity |
-| claim-username | `claim-username` | `claim-username` | `claim-username` | Full parity |
 | send-email | `send-email` | `send-email` | `send-email` | Full parity |
 | list-messages | `list-messages` | `list-messages` | `list-messages` | Full parity |
 | search-messages | -- | -- | `search-messages` | Rust-only addition |
@@ -49,8 +47,6 @@ Audit of Python/Node CLI and MCP server commands versus Rust replacements, produ
 | `hai_register_agent` | Y | Y | Y | Full parity |
 | `hai_agent_status` | Y | Y | Y | Full parity |
 | `hai_verify_status` | -- | -- | Y | Rust-only: verify with optional agent_id |
-| `hai_check_username` | Y | Y | Y | Full parity |
-| `hai_claim_username` | Y | Y | Y | Full parity |
 | `hai_verify_agent` | Y | Y | -- | Dropped from Rust MCP; use jacs-mcp verify tools |
 | `hai_generate_verify_link` | Y | Y | Y | Full parity |
 | `hai_create_agent` | -- | -- | Y | Rust-only: create new JACS agent via MCP |

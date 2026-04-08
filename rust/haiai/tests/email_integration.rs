@@ -86,7 +86,7 @@ async fn email_integration_lifecycle() {
                 env::var("HAI_OWNER_EMAIL").unwrap_or_else(|_| "jonathan@hai.io".to_string()),
             ),
             domain: None,
-            description: Some("Rust integration test agent".to_string()),
+            ..Default::default()
         })
         .await
         .expect("register agent");
@@ -105,16 +105,10 @@ async fn email_integration_lifecycle() {
         client.set_hai_agent_id(reg.agent_id.clone());
     }
 
-    // ── 0. Claim username (provisions email address) ────────────────────
-    let claim = client
-        .claim_username(&reg.agent_id, &agent_name)
-        .await
-        .expect("claim_username");
-    eprintln!(
-        "Claimed username: {}, email={}",
-        claim.username, claim.email
-    );
-    assert!(!claim.email.is_empty(), "claim should return email");
+    // Username is now claimed during registration (one-step flow).
+    // The agent email is {agent_name}@hai.ai.
+    let agent_email = format!("{}@hai.ai", agent_name);
+    eprintln!("Agent registered with email: {}", agent_email);
 
     // ── 1. Send email ────────────────────────────────────────────────────
     let subject = format!("rust-integ-test-{}", uuid_v4_short());

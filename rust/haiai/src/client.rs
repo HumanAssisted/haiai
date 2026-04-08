@@ -15,7 +15,7 @@ use tungstenite::client::IntoClientRequest;
 use crate::error::{HaiError, Result};
 use crate::jacs::JacsProvider;
 use crate::types::{
-    AgentKeyHistory, AgentVerificationResult, CheckUsernameResult, ClaimUsernameResult,
+    AgentKeyHistory, AgentVerificationResult,
     Contact, CreateEmailTemplateOptions, DeleteUsernameResult, DnsCertifiedResult,
     DnsCertifiedRunOptions, DocumentVerificationResult, EmailMessage, EmailStatus,
     EmailTemplate, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult,
@@ -77,19 +77,37 @@ impl WsConnection {
     }
 }
 
+/// Default request timeout in seconds.
+pub const DEFAULT_TIMEOUT_SECS: u64 = 30;
+
+/// Default maximum retry count for transient failures.
+pub const DEFAULT_MAX_RETRIES: usize = 3;
+
+/// Default DNS-over-HTTPS resolver for email TXT record lookups.
+pub const DEFAULT_DNS_RESOLVER: &str = "https://dns.google/resolve";
+
+/// Header name for SDK client identification. The API repo defines its own
+/// matching constant -- keep them in sync.
+pub const HAI_CLIENT_HEADER: &str = "x-hai-client";
+
 #[derive(Debug, Clone)]
 pub struct HaiClientOptions {
     pub base_url: String,
     pub timeout: Duration,
     pub max_retries: usize,
+    /// SDK client identifier sent as the `X-HAI-Client` header.
+    /// Format: `haiai-{transport}/{version}`.
+    /// Defaults to `haiai-rust/{CARGO_PKG_VERSION}` when `None`.
+    pub client_identifier: Option<String>,
 }
 
 impl Default for HaiClientOptions {
     fn default() -> Self {
         Self {
             base_url: DEFAULT_BASE_URL.to_string(),
-            timeout: Duration::from_secs(30),
-            max_retries: 3,
+            timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+            max_retries: DEFAULT_MAX_RETRIES,
+            client_identifier: None,
         }
     }
 }
@@ -101,7 +119,7 @@ pub struct HaiClient<P: JacsProvider> {
     jacs: P,
     /// HAI-assigned agent UUID for email URL paths (set after registration).
     hai_agent_id: Option<String>,
-    /// Agent's @hai.ai email address (set after claim_username).
+    /// Agent's @hai.ai email address (set after registration).
     agent_email: Option<String>,
 }
 
@@ -126,8 +144,22 @@ impl<P: JacsProvider> HaiClient<P> {
             });
         }
 
+        let client_id = options.client_identifier.unwrap_or_else(|| {
+            format!("haiai-rust/{}", env!("CARGO_PKG_VERSION"))
+        });
+        let mut default_headers = reqwest::header::HeaderMap::new();
+        if let Ok(val) = reqwest::header::HeaderValue::from_str(&client_id) {
+            default_headers.insert(HAI_CLIENT_HEADER, val);
+        } else {
+            eprintln!(
+                "WARNING: Invalid X-HAI-Client header value '{}', telemetry will not be sent",
+                client_id
+            );
+        }
+
         let http = reqwest::Client::builder()
             .timeout(options.timeout)
+            .default_headers(default_headers)
             .build()?;
 
         Ok(Self {
@@ -165,7 +197,7 @@ impl<P: JacsProvider> HaiClient<P> {
         self.hai_agent_id = Some(id);
     }
 
-    /// Get the agent's @hai.ai email address (set after claim_username).
+    /// Get the agent's @hai.ai email address (set after registration).
     pub fn agent_email(&self) -> Option<&str> {
         self.agent_email.as_deref()
     }
@@ -231,37 +263,6 @@ impl<P: JacsProvider> HaiClient<P> {
         })
     }
 
-    pub async fn check_username(&self, username: &str) -> Result<CheckUsernameResult> {
-        let url = self.url("/api/v1/agents/username/check");
-        let username = username.to_string();
-        let response = self
-            .request_with_retry(|| {
-                let http = &self.http;
-                let url = &url;
-                let username = &username;
-                async move {
-                    http.get(url.as_str())
-                        .query(&[("username", username.as_str())])
-                        .send()
-                        .await
-                }
-            })
-            .await?;
-
-        let data = response_json(response).await?;
-        Ok(CheckUsernameResult {
-            available: data
-                .get("available")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            username: value_string(&data, &["username"]).if_empty_then(username),
-            reason: data
-                .get("reason")
-                .and_then(Value::as_str)
-                .map(ToString::to_string),
-        })
-    }
-
     pub async fn register(&self, options: &RegisterAgentOptions) -> Result<RegistrationResult> {
         let url = self.url("/api/v1/agents/register");
 
@@ -285,10 +286,16 @@ impl<P: JacsProvider> HaiClient<P> {
             payload.insert("domain".to_string(), Value::String(domain.clone()));
         }
         if let Some(description) = &options.description {
+            payload.insert("description".to_string(), Value::String(description.clone()));
+        }
+        if let Some(registration_key) = &options.registration_key {
             payload.insert(
-                "description".to_string(),
-                Value::String(description.clone()),
+                "registration_key".to_string(),
+                Value::String(registration_key.clone()),
             );
+        }
+        if let Some(is_mediator) = options.is_mediator {
+            payload.insert("is_mediator".to_string(), Value::Bool(is_mediator));
         }
 
         let body = Value::Object(payload);
@@ -325,6 +332,10 @@ impl<P: JacsProvider> HaiClient<P> {
             registered_at: value_string(&data, &["registered_at", "registeredAt"]),
             message: data
                 .get("message")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            email: data
+                .get("email")
                 .and_then(Value::as_str)
                 .map(ToString::to_string),
         })
@@ -482,39 +493,6 @@ impl<P: JacsProvider> HaiClient<P> {
         Ok(parsed)
     }
 
-    pub async fn claim_username(
-        &mut self,
-        agent_id: &str,
-        username: &str,
-    ) -> Result<ClaimUsernameResult> {
-        let safe_agent_id = encode_path_segment(agent_id);
-        let url = self.url(&format!("/api/v1/agents/{safe_agent_id}/username"));
-
-        let response = self
-            .http
-            .post(url)
-            .header("Authorization", self.build_auth_header()?)
-            .header("Content-Type", "application/json")
-            .json(&json!({ "username": username }))
-            .send()
-            .await?;
-
-        let data = response_json(response).await?;
-        let result = ClaimUsernameResult {
-            username: value_string(&data, &["username"]).if_empty_then(username),
-            email: value_string(&data, &["email"]),
-            agent_id: value_string(&data, &["agent_id", "agentId"]).if_empty_then(agent_id),
-        };
-
-        // Auto-store the email so subsequent send_email calls work without
-        // a separate set_agent_email call.
-        if !result.email.is_empty() {
-            self.agent_email = Some(result.email.clone());
-        }
-
-        Ok(result)
-    }
-
     pub async fn update_username(
         &self,
         agent_id: &str,
@@ -554,7 +532,7 @@ impl<P: JacsProvider> HaiClient<P> {
     pub async fn send_email(&self, options: &SendEmailOptions) -> Result<SendEmailResult> {
         // Validate agent_email is set before sending.
         let _ = self.agent_email.as_deref().ok_or_else(|| {
-            HaiError::Message("agent email not set — call claim_username first".into())
+            HaiError::Message("agent email not set — register with a username first".into())
         })?;
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/send"));
@@ -637,13 +615,13 @@ impl<P: JacsProvider> HaiClient<P> {
     /// # Errors
     ///
     /// Returns `HaiError` if:
-    /// - `agent_email` is not set (call `claim_username` first)
+    /// - `agent_email` is not set (register with a username first)
     /// - The provider does not support local signing (use `LocalJacsProvider`)
     /// - MIME construction or JACS signing fails
     /// - The server rejects the signed email
     pub async fn send_signed_email(&self, options: &SendEmailOptions) -> Result<SendEmailResult> {
         let from = self.agent_email.as_deref().ok_or_else(|| {
-            HaiError::Message("agent email not set — call claim_username first".into())
+            HaiError::Message("agent email not set — register with a username first".into())
         })?;
 
         // Append verification footer before signing (Decision D8: client-side,
@@ -657,8 +635,8 @@ impl<P: JacsProvider> HaiClient<P> {
             if has_external {
                 let slug = email_to_slug(from);
                 format!(
-                    "{}\n\nVerify this agent's reputation: https://hai.ai/agents/{}",
-                    options.body, slug
+                    "{}\n\nVerify this agent's reputation: {}/agents/{}",
+                    options.body, self.base_url, slug
                 )
             } else {
                 options.body.clone()
@@ -746,7 +724,7 @@ impl<P: JacsProvider> HaiClient<P> {
         remove: &[&str],
     ) -> Result<Vec<String>> {
         let _ = self.agent_email.as_deref().ok_or_else(|| {
-            HaiError::Message("agent email not set — call claim_username first".into())
+            HaiError::Message("agent email not set — register with a username first".into())
         })?;
         let agent_id = self.hai_agent_id();
         let safe_agent_id = encode_path_segment(agent_id);
@@ -1098,7 +1076,7 @@ impl<P: JacsProvider> HaiClient<P> {
     /// Convenience alias for contacts endpoint.
     pub async fn contacts(&self) -> Result<Vec<Contact>> {
         let _ = self.agent_email.as_deref().ok_or_else(|| {
-            HaiError::Message("agent email not set — call claim_username first".into())
+            HaiError::Message("agent email not set — register with a username first".into())
         })?;
         let agent_id = self.hai_agent_id();
         let safe_agent_id = encode_path_segment(agent_id);
@@ -2212,86 +2190,6 @@ mod tests {
         assert!(att.data_base64.is_none());
     }
 
-    // ── Issue 13: claim_username stores email ────────────────────────────
-
-    #[tokio::test]
-    async fn test_claim_username_stores_agent_email() {
-        // We need httpmock for this, which is a dev-dependency
-        // Use a mock server to simulate the claim_username response
-        let server = httpmock::MockServer::start_async().await;
-
-        // Mock the claim_username endpoint
-        server
-            .mock_async(|when, then| {
-                when.method(httpmock::Method::POST)
-                    .path("/api/v1/agents/test-agent-001/username");
-                then.status(200).json_body(serde_json::json!({
-                    "username": "myagent",
-                    "email": "myagent@hai.ai",
-                    "agent_id": "test-agent-001"
-                }));
-            })
-            .await;
-
-        let provider = StaticJacsProvider::new("test-agent-001");
-        let mut client = HaiClient::new(
-            provider,
-            HaiClientOptions {
-                base_url: server.base_url(),
-                ..HaiClientOptions::default()
-            },
-        )
-        .expect("client");
-
-        // Before claim_username, agent_email should be None
-        assert!(client.agent_email().is_none());
-
-        let result = client
-            .claim_username("test-agent-001", "myagent")
-            .await
-            .expect("claim");
-        assert_eq!(result.email, "myagent@hai.ai");
-
-        // After claim_username, agent_email should be auto-stored
-        assert_eq!(client.agent_email(), Some("myagent@hai.ai"));
-    }
-
-    #[tokio::test]
-    async fn test_claim_username_does_not_store_empty_email() {
-        let server = httpmock::MockServer::start_async().await;
-
-        server
-            .mock_async(|when, then| {
-                when.method(httpmock::Method::POST)
-                    .path("/api/v1/agents/test-agent-001/username");
-                then.status(200).json_body(serde_json::json!({
-                    "username": "myagent",
-                    "email": "",
-                    "agent_id": "test-agent-001"
-                }));
-            })
-            .await;
-
-        let provider = StaticJacsProvider::new("test-agent-001");
-        let mut client = HaiClient::new(
-            provider,
-            HaiClientOptions {
-                base_url: server.base_url(),
-                ..HaiClientOptions::default()
-            },
-        )
-        .expect("client");
-
-        let _result = client
-            .claim_username("test-agent-001", "myagent")
-            .await
-            .expect("claim");
-        assert!(
-            client.agent_email().is_none(),
-            "empty email should not be stored"
-        );
-    }
-
     // ── Key rotation tests ──────────────────────────────────────────────
 
     #[tokio::test]
@@ -2608,6 +2506,122 @@ mod tests {
     }
 
     // ── Issue #17: reply endpoint in contract fixture ─────────────────
+
+    #[test]
+    fn test_hai_client_options_default_client_identifier_is_none() {
+        let opts = HaiClientOptions::default();
+        assert!(
+            opts.client_identifier.is_none(),
+            "default client_identifier should be None (resolved to haiai-rust/VERSION at construction)"
+        );
+    }
+
+    #[test]
+    fn test_hai_client_constructs_with_default_client_identifier() {
+        let provider = StaticJacsProvider::new("test-agent".to_string());
+        // Should not panic -- proves the default header construction path works
+        let _client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                client_identifier: None,
+                ..Default::default()
+            },
+        )
+        .expect("should create client with default client identifier");
+    }
+
+    #[test]
+    fn test_hai_client_constructs_with_custom_client_identifier() {
+        let provider = StaticJacsProvider::new("test-agent".to_string());
+        let _client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                client_identifier: Some("haiai-cli/0.2.2".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("should create client with custom client identifier");
+    }
+
+    #[test]
+    fn test_hai_client_header_constant_matches_expected_name() {
+        assert_eq!(HAI_CLIENT_HEADER, "x-hai-client");
+    }
+
+    #[tokio::test]
+    async fn test_hai_client_sends_x_hai_client_header_in_requests() {
+        // Use a mock server to verify the header is actually sent in HTTP requests.
+        // This test would FAIL if the default_headers insertion were removed,
+        // proving it is not vacuous.
+        let server = httpmock::MockServer::start_async().await;
+
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::GET)
+                    .path("/health")
+                    .header_exists(HAI_CLIENT_HEADER);
+                then.status(200).body("ok");
+            })
+            .await;
+
+        let provider = StaticJacsProvider::new("header-test-agent".to_string());
+        let client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: server.base_url(),
+                client_identifier: None, // defaults to haiai-rust/{version}
+                ..Default::default()
+            },
+        )
+        .expect("should create client");
+
+        // Make a raw HTTP request through the client's reqwest::Client
+        // (which has the default headers set)
+        let resp = client
+            .http
+            .get(format!("{}/health", server.base_url()))
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(resp.status(), 200);
+        mock.assert_async().await; // Verifies the mock was hit with the expected header
+    }
+
+    #[tokio::test]
+    async fn test_hai_client_sends_custom_client_identifier_header() {
+        let server = httpmock::MockServer::start_async().await;
+
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::GET)
+                    .path("/health")
+                    .header(HAI_CLIENT_HEADER, "haiai-cli/1.0.0");
+                then.status(200).body("ok");
+            })
+            .await;
+
+        let provider = StaticJacsProvider::new("header-test-agent".to_string());
+        let client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: server.base_url(),
+                client_identifier: Some("haiai-cli/1.0.0".to_string()),
+                ..Default::default()
+            },
+        )
+        .expect("should create client");
+
+        let resp = client
+            .http
+            .get(format!("{}/health", server.base_url()))
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(resp.status(), 200);
+        mock.assert_async().await; // Verifies mock matched on the exact header value
+    }
 
     #[test]
     fn test_contract_fixture_contains_reply_endpoint() {

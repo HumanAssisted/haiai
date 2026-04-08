@@ -20,6 +20,8 @@ import type {
   EmailMessage,
   EmailStatus,
   ForwardOptions,
+  ListEmailTemplatesOptions,
+  ListEmailTemplatesResult,
   ListMessagesOptions,
   SearchOptions,
   SendEmailOptions,
@@ -298,5 +300,15 @@ export class EmailNamespace {
    */
   async contacts(): Promise<Contact[]> {
     return this._client.getContacts();
+  }
+
+  /**
+   * List or search email templates.
+   *
+   * @param options - Optional pagination and search query.
+   * @returns ListEmailTemplatesResult with templates array and total count.
+   */
+  async templates(options?: ListEmailTemplatesOptions): Promise<ListEmailTemplatesResult> {
+    return this._client.listEmailTemplates(options);
   }
 }

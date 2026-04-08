@@ -87,8 +87,8 @@ or JACS-owned signature vectors.
 Current required parity checks:
 
 1. `hello`: `POST /api/v1/agents/hello` with auth
-2. `check_username`: `GET /api/v1/agents/username/check` without auth
-3. `submit_response`: `POST /api/v1/agents/jobs/{job_id}/response` with auth
+2. `submit_response`: `POST /api/v1/agents/jobs/{job_id}/response` with auth
+3. `reply`: `POST /api/agents/{agent_id}/email/reply` with auth
 
 Each language must have tests that assert method + path + auth behavior from this fixture.
 

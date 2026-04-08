@@ -227,6 +227,62 @@ impl LocalJacsProvider {
         })
     }
 
+    /// Read `agent_email` from the config file on disk.
+    pub fn agent_email_from_config(&self) -> Option<String> {
+        let raw = std::fs::read_to_string(&self.config_path).ok()?;
+        let data: Value = serde_json::from_str(&raw).ok()?;
+        data.get("agent_email")
+            .or_else(|| data.get("agentEmail"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    }
+
+    /// Write a config `Value` back to disk, re-signing it with the agent's key.
+    ///
+    /// If the config already has a `jacsSignature`, calls `update_config` (bumps
+    /// version, preserves `jacsId`). Otherwise calls `sign_config` to produce the
+    /// initial signed config. This matches the pattern in
+    /// `jacs/src/simple/advanced.rs:277-285`.
+    fn write_config_signed(&self, config_value: &Value) -> Result<()> {
+        let mut agent = self
+            .agent
+            .lock()
+            .map_err(|e| HaiError::Provider(format!("failed to lock agent for config signing: {e}")))?;
+        let signed = if config_value.get("jacsSignature").is_some() {
+            agent.update_config(config_value).map_err(|e| {
+                HaiError::Provider(format!("failed to re-sign config: {e}"))
+            })?
+        } else {
+            agent.sign_config(config_value).map_err(|e| {
+                HaiError::Provider(format!("failed to sign config: {e}"))
+            })?
+        };
+        let updated_str = serde_json::to_string_pretty(&signed)?;
+        std::fs::write(&self.config_path, updated_str)
+            .map_err(|e| HaiError::Provider(format!("failed to write signed config: {e}")))?;
+        Ok(())
+    }
+
+    /// Persist `agent_email` into the config file on disk and re-sign.
+    pub fn update_config_email(&self, email: &str) -> Result<()> {
+        if email.is_empty() || !email.contains('@') {
+            return Err(HaiError::Provider(format!(
+                "invalid email address: '{email}'"
+            )));
+        }
+        let config_str = std::fs::read_to_string(&self.config_path).map_err(|e| {
+            HaiError::Provider(format!("failed to read config for email update: {e}"))
+        })?;
+        let mut config_value: Value = serde_json::from_str(&config_str)?;
+        if let Some(obj) = config_value.as_object_mut() {
+            obj.insert(
+                "agent_email".to_string(),
+                serde_json::json!(email),
+            );
+        }
+        self.write_config_signed(&config_value)
+    }
+
     fn update_config_version(&self, jacs_id: &str, new_version: &str) -> Result<()> {
         let config_str = std::fs::read_to_string(&self.config_path).map_err(|e| {
             HaiError::Provider(format!("failed to read config for version update: {e}"))
@@ -239,10 +295,7 @@ impl LocalJacsProvider {
                 serde_json::json!(new_lookup),
             );
         }
-        let updated_str = serde_json::to_string_pretty(&config_value)?;
-        std::fs::write(&self.config_path, updated_str)
-            .map_err(|e| HaiError::Provider(format!("failed to write updated config: {e}")))?;
-        Ok(())
+        self.write_config_signed(&config_value)
     }
 
     fn load_simple_agent(&self) -> Result<SimpleAgent> {
@@ -441,7 +494,7 @@ impl JacsProvider for LocalJacsProvider {
     #[cfg(feature = "jacs-crate")]
     fn rotate(&self) -> Result<RotationResult> {
         let simple = self.load_simple_agent()?;
-        let jacs_result = simple::advanced::rotate(&simple)
+        let jacs_result = simple::advanced::rotate(&simple, None)
             .map_err(|e| HaiError::Provider(format!("JACS key rotation failed: {e}")))?;
 
         // Reload the agent so in-memory state reflects the rotated keys

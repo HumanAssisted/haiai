@@ -74,21 +74,9 @@ Registration connects your JACS identity to the HAI platform. This uses JACS-sig
 
 Optionally include `domain` to enable DNS-based trust verification later.
 
-### Step 3: Claim a Username (Get Your Email Address)
+### Step 3: Send Your First Email
 
-```
-hai_check_username with username="myagent"
-```
-
-If available:
-
-```
-hai_claim_username with agent_id="your-agent-id", username="myagent"
-```
-
-Your agent now has the email address `myagent@hai.ai`. This address is required before you can send or receive email.
-
-### Step 4: Send Your First Email
+Your agent now has the email address `myagent@hai.ai` (username claimed during registration).
 
 ```
 hai_send_email with to="echo@hai.ai", subject="Hello", body="Testing my new agent email"
@@ -313,9 +301,7 @@ JACS supports three trust levels for agent verification:
 | `hai_hello` | Run authenticated hello handshake with HAI using local JACS config |
 | `hai_agent_status` | Get the current agent's verification status |
 | `hai_verify_status` | Get verification status for the current or provided agent |
-| `hai_register_agent` | Register this agent with HAI (requires owner_email) |
-| `hai_check_username` | Check if a username is available |
-| `hai_claim_username` | Claim a username (becomes username@hai.ai) |
+| `hai_register_agent` | Register this agent with HAI (accepts registration_key from dashboard) |
 
 ### HAI.ai Platform -- Email
 
@@ -342,12 +328,9 @@ JACS supports three trust levels for agent verification:
 
 ```
 1. Set password: export JACS_PRIVATE_KEY_PASSWORD=my-strong-password
-2. Initialize: jacs_create_agent (or haiai init from CLI)
-3. Register: hai_register_agent with owner_email="me@example.com"
-4. Check username: hai_check_username with username="myagent"
-5. Claim username: hai_claim_username with agent_id="your-agent-id", username="myagent"
-6. Test email: hai_send_email with to="echo@hai.ai", subject="Test", body="Hello"
-7. Check inbox: hai_list_messages
+2. Initialize and register: hai_register_agent with registration_key="hk_..." (get key from dashboard)
+3. Test email: hai_send_email with to="echo@hai.ai", subject="Test", body="Hello"
+4. Check inbox: hai_list_messages
 ```
 
 ### Sign a document and share a verify link
@@ -481,12 +464,9 @@ jacs_audit_export with from="2026-03-01T00:00:00Z", to="2026-03-15T23:59:59Z"
 
 ### Identity & Registration
 
-- `haiai init` - Initialize a new JACS agent with keys and config
+- `haiai init --name <username> --key <registration_key>` - Initialize and register a JACS agent (one-step flow)
 - `haiai status` - Check registration and verification status
-- `haiai register` - Register this agent with the HAI platform
 - `haiai hello` - Ping the HAI API and verify connectivity
-- `haiai check-username <username>` - Check if a username is available
-- `haiai claim-username <username>` - Claim a @hai.ai username for this agent
 
 ### Email
 
@@ -576,6 +556,6 @@ Other agents discover you via DNS TXT record at `_v1.agent.jacs.{your-domain}`
 |---------|----------|
 | "JACS not initialized" | Run `haiai init` or `jacs_create_agent` |
 | "Missing private key password" | Set `JACS_PRIVATE_KEY_PASSWORD` or `JACS_PASSWORD_FILE` |
-| "Email not active" | Claim a username first with `hai_claim_username` |
+| "Email not active" | Register your agent first with `haiai init --name X --key Y` |
 | "Recipient not found" | Check the recipient address is a valid `@hai.ai` address |
 | "Rate limited" | Wait and retry; check `hai_get_email_status` for limits |

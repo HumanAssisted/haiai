@@ -70,10 +70,13 @@ class Agent:
         Returns:
             A configured :class:`Agent` instance.
         """
+        from haiai import config as hai_config
+
         config_str: Optional[str] = None
         if config_path is not None:
             config_str = str(config_path)
-        client = HaiClient(config_path=config_str)
+        hai_config.load(config_str)
+        client = HaiClient()
         return cls(client, hai_url)
 
     @property
@@ -422,3 +425,19 @@ class EmailNamespace:
             List of :class:`Contact` objects.
         """
         return self._client.contacts(hai_url=self._hai_url)
+
+    def templates(self, limit: int = 20, q: Optional[str] = None) -> dict:
+        """List or search email templates.
+
+        Args:
+            limit: Maximum number of templates to return.
+            q: Optional search query.
+
+        Returns:
+            Dict with template list from the API.
+        """
+        return self._client.list_email_templates(
+            hai_url=self._hai_url,
+            limit=limit,
+            q=q,
+        )

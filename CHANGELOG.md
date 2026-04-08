@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.2
+
+- **One-step registration**: `haiai init --name <name> --key <key>` generates keypair, registers, and claims username in one command. Removed `checkUsername` / `claimUsername` from all SDKs.
+- **CI uses JACS workspace patch**: Test jobs clone JACS at the expected relative path instead of stripping `[patch.crates-io]`.
+- **Fix JACS `rotate()` API**: Updated call to pass the new `algorithm` parameter added upstream.
+- **Native SDKs promoted to beta**.
+
 ## 0.2.0
 
 - **FFI-first architecture**: All HTTP calls, auth, retry, and URL building now live in Rust and are exposed to Python, Node, and Go via FFI bindings (PyO3, napi-rs, CGo). Eliminates 4 separate HTTP implementations.

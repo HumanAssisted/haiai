@@ -123,16 +123,6 @@ pub struct MigrateAgentResult {
     pub patched_fields: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CheckUsernameResult {
-    #[serde(default)]
-    pub available: bool,
-    #[serde(default)]
-    pub username: String,
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RegisterAgentOptions {
     pub agent_json: String,
@@ -144,6 +134,12 @@ pub struct RegisterAgentOptions {
     pub domain: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// One-time registration key from the dashboard (for one-step registration)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration_key: Option<String>,
+    /// Whether this agent acts as a mediator
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_mediator: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -162,6 +158,9 @@ pub struct RegistrationResult {
     pub registered_at: String,
     #[serde(default)]
     pub message: Option<String>,
+    /// Agent's @hai.ai email address, returned by the server during registration.
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,16 +197,6 @@ pub struct JobResponseResult {
     pub job_id: String,
     #[serde(default)]
     pub message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClaimUsernameResult {
-    #[serde(default)]
-    pub username: String,
-    #[serde(default)]
-    pub email: String,
-    #[serde(default)]
-    pub agent_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -975,4 +964,23 @@ pub struct ListEmailTemplatesResult {
     pub total: i64,
     pub limit: i64,
     pub offset: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registration_result_deserializes_email() {
+        let json = r#"{"success": true, "agent_id": "a1", "jacs_id": "j1", "email": "bot@hai.ai"}"#;
+        let result: RegistrationResult = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(result.email, Some("bot@hai.ai".to_string()));
+    }
+
+    #[test]
+    fn registration_result_email_absent_is_none() {
+        let json = r#"{"success": true, "agent_id": "a1", "jacs_id": "j1"}"#;
+        let result: RegistrationResult = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(result.email, None);
+    }
 }

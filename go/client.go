@@ -35,9 +35,6 @@ const (
 const (
 	// DefaultEndpoint is the default HAI API endpoint.
 	DefaultEndpoint = "https://beta.hai.ai"
-
-	// DefaultKeysEndpoint is the default HAI key distribution service.
-	DefaultKeysEndpoint = "https://keys.hai.ai"
 )
 
 // Client is the HAI SDK client. It authenticates using JACS agent identity.
@@ -48,7 +45,7 @@ type Client struct {
 	jacsID     string
 	mu         sync.RWMutex // protects haiAgentID and agentEmail
 	haiAgentID string       // HAI-assigned agent UUID for email URL paths (set after registration)
-	agentEmail string       // Agent's @hai.ai email address (set after ClaimUsername)
+	agentEmail string       // Agent's @hai.ai email address (set after registration)
 	agentKeys  *keyCache    // Agent key cache with 5-minute TTL
 	ffi        FFIClient    // Rust FFI client for all API calls and crypto operations
 }
@@ -644,38 +641,7 @@ func (c *Client) VerifyAgentDocument(ctx context.Context, request VerifyAgentDoc
 	return &result, nil
 }
 
-// CheckUsername checks if a username is available for @hai.ai email.
-func (c *Client) CheckUsername(ctx context.Context, username string) (*CheckUsernameResult, error) {
-	raw, err := c.ffi.CheckUsername(username)
-	if err != nil {
-		return nil, mapFFIErr(err)
-	}
-	var result CheckUsernameResult
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, wrapError(ErrInvalidResponse, err, "failed to decode check username response")
-	}
-	return &result, nil
-}
-
-// ClaimUsername claims a username for an agent, getting {username}@hai.ai email.
-func (c *Client) ClaimUsername(ctx context.Context, agentID string, username string) (*ClaimUsernameResult, error) {
-	raw, err := c.ffi.ClaimUsername(agentID, username)
-	if err != nil {
-		return nil, mapFFIErr(err)
-	}
-	var result ClaimUsernameResult
-	if err := json.Unmarshal(raw, &result); err != nil {
-		return nil, wrapError(ErrInvalidResponse, err, "failed to decode claim username response")
-	}
-	if result.Email != "" {
-		c.mu.Lock()
-		c.agentEmail = result.Email
-		c.mu.Unlock()
-	}
-	return &result, nil
-}
-
-// AgentEmail returns the agent's @hai.ai email address (set after ClaimUsername).
+// AgentEmail returns the agent's @hai.ai email address (set after registration).
 func (c *Client) AgentEmail() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -732,7 +698,7 @@ func (c *Client) SendEmailWithOptions(ctx context.Context, opts SendEmailOptions
 	email := c.agentEmail
 	c.mu.RUnlock()
 	if email == "" {
-		return nil, fmt.Errorf("%w: agent email not set — call ClaimUsername first", ErrEmailNotActive)
+		return nil, fmt.Errorf("%w: agent email not set — register agent first", ErrEmailNotActive)
 	}
 
 	// Encode attachment data to base64 for JSON serialization
@@ -806,7 +772,7 @@ func (c *Client) SendSignedEmail(ctx context.Context, opts SendEmailOptions) (*S
 	email := c.agentEmail
 	c.mu.RUnlock()
 	if email == "" {
-		return nil, fmt.Errorf("%w: agent email not set — call ClaimUsername first", ErrEmailNotActive)
+		return nil, fmt.Errorf("%w: agent email not set — register agent first", ErrEmailNotActive)
 	}
 
 	// Encode attachment data to base64 for JSON serialization

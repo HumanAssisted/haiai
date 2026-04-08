@@ -384,12 +384,6 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
 
 fn response_for_request(request: &RecordedRequest) -> Value {
     match (request.method.as_str(), request.path.as_str()) {
-        ("GET", path) if path.starts_with("/api/v1/agents/username/check?username=demo-agent") => {
-            json!({
-                "username": "demo-agent",
-                "available": true
-            })
-        }
         ("POST", "/api/v1/agents/register") => {
             json!({
                 "success": true,
@@ -488,18 +482,6 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     assert_eq!(export_json["success"].as_bool(), Some(true));
     assert!(export_json["agent_id"].as_str().is_some());
 
-    let check_username = session.call_tool(
-        11,
-        "hai_check_username",
-        json!({
-            "username": "demo-agent"
-        }),
-    );
-    assert_eq!(
-        check_username["structuredContent"]["check_username"]["available"].as_bool(),
-        Some(true)
-    );
-
     let email_status = session.call_tool(
         12,
         "hai_get_email_status",
@@ -531,16 +513,6 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     server.assert_request(
         |request| {
             request.method == "GET"
-                && request
-                    .path
-                    .starts_with("/api/v1/agents/username/check?username=demo-agent")
-                && !request.headers.contains_key("authorization")
-        },
-        "GET /api/v1/agents/username/check?username=demo-agent",
-    );
-    server.assert_request(
-        |request| {
-            request.method == "GET"
                 && request.path == "/api/agents/hai-agent-123/email/status"
                 && request
                     .headers
@@ -563,9 +535,8 @@ fn rejects_runtime_hai_url_override_before_network_request() {
 
     let result = session.call_tool_allow_error(
         30,
-        "hai_check_username",
+        "hai_agent_status",
         json!({
-            "username": "demo-agent",
             "hai_url": "http://127.0.0.1:9"
         }),
     );

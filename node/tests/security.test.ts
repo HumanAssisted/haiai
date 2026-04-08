@@ -36,18 +36,6 @@ describe('security behaviors (node)', () => {
     });
   });
 
-  it('checkUsername delegates to FFI', async () => {
-    const client = await makeClient();
-    const checkUsernameMock = vi.fn(async (username: string) => {
-      expect(username).toBe('agent');
-      return { available: true, username: 'agent' };
-    });
-    client._setFFIAdapter(createMockFFI({ checkUsername: checkUsernameMock }));
-
-    const result = await client.checkUsername('agent');
-    expect(result.available).toBe(true);
-  });
-
   it('registerNewAgent delegates to FFI', async () => {
     const client = await makeClient();
     const registerMock = vi.fn(async (options: Record<string, unknown>) => {

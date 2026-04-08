@@ -43,7 +43,6 @@ extern void hai_free_string(char* s);
 
 // Registration & Identity
 extern char* hai_hello(HaiClientHandle handle, _Bool include_test);
-extern char* hai_check_username(HaiClientHandle handle, const char* username);
 extern char* hai_register(HaiClientHandle handle, const char* options_json);
 extern char* hai_register_new_agent(HaiClientHandle handle, const char* options_json);
 extern char* hai_rotate_keys(HaiClientHandle handle, const char* options_json);
@@ -52,7 +51,6 @@ extern char* hai_submit_response(HaiClientHandle handle, const char* params_json
 extern char* hai_verify_status(HaiClientHandle handle, const char* agent_id);
 
 // Username
-extern char* hai_claim_username(HaiClientHandle handle, const char* agent_id, const char* username);
 extern char* hai_update_username(HaiClientHandle handle, const char* agent_id, const char* username);
 extern char* hai_delete_username(HaiClientHandle handle, const char* agent_id);
 
@@ -281,17 +279,6 @@ func (c *Client) Hello(includeTest bool) (json.RawMessage, error) {
 	return parseEnvelope(result)
 }
 
-func (c *Client) CheckUsername(username string) (json.RawMessage, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if err := c.checkClosed(); err != nil {
-		return nil, err
-	}
-	cs := cString(username)
-	defer C.free(unsafe.Pointer(cs))
-	return parseEnvelope(goString(C.hai_check_username(c.handle, cs)))
-}
-
 func (c *Client) Register(optionsJSON string) (json.RawMessage, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -359,19 +346,6 @@ func (c *Client) VerifyStatus(agentID string) (json.RawMessage, error) {
 }
 
 // --- Username ---
-
-func (c *Client) ClaimUsername(agentID, username string) (json.RawMessage, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if err := c.checkClosed(); err != nil {
-		return nil, err
-	}
-	cs1 := cString(agentID)
-	defer C.free(unsafe.Pointer(cs1))
-	cs2 := cString(username)
-	defer C.free(unsafe.Pointer(cs2))
-	return parseEnvelope(goString(C.hai_claim_username(c.handle, cs1, cs2)))
-}
 
 func (c *Client) UpdateUsername(agentID, username string) (json.RawMessage, error) {
 	c.mu.RLock()

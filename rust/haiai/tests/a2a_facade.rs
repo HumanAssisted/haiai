@@ -71,7 +71,7 @@ fn register_options_with_agent_card_embeds_metadata() {
         public_key_pem: None,
         owner_email: None,
         domain: None,
-        description: None,
+        ..Default::default()
     };
     let merged = a2a
         .register_options_with_agent_card(opts, &card)

@@ -41,7 +41,7 @@ impl ServerHandler for HaiMcpServer {
                 title: Some("HAIAI MCP Server".to_string()),
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 icons: None,
-                website_url: Some("https://hai.ai".to_string()),
+                website_url: Some(haiai::DEFAULT_BASE_URL.to_string()),
             },
             instructions: Some(
                 "This MCP server runs locally over stdio only. It embeds the canonical JACS MCP \

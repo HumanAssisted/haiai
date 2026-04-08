@@ -13,8 +13,6 @@ import type {
   JobResponseResult,
   VerifyAgentResult,
   RegistrationEntry,
-  CheckUsernameResult,
-  ClaimUsernameResult,
   UpdateUsernameResult,
   DeleteUsernameResult,
   TranscriptMessage,
@@ -92,7 +90,7 @@ export class HaiClient {
   private serverPublicKeys: Record<string, string> = {};
   /** HAI-assigned agent UUID, set after register(). Used for email URL paths. */
   private _haiAgentId: string | null = null;
-  /** Agent's @hai.ai email address, set after claimUsername(). */
+  /** Agent's @hai.ai email address, set after registration. */
   private agentEmail?: string;
   /** Agent key cache: maps cache key -> { value, cachedAt (ms since epoch) }. */
   private keyCache = new Map<string, { value: PublicKeyInfo; cachedAt: number }>();
@@ -140,7 +138,7 @@ export class HaiClient {
       max_retries: this.maxRetries,
     };
     if (this.configPath) {
-      ffiConfig.config_path = this.configPath;
+      ffiConfig.jacs_config_path = this.configPath;
     }
     if (this.config?.jacsId) {
       ffiConfig.jacs_id = this.config.jacsId;
@@ -267,7 +265,7 @@ export class HaiClient {
     return this._connected;
   }
 
-  /** Get the agent's @hai.ai email address (set after claimUsername). */
+  /** Get the agent's @hai.ai email address (set after registration). */
   getAgentEmail(): string | undefined {
     return this.agentEmail;
   }
@@ -625,6 +623,8 @@ export class HaiClient {
   // ---------------------------------------------------------------------------
   // connect() -- SSE/WS streaming (stays native)
   // TODO(DRY_FFI_PHASE2): migrate to FFI streaming
+  // Tracked in docs/0403INCONCISTANCIES.md item M11.
+  // SSE/WS currently uses native Node implementation; may diverge from Rust core.
   // ---------------------------------------------------------------------------
 
   /**
@@ -692,50 +692,6 @@ export class HaiClient {
         await handler(job);
       }
     }
-  }
-
-  // ---------------------------------------------------------------------------
-  // checkUsername()
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Check if a username is available for claiming.
-   * This is a public endpoint and does not require authentication.
-   *
-   * @param username - The username to check
-   * @returns Availability result
-   */
-  async checkUsername(username: string): Promise<CheckUsernameResult> {
-    const data = await this.ffi.checkUsername(username);
-
-    return {
-      available: (data.available as boolean) ?? false,
-      username: (data.username as string) || username,
-      reason: (data.reason as string) || undefined,
-    };
-  }
-
-  // ---------------------------------------------------------------------------
-  // claimUsername()
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Claim a username for an agent. Requires JACS auth.
-   *
-   * @param agentId - The JACS ID of the agent to claim the username for
-   * @param username - The username to claim
-   * @returns Claim result with the assigned email
-   */
-  async claimUsername(agentId: string, username: string): Promise<ClaimUsernameResult> {
-    const data = await this.ffi.claimUsername(agentId, username);
-
-    this.agentEmail = (data.email as string) || '';
-
-    return {
-      username: (data.username as string) || username,
-      email: (data.email as string) || '',
-      agentId: (data.agent_id as string) || (data.agentId as string) || agentId,
-    };
   }
 
   /**
@@ -877,10 +833,7 @@ export class HaiClient {
     if (!options.quiet) {
       const agentId = (data.agent_id as string) || (data.agentId as string) || '';
       console.log(`\nAgent created and submitted for registration!`);
-      console.log(`  -> Check your email (${options.ownerEmail}) for a verification link`);
-      console.log(`  -> Click the link and log into hai.ai to complete registration`);
-      console.log(`  -> After verification, claim a @hai.ai username with:`);
-      console.log(`     client.claimUsername('${agentId}', 'my-agent')`);
+      console.log(`  -> Your agent is registered with username from your reservation`);
       console.log(`  -> Save your config and private key to a secure, access-controlled location`);
 
       if (options.domain) {
@@ -1190,7 +1143,7 @@ export class HaiClient {
    */
   async sendEmail(options: SendEmailOptions): Promise<SendEmailResult> {
     if (!this.agentEmail) {
-      throw new Error('agent email not set — call claimUsername first');
+      throw new Error('agent email not set — register agent first');
     }
 
     const emailOptions: Record<string, unknown> = {
@@ -1244,7 +1197,7 @@ export class HaiClient {
    */
   async sendSignedEmail(options: SendEmailOptions): Promise<SendEmailResult> {
     if (!this.agentEmail) {
-      throw new Error('agent email not set — call claimUsername first');
+      throw new Error('agent email not set — register agent first');
     }
 
     const emailOptions: Record<string, unknown> = {

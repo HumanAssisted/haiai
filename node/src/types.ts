@@ -264,26 +264,6 @@ export interface VerifyAgentResult {
   rawResponse: Record<string, unknown>;
 }
 
-/** Result of checking username availability. */
-export interface CheckUsernameResult {
-  /** Whether the username is available. */
-  available: boolean;
-  /** The username that was checked. */
-  username: string;
-  /** Reason if unavailable. */
-  reason?: string;
-}
-
-/** Result of claiming a username. */
-export interface ClaimUsernameResult {
-  /** The claimed username. */
-  username: string;
-  /** The resulting hai.ai email address. */
-  email: string;
-  /** The agent ID the username was claimed for. */
-  agentId: string;
-}
-
 /** Result of updating (renaming) a username. */
 export interface UpdateUsernameResult {
   /** The new username. */

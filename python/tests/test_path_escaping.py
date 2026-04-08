@@ -21,20 +21,6 @@ from haiai.async_client import AsyncHaiClient
 from haiai.client import HaiClient
 
 
-def test_claim_username_passes_raw_agent_id_to_ffi(
-    loaded_config: None,
-) -> None:
-    client = HaiClient()
-    mock_ffi = client._get_ffi()
-    mock_ffi.responses["claim_username"] = {"username": "alice", "email": "alice@hai.ai", "agent_id": "agent/../with/slash"}
-
-    client.claim_username("https://hai.ai", "agent/../with/slash", "alice")
-
-    assert mock_ffi.calls[0][0] == "claim_username"
-    assert mock_ffi.calls[0][1][0] == "agent/../with/slash"
-    assert mock_ffi.calls[0][1][1] == "alice"
-
-
 def test_update_username_passes_raw_agent_id_to_ffi(
     loaded_config: None,
 ) -> None:

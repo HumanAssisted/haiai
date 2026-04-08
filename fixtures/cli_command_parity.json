@@ -1,11 +1,11 @@
 {
   "description": "CLI command parity contract. The haiai binary must expose exactly these subcommands. Tests verify bidirectional parity between this fixture and the Commands enum.",
   "version": "1.0.0",
-  "total_command_count": 29,
+  "total_command_count": 26,
   "commands": [
     {
       "name": "init",
-      "args": ["name:string", "domain:string", "algorithm:string", "data_dir:string", "key_dir:string", "config_path:string"]
+      "args": ["name:string", "key:string?", "domain:string?", "register:bool", "algorithm:string", "data_dir:string", "key_dir:string", "config_path:string"]
     },
     {
       "name": "mcp",
@@ -16,20 +16,8 @@
       "args": []
     },
     {
-      "name": "register",
-      "args": ["owner_email:string", "description:string?"]
-    },
-    {
       "name": "status",
       "args": []
-    },
-    {
-      "name": "check-username",
-      "args": ["username:string"]
-    },
-    {
-      "name": "claim-username",
-      "args": ["username:string"]
     },
     {
       "name": "send-email",

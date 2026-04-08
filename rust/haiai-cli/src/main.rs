@@ -43,15 +43,23 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize a new JACS agent with keys and config
+    /// Initialize a new JACS agent with keys and config, optionally registering with HAI
     Init {
-        /// Agent name (required)
+        /// Agent name / username (required). Must be 3-30 lowercase alphanumeric + hyphens.
         #[arg(long)]
         name: String,
 
-        /// Agent domain for DNSSEC fingerprint (required)
+        /// One-time registration key from the dashboard (required when --register=true)
         #[arg(long)]
-        domain: String,
+        key: Option<String>,
+
+        /// Agent domain for DNSSEC fingerprint (optional)
+        #[arg(long)]
+        domain: Option<String>,
+
+        /// Set to false to skip HAI registration (create local identity only)
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        register: bool,
 
         /// Signing algorithm (default: pq2025)
         #[arg(long, default_value = "pq2025")]
@@ -76,31 +84,8 @@ enum Commands {
     /// Ping the HAI API and verify connectivity
     Hello,
 
-    /// Register this agent with the HAI platform
-    Register {
-        /// Owner email for registration notifications
-        #[arg(long)]
-        owner_email: String,
-
-        /// Optional description of this agent
-        #[arg(long)]
-        description: Option<String>,
-    },
-
     /// Check registration and verification status
     Status,
-
-    /// Check if a username is available
-    CheckUsername {
-        /// Username to check
-        username: String,
-    },
-
-    /// Claim a @hai.ai username for this agent
-    ClaimUsername {
-        /// Username to claim
-        username: String,
-    },
 
     /// Send a signed email from this agent
     SendEmail {
@@ -559,23 +544,47 @@ fn ensure_agent_password(quiet: bool, password_file: Option<&str>) -> anyhow::Re
 fn load_client() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
     let provider = LocalJacsProvider::from_config_path(None, None)
         .context("failed to load JACS agent from config")?;
+    let cached_email = provider.agent_email_from_config();
     let options = HaiClientOptions {
         base_url: hai_url(),
+        client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
         ..Default::default()
     };
-    let client = HaiClient::new(provider, options).context("failed to construct HaiClient")?;
+    let mut client =
+        HaiClient::new(provider, options).context("failed to construct HaiClient")?;
+    if let Some(email) = cached_email {
+        client.set_agent_email(email);
+    }
     Ok(client)
 }
 
-/// Load client and resolve the agent email address from the server.
-/// Required for commands that need agent_email (send, reply, forward, contacts).
+/// Load client and resolve the agent email address.
+/// Uses cached email from config; falls back to server and persists on first fetch.
 async fn load_client_with_email() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
-    let mut client = load_client()?;
-    if client.agent_email().is_none() {
-        if let Ok(status) = client.get_email_status().await {
-            if !status.email.is_empty() {
-                client.set_agent_email(status.email);
+    let provider = LocalJacsProvider::from_config_path(None, None)
+        .context("failed to load JACS agent from config")?;
+    let cached_email = provider.agent_email_from_config();
+    let config_path = provider.config_path().to_path_buf();
+    let options = HaiClientOptions {
+        base_url: hai_url(),
+        client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
+        ..Default::default()
+    };
+    let mut client =
+        HaiClient::new(provider, options).context("failed to construct HaiClient")?;
+
+    if let Some(email) = cached_email {
+        client.set_agent_email(email);
+    } else if let Ok(status) = client.get_email_status().await {
+        if !status.email.is_empty() {
+            let write_provider = LocalJacsProvider::from_config_path(
+                Some(config_path.as_path()),
+                None,
+            );
+            if let Ok(wp) = write_provider {
+                let _ = wp.update_config_email(&status.email);
             }
+            client.set_agent_email(status.email);
         }
     }
     Ok(client)
@@ -635,23 +644,54 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Init {
             name,
+            key,
             domain,
+            register,
             algorithm,
             data_dir,
             key_dir,
             config_path,
         } => {
+            // Validate --name against username format rules
+            let name_lower = name.to_lowercase();
+            if name_lower.len() < 3 || name_lower.len() > 30 {
+                anyhow::bail!("Invalid username '{}': must be 3-30 lowercase alphanumeric characters or hyphens, no leading/trailing hyphens.", name);
+            }
+            if name_lower.starts_with('-') || name_lower.ends_with('-') {
+                anyhow::bail!("Invalid username '{}': must be 3-30 lowercase alphanumeric characters or hyphens, no leading/trailing hyphens.", name);
+            }
+            if !name_lower.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+                anyhow::bail!("Invalid username '{}': must be 3-30 lowercase alphanumeric characters or hyphens, no leading/trailing hyphens.", name);
+            }
+
+            // When register=true, --key is required
+            if register {
+                if key.is_none() {
+                    anyhow::bail!(
+                        "Registration key is required. Log in at https://hai.ai, reserve your username, and copy the registration key from your dashboard."
+                    );
+                }
+                let k = key.as_ref().unwrap();
+                if !k.starts_with("hk_") || k.len() != 67 || !k[3..].chars().all(|c| c.is_ascii_hexdigit()) {
+                    anyhow::bail!(
+                        "Invalid registration key format. Keys start with 'hk_' followed by 64 hex characters."
+                    );
+                }
+            }
+
             let password_resolved = resolve_init_password(cli.password_file.as_deref())?;
-            let options = CreateAgentOptions {
-                name: name.clone(),
+            let mut options = CreateAgentOptions {
+                name: name_lower.clone(),
                 password: password_resolved,
                 algorithm: Some(algorithm),
                 data_directory: Some(data_dir),
                 key_directory: Some(key_dir),
                 config_path: Some(config_path),
-                domain: Some(domain),
                 ..Default::default()
             };
+            if let Some(ref d) = domain {
+                options.domain = Some(d.clone());
+            }
 
             let result = LocalJacsProvider::create_agent_with_options(&options).map_err(|e| {
                 let msg = e.to_string();
@@ -676,7 +716,68 @@ async fn main() -> anyhow::Result<()> {
                 println!("\nDNS (BIND):\n{}", result.dns_record);
                 println!("Reminder: enable DNSSEC for the zone and publish DS at the registrar.");
             }
-            println!("\nStart the MCP server with: haiai mcp");
+
+            if register {
+                println!("\nRegistering with HAI...");
+                // Load the created agent and register
+                let provider = LocalJacsProvider::from_config_path(
+                    Some(std::path::Path::new(&result.config_path)),
+                    effective_storage.as_deref(),
+                )
+                .context("failed to load created agent")?;
+                let agent_json = provider
+                    .export_agent_json()
+                    .context("failed to export agent JSON")?;
+                let public_key_pem = provider
+                    .public_key_pem()
+                    .context("failed to read public key PEM")?;
+
+                let hai_options = HaiClientOptions {
+                    base_url: hai_url(),
+                    client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
+                    ..Default::default()
+                };
+                let client = HaiClient::new(provider, hai_options)
+                    .context("failed to construct HaiClient")?;
+
+                let reg_options = RegisterAgentOptions {
+                    agent_json,
+                    public_key_pem: Some(public_key_pem),
+                    domain: domain.clone(),
+                    owner_email: None,
+                    is_mediator: Some(false),
+                    registration_key: key,
+                    ..Default::default()
+                };
+
+                match client.register(&reg_options).await {
+                    Ok(response) => {
+                        println!("Agent '{}' registered. Email: {}@hai.ai", name_lower, name_lower);
+                        println!("  Registration ID: {}", response.agent_id);
+                        // Persist the email address to config so future
+                        // invocations skip the GET /email/status round-trip.
+                        if let Some(ref email) = response.email {
+                            if let Ok(wp) = LocalJacsProvider::from_config_path(
+                                Some(std::path::Path::new(&result.config_path)),
+                                None,
+                            ) {
+                                let _ = wp.update_config_email(email);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if msg.contains("already registered") {
+                            println!("This agent is already registered. If you need new keys, use 'haiai rotate'.");
+                        } else {
+                            eprintln!("Registration failed: {}. Your agent was created locally. Fix connectivity and run 'haiai init --name {} --key <key>' again.", msg, name_lower);
+                        }
+                    }
+                }
+            } else {
+                println!("Agent '{}' created locally.", name_lower);
+                println!("\nStart the MCP server with: haiai mcp");
+            }
         }
 
         Commands::Mcp => {
@@ -728,7 +829,12 @@ async fn main() -> anyhow::Result<()> {
             let default_config_path = Some(shared_agent.config_path().display().to_string());
 
             let context =
-                HaiServerContext::from_process_env(fallback_jacs_id, default_config_path, provider);
+                HaiServerContext::from_process_env(fallback_jacs_id.clone(), default_config_path, provider);
+            // Pre-populate the email cache from the config file so the MCP
+            // skips the GET /email/status round-trip when email is known.
+            if let Some(email) = shared_agent.agent_email() {
+                context.remember_agent_email(&fallback_jacs_id, email);
+            }
             let server =
                 HaiMcpServer::new(JacsMcpServer::new(shared_agent.agent_wrapper()), context);
 
@@ -747,51 +853,6 @@ async fn main() -> anyhow::Result<()> {
             println!("  Hello ID:  {}", result.hello_id);
         }
 
-        Commands::Register {
-            owner_email,
-            description,
-        } => {
-            let provider = LocalJacsProvider::from_config_path(None, None)
-                .context("failed to load JACS agent from config")?;
-            let agent_json = provider
-                .export_agent_json()
-                .context("failed to export agent JSON")?;
-            let public_key = provider
-                .public_key_pem()
-                .context("failed to read public key PEM")?;
-
-            let options = HaiClientOptions {
-                base_url: hai_url(),
-                ..Default::default()
-            };
-            let client =
-                HaiClient::new(provider, options).context("failed to construct HaiClient")?;
-
-            let reg_options = RegisterAgentOptions {
-                agent_json,
-                public_key_pem: Some(public_key),
-                owner_email: Some(owner_email.clone()),
-                description,
-                ..Default::default()
-            };
-            let result = client
-                .register(&reg_options)
-                .await
-                .context("registration failed")?;
-
-            println!("  Agent ID:            {}", result.agent_id);
-            println!("  JACS ID:             {}", result.jacs_id);
-            println!(
-                "  Registration Status: {}",
-                if result.success {
-                    "registered"
-                } else {
-                    "failed"
-                }
-            );
-            println!("  Email:               {}", owner_email);
-        }
-
         Commands::Status => {
             let client = load_client()?;
             let jacs_id = client.jacs_id().to_string();
@@ -803,31 +864,6 @@ async fn main() -> anyhow::Result<()> {
             println!("  Registered:    {}", result.registered);
             println!("  DNS Verified:  {}", result.dns_verified);
             println!("  Registered At: {}", result.registered_at);
-        }
-
-        Commands::CheckUsername { username } => {
-            let client = load_client()?;
-            let result = client
-                .check_username(&username)
-                .await
-                .context("username check failed")?;
-            println!("  Available: {}", result.available);
-            println!("  Username:  {}", result.username);
-            if let Some(reason) = &result.reason {
-                println!("  Reason:    {}", reason);
-            }
-        }
-
-        Commands::ClaimUsername { username } => {
-            let mut client = load_client()?;
-            let agent_id = client.jacs_id().to_string();
-            let result = client
-                .claim_username(&agent_id, &username)
-                .await
-                .context("username claim failed")?;
-            println!("  Username: {}", result.username);
-            println!("  Email:    {}", result.email);
-            println!("  Agent ID: {}", result.agent_id);
         }
 
         Commands::SendEmail {
@@ -1031,7 +1067,7 @@ async fn main() -> anyhow::Result<()> {
             if result.registered_with_hai {
                 println!("  Re-registered: yes");
             } else {
-                println!("  Re-registered: no (run `haiai register` to register manually)");
+                println!("  Re-registered: no (run `haiai init --name <name> --key <key>` to re-register)");
             }
         }
 
@@ -1051,7 +1087,7 @@ async fn main() -> anyhow::Result<()> {
             if result.registered_with_hai {
                 println!("  Re-registered:  yes");
             } else {
-                println!("  Re-registered:  no (run `haiai register` to register manually)");
+                println!("  Re-registered:  no (run `haiai init --name <name> --key <key>` to re-register)");
             }
         }
 
@@ -1606,6 +1642,7 @@ mod tests {
             "myagent",
             "--domain",
             "example.com",
+            "--register=false",
         ]);
         match cli.command {
             Commands::Init {
@@ -1615,13 +1652,17 @@ mod tests {
                 data_dir,
                 key_dir,
                 config_path,
+                register,
+                key,
             } => {
                 assert_eq!(name, "myagent");
-                assert_eq!(domain, "example.com");
+                assert_eq!(domain.as_deref(), Some("example.com"));
                 assert_eq!(algorithm, "pq2025");
                 assert_eq!(data_dir, "./jacs");
                 assert_eq!(key_dir, "./jacs_keys");
                 assert_eq!(config_path, "./jacs.config.json");
+                assert!(!register);
+                assert!(key.is_none());
             }
             _ => panic!("expected Init command"),
         }
@@ -1648,86 +1689,67 @@ mod tests {
     }
 
     #[test]
-    fn parse_register_required_args() {
-        let cli = Cli::parse_from(["haiai", "register", "--owner-email", "agent@example.com"]);
-        match cli.command {
-            Commands::Register {
-                owner_email,
-                description,
-            } => {
-                assert_eq!(owner_email, "agent@example.com");
-                assert!(description.is_none());
-            }
-            _ => panic!("expected Register command"),
-        }
-    }
-
-    #[test]
-    fn parse_register_with_description() {
+    fn parse_init_with_key_and_register() {
         let cli = Cli::parse_from([
-            "haiai",
-            "register",
-            "--owner-email",
-            "agent@example.com",
-            "--description",
-            "My test agent",
+            "haiai", "init",
+            "--name", "myagent",
+            "--key", "hk_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
         ]);
         match cli.command {
-            Commands::Register {
-                owner_email,
-                description,
-            } => {
-                assert_eq!(owner_email, "agent@example.com");
-                assert_eq!(description.as_deref(), Some("My test agent"));
+            Commands::Init { name, key, register, domain, .. } => {
+                assert_eq!(name, "myagent");
+                assert!(key.is_some());
+                assert!(register); // default true
+                assert!(domain.is_none());
             }
-            _ => panic!("expected Register command"),
+            _ => panic!("expected Init command"),
         }
     }
 
     #[test]
-    fn parse_register_missing_email_fails() {
-        let result = Cli::try_parse_from(["haiai", "register"]);
-        assert!(
-            result.is_err(),
-            "register without --owner-email should fail"
-        );
+    fn parse_init_register_false_no_key() {
+        let cli = Cli::parse_from([
+            "haiai", "init",
+            "--name", "myagent",
+            "--register=false",
+        ]);
+        match cli.command {
+            Commands::Init { name, key, register, .. } => {
+                assert_eq!(name, "myagent");
+                assert!(key.is_none());
+                assert!(!register);
+            }
+            _ => panic!("expected Init command"),
+        }
+    }
+
+    #[test]
+    fn parse_init_domain_optional() {
+        let cli = Cli::parse_from([
+            "haiai", "init",
+            "--name", "myagent",
+            "--key", "hk_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+            "--domain", "example.com",
+        ]);
+        match cli.command {
+            Commands::Init { domain, .. } => {
+                assert_eq!(domain.as_deref(), Some("example.com"));
+            }
+            _ => panic!("expected Init command"),
+        }
+    }
+
+    #[test]
+    fn parse_removed_commands_fail() {
+        assert!(Cli::try_parse_from(["haiai", "register", "--owner-email", "a@b.com"]).is_err());
+        assert!(Cli::try_parse_from(["haiai", "claim-username", "bob"]).is_err());
+        assert!(Cli::try_parse_from(["haiai", "check-username", "alice"]).is_err());
     }
 
     #[test]
     fn parse_status() {
         let cli = Cli::parse_from(["haiai", "status"]);
         assert!(matches!(cli.command, Commands::Status));
-    }
-
-    #[test]
-    fn parse_check_username() {
-        let cli = Cli::parse_from(["haiai", "check-username", "alice"]);
-        match cli.command {
-            Commands::CheckUsername { username } => {
-                assert_eq!(username, "alice");
-            }
-            _ => panic!("expected CheckUsername command"),
-        }
-    }
-
-    #[test]
-    fn parse_check_username_missing_arg_fails() {
-        let result = Cli::try_parse_from(["haiai", "check-username"]);
-        assert!(
-            result.is_err(),
-            "check-username without positional arg should fail"
-        );
-    }
-
-    #[test]
-    fn parse_claim_username() {
-        let cli = Cli::parse_from(["haiai", "claim-username", "bob"]);
-        match cli.command {
-            Commands::ClaimUsername { username } => {
-                assert_eq!(username, "bob");
-            }
-            _ => panic!("expected ClaimUsername command"),
-        }
     }
 
     #[test]

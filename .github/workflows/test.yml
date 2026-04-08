@@ -46,6 +46,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust (for haiipy build via maturin)
         uses: dtolnay/rust-toolchain@stable
+      - name: Clone JACS (for workspace patch)
+        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
       - name: Create virtualenv and install maturin
         run: |
           python -m venv .venv
@@ -110,6 +112,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust (for haiinpm build via napi-rs)
         uses: dtolnay/rust-toolchain@stable
+      - name: Clone JACS (for workspace patch)
+        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
       - name: Build haiinpm native addon
         run: |
           cd rust/haiinpm
@@ -181,19 +185,17 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust (for jacsgo build)
         uses: dtolnay/rust-toolchain@stable
-      - name: Clone JACS
-        run: |
-          rm -rf /tmp/JACS
-          git clone --depth 1 https://github.com/HumanAssisted/JACS.git /tmp/JACS
+      - name: Clone JACS (for workspace patch + jacsgo build)
+        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
       - name: Cache jacsgo shared library
         id: cache-jacsgo
         uses: actions/cache@v4
         with:
-          path: /tmp/JACS/jacsgo/build
+          path: ${{ github.workspace }}/../JACS/jacsgo/build
           key: jacsgo-${{ runner.os }}-${{ hashFiles('.github/workflows/test.yml') }}
       - name: Build jacsgo shared library
         if: steps.cache-jacsgo.outputs.cache-hit != 'true'
-        run: cd /tmp/JACS/jacsgo && make build-rust
+        run: cd ${{ github.workspace }}/../JACS/jacsgo && make build-rust
       - name: Build haiigo cdylib
         run: |
           cd rust
@@ -202,22 +204,22 @@ jobs:
         run: |
           cd go
           sed -i '/^replace github.com\/HumanAssisted\/JACS\/jacsgo/d' go.mod
-          echo 'replace github.com/HumanAssisted/JACS/jacsgo => /tmp/JACS/jacsgo' >> go.mod
+          echo 'replace github.com/HumanAssisted/JACS/jacsgo => ${{ github.workspace }}/../JACS/jacsgo' >> go.mod
       - name: Run tests
         env:
           CGO_ENABLED: "1"
-          CGO_LDFLAGS: "-L/tmp/JACS/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
-          CGO_CFLAGS: "-I/tmp/JACS/jacsgo"
-          LD_LIBRARY_PATH: "/tmp/JACS/jacsgo/build:${{ github.workspace }}/rust/target/release"
+          CGO_LDFLAGS: "-L${{ github.workspace }}/../JACS/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
+          CGO_CFLAGS: "-I${{ github.workspace }}/../JACS/jacsgo"
+          LD_LIBRARY_PATH: "${{ github.workspace }}/../JACS/jacsgo/build:${{ github.workspace }}/rust/target/release"
         run: |
           cd go
           go test -race -v ./...
       - name: Smoke test haiigo FFI binding
         env:
           CGO_ENABLED: "1"
-          CGO_LDFLAGS: "-L/tmp/JACS/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
-          CGO_CFLAGS: "-I/tmp/JACS/jacsgo"
-          LD_LIBRARY_PATH: "/tmp/JACS/jacsgo/build:${{ github.workspace }}/rust/target/release"
+          CGO_LDFLAGS: "-L${{ github.workspace }}/../JACS/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
+          CGO_CFLAGS: "-I${{ github.workspace }}/../JACS/jacsgo"
+          LD_LIBRARY_PATH: "${{ github.workspace }}/../JACS/jacsgo/build:${{ github.workspace }}/rust/target/release"
         run: |
           cd go
           go test -run TestFFISmokeNewClient -v ./ffi/ || echo "FFI smoke test skipped (cdylib not linked)"
@@ -238,8 +240,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust-version }}
-      - name: Remove local dev patches
-        run: node -e "const f='rust/Cargo.toml';let t=require('fs').readFileSync(f,'utf8').replace(/\r\n/g,'\n');t=t.replace(/\n*(#[^\n]*\n)*\[patch[\s\S]*$/,'\n');require('fs').writeFileSync(f,t)"
+      - name: Clone JACS (for workspace patch)
+        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
       - name: Run tests (all workspace crates including hai-binding-core, haiinpm, haiipy, haiigo)
         run: |
           cd rust

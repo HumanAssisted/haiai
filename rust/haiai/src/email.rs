@@ -540,10 +540,12 @@ pub async fn verify_dns_public_key(domain: &str, public_key_pem: &str) -> Result
     Ok(false)
 }
 
-/// Fetch DNS TXT records using DNS-over-HTTPS (Google's public resolver).
+/// Fetch DNS TXT records using DNS-over-HTTPS.
 async fn fetch_dns_txt_records(name: &str) -> Result<Vec<String>> {
+    use crate::client::DEFAULT_DNS_RESOLVER;
     let url = format!(
-        "https://dns.google/resolve?name={}&type=TXT",
+        "{}?name={}&type=TXT",
+        DEFAULT_DNS_RESOLVER,
         percent_encoding::utf8_percent_encode(name, percent_encoding::NON_ALPHANUMERIC)
     );
 

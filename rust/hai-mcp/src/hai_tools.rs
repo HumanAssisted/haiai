@@ -24,11 +24,9 @@ fn tool_message<E: std::fmt::Display>(error: E) -> ToolError {
 pub fn has_tool(name: &str) -> bool {
     matches!(
         name,
-        "hai_check_username"
-            | "hai_hello"
+        "hai_hello"
             | "hai_agent_status"
             | "hai_verify_status"
-            | "hai_claim_username"
             | "hai_register_agent"
             | "hai_generate_verify_link"
             | "hai_send_email"
@@ -70,11 +68,9 @@ pub async fn dispatch(
     let args = Value::Object(arguments.unwrap_or_default());
 
     let result = match name {
-        "hai_check_username" => call_check_username(context, &args).await,
         "hai_hello" => call_hello(context, &args).await,
         "hai_agent_status" => call_verify_status(context, &args).await,
         "hai_verify_status" => call_verify_status(context, &args).await,
-        "hai_claim_username" => call_claim_username(context, &args).await,
         "hai_register_agent" => call_register_agent(context, &args).await,
         "hai_generate_verify_link" => call_generate_verify_link(&args).await,
         "hai_send_email" => call_send_email(context, &args).await,
@@ -113,17 +109,6 @@ pub async fn dispatch(
 fn definition_values() -> Vec<Value> {
     vec![
         json!({
-            "name": "hai_check_username",
-            "description": "Check if a hai.ai username is available",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "username": { "type": "string" }
-                },
-                "required": ["username"]
-            }
-        }),
-        json!({
             "name": "hai_hello",
             "description": "Run authenticated hello handshake with HAI using local JACS config",
             "inputSchema": {
@@ -156,19 +141,6 @@ fn definition_values() -> Vec<Value> {
             }
         }),
         json!({
-            "name": "hai_claim_username",
-            "description": "Claim a username for an agent ID",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "agent_id": { "type": "string" },
-                    "username": { "type": "string" },
-                    "config_path": { "type": "string" }
-                },
-                "required": ["agent_id", "username"]
-            }
-        }),
-        json!({
             "name": "hai_register_agent",
             "description": "Register an existing local JACS agent with HAI",
             "inputSchema": {
@@ -177,7 +149,8 @@ fn definition_values() -> Vec<Value> {
                     "config_path": { "type": "string" },
                     "owner_email": { "type": "string" },
                     "domain": { "type": "string" },
-                    "description": { "type": "string" }
+                    "description": { "type": "string" },
+                    "registration_key": { "type": "string", "description": "One-time registration key from the dashboard" }
                 }
             }
         }),
@@ -510,29 +483,6 @@ fn definition_values() -> Vec<Value> {
     ]
 }
 
-async fn call_check_username(context: &HaiServerContext, args: &Value) -> ToolResult {
-    let username = required_string(args, "username")?;
-    let hai_url = optional_string(args, "hai_url");
-
-    let client = context
-        .noop_client_with_url(hai_url)
-        .map_err(tool_message)?;
-    let result = client
-        .check_username(username)
-        .await
-        .map_err(tool_message)?;
-
-    Ok(success_tool_result(
-        format!(
-            "username={} available={} reason={}",
-            result.username,
-            result.available,
-            result.reason.clone().unwrap_or_default()
-        ),
-        json!({ "check_username": result }),
-    ))
-}
-
 async fn call_hello(context: &HaiServerContext, args: &Value) -> ToolResult {
     let include_test = args
         .get("include_test")
@@ -571,32 +521,6 @@ async fn call_verify_status(context: &HaiServerContext, args: &Value) -> ToolRes
     ))
 }
 
-async fn call_claim_username(context: &HaiServerContext, args: &Value) -> ToolResult {
-    let agent_id = required_string(args, "agent_id")?;
-    let username = required_string(args, "username")?;
-    let config_path = optional_string(args, "config_path");
-    let hai_url = optional_string(args, "hai_url");
-
-    let mut client = context
-        .embedded_client_with_url(config_path, hai_url)
-        .map_err(tool_message)?;
-    let result = client
-        .claim_username(agent_id, username)
-        .await
-        .map_err(tool_message)?;
-    let jacs_id = client.jacs_id().to_string();
-    context.remember_hai_agent_id(&jacs_id, &result.agent_id);
-    context.remember_agent_email(&jacs_id, &result.email);
-
-    Ok(success_tool_result(
-        format!(
-            "claimed username={} for agent_id={}",
-            result.username, result.agent_id
-        ),
-        json!({ "claim_username": result }),
-    ))
-}
-
 async fn call_register_agent(context: &HaiServerContext, args: &Value) -> ToolResult {
     let config_path = optional_string(args, "config_path");
     let provider = context
@@ -617,6 +541,8 @@ async fn call_register_agent(context: &HaiServerContext, args: &Value) -> ToolRe
             owner_email: optional_string(args, "owner_email").map(ToString::to_string),
             domain: optional_string(args, "domain").map(ToString::to_string),
             description: optional_string(args, "description").map(ToString::to_string),
+            registration_key: optional_string(args, "registration_key").map(ToString::to_string),
+            is_mediator: None,
         })
         .await
         .map_err(tool_message)?;
@@ -696,6 +622,10 @@ async fn prepare_email_client(
     if client.agent_email().is_none() {
         if let Ok(status) = client.get_email_status().await {
             if !status.email.is_empty() {
+                // Persist to config so future restarts skip this round-trip.
+                if let Ok(wp) = context.local_provider(None) {
+                    let _ = wp.update_config_email(&status.email);
+                }
                 context.remember_agent_email(client.jacs_id(), &status.email);
                 client.set_agent_email(status.email);
             }
@@ -845,6 +775,10 @@ async fn call_get_email_status(context: &HaiServerContext, args: &Value) -> Tool
     let client = prepare_email_client(context, args).await?;
     let result = client.get_email_status().await.map_err(tool_message)?;
     context.remember_agent_email(client.jacs_id(), &result.email);
+    // Persist the discovered email to config so it survives MCP restarts.
+    if let Ok(wp) = context.local_provider(None) {
+        let _ = wp.update_config_email(&result.email);
+    }
 
     Ok(success_tool_result(
         format!(

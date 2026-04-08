@@ -18,7 +18,6 @@ struct EndpointContract {
 struct ContractFixture {
     base_url: String,
     hello: EndpointContract,
-    check_username: EndpointContract,
     submit_response: EndpointContract,
 }
 
@@ -79,36 +78,6 @@ async fn hello_uses_shared_method_path_auth_contract() {
     client.hello(false).await.expect("hello response");
 
     hello.assert_async().await;
-}
-
-#[tokio::test]
-async fn check_username_uses_shared_method_path_auth_contract() {
-    let fixture = load_contract_fixture();
-    let server = MockServer::start_async().await;
-
-    let mock = server
-        .mock_async(|when, then| {
-            let when = when
-                .method(method_from_fixture(&fixture.check_username.method))
-                .path(fixture.check_username.path.clone())
-                .query_param("username", "alice");
-            let _when = if fixture.check_username.auth_required {
-                when.header_exists("authorization")
-            } else {
-                when
-            };
-            then.status(200)
-                .json_body(json!({ "available": true, "username": "alice" }));
-        })
-        .await;
-
-    let client = make_client(&server.base_url());
-    client
-        .check_username("alice")
-        .await
-        .expect("check username response");
-
-    mock.assert_async().await;
 }
 
 #[tokio::test]
@@ -178,6 +147,7 @@ async fn register_posts_bootstrap_payload() {
             owner_email: Some("owner@example.com".to_string()),
             domain: Some("agent.example.com".to_string()),
             description: Some("Agent registered via Rust test".to_string()),
+            ..Default::default()
         })
         .await
         .expect("register");
@@ -224,7 +194,7 @@ async fn register_is_unauthenticated() {
             public_key_pem: Some("pub-key".to_string()),
             owner_email: Some("owner@hai.ai".to_string()),
             domain: None,
-            description: None,
+            ..Default::default()
         })
         .await
         .expect("register should succeed without auth");
@@ -273,7 +243,7 @@ async fn register_omits_private_key() {
             public_key_pem: Some("-----BEGIN PUBLIC KEY-----\nfake\n-----END PUBLIC KEY-----".to_string()),
             owner_email: Some("owner@hai.ai".to_string()),
             domain: None,
-            description: None,
+            ..Default::default()
         })
         .await
         .expect("register should succeed without private key");

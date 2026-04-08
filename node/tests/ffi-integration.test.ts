@@ -201,7 +201,7 @@ describe('HaiClient delegates to FFI (Node)', () => {
 
   it('sendEmail delegates to FFI', async () => {
     const client = await makeClient();
-    // sendEmail requires agentEmail to be set (normally set by claimUsername)
+    // sendEmail requires agentEmail to be set (normally set during registration)
     (client as any).agentEmail = 'test@hai.ai';
     const sendEmailMock = vi.fn(async () => ({
       message_id: 'msg-1',
@@ -243,19 +243,6 @@ describe('HaiClient delegates to FFI (Node)', () => {
     const result = await client.verifyDocument({ jacsId: 'a' });
     expect(verifyMock).toHaveBeenCalledOnce();
     expect(result.valid).toBe(true);
-  });
-
-  it('checkUsername delegates to FFI', async () => {
-    const client = await makeClient();
-    const checkMock = vi.fn(async () => ({
-      available: true,
-      username: 'alice',
-    }));
-    client._setFFIAdapter(createMockFFI({ checkUsername: checkMock }));
-
-    const result = await client.checkUsername('alice');
-    expect(checkMock).toHaveBeenCalledOnce();
-    expect(result.available).toBe(true);
   });
 
   it('fetchRemoteKey delegates to FFI', async () => {

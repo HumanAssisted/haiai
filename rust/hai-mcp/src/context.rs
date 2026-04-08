@@ -111,6 +111,7 @@ impl HaiServerContext {
             provider,
             HaiClientOptions {
                 base_url,
+                client_identifier: Some(format!("haiai-mcp/{}", env!("CARGO_PKG_VERSION"))),
                 ..HaiClientOptions::default()
             },
         )

@@ -84,16 +84,16 @@ fn init_missing_required_args_exits_nonzero() {
 }
 
 #[test]
-fn init_missing_domain_exits_nonzero() {
+fn init_missing_key_when_register_true() {
     let output = Command::new(haiai_bin())
         .args(["init", "--name", "test-agent"])
         .output()
-        .expect("run init without --domain");
+        .expect("run init without --key");
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("--domain") || stderr.contains("domain"),
-        "should mention missing --domain: {stderr}"
+        stderr.contains("Registration key is required") || stderr.contains("key"),
+        "should mention missing registration key: {stderr}"
     );
 }
 
@@ -111,6 +111,7 @@ fn init_creates_config_keys_and_prints_agent_id() {
             "cli-test-agent",
             "--domain",
             "test.example.com",
+            "--register=false",
             "--algorithm",
             "ring-Ed25519",
             "--config-path",
@@ -184,6 +185,7 @@ fn init_without_password_env_fails_gracefully() {
             "no-password-agent",
             "--domain",
             "test.example.com",
+            "--register=false",
             "--config-path",
             &temp.path().join("jacs.config.json").to_string_lossy(),
             "--key-dir",
@@ -214,6 +216,7 @@ fn init_with_domain_shows_dns_record() {
             "dns-test-agent",
             "--domain",
             "dns-test.example.com",
+            "--register=false",
             "--algorithm",
             "ring-Ed25519",
             "--config-path",
@@ -432,6 +435,7 @@ fn init_then_mcp_fails_due_to_raw_key_format() {
             "key-format-agent",
             "--domain",
             "test.example.com",
+            "--register=false",
             "--algorithm",
             "ring-Ed25519",
             "--config-path",

@@ -64,11 +64,6 @@ impl HaiClient {
     }
 
     #[napi]
-    pub async fn check_username(&self, username: String) -> Result<String> {
-        self.inner.check_username(&username).await.map_err(to_napi_err)
-    }
-
-    #[napi]
     pub async fn register(&self, options_json: String) -> Result<String> {
         self.inner.register(&options_json).await.map_err(to_napi_err)
     }
@@ -102,10 +97,6 @@ impl HaiClient {
     // Username
     // =========================================================================
 
-    #[napi]
-    pub async fn claim_username(&self, agent_id: String, username: String) -> Result<String> {
-        self.inner.claim_username(&agent_id, &username).await.map_err(to_napi_err)
-    }
 
     #[napi]
     pub async fn update_username(&self, agent_id: String, username: String) -> Result<String> {

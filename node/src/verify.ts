@@ -60,6 +60,11 @@ function extractHostedDocumentId(document: string): string {
  * Delegates base64url encoding to JACS binding-core when an agent is
  * provided. Falls back to local encoding otherwise.
  *
+ * TODO: This link cannot be embedded in the email it verifies — the signed body would need to
+ * contain its own base64 encoding (chicken-and-egg), and hosting the content behind a token
+ * creates a public access path to private messages. Per-message verification is therefore
+ * recipient-initiated: paste the raw email at /verify.
+ *
  * @param document - The JACS document JSON string to embed
  * @param baseUrl - Base URL for the verify page (default: https://hai.ai)
  * @param hosted - If true, generate a hosted verify link using the document ID

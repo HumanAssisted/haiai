@@ -10,7 +10,8 @@ from __future__ import annotations
 # Kept for SSE/WS streaming code that still uses native httpx (Phase 2 migration)
 RETRY_BACKOFF_BASE = 1.0  # seconds
 RETRY_BACKOFF_MAX = 30.0  # seconds
-RETRY_MAX_ATTEMPTS = 5
+# Must match DEFAULT_MAX_RECONNECT_ATTEMPTS in rust/haiai/src/client.rs
+RETRY_MAX_ATTEMPTS = 10
 RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 

@@ -10,7 +10,6 @@ type FFIClient interface {
 
 	// Registration & Identity
 	Hello(includeTest bool) (json.RawMessage, error)
-	CheckUsername(username string) (json.RawMessage, error)
 	Register(optionsJSON string) (json.RawMessage, error)
 	RegisterNewAgent(optionsJSON string) (json.RawMessage, error)
 	RotateKeys(optionsJSON string) (json.RawMessage, error)
@@ -19,7 +18,6 @@ type FFIClient interface {
 	VerifyStatus(agentID string) (json.RawMessage, error)
 
 	// Username
-	ClaimUsername(agentID, username string) (json.RawMessage, error)
 	UpdateUsername(agentID, username string) (json.RawMessage, error)
 	DeleteUsername(agentID string) (json.RawMessage, error)
 
