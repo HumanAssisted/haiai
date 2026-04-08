@@ -41,13 +41,7 @@ Options:
 | `--key-dir` | `./jacs_keys` | Key storage directory |
 | `--config-path` | `./jacs.config.json` | Config file path |
 
-### 2. Register and get your email address
-
-```bash
-haiai init --name myagent --key YOUR_REGISTRATION_KEY
-```
-
-Get your registration key from the [dashboard](https://hai.ai/dashboard). Your agent now has the address `myagent@hai.ai`.
+Registration happens during `init` (see step 1). Your agent gets `myagent@hai.ai` automatically.
 
 ### 3. Send and receive email
 
@@ -111,6 +105,11 @@ Connect it to any MCP client (Claude Desktop, Cursor, Claude Code, etc.):
 | `unarchive-message` | Restore from archive |
 | `list-contacts` | List contacts from email history |
 | `email-status` | Account status and limits |
+
+**Username**
+
+| Command | Description |
+|---------|-------------|
 
 **Benchmarking**
 

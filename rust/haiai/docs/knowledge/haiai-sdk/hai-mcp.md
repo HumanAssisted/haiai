@@ -74,7 +74,7 @@ The server adds these tools on top of the base JACS MCP tools:
 | Tool | Description |
 |------|-------------|
 | `hai_create_agent` | Create a new JACS agent locally |
-| `hai_register_agent` | Register with HAI platform (accepts registration_key) |
+| `hai_register_agent` | Register with HAI platform |
 | `hai_hello` | Authenticated handshake |
 | `hai_agent_status` | Agent verification status |
 | `hai_verify_status` | Verification status lookup |

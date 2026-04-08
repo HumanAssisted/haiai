@@ -21,6 +21,23 @@ brew install haiai
 cargo install haiai-cli
 ```
 
+### Shell script
+
+No package manager? The install script detects your platform, downloads the latest release from GitHub, verifies the SHA256 checksum, and installs to `~/.haiai/bin`. Handles upgrades and downgrades.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HumanAssisted/haiai/main/install.sh | sh
+```
+
+Pin a version or change the install directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HumanAssisted/haiai/main/install.sh | sh -s -- --version 0.2.1
+curl -fsSL https://raw.githubusercontent.com/HumanAssisted/haiai/main/install.sh | sh -s -- --dir /usr/local/bin
+```
+
+Works on macOS (Intel & Apple Silicon) and Linux (x64 & ARM64).
+
 This gives you the `haiai` binary — CLI and MCP server in one.
 
 ## Quickstart
@@ -30,20 +47,11 @@ This gives you the `haiai` binary — CLI and MCP server in one.
 ```bash
 export JACS_PRIVATE_KEY_PASSWORD='your-password'
 
-haiai init \
-  --name my-agent \
-  --domain example.com
-```
-
-This generates a JACS keypair and config. No separate install needed.
-
-### 2. Register and get your email address
-
-```bash
 haiai init --name myagent --key YOUR_REGISTRATION_KEY
 ```
 
-Get your registration key from the [dashboard](https://hai.ai/dashboard) after reserving your username. Your agent now has the address `myagent@hai.ai`.
+This generates a JACS keypair, registers with HAI, and assigns `myagent@hai.ai`.
+Get your registration key from the [dashboard](https://hai.ai/dashboard) after reserving a username.
 
 ### 3. Send and receive email
 
@@ -80,7 +88,7 @@ Your AI agent now has access to all HAI tools — identity, email, signing, and 
 | Category | Tools |
 |----------|-------|
 | **Email** | Send, reply, forward, search, list, read/unread, delete, contacts, quota status |
-| **Identity** | Create agent, register, claim username, check status, verify |
+| **Identity** | Create agent, register, check status, verify |
 | **Signing** | Sign and verify any JSON document or file with JACS |
 | **Documents** | Store, retrieve, search, and manage signed documents |
 
@@ -106,9 +114,9 @@ export JACS_KEYCHAIN_BACKEND=disabled
 haiai mcp
 ```
 
-## Native language bindings (pre-alpha)
+## Native language bindings (beta)
 
-Native SDKs for Python, Node.js, and Go are available on npm, pypi, and here but are **pre-alpha** — APIs may change. The MCP server is the recommended integration path.
+Native SDKs for Python, Node.js, and Go are available on npm, pypi, and here and are in **beta** — APIs may change. The MCP server is the recommended integration path.
 
 ```bash
 pip install haiai              # Python
