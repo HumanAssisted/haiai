@@ -43,6 +43,7 @@
     { "name": "search-documents", "reason": "Local document storage" },
     { "name": "get-document", "reason": "Local document storage" },
     { "name": "remove-document", "reason": "Local document storage" },
-    { "name": "keychain", "reason": "OS keychain management" }
+    { "name": "keychain", "reason": "OS keychain management" },
+    { "name": "deploy", "reason": "Managed platform deployment (Anthropic Claude Agents)" }
   ]
 }

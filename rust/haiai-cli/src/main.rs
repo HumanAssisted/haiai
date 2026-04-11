@@ -319,6 +319,12 @@ enum Commands {
         #[command(subcommand)]
         action: KeychainAction,
     },
+
+    /// Deploy agent to a managed platform
+    Deploy {
+        #[command(subcommand)]
+        command: DeployCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -414,6 +420,302 @@ enum KeychainAction {
     Delete,
     /// Check if the OS keychain is available and has a stored password
     Status,
+}
+
+#[derive(Subcommand)]
+enum DeployCommands {
+    /// Deploy to Claude Managed Agents (Anthropic)
+    Anthropic {
+        /// Model tier: haiku, sonnet, opus
+        #[arg(long, default_value = "sonnet")]
+        model: String,
+        /// Anthropic API key (or set ANTHROPIC_API_KEY)
+        #[arg(long, env = "ANTHROPIC_API_KEY")]
+        api_key: Option<String>,
+        /// Agent name (default: from JACS config)
+        #[arg(long)]
+        name: Option<String>,
+        /// Print configs without deploying
+        #[arg(long)]
+        dry_run: bool,
+        /// Also create and start an initial session
+        #[arg(long)]
+        session: bool,
+        /// Reuse existing environment ID
+        #[arg(long)]
+        env_id: Option<String>,
+        /// Reuse existing agent ID
+        #[arg(long)]
+        agent_id: Option<String>,
+        /// Redeploy: re-upload changed identity files
+        #[arg(long)]
+        update: bool,
+        /// Published JACS Skill ID (added to agent's skills array)
+        #[arg(long)]
+        skill_id: Option<String>,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Deploy types
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DeployState {
+    env_id: String,
+    agent_id: String,
+    model: String,
+    file_ids: DeployFileIds,
+    deployed_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    updated_at: Option<String>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct DeployFileIds {
+    config: String,
+    public_key: String,
+    private_key: String,
+    password: String,
+}
+
+// ---------------------------------------------------------------------------
+// Deploy helpers
+// ---------------------------------------------------------------------------
+
+fn map_model_tier(tier: &str) -> anyhow::Result<&'static str> {
+    match tier {
+        "haiku" => Ok("claude-haiku-4-5"),
+        "sonnet" => Ok("claude-sonnet-4-6"),
+        "opus" => Ok("claude-opus-4-6"),
+        _ => anyhow::bail!("Unknown model tier '{}'. Use: haiku, sonnet, or opus", tier),
+    }
+}
+
+fn build_environment_config(agent_name: &str) -> serde_json::Value {
+    serde_json::json!({
+        "name": format!("haiai-{}-env", agent_name),
+        "config": {
+            "type": "cloud",
+            "packages": {
+                "apt": ["pkg-config", "libssl-dev", "ca-certificates"],
+                "cargo": ["haiai-cli"]
+            },
+            "networking": {
+                "type": "limited",
+                "allowed_hosts": ["https://api.hai.ai"],
+                "allow_package_managers": true,
+                "allow_mcp_servers": true
+            }
+        }
+    })
+}
+
+fn build_agent_config(
+    agent_name: &str,
+    model_id: &str,
+    skill_id: Option<&str>,
+) -> serde_json::Value {
+    let system_prompt = "You are an AI agent with a verified HAI.AI cryptographic identity. Before using haiai commands, run: ln -s /workspace/jacs.config.json ./jacs.config.json && ln -s /workspace/keys ./keys. Always pass --password-file /workspace/password.txt when running haiai commands. Your identity is already configured — do not run haiai init.";
+
+    let mut agent = serde_json::json!({
+        "name": agent_name,
+        "model": model_id,
+        "system": system_prompt,
+        "tools": [{"type": "agent_toolset_20260401"}]
+    });
+
+    if let Some(sid) = skill_id {
+        agent["skills"] = serde_json::json!([
+            {"type": "custom", "skill_id": sid, "version": "latest"}
+        ]);
+    }
+
+    agent
+}
+
+/// Build session config. Note: the API field is `"agent"` (not `"agent_id"`).
+fn build_session_config(
+    agent_id: &str,
+    env_id: &str,
+    file_ids: &DeployFileIds,
+) -> serde_json::Value {
+    serde_json::json!({
+        "agent": agent_id,
+        "environment_id": env_id,
+        "resources": [
+            {"type": "file", "file_id": file_ids.config, "mount_path": "/workspace/jacs.config.json"},
+            {"type": "file", "file_id": file_ids.public_key, "mount_path": "/workspace/keys/public.pem"},
+            {"type": "file", "file_id": file_ids.private_key, "mount_path": "/workspace/keys/private.pem.enc"},
+            {"type": "file", "file_id": file_ids.password, "mount_path": "/workspace/password.txt"}
+        ]
+    })
+}
+
+async fn upload_file_to_anthropic(
+    client: &reqwest::Client,
+    api_key: &str,
+    path: &std::path::Path,
+) -> anyhow::Result<String> {
+    let file_content = tokio::fs::read(path)
+        .await
+        .with_context(|| format!("failed to read file: {}", path.display()))?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("path has no file name: {}", path.display()))?
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("file name is not valid UTF-8: {}", path.display()))?
+        .to_string();
+
+    let form = reqwest::multipart::Form::new().part(
+        "file",
+        reqwest::multipart::Part::bytes(file_content).file_name(file_name),
+    );
+
+    let resp = client
+        .post("https://api.anthropic.com/v1/files")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("anthropic-beta", "files-api-2025-04-14")
+        .multipart(form)
+        .send()
+        .await
+        .context("Files API request failed")?;
+
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.context("failed to parse Files API response")?;
+    if !status.is_success() {
+        anyhow::bail!("Files API error ({}): {}", status, body);
+    }
+
+    body["id"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Files API response missing 'id' field"))
+}
+
+/// Post JSON to an Anthropic Managed Agents endpoint with the required beta header.
+async fn anthropic_managed_post(
+    client: &reqwest::Client,
+    api_key: &str,
+    url: &str,
+    body: &serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
+    let resp = client
+        .post(url)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("anthropic-beta", "managed-agents-2026-04-01")
+        .json(body)
+        .send()
+        .await
+        .with_context(|| format!("POST {} failed", url))?;
+
+    let status = resp.status();
+    let resp_body: serde_json::Value = resp
+        .json()
+        .await
+        .with_context(|| format!("failed to parse response from {}", url))?;
+    if !status.is_success() {
+        anyhow::bail!("API error ({}) from {}: {}", status, url, resp_body);
+    }
+    Ok(resp_body)
+}
+
+/// Discover identity files from the local JACS agent config directory.
+struct IdentityFiles {
+    config_path: std::path::PathBuf,
+    public_key_path: std::path::PathBuf,
+    private_key_path: std::path::PathBuf,
+}
+
+fn discover_identity_files() -> anyhow::Result<IdentityFiles> {
+    let config_path = std::path::PathBuf::from("jacs.config.json");
+    if !config_path.exists() {
+        anyhow::bail!(
+            "jacs.config.json not found in current directory. Run 'haiai init' first."
+        );
+    }
+
+    let config_content =
+        std::fs::read_to_string(&config_path).context("failed to read jacs.config.json")?;
+    let config: serde_json::Value =
+        serde_json::from_str(&config_content).context("invalid JSON in jacs.config.json")?;
+
+    let key_dir_str = config["key_directory"]
+        .as_str()
+        .unwrap_or("./jacs_keys");
+    let key_dir = std::path::PathBuf::from(key_dir_str);
+    if !key_dir.exists() {
+        anyhow::bail!(
+            "Key directory '{}' not found. Run 'haiai init' first.",
+            key_dir.display()
+        );
+    }
+
+    let mut public_key_path: Option<std::path::PathBuf> = None;
+    let mut private_key_path: Option<std::path::PathBuf> = None;
+
+    for entry in std::fs::read_dir(&key_dir)
+        .with_context(|| format!("failed to read key directory: {}", key_dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if name.ends_with(".pem.enc") {
+            private_key_path = Some(path);
+        } else if name.ends_with(".pem") {
+            public_key_path = Some(path);
+        }
+    }
+
+    let public_key_path =
+        public_key_path.ok_or_else(|| anyhow::anyhow!("no .pem file found in {}", key_dir.display()))?;
+    let private_key_path = private_key_path
+        .ok_or_else(|| anyhow::anyhow!("no .pem.enc file found in {}", key_dir.display()))?;
+
+    Ok(IdentityFiles {
+        config_path,
+        public_key_path,
+        private_key_path,
+    })
+}
+
+/// Resolve the agent name: explicit flag > JACS config name field.
+fn resolve_agent_name(explicit: Option<&str>) -> anyhow::Result<String> {
+    if let Some(name) = explicit {
+        return Ok(name.to_string());
+    }
+    let config_path = std::path::PathBuf::from("jacs.config.json");
+    let content =
+        std::fs::read_to_string(&config_path).context("failed to read jacs.config.json")?;
+    let config: serde_json::Value =
+        serde_json::from_str(&content).context("invalid JSON in jacs.config.json")?;
+    config["agent_name"]
+        .as_str()
+        .or_else(|| config["name"].as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Could not determine agent name. Pass --name or set agent_name in jacs.config.json."
+            )
+        })
+}
+
+/// Resolve the password for deploy file upload: --password-file > env var > error.
+/// Does NOT prompt interactively since deploy is non-interactive by nature.
+fn resolve_deploy_password(password_file: Option<&str>) -> anyhow::Result<String> {
+    if let Some(path) = password_file {
+        return read_password_file(path);
+    }
+    if let Ok(pass) = std::env::var("JACS_PRIVATE_KEY_PASSWORD") {
+        if !pass.is_empty() {
+            return Ok(pass);
+        }
+    }
+    anyhow::bail!(
+        "Password required for deploy. Set JACS_PRIVATE_KEY_PASSWORD or pass --password-file."
+    )
 }
 
 /// Resolve the effective `--storage` value, considering `--storage-env`.
@@ -635,7 +937,7 @@ async fn main() -> anyhow::Result<()> {
     // Commands that load an existing agent need the private key password. Prompt once if not set and not -q.
     if !matches!(
         cli.command,
-        Commands::Init { .. } | Commands::SelfKnowledge { .. }
+        Commands::Init { .. } | Commands::SelfKnowledge { .. } | Commands::Deploy { .. }
     ) {
         ensure_agent_password(cli.quiet, cli.password_file.as_deref())
             .context("failed to resolve private key password")?;
@@ -1447,6 +1749,331 @@ async fn main() -> anyhow::Result<()> {
                         .unwrap_or(false);
                     println!("Keychain available: {available}");
                     println!("Password stored:    {has_password}");
+                }
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // Deploy
+        // -----------------------------------------------------------------
+        Commands::Deploy { command } => {
+            match command {
+                DeployCommands::Anthropic {
+                    model,
+                    api_key,
+                    name,
+                    dry_run,
+                    session,
+                    env_id,
+                    agent_id,
+                    update,
+                    skill_id,
+                } => {
+                    let model_id = map_model_tier(&model)?;
+                    let agent_name = resolve_agent_name(name.as_deref())?;
+
+                    let api_key = api_key.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Anthropic API key required. Pass --api-key or set ANTHROPIC_API_KEY."
+                        )
+                    })?;
+
+                    let env_config = build_environment_config(&agent_name);
+                    let agent_config =
+                        build_agent_config(&agent_name, model_id, skill_id.as_deref());
+
+                    if dry_run {
+                        println!("--- Dry Run ---\n");
+                        println!("Model: {} ({})", model, model_id);
+                        println!("Agent: {}\n", agent_name);
+                        println!("Environment config:");
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&env_config).unwrap_or_default()
+                        );
+                        println!("\nAgent config:");
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&agent_config).unwrap_or_default()
+                        );
+                        let placeholder_ids = DeployFileIds {
+                            config: "<config-file-id>".into(),
+                            public_key: "<public-key-file-id>".into(),
+                            private_key: "<private-key-file-id>".into(),
+                            password: "<password-file-id>".into(),
+                        };
+                        let session_config =
+                            build_session_config("<agent-id>", "<env-id>", &placeholder_ids);
+                        println!("\nSession config:");
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&session_config).unwrap_or_default()
+                        );
+                        return Ok(());
+                    }
+
+                    let http_client = reqwest::Client::new();
+                    let deploy_state_path = std::path::PathBuf::from(".haiai-deploy.json");
+
+                    if update {
+                        // -------------------------------------------------------
+                        // Redeploy: re-upload identity files, update state
+                        // -------------------------------------------------------
+                        let existing_raw = std::fs::read_to_string(&deploy_state_path).context(
+                            ".haiai-deploy.json not found. Run 'haiai deploy anthropic' first (without --update).",
+                        )?;
+                        let mut state: DeployState =
+                            serde_json::from_str(&existing_raw).context("invalid .haiai-deploy.json")?;
+
+                        let identity = discover_identity_files()?;
+                        let password = resolve_deploy_password(cli.password_file.as_deref())?;
+                        let password_tmp = std::env::temp_dir().join("haiai-deploy-pw.tmp");
+                        std::fs::write(&password_tmp, &password)
+                            .context("failed to write temporary password file")?;
+
+                        println!("Re-uploading identity files...");
+                        let old_ids = state.file_ids.clone();
+                        let new_config_id =
+                            upload_file_to_anthropic(&http_client, &api_key, &identity.config_path)
+                                .await?;
+                        let new_pub_id = upload_file_to_anthropic(
+                            &http_client,
+                            &api_key,
+                            &identity.public_key_path,
+                        )
+                        .await?;
+                        let new_priv_id = upload_file_to_anthropic(
+                            &http_client,
+                            &api_key,
+                            &identity.private_key_path,
+                        )
+                        .await?;
+                        let new_pw_id =
+                            upload_file_to_anthropic(&http_client, &api_key, &password_tmp).await?;
+
+                        let _ = std::fs::remove_file(&password_tmp);
+
+                        state.file_ids = DeployFileIds {
+                            config: new_config_id,
+                            public_key: new_pub_id,
+                            private_key: new_priv_id,
+                            password: new_pw_id,
+                        };
+                        state.updated_at = Some(chrono::Utc::now().to_rfc3339());
+
+                        let state_json = serde_json::to_string_pretty(&state)
+                            .context("failed to serialize deploy state")?;
+                        std::fs::write(&deploy_state_path, &state_json)
+                            .context("failed to write .haiai-deploy.json")?;
+
+                        println!("\nFiles updated:");
+                        println!(
+                            "  config:      {} -> {}",
+                            old_ids.config, state.file_ids.config
+                        );
+                        println!(
+                            "  public_key:  {} -> {}",
+                            old_ids.public_key, state.file_ids.public_key
+                        );
+                        println!(
+                            "  private_key: {} -> {}",
+                            old_ids.private_key, state.file_ids.private_key
+                        );
+                        println!(
+                            "  password:    {} -> {}",
+                            old_ids.password, state.file_ids.password
+                        );
+                        println!("\nExisting env_id:   {}", state.env_id);
+                        println!("Existing agent_id: {}", state.agent_id);
+
+                        if session {
+                            println!("\nCreating session...");
+                            let session_config = build_session_config(
+                                &state.agent_id,
+                                &state.env_id,
+                                &state.file_ids,
+                            );
+                            let session_resp = anthropic_managed_post(
+                                &http_client,
+                                &api_key,
+                                "https://api.anthropic.com/v1/sessions",
+                                &session_config,
+                            )
+                            .await?;
+                            let session_id = session_resp["id"].as_str().unwrap_or("<unknown>");
+                            println!("  Session ID: {}", session_id);
+
+                            let event_url = format!(
+                                "https://api.anthropic.com/v1/sessions/{}/events",
+                                session_id
+                            );
+                            let event_body = serde_json::json!({
+                                "type": "user.message",
+                                "content": [{"type": "text", "text": "Your HAI.AI identity is ready. Run `ln -s /workspace/jacs.config.json ./jacs.config.json && ln -s /workspace/keys ./keys` to set up symlinks, then use `haiai` CLI commands with `--password-file /workspace/password.txt`."}]
+                            });
+                            let _ = anthropic_managed_post(
+                                &http_client,
+                                &api_key,
+                                &event_url,
+                                &event_body,
+                            )
+                            .await?;
+                            println!("  Session started.");
+                        }
+                    } else {
+                        // -------------------------------------------------------
+                        // Initial deploy
+                        // -------------------------------------------------------
+                        let identity = discover_identity_files()?;
+                        let password = resolve_deploy_password(cli.password_file.as_deref())?;
+                        let password_tmp = std::env::temp_dir().join("haiai-deploy-pw.tmp");
+                        std::fs::write(&password_tmp, &password)
+                            .context("failed to write temporary password file")?;
+
+                        println!("Identity files uploaded:");
+                        let config_file_id = upload_file_to_anthropic(
+                            &http_client,
+                            &api_key,
+                            &identity.config_path,
+                        )
+                        .await?;
+                        println!("  Config:   {}", config_file_id);
+                        let pub_file_id = upload_file_to_anthropic(
+                            &http_client,
+                            &api_key,
+                            &identity.public_key_path,
+                        )
+                        .await?;
+                        println!("  PubKey:   {}", pub_file_id);
+                        let priv_file_id = upload_file_to_anthropic(
+                            &http_client,
+                            &api_key,
+                            &identity.private_key_path,
+                        )
+                        .await?;
+                        println!("  PrivKey:  {}", priv_file_id);
+                        let pw_file_id =
+                            upload_file_to_anthropic(&http_client, &api_key, &password_tmp).await?;
+                        println!("  Password: {}", pw_file_id);
+
+                        let _ = std::fs::remove_file(&password_tmp);
+
+                        let file_ids = DeployFileIds {
+                            config: config_file_id,
+                            public_key: pub_file_id,
+                            private_key: priv_file_id,
+                            password: pw_file_id,
+                        };
+
+                        // Create environment (or reuse)
+                        let resolved_env_id = if let Some(eid) = env_id {
+                            println!("\nReusing environment: {}", eid);
+                            eid
+                        } else {
+                            println!("\nCreating environment...");
+                            let env_resp = anthropic_managed_post(
+                                &http_client,
+                                &api_key,
+                                "https://api.anthropic.com/v1/environments",
+                                &env_config,
+                            )
+                            .await?;
+                            let eid = env_resp["id"]
+                                .as_str()
+                                .map(|s| s.to_string())
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "Environment response missing 'id': {}",
+                                        env_resp
+                                    )
+                                })?;
+                            println!("  Environment ID: {}", eid);
+                            eid
+                        };
+
+                        // Create agent (or reuse)
+                        let resolved_agent_id = if let Some(aid) = agent_id {
+                            println!("Reusing agent: {}", aid);
+                            aid
+                        } else {
+                            println!("Creating agent...");
+                            let agent_resp = anthropic_managed_post(
+                                &http_client,
+                                &api_key,
+                                "https://api.anthropic.com/v1/agents",
+                                &agent_config,
+                            )
+                            .await?;
+                            let aid = agent_resp["id"]
+                                .as_str()
+                                .map(|s| s.to_string())
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!("Agent response missing 'id': {}", agent_resp)
+                                })?;
+                            println!("  Agent ID: {}", aid);
+                            aid
+                        };
+
+                        // Save deploy state
+                        let state = DeployState {
+                            env_id: resolved_env_id.clone(),
+                            agent_id: resolved_agent_id.clone(),
+                            model: model_id.to_string(),
+                            file_ids: file_ids.clone(),
+                            deployed_at: chrono::Utc::now().to_rfc3339(),
+                            updated_at: None,
+                        };
+                        let state_json = serde_json::to_string_pretty(&state)
+                            .context("failed to serialize deploy state")?;
+                        std::fs::write(&deploy_state_path, &state_json)
+                            .context("failed to write .haiai-deploy.json")?;
+                        println!("\nDeploy state saved to .haiai-deploy.json");
+
+                        println!("\nEnvironment: {} (haiai-{}-env)", resolved_env_id, agent_name);
+                        println!("Agent:       {} ({})", resolved_agent_id, agent_name);
+                        println!("Model:       {}", model_id);
+                        println!(
+                            "\nTo start a session:\n  haiai deploy anthropic --session --env-id {} --agent-id {}",
+                            resolved_env_id, resolved_agent_id
+                        );
+                        println!("\nTo redeploy after updating agent or rotating keys:");
+                        println!("  haiai deploy anthropic --update");
+
+                        if session {
+                            println!("\nCreating session...");
+                            let session_config = build_session_config(
+                                &resolved_agent_id,
+                                &resolved_env_id,
+                                &file_ids,
+                            );
+                            let session_resp = anthropic_managed_post(
+                                &http_client,
+                                &api_key,
+                                "https://api.anthropic.com/v1/sessions",
+                                &session_config,
+                            )
+                            .await?;
+                            let session_id = session_resp["id"].as_str().unwrap_or("<unknown>");
+                            println!("  Session ID: {}", session_id);
+
+                            let event_url = format!(
+                                "https://api.anthropic.com/v1/sessions/{}/events",
+                                session_id
+                            );
+                            let event_body = serde_json::json!({
+                                "type": "user.message",
+                                "content": [{"type": "text", "text": "Your HAI.AI identity is ready. Run `ln -s /workspace/jacs.config.json ./jacs.config.json && ln -s /workspace/keys ./keys` to set up symlinks, then use `haiai` CLI commands with `--password-file /workspace/password.txt`."}]
+                            });
+                            let _ = anthropic_managed_post(
+                                &http_client,
+                                &api_key,
+                                &event_url,
+                                &event_body,
+                            )
+                            .await?;
+                            println!("  Session started.");
+                        }
+                    }
                 }
             }
         }
@@ -2561,6 +3188,162 @@ mod tests {
             phantom_cli.is_empty(),
             "mcp_cli_parity.json references CLI commands that don't exist: {:?}",
             phantom_cli
+        );
+    }
+
+    #[test]
+    fn parse_deploy_anthropic_defaults() {
+        let cli = Cli::parse_from(["haiai", "deploy", "anthropic"]);
+        match cli.command {
+            Commands::Deploy {
+                command:
+                    DeployCommands::Anthropic {
+                        model,
+                        api_key: _,
+                        name,
+                        dry_run,
+                        session,
+                        env_id,
+                        agent_id,
+                        update,
+                        skill_id,
+                    },
+            } => {
+                assert_eq!(model, "sonnet");
+                assert!(name.is_none());
+                assert!(!dry_run);
+                assert!(!session);
+                assert!(env_id.is_none());
+                assert!(agent_id.is_none());
+                assert!(!update);
+                assert!(skill_id.is_none());
+            }
+            _ => panic!("expected Deploy Anthropic command"),
+        }
+    }
+
+    #[test]
+    fn parse_deploy_anthropic_all_flags() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "deploy",
+            "anthropic",
+            "--model",
+            "opus",
+            "--api-key",
+            "sk-test",
+            "--name",
+            "mybot",
+            "--dry-run",
+            "--session",
+            "--env-id",
+            "env_123",
+            "--agent-id",
+            "agent_456",
+            "--update",
+            "--skill-id",
+            "skill_789",
+        ]);
+        match cli.command {
+            Commands::Deploy {
+                command:
+                    DeployCommands::Anthropic {
+                        model,
+                        api_key,
+                        name,
+                        dry_run,
+                        session,
+                        env_id,
+                        agent_id,
+                        update,
+                        skill_id,
+                    },
+            } => {
+                assert_eq!(model, "opus");
+                assert_eq!(api_key.as_deref(), Some("sk-test"));
+                assert_eq!(name.as_deref(), Some("mybot"));
+                assert!(dry_run);
+                assert!(session);
+                assert_eq!(env_id.as_deref(), Some("env_123"));
+                assert_eq!(agent_id.as_deref(), Some("agent_456"));
+                assert!(update);
+                assert_eq!(skill_id.as_deref(), Some("skill_789"));
+            }
+            _ => panic!("expected Deploy Anthropic command"),
+        }
+    }
+
+    #[test]
+    fn model_tier_mapping() {
+        assert_eq!(map_model_tier("haiku").unwrap(), "claude-haiku-4-5");
+        assert_eq!(map_model_tier("sonnet").unwrap(), "claude-sonnet-4-6");
+        assert_eq!(map_model_tier("opus").unwrap(), "claude-opus-4-6");
+        assert!(map_model_tier("gpt4").is_err());
+    }
+
+    #[test]
+    fn build_configs_are_valid_json() {
+        let env = build_environment_config("test-agent");
+        assert_eq!(env["name"], "haiai-test-agent-env");
+        assert_eq!(env["config"]["type"], "cloud");
+
+        let agent = build_agent_config("test-agent", "claude-sonnet-4-6", None);
+        assert_eq!(agent["name"], "test-agent");
+        assert_eq!(agent["model"], "claude-sonnet-4-6");
+        assert!(agent.get("skills").is_none());
+
+        let agent_with_skill =
+            build_agent_config("test-agent", "claude-sonnet-4-6", Some("skill_abc"));
+        assert!(agent_with_skill["skills"].is_array());
+
+        let ids = DeployFileIds {
+            config: "f1".into(),
+            public_key: "f2".into(),
+            private_key: "f3".into(),
+            password: "f4".into(),
+        };
+        let session = build_session_config("agent_1", "env_1", &ids);
+        assert_eq!(session["agent"], "agent_1");
+        assert_eq!(session["environment_id"], "env_1");
+        assert!(session["resources"].is_array());
+        assert_eq!(session["resources"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn session_config_uses_agent_not_agent_id() {
+        let ids = DeployFileIds {
+            config: "f1".into(),
+            public_key: "f2".into(),
+            private_key: "f3".into(),
+            password: "f4".into(),
+        };
+        let session = build_session_config("agent_1", "env_1", &ids);
+        // Must use "agent", NOT "agent_id" per Managed Agents API
+        assert!(session.get("agent").is_some());
+        assert!(session.get("agent_id").is_none());
+    }
+
+    #[test]
+    fn agent_system_prompt_does_not_instruct_init() {
+        let agent = build_agent_config("test", "claude-sonnet-4-6", None);
+        let system = agent["system"].as_str().unwrap();
+        assert!(
+            system.contains("do not run haiai init"),
+            "system prompt must say not to run haiai init"
+        );
+        assert!(
+            system.contains("--password-file /workspace/password.txt"),
+            "system prompt must reference password-file"
+        );
+    }
+
+    #[test]
+    fn environment_config_has_cargo_haiai_cli() {
+        let env = build_environment_config("test");
+        let cargo = &env["config"]["packages"]["cargo"];
+        assert!(
+            cargo.as_array().unwrap().contains(&serde_json::json!("haiai-cli")),
+            "environment must install haiai-cli via cargo"
         );
     }
 }
