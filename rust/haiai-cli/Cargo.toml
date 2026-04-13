@@ -32,6 +32,7 @@ reqwest = { workspace = true, features = ["rustls"] }
 chrono = "0.4"
 rpassword = "7"
 atty = "0.2"
+percent-encoding.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

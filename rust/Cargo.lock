@@ -1287,6 +1287,7 @@ dependencies = [
  "haiai",
  "jacs",
  "jacs-mcp",
+ "percent-encoding",
  "reqwest 0.13.2",
  "rmcp",
  "rpassword",

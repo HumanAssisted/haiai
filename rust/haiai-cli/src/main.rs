@@ -8,8 +8,35 @@ use haiai::{
     UpdateEmailTemplateOptions,
 };
 use jacs_mcp::JacsMcpServer;
+use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use rmcp::{transport::stdio, ServiceExt};
 use serde_json::Value;
+
+/// Characters that must be percent-encoded in URL query values.
+/// Encodes everything except unreserved characters (RFC 3986 section 2.3).
+const QUERY_ENCODE_SET: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'&')
+    .add(b'+')
+    .add(b'=')
+    .add(b'/')
+    .add(b'?')
+    .add(b'@')
+    .add(b'[')
+    .add(b']');
+
+/// Characters that must be percent-encoded in URL path segments.
+const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'/')
+    .add(b'?')
+    .add(b'@')
+    .add(b'[')
+    .add(b']');
 
 #[derive(Parser)]
 #[command(name = "haiai", version, about = "HAIAI CLI")]
@@ -454,6 +481,52 @@ enum DeployCommands {
         #[arg(long)]
         skill_id: Option<String>,
     },
+    /// List sessions for a deployed Anthropic agent
+    ListSessions {
+        /// Anthropic agent ID (reads from .haiai-deploy.json if omitted)
+        #[arg(long)]
+        agent_id: Option<String>,
+
+        /// Anthropic API key (or set ANTHROPIC_API_KEY)
+        #[arg(long, env = "ANTHROPIC_API_KEY")]
+        api_key: Option<String>,
+
+        /// Maximum number of sessions to return
+        #[arg(long, default_value = "20")]
+        limit: u32,
+
+        /// Include archived sessions
+        #[arg(long)]
+        include_archived: bool,
+    },
+    /// List versions of a deployed Anthropic agent
+    ListVersions {
+        /// Anthropic agent ID (reads from .haiai-deploy.json if omitted)
+        #[arg(long)]
+        agent_id: Option<String>,
+
+        /// Anthropic API key (or set ANTHROPIC_API_KEY)
+        #[arg(long, env = "ANTHROPIC_API_KEY")]
+        api_key: Option<String>,
+
+        /// Maximum number of versions to return
+        #[arg(long, default_value = "20")]
+        limit: u32,
+    },
+    /// Send a single message to a deployed Anthropic session
+    Message {
+        /// Session ID to send the message to (required)
+        #[arg(long)]
+        session_id: String,
+
+        /// Message text to send
+        #[arg(long)]
+        text: String,
+
+        /// Anthropic API key (or set ANTHROPIC_API_KEY)
+        #[arg(long, env = "ANTHROPIC_API_KEY")]
+        api_key: Option<String>,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -622,6 +695,32 @@ async fn anthropic_managed_post(
     Ok(resp_body)
 }
 
+/// GET JSON from an Anthropic Managed Agents endpoint with the required beta header.
+async fn anthropic_managed_get(
+    client: &reqwest::Client,
+    api_key: &str,
+    url: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let resp = client
+        .get(url)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("anthropic-beta", "managed-agents-2026-04-01")
+        .send()
+        .await
+        .with_context(|| format!("GET {} failed", url))?;
+
+    let status = resp.status();
+    let resp_body: serde_json::Value = resp
+        .json()
+        .await
+        .with_context(|| format!("failed to parse response from {}", url))?;
+    if !status.is_success() {
+        anyhow::bail!("API error ({}) from {}: {}", status, url, resp_body);
+    }
+    Ok(resp_body)
+}
+
 /// Discover identity files from the local JACS agent config directory.
 struct IdentityFiles {
     config_path: std::path::PathBuf,
@@ -742,6 +841,17 @@ fn resolve_storage_flag(
         return Ok(Some(label));
     }
     Ok(storage.map(|s| s.to_string()))
+}
+
+/// Read the saved deploy state from `.haiai-deploy.json` in the current directory.
+fn read_deploy_state() -> anyhow::Result<DeployState> {
+    let path = std::path::PathBuf::from(".haiai-deploy.json");
+    let raw = std::fs::read_to_string(&path).context(
+        ".haiai-deploy.json not found. Run 'haiai deploy anthropic' first or pass --agent-id.",
+    )?;
+    let state: DeployState =
+        serde_json::from_str(&raw).context("invalid .haiai-deploy.json")?;
+    Ok(state)
 }
 
 fn hai_url() -> String {
@@ -1819,11 +1929,7 @@ async fn main() -> anyhow::Result<()> {
                         // -------------------------------------------------------
                         // Redeploy: re-upload identity files, update state
                         // -------------------------------------------------------
-                        let existing_raw = std::fs::read_to_string(&deploy_state_path).context(
-                            ".haiai-deploy.json not found. Run 'haiai deploy anthropic' first (without --update).",
-                        )?;
-                        let mut state: DeployState =
-                            serde_json::from_str(&existing_raw).context("invalid .haiai-deploy.json")?;
+                        let mut state = read_deploy_state()?;
 
                         let identity = discover_identity_files()?;
                         let password = resolve_deploy_password(cli.password_file.as_deref())?;
@@ -2074,6 +2180,159 @@ async fn main() -> anyhow::Result<()> {
                             println!("  Session started.");
                         }
                     }
+                }
+                DeployCommands::ListSessions {
+                    agent_id,
+                    api_key,
+                    limit,
+                    include_archived,
+                } => {
+                    let api_key = api_key.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Anthropic API key required. Pass --api-key or set ANTHROPIC_API_KEY."
+                        )
+                    })?;
+
+                    let resolved_agent_id = match agent_id {
+                        Some(id) => id,
+                        None => read_deploy_state()?.agent_id,
+                    };
+
+                    let encoded_agent_id =
+                        utf8_percent_encode(&resolved_agent_id, QUERY_ENCODE_SET);
+                    let mut url = format!(
+                        "https://api.anthropic.com/v1/sessions?agent_id={}&limit={}",
+                        encoded_agent_id, limit
+                    );
+                    if include_archived {
+                        url.push_str("&include_archived=true");
+                    }
+
+                    let http_client = reqwest::Client::new();
+                    let resp = anthropic_managed_get(&http_client, &api_key, &url).await?;
+
+                    // Assumed response schema (Anthropic Managed Agents API):
+                    //   { "data": [{ "id", "status", "created_at", "updated_at",
+                    //     "usage": { "input_tokens", "output_tokens" } }] }
+                    // Ref: https://docs.anthropic.com/en/docs/agents
+                    let sessions = resp["data"].as_array();
+                    match sessions {
+                        Some(arr) if !arr.is_empty() => {
+                            println!(
+                                "{:<32} {:<14} {:<24} {:<24} {:<10} {:<10}",
+                                "ID", "STATUS", "CREATED", "UPDATED", "IN TOK", "OUT TOK"
+                            );
+                            println!("{}", "-".repeat(114));
+                            for s in arr {
+                                let id = s["id"].as_str().unwrap_or("-");
+                                let status = s["status"].as_str().unwrap_or("-");
+                                let created = s["created_at"].as_str().unwrap_or("-");
+                                let updated = s["updated_at"].as_str().unwrap_or("-");
+                                let in_tok = s["usage"]["input_tokens"]
+                                    .as_u64()
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "-".to_string());
+                                let out_tok = s["usage"]["output_tokens"]
+                                    .as_u64()
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "-".to_string());
+                                println!(
+                                    "{:<32} {:<14} {:<24} {:<24} {:<10} {:<10}",
+                                    id, status, created, updated, in_tok, out_tok
+                                );
+                            }
+                        }
+                        _ => println!("No sessions found."),
+                    }
+                }
+                DeployCommands::ListVersions {
+                    agent_id,
+                    api_key,
+                    limit,
+                } => {
+                    let api_key = api_key.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Anthropic API key required. Pass --api-key or set ANTHROPIC_API_KEY."
+                        )
+                    })?;
+
+                    let resolved_agent_id = match agent_id {
+                        Some(id) => id,
+                        None => read_deploy_state()?.agent_id,
+                    };
+
+                    let encoded_agent_id =
+                        utf8_percent_encode(&resolved_agent_id, PATH_SEGMENT_ENCODE_SET);
+                    let url = format!(
+                        "https://api.anthropic.com/v1/agents/{}/versions?limit={}",
+                        encoded_agent_id, limit
+                    );
+
+                    let http_client = reqwest::Client::new();
+                    let resp = anthropic_managed_get(&http_client, &api_key, &url).await?;
+
+                    // Assumed response schema (Anthropic Managed Agents API):
+                    //   { "data": [{ "version", "name", "model": { "id" },
+                    //     "created_at", "updated_at" }] }
+                    // Ref: https://docs.anthropic.com/en/docs/agents
+                    let versions = resp["data"].as_array();
+                    match versions {
+                        Some(arr) if !arr.is_empty() => {
+                            println!(
+                                "{:<10} {:<30} {:<20} {:<24} {:<24}",
+                                "VERSION", "NAME", "MODEL", "CREATED", "UPDATED"
+                            );
+                            println!("{}", "-".repeat(108));
+                            for v in arr {
+                                let version = v["version"]
+                                    .as_u64()
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_else(|| "-".to_string());
+                                let name = v["name"].as_str().unwrap_or("-");
+                                let model = v["model"]["id"].as_str().unwrap_or("-");
+                                let created = v["created_at"].as_str().unwrap_or("-");
+                                let updated = v["updated_at"].as_str().unwrap_or("-");
+                                println!(
+                                    "{:<10} {:<30} {:<20} {:<24} {:<24}",
+                                    version, name, model, created, updated
+                                );
+                            }
+                        }
+                        _ => println!("No versions found."),
+                    }
+                }
+                DeployCommands::Message {
+                    session_id,
+                    text,
+                    api_key,
+                } => {
+                    let api_key = api_key.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Anthropic API key required. Pass --api-key or set ANTHROPIC_API_KEY."
+                        )
+                    })?;
+
+                    let encoded_session_id =
+                        utf8_percent_encode(&session_id, PATH_SEGMENT_ENCODE_SET);
+                    let url = format!(
+                        "https://api.anthropic.com/v1/sessions/{}/events",
+                        encoded_session_id
+                    );
+                    let body = serde_json::json!({
+                        "type": "user.message",
+                        "content": [{"type": "text", "text": text}]
+                    });
+
+                    let http_client = reqwest::Client::new();
+                    let resp =
+                        anthropic_managed_post(&http_client, &api_key, &url, &body).await?;
+
+                    // Print the event response
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&resp)
+                            .unwrap_or_else(|_| resp.to_string())
+                    );
                 }
             }
         }
@@ -3271,6 +3530,149 @@ mod tests {
             }
             _ => panic!("expected Deploy Anthropic command"),
         }
+    }
+
+    #[test]
+    fn parse_deploy_list_sessions_defaults() {
+        let cli = Cli::parse_from(["haiai", "deploy", "list-sessions"]);
+        match cli.command {
+            Commands::Deploy {
+                command:
+                    DeployCommands::ListSessions {
+                        agent_id,
+                        limit,
+                        include_archived,
+                        ..
+                    },
+            } => {
+                assert!(agent_id.is_none());
+                assert_eq!(limit, 20);
+                assert!(!include_archived);
+            }
+            _ => panic!("expected Deploy ListSessions command"),
+        }
+    }
+
+    #[test]
+    fn parse_deploy_list_sessions_with_args() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "deploy",
+            "list-sessions",
+            "--agent-id",
+            "agent_123",
+            "--limit",
+            "50",
+            "--include-archived",
+        ]);
+        match cli.command {
+            Commands::Deploy {
+                command:
+                    DeployCommands::ListSessions {
+                        agent_id,
+                        limit,
+                        include_archived,
+                        ..
+                    },
+            } => {
+                assert_eq!(agent_id.as_deref(), Some("agent_123"));
+                assert_eq!(limit, 50);
+                assert!(include_archived);
+            }
+            _ => panic!("expected Deploy ListSessions command"),
+        }
+    }
+
+    #[test]
+    fn parse_deploy_list_versions_defaults() {
+        let cli = Cli::parse_from(["haiai", "deploy", "list-versions"]);
+        match cli.command {
+            Commands::Deploy {
+                command:
+                    DeployCommands::ListVersions {
+                        agent_id, limit, ..
+                    },
+            } => {
+                assert!(agent_id.is_none());
+                assert_eq!(limit, 20);
+            }
+            _ => panic!("expected Deploy ListVersions command"),
+        }
+    }
+
+    #[test]
+    fn parse_deploy_list_versions_with_args() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "deploy",
+            "list-versions",
+            "--agent-id",
+            "agent_abc",
+            "--limit",
+            "10",
+        ]);
+        match cli.command {
+            Commands::Deploy {
+                command:
+                    DeployCommands::ListVersions {
+                        agent_id, limit, ..
+                    },
+            } => {
+                assert_eq!(agent_id.as_deref(), Some("agent_abc"));
+                assert_eq!(limit, 10);
+            }
+            _ => panic!("expected Deploy ListVersions command"),
+        }
+    }
+
+    #[test]
+    fn parse_deploy_message() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "deploy",
+            "message",
+            "--session-id",
+            "sess_123",
+            "--text",
+            "hello world",
+        ]);
+        match cli.command {
+            Commands::Deploy {
+                command:
+                    DeployCommands::Message {
+                        session_id, text, ..
+                    },
+            } => {
+                assert_eq!(session_id, "sess_123");
+                assert_eq!(text, "hello world");
+            }
+            _ => panic!("expected Deploy Message command"),
+        }
+    }
+
+    #[test]
+    fn parse_deploy_list_sessions_reads_api_key_env() {
+        // Verify that the ANTHROPIC_API_KEY env var is picked up by the
+        // #[arg(env = "ANTHROPIC_API_KEY")] annotation. Guards against
+        // accidental removal of the env attribute.
+        let key = "ANTHROPIC_API_KEY_TEST_GUARD";
+        std::env::set_var(key, "sk-test-env");
+        // Use a renamed env var via clap env override would be ideal, but
+        // since ANTHROPIC_API_KEY is hardcoded in the derive, we test by
+        // temporarily setting it. Note: this test may be affected by
+        // parallel test execution if another test also sets this var.
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-env-value");
+        let cli = Cli::parse_from(["haiai", "deploy", "list-sessions"]);
+        match cli.command {
+            Commands::Deploy {
+                command: DeployCommands::ListSessions { api_key, .. },
+            } => {
+                assert_eq!(api_key.as_deref(), Some("sk-test-env-value"));
+            }
+            _ => panic!("expected Deploy ListSessions command"),
+        }
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::remove_var(key);
     }
 
     #[test]

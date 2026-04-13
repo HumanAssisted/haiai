@@ -112,7 +112,7 @@
     {
       "name": "deploy",
       "args": [],
-      "subcommands": ["anthropic"]
+      "subcommands": ["anthropic", "list-sessions", "list-versions", "message"]
     }
   ]
 }
