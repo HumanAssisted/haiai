@@ -139,6 +139,10 @@ enum Commands {
         /// Labels/tags to apply (repeatable)
         #[arg(long)]
         labels: Vec<String>,
+
+        /// Emit machine-readable JSON instead of the default two-line summary
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
 
     /// List email messages
@@ -166,6 +170,10 @@ enum Commands {
         /// Filter by label/tag
         #[arg(long)]
         label: Option<String>,
+
+        /// Emit machine-readable JSON (array of EmailMessage) instead of the human table
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
 
     /// Search email messages
@@ -1285,6 +1293,7 @@ async fn main() -> anyhow::Result<()> {
             cc,
             bcc,
             labels,
+            json,
         } => {
             let client = load_client_with_email().await?;
             let options = SendEmailOptions {
@@ -1302,8 +1311,15 @@ async fn main() -> anyhow::Result<()> {
                 .send_signed_email(&options)
                 .await
                 .context("send email failed")?;
-            println!("  Message ID: {}", result.message_id);
-            println!("  Status:     {}", result.status);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&result).context("serialize send result")?
+                );
+            } else {
+                println!("  Message ID: {}", result.message_id);
+                println!("  Status:     {}", result.status);
+            }
         }
 
         Commands::ListMessages {
@@ -1313,6 +1329,7 @@ async fn main() -> anyhow::Result<()> {
             is_read,
             folder,
             label,
+            json,
         } => {
             let client = load_client()?;
             let options = ListMessagesOptions {
@@ -1328,7 +1345,14 @@ async fn main() -> anyhow::Result<()> {
                 .list_messages(&options)
                 .await
                 .context("list messages failed")?;
-            print_message_table(&messages);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&messages).context("serialize list result")?
+                );
+            } else {
+                print_message_table(&messages);
+            }
         }
 
         Commands::SearchMessages {
