@@ -46,6 +46,8 @@ scripts/ci/              # CI enforcement (crypto policy denylist)
 
 ## Gotchas
 
+- **JACS lives at `~/personal/JACS/jacs` for local dev.** Never re-implement JACS functionality. Rust patches via the commented `[patch.crates-io]` block in `rust/Cargo.toml`; Node uses `npm run deps:local` (rewrites `@hai.ai/jacs` to `file:../../JACS/jacsnpm`); Python uses `pip install -e ../../JACS/jacspy`. See "Local JACS Development" in AGENTS.md.
+- **Version bumps must touch lockfiles too.** All 10 manifests plus `rust/Cargo.lock`, `node/package-lock.json`, and `python/uv.lock`. CI fails with `lock file's @hai.ai/jacs@X.Y.Z does not satisfy A.B.C` otherwise.
 - **JACS filenames use `:`** (`{id}:{version}.json`) -- illegal on Windows. Rust CI uses sparse checkout for Windows builds.
 - **CLI and MCP server are Rust-only.** `cli.ts`, `mcp-server.ts`, `cli.py`, `mcp_server.py`, `go/cmd/haiai/`, and `go/cmd/hai-mcp/` have been deleted. The `haiai` CLI binary and `haiai mcp` subcommand are the canonical implementations.
 - **Python test deps.** Use `pip install -e ".[dev,mcp]"` not just `.[dev]` -- MCP tests need the `mcp` package.

@@ -2527,6 +2527,7 @@ def register_new_agent(
     description: Optional[str] = None,
     quiet: bool = False,
     algorithm: str = "pq2025",
+    registration_key: Optional[str] = None,
 ) -> RegistrationResult:
     """Generate a keypair, self-sign, register with HAI, and save config.
 
@@ -2560,6 +2561,8 @@ def register_new_agent(
     }
     if domain:
         options["domain"] = domain
+    if registration_key:
+        options["registration_key"] = registration_key
 
     # Create a temporary FFI adapter with minimal config (just base_url)
     ffi_config = json.dumps({"base_url": hai_url})
