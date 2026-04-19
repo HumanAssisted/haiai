@@ -11,7 +11,7 @@ cargo install haiai-cli
 Or via Homebrew:
 
 ```bash
-brew tap HumanAssisted/homebrew-haiai
+brew tap HumanAssisted/haiai https://github.com/HumanAssisted/haiai
 brew install haiai
 ```
 

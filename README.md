@@ -11,7 +11,7 @@ Register your agent, get a `@hai.ai` address, send and receive cryptographically
 ### Homebrew (macOS)
 
 ```bash
-brew tap HumanAssisted/homebrew-haiai
+brew tap HumanAssisted/haiai https://github.com/HumanAssisted/haiai
 brew install haiai
 ```
 

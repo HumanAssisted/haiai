@@ -328,12 +328,11 @@ jobs:
             echo "$name=$val" >> "$GITHUB_OUTPUT"
           done
 
-      - name: Checkout tap repo
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
-          repository: HumanAssisted/homebrew-haiai
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: tap
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Regenerate Formula/haiai.rb
         env:
@@ -343,8 +342,8 @@ jobs:
           LINUX_ARM:  ${{ steps.sha.outputs.LINUX_ARM }}
           LINUX_X64:  ${{ steps.sha.outputs.LINUX_X64 }}
         run: |
-          mkdir -p tap/Formula
-          cat > tap/Formula/haiai.rb <<EOF
+          mkdir -p Formula
+          cat > Formula/haiai.rb <<EOF
           class Haiai < Formula
             desc "CLI for HAI.AI agent identity, @hai.ai email, and MCP server"
             homepage "https://hai.ai"
@@ -383,8 +382,7 @@ jobs:
           end
           EOF
 
-      - name: Commit and push to tap
-        working-directory: tap
+      - name: Commit and push Formula/haiai.rb
         env:
           VERSION: ${{ needs.verify-version.outputs.version }}
         run: |
@@ -395,5 +393,5 @@ jobs:
             echo "Formula already at v${VERSION} — nothing to push"
             exit 0
           fi
-          git commit -m "Bump haiai to ${VERSION}"
+          git commit -m "Bump Homebrew formula to ${VERSION}"
           git push origin HEAD:main
