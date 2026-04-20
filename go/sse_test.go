@@ -13,10 +13,12 @@ import (
 type mockSSEFFIClient struct {
 	*mockFFIClient
 
-	mu       sync.Mutex
-	events   []json.RawMessage // queued events to return from SSENextEvent
-	eventIdx int
-	closed   bool
+	mu         sync.Mutex
+	events     []json.RawMessage // queued events to return from SSENextEvent
+	eventIdx   int
+	closed     bool
+	closeCalls int
+	nextErr    error
 }
 
 func (m *mockSSEFFIClient) ConnectSSE() (uint64, error) {
@@ -29,6 +31,9 @@ func (m *mockSSEFFIClient) SSENextEvent(handleID uint64) (json.RawMessage, error
 
 	if m.closed {
 		return nil, nil
+	}
+	if m.nextErr != nil {
+		return nil, m.nextErr
 	}
 	if m.eventIdx >= len(m.events) {
 		// Signal end of stream
@@ -43,6 +48,7 @@ func (m *mockSSEFFIClient) SSEClose(handleID uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.closed = true
+	m.closeCalls++
 }
 
 func newMockSSEClient(t *testing.T, events []AgentEvent) (*Client, *mockSSEFFIClient) {
@@ -82,7 +88,7 @@ func TestSSEConnection(t *testing.T) {
 		{Type: "disconnect", Reason: "test complete"},
 	}
 
-	cl, _ := newMockSSEClient(t, events)
+	cl, mock := newMockSSEClient(t, events)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -91,7 +97,6 @@ func TestSSEConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConnectSSE: %v", err)
 	}
-	defer conn.Close()
 
 	var received []AgentEvent
 	for event := range conn.Events() {
@@ -115,6 +120,12 @@ func TestSSEConnection(t *testing.T) {
 	}
 	if received[2].Type != "disconnect" {
 		t.Errorf("third event should be 'disconnect', got '%s'", received[2].Type)
+	}
+	if !mock.closed {
+		t.Error("expected SSE handle to be closed after stream completion")
+	}
+	if mock.closeCalls != 1 {
+		t.Errorf("expected SSE handle to close once, got %d", mock.closeCalls)
 	}
 }
 
@@ -170,5 +181,32 @@ func TestConnectSSEWithHandler(t *testing.T) {
 	}
 	if handledJobs[0] != "j-1" {
 		t.Errorf("expected job ID 'j-1', got '%s'", handledJobs[0])
+	}
+}
+
+func TestSSEConnectionClosesHandleOnReadError(t *testing.T) {
+	mock := &mockSSEFFIClient{
+		mockFFIClient: newMockFFIClient("http://localhost", "test-jacs-id", "JACS test:123:sig"),
+		nextErr:       fmt.Errorf("stream failed"),
+	}
+	cl := &Client{ffi: mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	conn, err := cl.ConnectSSE(ctx)
+	if err != nil {
+		t.Fatalf("ConnectSSE: %v", err)
+	}
+
+	for range conn.Events() {
+		t.Fatal("expected no events when SSENextEvent returns an error")
+	}
+
+	if !mock.closed {
+		t.Fatal("expected SSE handle to close after read error")
+	}
+	if mock.closeCalls != 1 {
+		t.Fatalf("expected SSE handle to close once, got %d", mock.closeCalls)
 	}
 }
