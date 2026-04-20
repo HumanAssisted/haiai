@@ -21,12 +21,10 @@ import asyncio
 import base64
 import json
 import logging
-import time
 from typing import Any, AsyncIterator, Optional, Union
-from urllib.parse import quote
 
+from haiai import _client_shared
 from haiai._ffi_adapter import AsyncFFIAdapter
-from haiai._sse import flatten_benchmark_job  # noqa: F401
 from haiai.signing import canonicalize_json, create_agent_document  # noqa: F401
 from haiai.errors import (
     BenchmarkError,
@@ -41,6 +39,7 @@ from haiai.errors import (
     RegistrationError,
     SubjectTooLong,
 )
+from haiai._retry import RETRY_MAX_ATTEMPTS, backoff
 from haiai.models import (
     BaselineRunResult,
     BenchmarkResult,
@@ -66,7 +65,6 @@ from haiai.models import (
     SendEmailResult,
     TranscriptMessage,
 )
-from haiai.signing import is_signed_event, sign_response, unwrap_signed_event
 
 logger = logging.getLogger("haiai.async_client")
 
@@ -91,6 +89,7 @@ class AsyncHaiClient:
         self._connected = False
         self._should_disconnect = False
         self._hai_url: Optional[str] = None
+        self._last_event_id: Optional[str] = None
         self._hai_agent_id: Optional[str] = None
         self._agent_email: Optional[str] = None
         self._ffi: Optional[AsyncFFIAdapter] = None
@@ -127,83 +126,32 @@ class AsyncHaiClient:
 
     @staticmethod
     def _make_url(base_url: str, path: str) -> str:
-        base = base_url.rstrip("/")
-        path = "/" + path.lstrip("/")
-        return base + path
+        return _client_shared.make_url(base_url, path, validate_scheme=False)
 
     @staticmethod
     def _escape_path_segment(value: str) -> str:
-        return quote(value, safe="")
+        return _client_shared.escape_path_segment(value)
 
     def _get_jacs_id(self) -> str:
-        from haiai.config import get_config
-        cfg = get_config()
-        if cfg.jacs_id is None:
-            raise HaiAuthError("jacsId is required in config for JACS authentication")
-        return cfg.jacs_id
+        return _client_shared.get_jacs_id()
 
     def _get_hai_agent_id(self) -> str:
         """Return the HAI-assigned agent UUID for email URL paths."""
-        return self._hai_agent_id or self._get_jacs_id()
+        return _client_shared.get_hai_agent_id(self._hai_agent_id)
 
     def _build_jacs_auth_header(self) -> str:
-        from haiai.config import get_config, get_agent
-        cfg = get_config()
-        agent = get_agent()
-        if cfg.jacs_id is None:
-            raise HaiAuthError("jacsId is required for JACS authentication")
-
-        # Prefer JACS binding delegation
-        if hasattr(agent, "build_auth_header"):
-            return agent.build_auth_header()
-
-        # Local construction using JACS sign_string
-        if not hasattr(agent, "sign_string"):
-            raise HaiError(
-                "build_auth_header requires a JACS agent with sign_string support",
-                code="JACS_NOT_LOADED",
-                action="Run 'haiai init' or set JACS_CONFIG_PATH environment variable",
-            )
-
-        timestamp = int(time.time())
-        message = f"{cfg.jacs_id}:{timestamp}"
-        signature = agent.sign_string(message)
-        return f"JACS {cfg.jacs_id}:{timestamp}:{signature}"
+        return _client_shared.build_jacs_auth_header()
 
     def _build_auth_headers(self) -> dict[str, str]:
-        from haiai.config import is_loaded, get_config
-        if not (is_loaded() and get_config().jacs_id):
-            raise HaiAuthError(
-                "No JACS authentication available. "
-                "Call haiai.config.load() with a config containing jacsId."
-            )
-        return {"Authorization": self._build_jacs_auth_header()}
+        return _client_shared.build_auth_headers()
 
     @staticmethod
     def _parse_transcript(raw_messages: list[dict[str, Any]]) -> list[TranscriptMessage]:
-        return [
-            TranscriptMessage(
-                role=msg.get("role", "system"),
-                content=msg.get("content", ""),
-                timestamp=msg.get("timestamp", ""),
-                annotations=msg.get("annotations", []),
-            )
-            for msg in raw_messages
-        ]
+        return _client_shared.parse_transcript(raw_messages)
 
     @staticmethod
     def _parse_public_key_info(data: dict[str, Any], **defaults: Any) -> PublicKeyInfo:
-        return PublicKeyInfo(
-            jacs_id=data.get("jacs_id", defaults.get("jacs_id", "")),
-            version=data.get("version", defaults.get("version", "")),
-            public_key=data.get("public_key", ""),
-            public_key_raw_b64=data.get("public_key_raw_b64", ""),
-            algorithm=data.get("algorithm", ""),
-            public_key_hash=data.get("public_key_hash", ""),
-            status=data.get("status", ""),
-            dns_verified=data.get("dns_verified", False),
-            created_at=data.get("created_at", ""),
-        )
+        return _client_shared.parse_public_key_info(data, **defaults)
 
     # ------------------------------------------------------------------
     # testconnection
@@ -1095,42 +1043,59 @@ class AsyncHaiClient:
         self._connected = False
 
         ffi = self._get_ffi()
-        handle = None
-        try:
-            if transport == "ws":
-                handle = await ffi.connect_ws()
-            else:
-                handle = await ffi.connect_sse()
-
-            self._connected = True
-
-            while not self._should_disconnect:
+        attempt = 0
+        while not self._should_disconnect:
+            handle = None
+            try:
                 if transport == "ws":
-                    event_data = await ffi.ws_next_event(handle)
+                    handle = await ffi.connect_ws()
                 else:
-                    event_data = await ffi.sse_next_event(handle)
+                    handle = await ffi.connect_sse()
 
-                if event_data is None:
-                    break
+                self._connected = True
+                attempt = 0
 
-                event = HaiEvent(
-                    event_type=event_data.get("event_type", ""),
-                    data=event_data.get("data", {}),
-                    id=event_data.get("id"),
-                    raw=event_data.get("raw", ""),
-                )
-                yield event
-
-        finally:
-            self._connected = False
-            if handle is not None:
-                try:
+                while not self._should_disconnect:
                     if transport == "ws":
-                        await ffi.ws_close(handle)
+                        event_data = await ffi.ws_next_event(handle)
                     else:
-                        await ffi.sse_close(handle)
-                except Exception:
-                    pass
+                        event_data = await ffi.sse_next_event(handle)
+
+                    if event_data is None:
+                        break
+
+                    event = _client_shared.make_ffi_event(event_data)
+                    if event.id:
+                        self._last_event_id = event.id
+                    yield event
+
+            except HaiAuthError:
+                raise
+            except Exception as exc:
+                if attempt >= RETRY_MAX_ATTEMPTS:
+                    label = "WS" if transport == "ws" else "SSE"
+                    raise HaiConnectionError(
+                        f"{label} connection failed after {attempt} attempts: {exc}"
+                    ) from exc
+                delay = backoff(attempt)
+                logger.warning(
+                    "%s connection lost, retrying in %.1fs: %s",
+                    transport.upper(),
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+                attempt += 1
+            finally:
+                self._connected = False
+                if handle is not None:
+                    try:
+                        if transport == "ws":
+                            await ffi.ws_close(handle)
+                        else:
+                            await ffi.sse_close(handle)
+                    except Exception:
+                        pass
 
     def disconnect(self) -> None:
         """Signal the SSE loop to stop."""

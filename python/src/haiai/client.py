@@ -14,8 +14,8 @@ import os
 import time
 from pathlib import Path
 from typing import Any, Generator, Iterator, Optional, Union
-from urllib.parse import quote
 
+from haiai import _client_shared
 from haiai._ffi_adapter import FFIAdapter, map_ffi_error
 from haiai._sse import flatten_benchmark_job, parse_sse_lines
 from haiai.signing import canonicalize_json, create_agent_document
@@ -253,18 +253,12 @@ class HaiClient:
         Raises:
             ValueError: If base_url does not start with http:// or https://.
         """
-        if not base_url or not base_url.startswith(("http://", "https://")):
-            raise ValueError(
-                f"Invalid base URL: {base_url!r} — URL must start with http:// or https://"
-            )
-        base = base_url.rstrip("/")
-        path = "/" + path.lstrip("/")
-        return base + path
+        return _client_shared.make_url(base_url, path, validate_scheme=True)
 
     @staticmethod
     def _escape_path_segment(value: str) -> str:
         """Escape a user-controlled URL path segment."""
-        return quote(value, safe="")
+        return _client_shared.escape_path_segment(value)
 
     def _get_cached_key(self, cache_key: str) -> Optional[Any]:
         """Return a cached key if it exists and hasn't expired, else None."""
@@ -287,19 +281,14 @@ class HaiClient:
 
     def _get_jacs_id(self) -> str:
         """Return the loaded JACS ID, raising if not available."""
-        from haiai.config import get_config
-
-        cfg = get_config()
-        if cfg.jacs_id is None:
-            raise HaiAuthError("jacsId is required in config for JACS authentication")
-        return cfg.jacs_id
+        return _client_shared.get_jacs_id()
 
     def _get_hai_agent_id(self) -> str:
         """Return the HAI-assigned agent UUID for email URL paths.
 
         Falls back to the JACS ID if not set (e.g. before registration).
         """
-        return self._hai_agent_id or self._get_jacs_id()
+        return _client_shared.get_hai_agent_id(self._hai_agent_id)
 
     def _build_jacs_auth_header(self) -> str:
         """Build ``Authorization: JACS {jacsId}:{timestamp}:{signature}``.
@@ -308,41 +297,11 @@ class HaiClient:
         Otherwise constructs the header locally using JACS ``sign_string``.
         Both paths require a loaded JACS agent.
         """
-        from haiai.config import get_config, get_agent
-
-        cfg = get_config()
-        agent = get_agent()
-
-        if cfg.jacs_id is None:
-            raise HaiAuthError("jacsId is required for JACS authentication")
-
-        # Prefer JACS binding delegation
-        if hasattr(agent, "build_auth_header"):
-            return agent.build_auth_header()
-
-        # Local construction using JACS sign_string
-        if not hasattr(agent, "sign_string"):
-            raise HaiError(
-                "build_auth_header requires a JACS agent with sign_string support",
-                code="JACS_NOT_LOADED",
-                action="Run 'haiai init' or set JACS_CONFIG_PATH environment variable",
-            )
-
-        timestamp = int(time.time())
-        message = f"{cfg.jacs_id}:{timestamp}"
-        signature = agent.sign_string(message)
-        return f"JACS {cfg.jacs_id}:{timestamp}:{signature}"
+        return _client_shared.build_jacs_auth_header()
 
     def _build_auth_headers(self) -> dict[str, str]:
         """Return auth headers using JACS signature authentication."""
-        from haiai.config import is_loaded, get_config
-
-        if not (is_loaded() and get_config().jacs_id):
-            raise HaiAuthError(
-                "No JACS authentication available. "
-                "Call haiai.config.load() with a config containing jacsId."
-            )
-        return {"Authorization": self._build_jacs_auth_header()}
+        return _client_shared.build_auth_headers()
 
     @staticmethod
     def _build_jacs_auth_header_with_key(
@@ -357,40 +316,21 @@ class HaiClient:
         the OLD agent's key (chain of trust).
         Signing delegates to JACS binding-core.
         """
-        timestamp = int(time.time())
-        message = f"{jacs_id}:{version}:{timestamp}"
-        signature = agent.sign_string(message)
-        return f"JACS {jacs_id}:{version}:{timestamp}:{signature}"
+        return _client_shared.build_jacs_auth_header_with_key(
+            jacs_id, version, agent
+        )
 
     @staticmethod
     def _parse_transcript(
         raw_messages: list[dict[str, Any]],
     ) -> list[TranscriptMessage]:
         """Parse raw transcript messages from API response."""
-        return [
-            TranscriptMessage(
-                role=msg.get("role", "system"),
-                content=msg.get("content", ""),
-                timestamp=msg.get("timestamp", ""),
-                annotations=msg.get("annotations", []),
-            )
-            for msg in raw_messages
-        ]
+        return _client_shared.parse_transcript(raw_messages)
 
     @staticmethod
     def _parse_public_key_info(data: dict[str, Any], **defaults: Any) -> PublicKeyInfo:
         """Parse a PublicKeyInfo from an FFI response dict."""
-        return PublicKeyInfo(
-            jacs_id=data.get("jacs_id", defaults.get("jacs_id", "")),
-            version=data.get("version", defaults.get("version", "")),
-            public_key=data.get("public_key", ""),
-            public_key_raw_b64=data.get("public_key_raw_b64", ""),
-            algorithm=data.get("algorithm", ""),
-            public_key_hash=data.get("public_key_hash", ""),
-            status=data.get("status", ""),
-            dns_verified=data.get("dns_verified", False),
-            created_at=data.get("created_at", ""),
-        )
+        return _client_shared.parse_public_key_info(data, **defaults)
 
     @staticmethod
     def _parse_email_status(data: dict) -> EmailStatus:
@@ -1908,12 +1848,7 @@ class HaiClient:
                         # Connection closed
                         break
 
-                    event = HaiEvent(
-                        event_type=event_data.get("event_type", ""),
-                        data=event_data.get("data", {}),
-                        id=event_data.get("id"),
-                        raw=event_data.get("raw", ""),
-                    )
+                    event = _client_shared.make_ffi_event(event_data)
                     if event.id:
                         self._last_event_id = event.id
                     yield event
@@ -1957,12 +1892,7 @@ class HaiClient:
                     if event_data is None:
                         break
 
-                    event = HaiEvent(
-                        event_type=event_data.get("event_type", ""),
-                        data=event_data.get("data", {}),
-                        id=event_data.get("id"),
-                        raw=event_data.get("raw", ""),
-                    )
+                    event = _client_shared.make_ffi_event(event_data)
                     yield event
 
             except HaiAuthError:
