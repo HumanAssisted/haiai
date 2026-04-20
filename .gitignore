@@ -30,6 +30,7 @@ dist/
 .vitest/
 node/jacs.config.json
 node/jacs_data/
+*.node
 
 # Go
 go/haiai
