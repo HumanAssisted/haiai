@@ -141,6 +141,12 @@ export interface RegistrationResult {
   haiSignature: string;
   registrationId: string;
   registeredAt: string;
+  /** Filesystem path where the agent's keys were written (set by registerNewAgent). */
+  keyDirectory?: string;
+  /** Path to the agent's public key PEM (set by registerNewAgent when available). */
+  publicKeyPath?: string;
+  /** DNS TXT record value for _jacs.<domain> (set when registerNewAgent was called with a domain). */
+  dnsRecord?: string;
   rawResponse: Record<string, unknown>;
 }
 

@@ -114,7 +114,13 @@ export class HaiClient {
   }
 
   private constructor(options?: HaiClientOptions) {
-    const rawUrl = options?.url ?? DEFAULT_BASE_URL;
+    // URL precedence mirrors the Python SDK (client.py:174):
+    //   options.url > HAI_URL > HAI_API_URL > DEFAULT_BASE_URL
+    const rawUrl =
+      options?.url
+      ?? process.env.HAI_URL
+      ?? process.env.HAI_API_URL
+      ?? DEFAULT_BASE_URL;
     if (!/^https?:\/\//i.test(rawUrl)) {
       throw new HaiError(
         `Invalid base URL: "${rawUrl}". URL must start with http:// or https://.`,
@@ -132,8 +138,12 @@ export class HaiClient {
    * Rust HaiClient constructor).
    */
   private buildFFIConfigJson(): string {
+    // Key names must match hai-binding-core's FfiHaiConfig schema:
+    // `base_url` (NOT `url`), `jacs_config_path`, plus agent metadata from
+    // the loaded config so the Rust side builds a Local provider instead of
+    // falling back to an ephemeral agent.
     const ffiConfig: Record<string, unknown> = {
-      url: this.baseUrl,
+      base_url: this.baseUrl,
       timeout_ms: this.timeout,
       max_retries: this.maxRetries,
     };
@@ -142,6 +152,15 @@ export class HaiClient {
     }
     if (this.config?.jacsId) {
       ffiConfig.jacs_id = this.config.jacsId;
+    }
+    if (this.config?.jacsAgentName) {
+      ffiConfig.agent_name = this.config.jacsAgentName;
+    }
+    if (this.config?.jacsAgentVersion) {
+      ffiConfig.agent_version = this.config.jacsAgentVersion;
+    }
+    if (this.config?.jacsKeyDir) {
+      ffiConfig.key_dir = this.config.jacsKeyDir;
     }
     return JSON.stringify(ffiConfig);
   }
@@ -807,7 +826,13 @@ export class HaiClient {
    * Generate a fresh JACS agent and register it with HAI.
    *
    * Convenience method that combines key generation, document building,
-   * signing, and registration in one call.
+   * signing, and registration in one call. Delegates to the Rust FFI
+   * `registerNewAgent` entry point which performs keygen, self-sign, and
+   * the HAI registration HTTP call in one atomic pass.
+   *
+   * For the FTUX bootstrap case (no pre-existing config / HaiClient),
+   * use the standalone {@link registerNewAgent} function exported from
+   * this module instead.
    *
    * @param agentName - Name for the new agent
    * @param options - Registration options
@@ -818,45 +843,20 @@ export class HaiClient {
     domain?: string;
     description?: string;
     quiet?: boolean;
+    registrationKey?: string;
+    algorithm?: string;
+    keyDir?: string;
+    dataDir?: string;
+    configPath?: string;
+    password?: string;
   }): Promise<RegistrationResult> {
-    // Delegate to FFI register with the full set of options
-    const registerOptions: Record<string, unknown> = {
-      agent_name: agentName,
-      owner_email: options.ownerEmail,
-      new_agent: true,
-    };
-    if (options.domain) registerOptions.domain = options.domain;
-    if (options.description) registerOptions.description = options.description;
-
-    const data = await this.ffi.register(registerOptions);
-
-    if (!options.quiet) {
-      const agentId = (data.agent_id as string) || (data.agentId as string) || '';
-      console.log(`\nAgent created and submitted for registration!`);
-      console.log(`  -> Your agent is registered with username from your reservation`);
-      console.log(`  -> Save your config and private key to a secure, access-controlled location`);
-
-      if (options.domain) {
-        console.log(`\n--- DNS Setup Instructions ---`);
-        console.log(`Add this TXT record to your domain '${options.domain}':`);
-        console.log(`  Name:  _jacs.${options.domain}`);
-        console.log(`  Type:  TXT`);
-        console.log(`  Value: sha256:<your_public_key_hash>`);
-        console.log(`DNS verification enables the pro tier.\n`);
-      } else {
-        console.log();
-      }
-    }
-
-    return {
-      success: true,
-      agentId: (data.agent_id as string) || (data.agentId as string) || '',
-      jacsId: (data.jacs_id as string) || (data.jacsId as string) || '',
-      haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
-      registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
-      registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
-      rawResponse: data,
-    };
+    const resolved = resolveRegisterNewAgentOptions(agentName, {
+      ...options,
+      baseUrl: this.baseUrl,
+    });
+    const data = await this.ffi.registerNewAgent(resolved);
+    printRegistrationGuidance(data, options);
+    return toRegistrationResult(data);
   }
 
   // ---------------------------------------------------------------------------
@@ -1843,4 +1843,155 @@ export class HaiClient {
       createdAt: (data.created_at as string) || '',
     };
   }
+}
+
+// =============================================================================
+// Standalone registerNewAgent() -- FTUX bootstrap (no HaiClient needed)
+// =============================================================================
+
+/** Options shared between the class method and the standalone helper. */
+interface RegisterNewAgentCommonOptions {
+  ownerEmail: string;
+  domain?: string;
+  description?: string;
+  quiet?: boolean;
+  registrationKey?: string;
+  algorithm?: string;
+  keyDir?: string;
+  dataDir?: string;
+  configPath?: string;
+  password?: string;
+}
+
+/**
+ * Build the snake_case FFI payload that the Rust `registerNewAgent`
+ * entry point expects. Keys mirror the Python SDK exactly:
+ *   agent_name, password, algorithm, owner_email, base_url,
+ *   key_directory, data_directory, config_path, description,
+ *   [domain], [registration_key]
+ */
+function resolveRegisterNewAgentOptions(
+  agentName: string,
+  opts: RegisterNewAgentCommonOptions & { baseUrl: string },
+): Record<string, unknown> {
+  if (!opts.ownerEmail) {
+    throw new HaiError(
+      'ownerEmail is required -- agents must be associated with a verified HAI user',
+    );
+  }
+
+  const nodePath = require('node:path') as typeof import('node:path');
+  const nodeOs = require('node:os') as typeof import('node:os');
+
+  const keyDir = opts.keyDir
+    ? nodePath.resolve(opts.keyDir.replace(/^~(?=$|\/)/, nodeOs.homedir()))
+    : nodePath.join(nodeOs.homedir(), '.jacs', 'keys');
+  const dataDir = opts.dataDir
+    ? nodePath.resolve(opts.dataDir.replace(/^~(?=$|\/)/, nodeOs.homedir()))
+    : nodePath.join(nodePath.dirname(keyDir), 'data');
+  const configPath = nodePath.resolve(opts.configPath ?? './jacs.config.json');
+
+  const password = opts.password ?? process.env.JACS_PRIVATE_KEY_PASSWORD;
+  if (!password) {
+    throw new HaiError(
+      'password is required: pass options.password or set JACS_PRIVATE_KEY_PASSWORD',
+    );
+  }
+
+  const payload: Record<string, unknown> = {
+    agent_name: agentName,
+    password,
+    algorithm: opts.algorithm ?? 'pq2025',
+    owner_email: opts.ownerEmail,
+    base_url: opts.baseUrl,
+    key_directory: keyDir,
+    data_directory: dataDir,
+    config_path: configPath,
+    description: opts.description ?? 'Agent registered via Node SDK',
+  };
+  if (opts.domain) payload.domain = opts.domain;
+  if (opts.registrationKey) payload.registration_key = opts.registrationKey;
+  return payload;
+}
+
+/** Convert the raw FFI response into a RegistrationResult. */
+function toRegistrationResult(data: Record<string, unknown>): RegistrationResult {
+  return {
+    success: true,
+    agentId: (data.agent_id as string) || (data.agentId as string) || '',
+    jacsId: (data.jacs_id as string) || (data.jacsId as string) || '',
+    haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
+    registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
+    registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
+    keyDirectory: (data.key_directory as string) || (data.keyDirectory as string) || '',
+    publicKeyPath: (data.public_key_path as string) || (data.publicKeyPath as string) || undefined,
+    dnsRecord: (data.dns_record as string) || (data.dnsRecord as string) || undefined,
+    rawResponse: data,
+  };
+}
+
+/** Print post-registration guidance to stdout (unless quiet). */
+function printRegistrationGuidance(
+  data: Record<string, unknown>,
+  opts: { quiet?: boolean; domain?: string; ownerEmail: string; configPath?: string },
+): void {
+  if (opts.quiet) return;
+  const keyDir = (data.key_directory as string) || (data.keyDirectory as string) || '';
+  const configPath = opts.configPath ?? './jacs.config.json';
+  console.log('\nAgent created and submitted for registration!');
+  console.log(`  -> Check your email (${opts.ownerEmail}) for a verification link`);
+  console.log('  -> Your agent is registered with username from your reservation');
+  console.log(`  -> Config saved to ${configPath}`);
+  if (keyDir) console.log(`  -> Keys saved to ${keyDir}`);
+  console.log('  -> Private key encrypted using JACS_PASSWORD_FILE/JACS_PRIVATE_KEY_PASSWORD');
+
+  if (opts.domain) {
+    const dnsRecord = (data.dns_record as string) || '';
+    console.log('\n--- DNS Setup Instructions ---');
+    console.log(`Add this TXT record to your domain '${opts.domain}':`);
+    console.log(`  Name:  _jacs.${opts.domain}`);
+    console.log('  Type:  TXT');
+    console.log(`  Value: ${dnsRecord || 'sha256:<your_public_key_hash>'}`);
+    console.log('DNS verification enables the pro tier.\n');
+  } else {
+    console.log();
+  }
+}
+
+/**
+ * Standalone agent-registration helper for the FTUX bootstrap case.
+ *
+ * Unlike {@link HaiClient.registerNewAgent}, this function does NOT
+ * require a pre-existing jacs.config.json -- it builds a minimal FFI
+ * adapter with only `base_url` and delegates the full keygen + sign +
+ * register flow to the Rust `registerNewAgent` FFI entry point.
+ *
+ * Mirrors the Python SDK's top-level `register_new_agent(...)`.
+ *
+ * @example
+ * ```typescript
+ * import { registerNewAgent } from '@haiai/haiai';
+ *
+ * const result = await registerNewAgent('my-agent', {
+ *   ownerEmail: 'dev@example.com',
+ *   haiUrl: 'https://beta.hai.ai',
+ *   password: 'hunter2',
+ * });
+ * console.log(result.agentId, result.jacsId);
+ * ```
+ */
+export async function registerNewAgent(
+  agentName: string,
+  options: RegisterNewAgentCommonOptions & { haiUrl?: string },
+): Promise<RegistrationResult> {
+  const baseUrl = options.haiUrl ?? DEFAULT_BASE_URL;
+  const payload = resolveRegisterNewAgentOptions(agentName, { ...options, baseUrl });
+
+  // Minimal FFI adapter config: just base_url. Mirrors Python client.py:2568.
+  const ffiConfig = JSON.stringify({ base_url: baseUrl });
+  const ffi = await FFIClientAdapter.create(ffiConfig);
+  const data = await ffi.registerNewAgent(payload);
+
+  printRegistrationGuidance(data, options);
+  return toRegistrationResult(data);
 }

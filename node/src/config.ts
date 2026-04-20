@@ -107,6 +107,105 @@ export async function loadPrivateKeyPassphrase(): Promise<string> {
   return readPasswordFileStrict(filePath);
 }
 
+// Canonical Rust-format JACS config fields (written by `haiai init` and JACS
+// itself). Detection: presence of `jacs_agent_id_and_version` +
+// `jacs_key_directory` means the config is in Rust-canonical format. The
+// Python SDK previously only understood the camelCase wrapper form and
+// produced a false-green; this parity was added to the Node SDK as well.
+const CANONICAL_FIELDS = ['jacs_agent_id_and_version', 'jacs_key_directory'] as const;
+const LEGACY_FIELDS = ['jacsAgentName', 'jacsAgentVersion', 'jacsKeyDir'] as const;
+
+function resolveAbsoluteDir(value: string, configDir: string): string {
+  return isAbsolute(value) ? value : resolve(configDir, value);
+}
+
+function parseAgentIdAndVersion(value: string): { agentId: string; version: string } {
+  const idx = value.indexOf(':');
+  if (idx < 0) {
+    throw new Error(
+      `Invalid jacs_agent_id_and_version (expected 'id:version'): ${JSON.stringify(value)}`,
+    );
+  }
+  const agentId = value.slice(0, idx);
+  const version = value.slice(idx + 1);
+  if (!agentId || !version) {
+    throw new Error(
+      `jacs_agent_id_and_version has empty component: ${JSON.stringify(value)}`,
+    );
+  }
+  return { agentId, version };
+}
+
+/**
+ * Read the agent name from the signed agent document on disk.
+ *
+ * JACS stores the agent document at `{data_dir}/agent/{id:version}.json`.
+ * The name isn't in the canonical config file — it's a field of the signed
+ * document. We only need it for `AgentConfig.jacsAgentName` (logging /
+ * display); the FFI loads the real data from the config path we pass.
+ *
+ * Permissive by design: if the doc isn't readable, fall back to
+ * `id_and_version` as the name rather than blocking config load.
+ */
+async function readAgentNameFromDoc(
+  dataDir: string,
+  idAndVersion: string,
+): Promise<string | undefined> {
+  const docPath = join(dataDir, 'agent', `${idAndVersion}.json`);
+  try {
+    const raw = await readFile(docPath, 'utf-8');
+    const doc = JSON.parse(raw) as Record<string, unknown>;
+    const candidate = (doc.jacsAgentName ?? doc.name) as unknown;
+    if (typeof candidate === 'string' && candidate.length > 0) {
+      return candidate;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function loadCanonical(
+  json: Record<string, unknown>,
+  configDir: string,
+): Promise<AgentConfig> {
+  const idAndVersion = json.jacs_agent_id_and_version as string;
+  const { agentId, version } = parseAgentIdAndVersion(idAndVersion);
+  const keyDir = resolveAbsoluteDir(json.jacs_key_directory as string, configDir);
+  const dataDirRaw = (json.jacs_data_directory as string | undefined) ?? 'data';
+  const dataDir = resolveAbsoluteDir(dataDirRaw, configDir);
+  const nameFromDoc = await readAgentNameFromDoc(dataDir, idAndVersion);
+
+  const privateKeyPath = json.jacs_agent_private_key_filename as string | undefined;
+
+  return {
+    jacsAgentName: nameFromDoc ?? idAndVersion,
+    jacsAgentVersion: version,
+    jacsKeyDir: keyDir,
+    jacsId: agentId,
+    jacsPrivateKeyPath: privateKeyPath
+      ? (isAbsolute(privateKeyPath) ? privateKeyPath : resolve(keyDir, privateKeyPath))
+      : undefined,
+  };
+}
+
+function loadLegacy(json: Record<string, unknown>, configDir: string): AgentConfig {
+  const name = json.jacsAgentName as string;
+  const version = json.jacsAgentVersion as string;
+  const keyDir = resolveAbsoluteDir(json.jacsKeyDir as string, configDir);
+  const privateKeyPath = (json.jacsPrivateKeyPath ?? json.private_key_path) as string | undefined;
+
+  return {
+    jacsAgentName: name,
+    jacsAgentVersion: version,
+    jacsKeyDir: keyDir,
+    jacsId: (json.jacsId ?? json.jacs_id) as string | undefined,
+    jacsPrivateKeyPath: privateKeyPath
+      ? (isAbsolute(privateKeyPath) ? privateKeyPath : resolve(configDir, privateKeyPath))
+      : undefined,
+  };
+}
+
 /**
  * Load JACS agent configuration from a jacs.config.json file.
  *
@@ -114,6 +213,14 @@ export async function loadPrivateKeyPassphrase(): Promise<string> {
  * 1. Explicit configPath argument
  * 2. JACS_CONFIG_PATH environment variable
  * 3. ./jacs.config.json (current directory)
+ *
+ * Accepts two config formats:
+ * - Canonical Rust/JACS format (snake_case, written by `haiai init`): detected
+ *   by presence of `jacs_agent_id_and_version` + `jacs_key_directory`. Agent
+ *   name is read from the signed agent document at
+ *   `{jacs_data_directory}/agent/{jacs_agent_id_and_version}.json`.
+ * - Legacy camelCase format (older Node/Python wrapper output): detected by
+ *   presence of `jacsAgentName` + `jacsAgentVersion` + `jacsKeyDir`.
  */
 export async function loadConfig(configPath?: string): Promise<AgentConfig> {
   const resolvedPath = configPath
@@ -124,32 +231,24 @@ export async function loadConfig(configPath?: string): Promise<AgentConfig> {
 
   const raw = await readFile(absoluteConfigPath, 'utf-8');
   const json = JSON.parse(raw) as Record<string, unknown>;
-  const name = (json.jacsAgentName ?? json.agent_name) as string | undefined;
-  const version = (json.jacsAgentVersion ?? json.agent_version) as string | undefined;
-  const keyDir = (json.jacsKeyDir ?? json.key_dir) as string | undefined;
-  const missing: string[] = [];
-  if (!name) missing.push('jacsAgentName');
-  if (!version) missing.push('jacsAgentVersion');
-  if (!keyDir) missing.push('jacsKeyDir');
-  if (missing.length > 0) {
-    throw new Error(`JACS config missing required fields: ${missing.join(', ')}`);
+
+  const isCanonical = CANONICAL_FIELDS.every((k) => typeof json[k] === 'string' && (json[k] as string).length > 0);
+  const isLegacy = LEGACY_FIELDS.every((k) => typeof json[k] === 'string' && (json[k] as string).length > 0);
+
+  if (isCanonical) {
+    return loadCanonical(json, configDir);
   }
-  const resolvedKeyDir = keyDir as string;
+  if (isLegacy) {
+    return loadLegacy(json, configDir);
+  }
 
-  const privateKeyPath = (json.jacsPrivateKeyPath ?? json.private_key_path) as string | undefined;
-
-  return {
-    jacsAgentName: name as string,
-    jacsAgentVersion: version as string,
-    // Resolve relative paths from the config location, not the caller CWD.
-    jacsKeyDir: isAbsolute(resolvedKeyDir)
-      ? resolvedKeyDir
-      : resolve(configDir, resolvedKeyDir),
-    jacsId: (json.jacsId ?? json.jacs_id) as string | undefined,
-    jacsPrivateKeyPath: privateKeyPath
-      ? (isAbsolute(privateKeyPath) ? privateKeyPath : resolve(configDir, privateKeyPath))
-      : undefined,
-  };
+  const missingCanonical = CANONICAL_FIELDS.filter((k) => !(typeof json[k] === 'string' && (json[k] as string).length > 0));
+  const missingLegacy = LEGACY_FIELDS.filter((k) => !(typeof json[k] === 'string' && (json[k] as string).length > 0));
+  throw new Error(
+    'JACS config has neither canonical nor legacy fields. ' +
+      `Canonical missing: ${missingCanonical.join(', ')}; ` +
+      `Legacy missing: ${missingLegacy.join(', ')}`,
+  );
 }
 
 /**
