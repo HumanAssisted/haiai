@@ -2682,6 +2682,7 @@ mod tests {
                 cc,
                 bcc,
                 labels,
+                json,
             } => {
                 assert_eq!(to, "friend@hai.ai");
                 assert_eq!(subject, "Hello");
@@ -2689,6 +2690,7 @@ mod tests {
                 assert!(cc.is_empty());
                 assert!(bcc.is_empty());
                 assert!(labels.is_empty());
+                assert!(!json);
             }
             _ => panic!("expected SendEmail command"),
         }
@@ -2751,6 +2753,7 @@ mod tests {
                 is_read,
                 folder,
                 label,
+                json,
             } => {
                 assert_eq!(limit, 20);
                 assert_eq!(offset, 0);
@@ -2758,6 +2761,7 @@ mod tests {
                 assert!(is_read.is_none());
                 assert!(folder.is_none());
                 assert!(label.is_none());
+                assert!(!json);
             }
             _ => panic!("expected ListMessages command"),
         }
