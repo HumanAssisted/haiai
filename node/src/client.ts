@@ -72,6 +72,14 @@ import { FFIClientAdapter } from './ffi-client.js';
 /** Default HAI API base URL. Override with the `url` option or `HAI_URL` env var. */
 export const DEFAULT_BASE_URL = 'https://beta.hai.ai';
 
+type OpaqueTransportState = {
+  close: (handle: number) => Promise<void>;
+  connect: () => Promise<number>;
+  nextEvent: (handle: number) => Promise<Record<string, unknown> | null>;
+  onConnect?: (handle: number) => void;
+  onClose?: () => void;
+};
+
 export class HaiClient {
   private config!: AgentConfig;
   private configPath: string | null = null;
@@ -928,7 +936,19 @@ export class HaiClient {
   // SSE transport (via FFI opaque handles)
   // ---------------------------------------------------------------------------
 
-  private async *connectSse(
+  private normalizeOpaqueTransportEvent(
+    eventData: Record<string, unknown>,
+  ): HaiEvent {
+    return {
+      eventType: (eventData.event_type as string) || '',
+      data: eventData.data || {},
+      id: eventData.id as string | undefined,
+      raw: (eventData.raw as string) || '',
+    };
+  }
+
+  private async *connectOpaqueTransport(
+    state: OpaqueTransportState,
     onEvent?: (event: HaiEvent) => void,
   ): AsyncGenerator<HaiEvent> {
     let attempt = 0;
@@ -936,21 +956,16 @@ export class HaiClient {
     while (!this._shouldDisconnect) {
       let handle: number | null = null;
       try {
-        handle = await this.ffi.connectSse();
+        handle = await state.connect();
         this._connected = true;
         attempt = 0;
+        state.onConnect?.(handle);
 
         while (!this._shouldDisconnect) {
-          const eventData = await this.ffi.sseNextEvent(handle);
+          const eventData = await state.nextEvent(handle);
           if (eventData === null) break; // Connection closed
 
-          const event: HaiEvent = {
-            eventType: (eventData as Record<string, unknown>).event_type as string || '',
-            data: (eventData as Record<string, unknown>).data || {},
-            id: (eventData as Record<string, unknown>).id as string | undefined,
-            raw: (eventData as Record<string, unknown>).raw as string || '',
-          };
-
+          const event = this.normalizeOpaqueTransportEvent(eventData);
           if (event.id) this._lastEventId = event.id;
           if (onEvent) onEvent(event);
           yield event;
@@ -963,11 +978,22 @@ export class HaiClient {
         attempt++;
       } finally {
         this._connected = false;
+        state.onClose?.();
         if (handle !== null) {
-          try { await this.ffi.sseClose(handle); } catch { /* ignore */ }
+          try { await state.close(handle); } catch { /* ignore */ }
         }
       }
     }
+  }
+
+  private async *connectSse(
+    onEvent?: (event: HaiEvent) => void,
+  ): AsyncGenerator<HaiEvent> {
+    yield* this.connectOpaqueTransport({
+      close: (handle) => this.ffi.sseClose(handle),
+      connect: () => this.ffi.connectSse(),
+      nextEvent: (handle) => this.ffi.sseNextEvent(handle),
+    }, onEvent);
   }
 
   // ---------------------------------------------------------------------------
@@ -977,45 +1003,17 @@ export class HaiClient {
   private async *connectWs(
     onEvent?: (event: HaiEvent) => void,
   ): AsyncGenerator<HaiEvent> {
-    let attempt = 0;
-
-    while (!this._shouldDisconnect) {
-      let handle: number | null = null;
-      try {
-        handle = await this.ffi.connectWs();
-        this._connected = true;
+    yield* this.connectOpaqueTransport({
+      close: (handle) => this.ffi.wsClose(handle),
+      connect: () => this.ffi.connectWs(),
+      nextEvent: (handle) => this.ffi.wsNextEvent(handle),
+      onConnect: (handle) => {
         this._wsConnection = handle;
-        attempt = 0;
-
-        while (!this._shouldDisconnect) {
-          const eventData = await this.ffi.wsNextEvent(handle);
-          if (eventData === null) break; // Connection closed
-
-          const event: HaiEvent = {
-            eventType: (eventData as Record<string, unknown>).event_type as string || '',
-            data: (eventData as Record<string, unknown>).data || {},
-            id: (eventData as Record<string, unknown>).id as string | undefined,
-            raw: (eventData as Record<string, unknown>).raw as string || '',
-          };
-
-          if (event.id) this._lastEventId = event.id;
-          if (onEvent) onEvent(event);
-          yield event;
-        }
-      } catch (err) {
-        if (err instanceof HaiError && (err as HaiError & { statusCode?: number }).statusCode === 401) throw err;
-        if (attempt >= this.maxReconnectAttempts) throw err;
-        const delay = Math.min(1000 * Math.pow(2, attempt), 60000);
-        await new Promise(r => setTimeout(r, delay));
-        attempt++;
-      } finally {
-        this._connected = false;
+      },
+      onClose: () => {
         this._wsConnection = null;
-        if (handle !== null) {
-          try { await this.ffi.wsClose(handle); } catch { /* ignore */ }
-        }
-      }
-    }
+      },
+    }, onEvent);
   }
 
   // ---------------------------------------------------------------------------

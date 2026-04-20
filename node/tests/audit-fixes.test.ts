@@ -167,6 +167,74 @@ describe('#14: SSE/WS max reconnect attempts', () => {
     // Initial attempt + maxReconnectAttempts retries = 4 total
     expect(connectCallCount).toBe(4);
   });
+
+  it('stops reconnecting WS after maxReconnectAttempts', async () => {
+    vi.useFakeTimers();
+    const client = await makeClient('agent-ws', { maxReconnectAttempts: 2 });
+
+    let connectCallCount = 0;
+    const connectWsMock = vi.fn(async () => {
+      connectCallCount++;
+      throw new HaiConnectionError('WS connection failed');
+    });
+    client._setFFIAdapter(createMockFFI({ connectWs: connectWsMock }));
+
+    const connectPromise = (async () => {
+      const events: unknown[] = [];
+      for await (const event of client.connect({ transport: 'ws' })) {
+        events.push(event);
+      }
+    })().catch((err: unknown) => { throw err; });
+
+    const settled = connectPromise.catch(() => {});
+
+    for (let i = 0; i < 10; i++) {
+      await vi.advanceTimersByTimeAsync(60_000);
+    }
+
+    await settled;
+    await expect(connectPromise).rejects.toThrow(HaiConnectionError);
+    expect(connectCallCount).toBe(3);
+  });
+
+  it.each([
+    ['sse', 'connectSse', 'sseClose'],
+    ['ws', 'connectWs', 'wsClose'],
+  ] as const)('yields %s events and closes the opaque handle once', async (
+    transport,
+    connectMethod,
+    closeMethod,
+  ) => {
+    const client = await makeClient(`agent-${transport}`);
+
+    const closeMock = vi.fn(async () => {});
+    const nextMethod = transport === 'sse' ? 'sseNextEvent' : 'wsNextEvent';
+    const connectMock = vi.fn(async () => 42);
+    const nextMock = vi.fn(async () => ({
+      event_type: 'connected',
+      data: { agent_id: `agent-${transport}` },
+      id: `${transport}-evt-1`,
+      raw: '{"agent_id":"test"}',
+    }));
+
+    client._setFFIAdapter(createMockFFI({
+      [closeMethod]: closeMock,
+      [connectMethod]: connectMock,
+      [nextMethod]: nextMock,
+    }));
+
+    const stream = client.connect({ transport });
+    const first = await stream.next();
+    expect(first.done).toBe(false);
+    expect(first.value?.eventType).toBe('connected');
+    expect(first.value?.id).toBe(`${transport}-evt-1`);
+
+    await stream.return(undefined);
+
+    expect(connectMock).toHaveBeenCalledTimes(1);
+    expect(closeMock).toHaveBeenCalledTimes(1);
+    expect(closeMock).toHaveBeenCalledWith(42);
+  });
 });
 
 // =============================================================================
