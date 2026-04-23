@@ -105,6 +105,7 @@ func TestSSEConnection(t *testing.T) {
 			break
 		}
 	}
+	conn.Close()
 
 	if len(received) < 3 {
 		t.Fatalf("expected at least 3 events, got %d", len(received))

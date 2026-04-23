@@ -21,11 +21,11 @@
     },
     {
       "name": "send-email",
-      "args": ["to:string", "subject:string", "body:string", "cc:string[]", "bcc:string[]", "labels:string[]"]
+      "args": ["to:string", "subject:string", "body:string", "cc:string[]", "bcc:string[]", "labels:string[]", "json:bool"]
     },
     {
       "name": "list-messages",
-      "args": ["limit:u32", "offset:u32", "direction:string?", "is_read:bool?", "folder:string?", "label:string?"]
+      "args": ["limit:u32", "offset:u32", "direction:string?", "is_read:bool?", "folder:string?", "label:string?", "json:bool"]
     },
     {
       "name": "search-messages",
