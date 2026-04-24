@@ -1,6 +1,9 @@
 {
-  "haiai": {
-    "command": "haiai",
-    "args": ["mcp"]
+  "mcpServers": {
+    "haiai": {
+      "type": "stdio",
+      "command": "haiai",
+      "args": ["mcp"]
+    }
   }
 }
