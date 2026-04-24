@@ -95,9 +95,9 @@ Parity is enforced by JSON fixture contracts in `fixtures/`. Each fixture is the
 
 | Fixture | Surface | Tested in |
 |---------|---------|-----------|
-| `mcp_tool_contract.json` | MCP tools (28 tools) | `rust/hai-mcp/tests/integration.rs`, `python/tests/test_mcp_parity.py` |
-| `cli_command_parity.json` | CLI commands (29 commands) | `rust/haiai-cli/src/main.rs` (mod tests) |
-| `ffi_method_parity.json` | FFI binding methods (68 methods) | Language-specific FFI adapter tests |
+| `mcp_tool_contract.json` | MCP tools (27 tools) | `rust/hai-mcp/tests/integration.rs`, `python/tests/test_mcp_parity.py` |
+| `cli_command_parity.json` | CLI commands (28 commands) | `rust/haiai-cli/src/main.rs` (mod tests) |
+| `ffi_method_parity.json` | FFI binding methods (67 methods) | Language-specific FFI adapter tests |
 | `mcp_cli_parity.json` | MCP-to-CLI mapping | `rust/haiai-cli/src/main.rs` (mod tests) |
 | `contract_endpoints.json` | HTTP endpoint contracts | `rust/haiai/tests/contract_endpoints.rs`, Python/Node/Go contract tests |
 | `cross_lang_test.json` | Auth headers, canonical JSON | `rust/haiai/tests/cross_lang_contract.rs`, `python/tests/test_cross_lang_contract.py` |

@@ -123,10 +123,10 @@ haiai get-raw-email m.uuid --base64 | tee /tmp/raw.b64
 Exit code 2 when `available: false`, with `omitted_reason` printed on
 stderr so scripts can branch.
 
-There is no `haiai verify-email` CLI today (see issue 006 in
-`docs/RAW_EMAIL_RETRIEVAL_ISSUES/`). For offline verification from the
-shell, pipe the raw bytes into a short Python or Node script using the
-language-library `verifyEmail` / `verify_email` calls shown above.
+There is no `haiai verify-email` CLI today. For offline verification
+from the shell, pipe the raw bytes into a short Python or Node script
+using the language-library `verifyEmail` / `verify_email` calls shown
+above.
 
 ## MCP
 
@@ -141,7 +141,7 @@ language-library `verifyEmail` / `verify_email` calls shown above.
 moltyjacs wraps the first call as `jacs_hai_get_raw_email`. MCP
 `hai_verify_email_raw` and moltyjacs `jacs_hai_verify_email_raw` are
 *not* registered today; a `verifyEmail` MCP tool would be additive but
-has not been scoped (tracked in issue 006).
+has not been scoped.
 
 ## Why Byte-Fidelity Matters (PRD R2)
 
@@ -157,14 +157,10 @@ embedded NUL, and non-ASCII bytes to catch regressions.
 ## When Verification Cannot Happen
 
 - `available: false` with `omitted_reason: "not_stored"`: the message
-  predates this feature, **OR** it is an inbound email received from an
-  external sender while the filter-worker write site in `hai/api` is
-  still pending (see `docs/RAW_EMAIL_RETRIEVAL_ISSUES/RAW_EMAIL_RETRIEVAL_ISSUE_004.md`).
-  Outbound messages you sent through `send_signed_email` **do** carry
-  `raw_mime` today. Until filter-worker lands server-side, inbound-from-
-  external-agent verification is limited to trusting the server's
-  `jacs_verified` flag on the message row (which reflects server-side
-  verification at ingest).
+  predates this feature (row inserted before the `raw_mime` column
+  existed). Fall back to the server's `jacs_verified` flag on the
+  message row; offline verification is not possible for pre-feature
+  rows.
 - `available: false` with `omitted_reason: "oversize"`: the MIME was
   larger than the 25 MB attachment cap and not persisted. Again, the
   server-side `jacs_verified` flag is the best you have offline.
@@ -172,18 +168,12 @@ embedded NUL, and non-ASCII bytes to catch regressions.
   was tampered in transit or the signer's key has been revoked. Do
   not trust this message.
 
-### Known server-side gaps (cross-repo, tracked in `_ISSUES/`)
+### Server-side coverage
 
-The haisdk side of this feature is complete. Two items that would
-strengthen the guarantee live in the `hai/api` repo and are tracked
-there:
-
-1. **Filter-worker inbound ingestion** (issue 004) — raw bytes are
-   persisted only on send paths today. Until the filter-worker write
-   site wires `persist_raw_mime`, inbound emails from external agents
-   return `available: false`.
-2. **hai/api byte-identity integration test** (issue 005) — the
-   server-side `countersigned_email → DB → /raw` pipeline has no
-   `hosted_raw_email_roundtrip_test.rs` yet. haisdk proves byte-identity
-   with a mock HTTP server; the hai/api side needs its own Postgres-backed
-   test harness before the full PRD §5.3 contract is enforced end-to-end.
+Outbound and inbound raw bytes are both persisted. The filter-worker
+write site (`api/email/filter-worker/src/main.rs`) now calls the same
+`persist_raw_mime` helper on every DATA hook + SES inbound, passing the
+exact bytes received before any `mail-parser` normalization. The
+server-side pipeline is guarded by `hai/api/tests/hosted_raw_email_roundtrip_test.rs`,
+which asserts byte-identity through `send-signed → DB → /raw` and
+covers the legacy-row / oversize / cross-agent branches.

@@ -623,6 +623,6 @@
     "mutating_methods": 2,
     "excluded_methods": 5,
     "total_public_methods": 76,
-    "binding_core_scope": "50 async + 6 streaming + 11 sync + 2 mutating = 69 methods"
+    "binding_core_scope": "50 async + 6 streaming + 2 callback + 11 sync + 2 mutating = 71 methods"
   }
 }
