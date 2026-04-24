@@ -243,6 +243,14 @@ func TestParseRawEmailJSONPreservesNullVsDefault(t *testing.T) {
 }
 
 // Fixture-driven conformance — PRD §5.4 raw_email_roundtrip scenario.
+//
+// Issue 017 note: this test asserts *byte-identity forwarding through the
+// verify call chain*, not real post-quantum crypto verification. The
+// fixture's `verify_implemented_by: "rust_only"` key declares that only
+// Rust's conformance test runs `jacs::email::verify_email_document`
+// against the signed bytes. Go (and Python/Node) stub the verify HTTP
+// response; `captured` below is what guarantees the wrapper did not
+// mutate the bytes between GetRawEmail and VerifyEmail.
 
 func TestRawEmailConformanceRoundtrip(t *testing.T) {
 	fixturePath := filepath.Join("..", "fixtures", "email_conformance.json")
@@ -257,6 +265,9 @@ func TestRawEmailConformanceRoundtrip(t *testing.T) {
 	scenario, ok := fixture["raw_email_roundtrip"].(map[string]interface{})
 	if !ok {
 		t.Fatal("missing raw_email_roundtrip scenario")
+	}
+	if vb, _ := scenario["verify_implemented_by"].(string); vb != "rust_only" {
+		t.Fatalf("expected verify_implemented_by=\"rust_only\" (Issue 017); got %q", vb)
 	}
 	inputB64 := scenario["input_raw_b64"].(string)
 	expectedBytes, err := base64.StdEncoding.DecodeString(inputB64)

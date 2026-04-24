@@ -171,12 +171,24 @@ class TestRawEmailConformanceFixture:
     def test_raw_email_roundtrip_scenario_byte_identity(
         self, loaded_config: None,
     ) -> None:
+        # Issue 017 note: this test asserts *byte-identity forwarding
+        # through the verify call chain*, not real post-quantum crypto
+        # verification. The fixture's `verify_implemented_by: "rust_only"`
+        # key declares that only Rust's conformance test runs
+        # `jacs::email::verify_email_document` against the signed bytes.
+        # Python (and Node/Go) mock the FFI verify response; the
+        # `captured["bytes"]` assertion below is what guarantees the
+        # wrapper did not mutate the bytes between get_raw_email and
+        # verify_email_raw.
         fixture_path = (
             Path(__file__).parent.parent.parent / "fixtures" / "email_conformance.json"
         )
         assert fixture_path.exists(), fixture_path
         fixture = json.loads(fixture_path.read_text())
         scenario = fixture["raw_email_roundtrip"]
+        assert scenario["verify_implemented_by"] == "rust_only", (
+            "Issue 017: fixture must declare verify_implemented_by"
+        )
 
         expected_bytes = base64.b64decode(scenario["input_raw_b64"])
         # Belt-and-braces: hash matches the declared input_sha256

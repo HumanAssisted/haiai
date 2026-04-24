@@ -136,10 +136,18 @@ describe('getRawEmail', () => {
 
 describe('raw_email_roundtrip conformance fixture', () => {
   it('fetched bytes match declared SHA-256 AND verify succeeds (PRD §5.4)', async () => {
+    // Issue 017 note: this test asserts *byte-identity forwarding through
+    // the verify call chain*, not real post-quantum crypto verification.
+    // The fixture's `verify_implemented_by: "rust_only"` key declares that
+    // only Rust's conformance test runs `jacs::email::verify_email_document`
+    // against the signed bytes. Node (and Python/Go) mock the FFI verify
+    // response; capturedVerifyInput below is what guarantees the wrapper
+    // did not mutate the bytes between getRawEmail and verifyDocument.
     const fixturePath = resolve(__dirname, '..', '..', 'fixtures', 'email_conformance.json');
     const fixture = JSON.parse(readFileSync(fixturePath, 'utf-8'));
     const scenario = fixture.raw_email_roundtrip;
     expect(scenario).toBeDefined();
+    expect(scenario.verify_implemented_by).toBe('rust_only');
 
     const expectedBytes = Buffer.from(scenario.input_raw_b64, 'base64');
     const sha = createHash('sha256').update(expectedBytes).digest('hex');

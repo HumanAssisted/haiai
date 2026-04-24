@@ -1009,6 +1009,10 @@ pub struct RawEmailResponse {
     /// Explains why `raw_email` is absent. One of:
     /// - `"not_stored"`: legacy row predating the feature.
     /// - `"oversize"`: MIME exceeded the 25 MB storage cap.
+    /// - `"reconstructed"`: inbound SMTP DATA hook could not deliver
+    ///   byte-identical wire bytes, so no bytes were persisted
+    ///   (Issue 012). Callers should fall back to IMAP/JMAP for
+    ///   bit-exact bytes.
     /// - `None`: bytes are present (`available == true`).
     pub omitted_reason: Option<String>,
 }

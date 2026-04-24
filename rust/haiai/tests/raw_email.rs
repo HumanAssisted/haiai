@@ -139,6 +139,39 @@ async fn get_raw_email_available_false_oversize() {
     assert_eq!(resp.omitted_reason.as_deref(), Some("oversize"));
 }
 
+/// Issue 012: the server's SMTP DATA path cannot deliver byte-identical
+/// wire bytes, so it writes `raw_mime_omitted_reason = 'reconstructed'`
+/// and the handler surfaces `omitted_reason: "reconstructed"`. The SDK
+/// MUST surface that sentinel verbatim so callers can distinguish it
+/// from `"not_stored"` (legacy pre-feature row) and fall back to
+/// IMAP/JMAP for bit-exact bytes.
+#[tokio::test]
+async fn get_raw_email_available_false_reconstructed() {
+    let server = MockServer::start_async().await;
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path("/api/agents/a/email/messages/recon-id/raw");
+            then.status(200).json_body(json!({
+                "message_id": "recon-id",
+                "available": false,
+                "raw_email_b64": serde_json::Value::Null,
+                "size_bytes": serde_json::Value::Null,
+                "omitted_reason": "reconstructed",
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url(), "a");
+    let resp = client.get_raw_email("recon-id").await.expect("ok");
+    mock.assert_async().await;
+
+    assert!(!resp.available);
+    assert_eq!(resp.raw_email, None);
+    assert_eq!(resp.omitted_reason.as_deref(), Some("reconstructed"));
+    assert_eq!(resp.size_bytes, None);
+}
+
 #[tokio::test]
 async fn get_raw_email_404_is_api_error() {
     let server = MockServer::start_async().await;

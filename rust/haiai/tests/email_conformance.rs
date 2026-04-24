@@ -268,6 +268,15 @@ async fn raw_email_roundtrip_fixture_byte_identity_and_verify_valid() {
     let fixture = load_conformance();
     let scenario = &fixture["raw_email_roundtrip"];
 
+    // Issue 017: Rust is the only SDK declared as running real JACS crypto
+    // verify in the shared fixture. If this key changes, update the PRD §5.4
+    // contract and the non-Rust SDK tests.
+    assert_eq!(
+        scenario["verify_implemented_by"].as_str(),
+        Some("rust_only"),
+        "fixture verify_implemented_by must be \"rust_only\" (Issue 017)"
+    );
+
     let expected_b64 = scenario["input_raw_b64"]
         .as_str()
         .expect("input_raw_b64");
@@ -424,4 +433,39 @@ async fn raw_email_oversize_fixture_matches_available_false() {
     assert!(!resp.available);
     assert_eq!(resp.raw_email, None);
     assert_eq!(resp.omitted_reason.as_deref(), Some("oversize"));
+}
+
+/// Issue 012 conformance: the reconstructed-source sentinel flows
+/// through the fixture → mock server → SDK decode pipeline with the
+/// `omitted_reason: "reconstructed"` signal intact so cross-language
+/// SDKs all see the same wire shape.
+#[tokio::test]
+async fn raw_email_reconstructed_fixture_matches_available_false() {
+    let fixture = load_conformance();
+    let scenario = &fixture["raw_email_reconstructed"];
+
+    let server = MockServer::start_async().await;
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(GET)
+                .path_includes("/email/messages/")
+                .path_includes("/raw");
+            then.status(200).json_body(serde_json::json!({
+                "message_id": "recon",
+                "available": scenario["expected_available"],
+                "raw_email_b64": scenario["expected_raw_b64"],
+                "size_bytes": scenario["expected_size_bytes"],
+                "omitted_reason": scenario["expected_omitted_reason"],
+            }));
+        })
+        .await;
+
+    let client = make_test_client(&server.base_url(), "a");
+    let resp = client.get_raw_email("recon").await.expect("ok");
+    mock.assert_async().await;
+
+    assert!(!resp.available);
+    assert_eq!(resp.raw_email, None);
+    assert_eq!(resp.omitted_reason.as_deref(), Some("reconstructed"));
+    assert_eq!(resp.size_bytes, None);
 }

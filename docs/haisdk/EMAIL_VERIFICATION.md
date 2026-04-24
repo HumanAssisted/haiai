@@ -177,3 +177,93 @@ exact bytes received before any `mail-parser` normalization. The
 server-side pipeline is guarded by `hai/api/tests/hosted_raw_email_roundtrip_test.rs`,
 which asserts byte-identity through `send-signed → DB → /raw` and
 covers the legacy-row / oversize / cross-agent branches.
+
+## Smoke-Test the Endpoint (5 Minutes)
+
+Use this when you want to prove raw-email retrieval actually works
+end-to-end against a running `hai/api` instance — no mocks, no CI, just
+a real server and your terminal. Assumes `HAI_RUN_DB_TESTS=1` CI, a
+local docker compose with Postgres, or a staging deployment.
+
+### Prerequisites
+
+- `hai/api` running (locally: `cd hai && docker compose up -d`).
+- Two JACS agents registered and activated for email (simplest: reuse
+  the `email_ready_agents` fixture from the Python SDK integration
+  tests — `cd hai && pytest tests/haisdk/python/test_raw_email_e2e.py`
+  will set them up).
+- `curl`, `jq`, and `base64` installed.
+
+### Step 1 — Send a signed message
+
+```bash
+HAI_API=http://localhost:3000
+AGENT_ID=<agent-uuid-A>
+JACS_ID=<jacs-id-A>
+AUTH_HEADER="JACS $JACS_ID:$(date +%s):<signature-b64>"
+
+RESPONSE=$(curl -sS -X POST \
+  "$HAI_API/api/agents/$AGENT_ID/email/send" \
+  -H "Authorization: $AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"to":"b@hai.ai","subject":"smoke probe","body":"hello world","jacs_signature":"<sig>","jacs_timestamp":"<ts>"}')
+
+MESSAGE_ID=$(echo "$RESPONSE" | jq -r .message_id)
+echo "sent as: $MESSAGE_ID"
+```
+
+If the signature generation is annoying to script by hand, let the
+SDK's integration test do it:
+
+```bash
+cd hai && pytest tests/haisdk/python/test_raw_email_e2e.py -v -s
+# Printed `message_id` values are live and usable in the next step.
+```
+
+### Step 2 — Fetch the raw bytes
+
+```bash
+ESCAPED=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$MESSAGE_ID")
+RAW=$(curl -sS -H "Authorization: $AUTH_HEADER_RECIPIENT" \
+  "$HAI_API/api/agents/$RECIPIENT_AGENT_ID/email/messages/$ESCAPED/raw")
+echo "$RAW" | jq '{available, size_bytes, omitted_reason}'
+echo "$RAW" | jq -r .raw_email_b64 | base64 -D > /tmp/raw.eml
+ls -la /tmp/raw.eml
+```
+
+Expected: `{available: true, size_bytes: N, omitted_reason: null}` and
+`/tmp/raw.eml` contains the full RFC 5322 message including the
+`hai.ai.signature.jacs.json` attachment.
+
+### Step 3 — Verify offline
+
+```bash
+python3 <<'PY'
+from haiai import HaiClient
+raw = open("/tmp/raw.eml", "rb").read()
+c = HaiClient()
+r = c.verify_email(raw_email=raw)
+print("valid:", r.valid, "jacs_id:", r.jacs_id, "tier:", r.reputation_tier)
+PY
+```
+
+Expected: `valid: True`. Any other result means either (a) the raw bytes
+were mutated somewhere along the pipeline (R2 regression — escalate
+immediately) or (b) the signer's key is no longer trusted.
+
+### Step 4 — Failure branches
+
+```bash
+# legacy row: make-up a mid that never existed
+curl -sS -w "\n%{http_code}\n" -H "Authorization: $AUTH_HEADER" \
+  "$HAI_API/api/agents/$AGENT_ID/email/messages/%3Cfake%40hai.ai%3E/raw"
+# Expected HTTP 404 — NOT 200 + available:false.
+
+# cross-agent: try fetching someone else's message with your auth
+curl -sS -w "\n%{http_code}\n" -H "Authorization: $AUTH_HEADER_C" \
+  "$HAI_API/api/agents/$AGENT_ID_OF_B/email/messages/$ESCAPED/raw"
+# Expected HTTP 401 / 403 / 404 — NEVER 200 with bytes.
+```
+
+If any of these four steps deviates from expected, the feature is
+broken on that path. See Issue 014 for why this recipe exists.
