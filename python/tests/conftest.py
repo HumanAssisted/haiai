@@ -239,6 +239,9 @@ class MockFFIAdapter:
     def get_message(self, message_id: str) -> dict:
         return self._record("get_message", message_id)
 
+    def get_raw_email(self, message_id: str) -> dict:
+        return self._record("get_raw_email", message_id)
+
     def get_unread_count(self) -> int:
         result = self._record("get_unread_count")
         if isinstance(result, int):
@@ -454,6 +457,9 @@ class MockAsyncFFIAdapter(MockFFIAdapter):
 
     async def get_message(self, message_id: str) -> dict:  # type: ignore[override]
         return self._record("get_message", message_id)
+
+    async def get_raw_email(self, message_id: str) -> dict:  # type: ignore[override]
+        return self._record("get_raw_email", message_id)
 
     async def get_unread_count(self) -> int:  # type: ignore[override]
         result = self._record("get_unread_count")

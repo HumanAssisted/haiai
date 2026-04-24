@@ -72,6 +72,7 @@ const MCP_TOOL_TO_FFI_METHODS: Record<string, string[]> = {
   hai_get_email_template: ['getEmailTemplate'],
   hai_update_email_template: ['updateEmailTemplate'],
   hai_delete_email_template: ['deleteEmailTemplate'],
+  hai_get_raw_email: ['getRawEmail'],
 };
 
 // ---------------------------------------------------------------------------

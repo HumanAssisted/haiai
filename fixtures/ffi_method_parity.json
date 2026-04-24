@@ -24,6 +24,7 @@
       {"name": "update_labels", "args": ["params_json:string"], "returns": "json"},
       {"name": "get_email_status", "args": [], "returns": "json"},
       {"name": "get_message", "args": ["message_id:string"], "returns": "json"},
+      {"name": "get_raw_email", "args": ["message_id:string"], "returns": "json"},
       {"name": "get_unread_count", "args": [], "returns": "json"}
     ],
     "email_actions": [
@@ -107,5 +108,5 @@
     "ProviderError"
   ],
   "error_format": "{ErrorKind}: {message}",
-  "total_method_count": 66
+  "total_method_count": 67
 }

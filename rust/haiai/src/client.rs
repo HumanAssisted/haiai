@@ -20,10 +20,10 @@ use crate::types::{
     DnsCertifiedRunOptions, DocumentVerificationResult, EmailMessage, EmailStatus,
     EmailTemplate, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult,
     ListEmailTemplatesOptions, ListEmailTemplatesResult, ListMessagesOptions,
-    ProRunOptions, ProRunResult, PublicKeyInfo, RegisterAgentOptions, RegistrationResult,
-    RotateKeysOptions, RotationResult, SearchOptions, SendEmailOptions, SendEmailResult,
-    TranscriptMessage, TransportType, UpdateAgentResult, UpdateEmailTemplateOptions,
-    UpdateUsernameResult, VerifyAgentDocumentRequest, VerifyAgentResult,
+    ProRunOptions, ProRunResult, PublicKeyInfo, RawEmailResponse, RegisterAgentOptions,
+    RegistrationResult, RotateKeysOptions, RotationResult, SearchOptions, SendEmailOptions,
+    SendEmailResult, TranscriptMessage, TransportType, UpdateAgentResult,
+    UpdateEmailTemplateOptions, UpdateUsernameResult, VerifyAgentDocumentRequest, VerifyAgentResult,
 };
 
 pub const DEFAULT_BASE_URL: &str = "https://beta.hai.ai";
@@ -810,6 +810,37 @@ impl<P: JacsProvider> HaiClient<P> {
 
         let data = response_json(response).await?;
         Ok(serde_json::from_value(data)?)
+    }
+
+    /// Fetch the exact raw RFC 5322 bytes of a message, suitable for local
+    /// JACS verification via [`verify_email`](crate::email::verify_email).
+    ///
+    /// The endpoint (`GET .../messages/{id}/raw`) returns either the stored
+    /// bytes (base64-decoded here at the client boundary) or an explicit
+    /// `available: false` signal with an `omitted_reason`:
+    ///
+    /// - `"not_stored"`: legacy row predating the feature.
+    /// - `"oversize"`: MIME exceeded the 25 MB storage cap.
+    ///
+    /// **Byte-fidelity mandate (PRD R2):** bytes returned here MUST be
+    /// byte-identical to what JACS signed. No trimming, no line-ending
+    /// normalization, no UTF-8 lossy conversion.
+    pub async fn get_raw_email(&self, message_id: &str) -> Result<RawEmailResponse> {
+        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
+        let safe_message_id = encode_path_segment(message_id);
+        let url = self.url(&format!(
+            "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/raw"
+        ));
+
+        let response = self
+            .http
+            .get(url)
+            .header("Authorization", self.build_auth_header()?)
+            .send()
+            .await?;
+
+        let data = response_json(response).await?;
+        RawEmailResponse::from_wire_json(data)
     }
 
     pub async fn delete_message(&self, message_id: &str) -> Result<()> {

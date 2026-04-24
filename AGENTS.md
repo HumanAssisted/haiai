@@ -125,6 +125,36 @@ Every real MCP tool and every real CLI command must appear in exactly one sectio
 
 If you add a tool to MCP but not CLI (or vice versa), you must add it to the appropriate `*_only` section with a reason explaining why.
 
+## Raw Email Retrieval
+
+A recipient agent can fetch the exact raw RFC 5322 bytes of any message in
+its mailbox and feed them to local JACS verification, without contacting
+Stalwart. The server persists the exact bytes that JACS signed on every
+send path (PRD R2 byte-fidelity). Inbound messages from external agents
+currently require a server-side filter-worker write site still pending in
+`hai/api` (see `docs/RAW_EMAIL_RETRIEVAL_ISSUES/RAW_EMAIL_RETRIEVAL_ISSUE_004.md`);
+until that lands, inbound raw bytes return `available: false`.
+
+- HTTP: `GET /api/agents/{agent_id}/email/messages/{message_id}/raw`
+  → JSON `{ message_id, rfc_message_id, available, raw_email_b64,
+  size_bytes, omitted_reason }`.
+- Rust: `HaiClient::get_raw_email(message_id) -> RawEmailResponse`
+  (decodes base64 into `Vec<u8>` at the client boundary).
+- Python: `HaiClient.get_raw_email(hai_url=None, message_id="")`
+  (sync) and `AsyncHaiClient.get_raw_email(hai_url, message_id)` (async)
+  — returns `RawEmailResult.raw_email: bytes | None`.
+- Node: `HaiClient.getRawEmail(messageId): Promise<RawEmailResult>`
+  — returns `{ rawEmail: Buffer | null, ... }`.
+- Go: `Client.GetRawEmail(ctx, messageID) (*RawEmailResult, error)`
+  — returns `{ RawEmail []byte, ... }`.
+- MCP: `hai_get_raw_email`. CLI: `haiai get-raw-email <id> [--output F] [--base64]`.
+- moltyjacs: `jacs_hai_get_raw_email` delegates through `@haiai/haiai`.
+
+25 MB cap (matches existing attachment limit). Legacy rows predating the
+feature return `available: false` with `omitted_reason: "not_stored"`;
+oversize rows return `"oversize"`. Recipe + cross-language snippets live
+in `docs/haisdk/EMAIL_VERIFICATION.md`.
+
 ## Local JACS Development
 
 Each SDK pins a published JACS version for CI/release, but supports local path overrides for development:

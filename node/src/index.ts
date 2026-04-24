@@ -133,6 +133,7 @@ export type {
   SendEmailOptions,
   SendEmailResult,
   EmailMessage,
+  RawEmailResult,
   ListMessagesOptions,
   SearchOptions,
   EmailStatus,

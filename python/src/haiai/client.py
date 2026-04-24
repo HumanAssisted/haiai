@@ -59,6 +59,7 @@ from haiai.models import (
     HelloWorldResult,
     JobResponseResult,
     PublicKeyInfo,
+    RawEmailResult,
     RegistrationResult,
     RotationResult,
     SendEmailResult,
@@ -1441,6 +1442,24 @@ class HaiClient:
         ffi = self._get_ffi()
         m = ffi.get_message(message_id)
         return EmailMessage.from_dict(m)
+
+    def get_raw_email(
+        self, hai_url: Optional[str] = None, message_id: str = ""
+    ) -> RawEmailResult:
+        """Fetch the raw RFC 5322 bytes of a message for local JACS verification.
+
+        Returns :class:`RawEmailResult` with ``raw_email`` as ``bytes`` on the
+        happy path, or ``None`` when ``available`` is False (see
+        ``omitted_reason``). Pair with :meth:`verify_email` to verify offline.
+
+        Byte-fidelity (PRD R2): ``raw_email`` is byte-identical to what JACS
+        signed — no trimming, no line-ending normalization.
+        """
+        if not message_id:
+            raise ValueError("'message_id' is required")
+        ffi = self._get_ffi()
+        data = ffi.get_raw_email(message_id)
+        return RawEmailResult.from_dict(data)
 
     def delete_message(self, hai_url: Optional[str] = None, message_id: str = "") -> bool:
         """Delete an email message."""

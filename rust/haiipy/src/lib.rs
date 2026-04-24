@@ -311,6 +311,21 @@ impl HaiClient {
         }).map_err(to_py_err)
     }
 
+    fn get_raw_email<'py>(&self, py: Python<'py>, message_id: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.get_raw_email(&message_id).await.map_err(to_py_err)
+        })
+    }
+
+    fn get_raw_email_sync(&self, py: Python, message_id: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.get_raw_email(&message_id).await })
+        }).map_err(to_py_err)
+    }
+
     fn get_unread_count<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let client = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {

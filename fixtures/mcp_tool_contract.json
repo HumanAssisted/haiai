@@ -1,7 +1,7 @@
 {
   "description": "Canonical MCP tool parity contract. The Rust MCP server (hai-mcp) must expose exactly these tools with matching names, properties, and required fields. Other SDKs validate against this fixture to ensure cross-language parity.",
   "version": "2.0.0",
-  "total_tool_count": 26,
+  "total_tool_count": 27,
   "required_tools": [
     {
       "name": "hai_hello",
@@ -306,6 +306,17 @@
       },
       "required": [
         "template_id"
+      ]
+    },
+    {
+      "name": "hai_get_raw_email",
+      "properties": {
+        "message_id": "string",
+        "agent_id": "string",
+        "config_path": "string"
+      },
+      "required": [
+        "message_id"
       ]
     }
   ]

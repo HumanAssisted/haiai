@@ -143,6 +143,11 @@ impl HaiClient {
     }
 
     #[napi]
+    pub async fn get_raw_email(&self, message_id: String) -> Result<String> {
+        self.inner.get_raw_email(&message_id).await.map_err(to_napi_err)
+    }
+
+    #[napi]
     pub async fn get_unread_count(&self) -> Result<String> {
         self.inner.get_unread_count().await.map_err(to_napi_err)
     }

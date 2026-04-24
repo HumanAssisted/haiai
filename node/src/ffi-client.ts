@@ -53,6 +53,7 @@ interface NativeHaiClient {
   updateLabels(paramsJson: string): Promise<string>;
   getEmailStatus(): Promise<string>;
   getMessage(messageId: string): Promise<string>;
+  getRawEmail(messageId: string): Promise<string>;
   getUnreadCount(): Promise<string>;
 
   // Email Actions
@@ -415,6 +416,15 @@ export class FFIClientAdapter {
   async getMessage(messageId: string): Promise<Record<string, unknown>> {
     try {
       const json = await this.native.getMessage(messageId);
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async getRawEmail(messageId: string): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.getRawEmail(messageId);
       return JSON.parse(json) as Record<string, unknown>;
     } catch (err) {
       throw mapFFIError(err);

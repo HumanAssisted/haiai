@@ -19,5 +19,10 @@
     "method": "POST",
     "path": "/api/agents/{agent_id}/email/reply",
     "auth_required": true
+  },
+  "get_raw_email": {
+    "method": "GET",
+    "path": "/api/agents/{agent_id}/email/messages/{message_id}/raw",
+    "auth_required": true
   }
 }

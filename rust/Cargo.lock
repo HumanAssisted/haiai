@@ -1281,6 +1281,7 @@ version = "0.2.3"
 dependencies = [
  "anyhow",
  "atty",
+ "base64",
  "chrono",
  "clap",
  "hai-mcp",
@@ -1859,6 +1860,8 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jacs"
 version = "0.9.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2422c9f9e6a4e890b19f5909eb42aaec9be5e4458ca04d1566feb18c894ee2d9"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1922,6 +1925,8 @@ dependencies = [
 [[package]]
 name = "jacs-binding-core"
 version = "0.9.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e950501d587001bc40852029e270748de5ff05d8cfa329c2216d3670c20a0b0"
 dependencies = [
  "base64",
  "jacs",
@@ -1936,6 +1941,8 @@ dependencies = [
 [[package]]
 name = "jacs-mcp"
 version = "0.9.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe51cafd477f07dd58ff42d17330e9cfc5fb5fffb9edd0466c68a299d4086a5d"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5319,3 +5326,4 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+

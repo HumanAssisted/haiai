@@ -1,150 +1,221 @@
 {
-  "description": "Cross-SDK email conformance test vectors for EmailVerificationResultV2 and email signing API contracts",
-  "version": "1.0",
-
-  "content_hash_golden": {
-    "description": "All SDKs must produce identical content hashes for these inputs. Algorithm: sha256(subject + '\\n' + body + '\\n' + sorted_attachment_hashes.join('\\n')) where attachment_hash = sha256(filename_utf8_nfc + ':' + content_type_lower + ':' + raw_bytes). For no attachments: sha256(subject + '\\n' + body).",
-    "vectors": [
-      {
-        "name": "with_attachments",
-        "subject": "Cross-SDK Test",
-        "body": "Verify me",
-        "attachments": [
-          {"filename": "doc.pdf", "content_type": "application/pdf", "data_utf8": "pdf-content"},
-          {"filename": "img.png", "content_type": "image/png", "data_utf8": "png-content"}
-        ],
-        "expected_hash": "sha256:ee0b55f2f72c2ccaba13ebe86a710cbe69d58972d827ba5fd0687b5fcd30a828"
-      },
-      {
-        "name": "no_attachments",
-        "subject": "Subject",
-        "body": "Body",
-        "attachments": [],
-        "expected_hash": "sha256:ee0c09adcdb487b1c64d7e63dfeaf7eabc1fe5ffc7f6182b0541061e2610bb25"
-      }
-    ]
-  },
-
-  "verification_result_v2_schema": {
-    "description": "All SDKs must return structurally equivalent EmailVerificationResultV2 with these fields",
-    "required_fields": {
-      "valid": "boolean",
-      "jacs_id": "string",
-      "algorithm": "string",
-      "reputation_tier": "string",
-      "dns_verified": "boolean_or_null",
-      "field_results": "array_of_field_result",
-      "chain": "array_of_chain_entry",
-      "error": "string_or_null"
-    },
-    "field_result_schema": {
-      "required_fields": {
-        "field": "string",
-        "status": "field_status_enum"
-      },
-      "optional_fields": {
-        "original_hash": "string_or_null",
-        "current_hash": "string_or_null",
-        "original_value": "string_or_null",
-        "current_value": "string_or_null"
-      }
-    },
-    "chain_entry_schema": {
-      "required_fields": {
-        "signer": "string",
-        "jacs_id": "string",
-        "valid": "boolean",
-        "forwarded": "boolean"
-      }
-    },
-    "field_status_values": ["pass", "modified", "fail", "unverifiable"]
-  },
-
   "api_contracts": {
+    "send_email": {
+      "excluded_fields": [
+        "jacs_signature",
+        "jacs_timestamp"
+      ],
+      "method": "POST",
+      "note": "Client must NOT send jacs_signature or jacs_timestamp; server handles signing",
+      "path_pattern": "/api/agents/{agent_id}/email/send",
+      "request_content_type": "application/json"
+    },
     "sign_email": {
       "method": "POST",
       "path": "/api/v1/email/sign",
-      "request_content_type": "message/rfc822",
       "request_body": "raw_rfc5322_bytes",
-      "response_content_type": "message/rfc822",
-      "response_body": "signed_rfc5822_bytes"
+      "request_content_type": "message/rfc822",
+      "response_body": "signed_rfc5822_bytes",
+      "response_content_type": "message/rfc822"
     },
     "verify_email": {
       "method": "POST",
       "path": "/api/v1/email/verify",
-      "request_content_type": "message/rfc822",
       "request_body": "raw_rfc5322_bytes",
-      "response_content_type": "application/json",
-      "response_body": "EmailVerificationResultV2"
-    },
-    "send_email": {
-      "method": "POST",
-      "path_pattern": "/api/agents/{agent_id}/email/send",
-      "request_content_type": "application/json",
-      "excluded_fields": ["jacs_signature", "jacs_timestamp"],
-      "note": "Client must NOT send jacs_signature or jacs_timestamp; server handles signing"
+      "request_content_type": "message/rfc822",
+      "response_body": "EmailVerificationResultV2",
+      "response_content_type": "application/json"
     }
   },
-
+  "content_hash_golden": {
+    "description": "All SDKs must produce identical content hashes for these inputs. Algorithm: sha256(subject + '\\n' + body + '\\n' + sorted_attachment_hashes.join('\\n')) where attachment_hash = sha256(filename_utf8_nfc + ':' + content_type_lower + ':' + raw_bytes). For no attachments: sha256(subject + '\\n' + body).",
+    "vectors": [
+      {
+        "attachments": [
+          {
+            "content_type": "application/pdf",
+            "data_utf8": "pdf-content",
+            "filename": "doc.pdf"
+          },
+          {
+            "content_type": "image/png",
+            "data_utf8": "png-content",
+            "filename": "img.png"
+          }
+        ],
+        "body": "Verify me",
+        "expected_hash": "sha256:ee0b55f2f72c2ccaba13ebe86a710cbe69d58972d827ba5fd0687b5fcd30a828",
+        "name": "with_attachments",
+        "subject": "Cross-SDK Test"
+      },
+      {
+        "attachments": [],
+        "body": "Body",
+        "expected_hash": "sha256:ee0c09adcdb487b1c64d7e63dfeaf7eabc1fe5ffc7f6182b0541061e2610bb25",
+        "name": "no_attachments",
+        "subject": "Subject"
+      }
+    ]
+  },
+  "description": "Cross-SDK email conformance test vectors for EmailVerificationResultV2 and email signing API contracts",
   "error_type_mapping": {
     "description": "SDK error type names mapped to language-idiomatic casing",
     "email_not_active": {
       "error_code": "EMAIL_NOT_ACTIVE",
-      "python": "EmailNotActiveError (sentinel via ErrEmailNotActive pattern)",
-      "node": "EmailNotActiveError",
       "go": "ErrEmailNotActive",
+      "node": "EmailNotActiveError",
+      "python": "EmailNotActiveError (sentinel via ErrEmailNotActive pattern)",
       "rust": "HaiError::EmailNotActive"
-    },
-    "recipient_not_found": {
-      "error_code": "RECIPIENT_NOT_FOUND",
-      "python": "RecipientNotFoundError (sentinel via ErrRecipientNotFound pattern)",
-      "node": "RecipientNotFoundError",
-      "go": "ErrRecipientNotFound",
-      "rust": "HaiError::RecipientNotFound"
     },
     "rate_limited": {
       "error_code": "RATE_LIMITED",
-      "python": "RateLimitedError (sentinel via ErrEmailRateLimited pattern)",
-      "node": "RateLimitedError",
       "go": "ErrEmailRateLimited",
+      "node": "RateLimitedError",
+      "python": "RateLimitedError (sentinel via ErrEmailRateLimited pattern)",
       "rust": "HaiError::RateLimited"
+    },
+    "recipient_not_found": {
+      "error_code": "RECIPIENT_NOT_FOUND",
+      "go": "ErrRecipientNotFound",
+      "node": "RecipientNotFoundError",
+      "python": "RecipientNotFoundError (sentinel via ErrRecipientNotFound pattern)",
+      "rust": "HaiError::RecipientNotFound"
     }
   },
-
   "mime_round_trip": {
     "description": "All SDKs build this email and must produce the same content hash via compute_content_hash",
+    "expected_content_hash": "sha256:147268b08359556b73026f13ffe03da453a728c98780cb4cc5777c25e5c29e66",
     "input": {
-      "to": "recipient@hai.ai",
+      "attachments": [
+        {
+          "content_type": "text/plain",
+          "data_utf8": "Hello conformance",
+          "filename": "test.txt"
+        }
+      ],
+      "body": "This is a cross-SDK conformance test.",
       "from": "sender@hai.ai",
       "subject": "MIME Round-Trip Test",
-      "body": "This is a cross-SDK conformance test.",
-      "attachments": [
-        {"filename": "test.txt", "content_type": "text/plain", "data_utf8": "Hello conformance"}
-      ]
-    },
-    "expected_content_hash": "sha256:147268b08359556b73026f13ffe03da453a728c98780cb4cc5777c25e5c29e66"
+      "to": "recipient@hai.ai"
+    }
   },
-
   "mock_verify_response": {
     "description": "A canonical mock response that all SDKs should be able to deserialize into EmailVerificationResultV2",
     "json": {
-      "valid": true,
-      "jacs_id": "conformance-test-agent-001",
+      "agent_status": "active",
       "algorithm": "ed25519",
-      "reputation_tier": "established",
-      "dns_verified": true,
-      "field_results": [
-        {"field": "subject", "status": "pass", "original_hash": "sha256:aaa", "current_hash": "sha256:aaa"},
-        {"field": "body", "status": "pass"},
-        {"field": "from", "status": "pass"},
-        {"field": "date", "status": "modified", "original_value": "2026-02-27T12:00:00Z", "current_value": "2026-02-27T12:00:01Z"}
+      "benchmarks_completed": [
+        "free_chaotic"
       ],
       "chain": [
-        {"signer": "agent@hai.ai", "jacs_id": "conformance-test-agent-001", "valid": true, "forwarded": false}
+        {
+          "forwarded": false,
+          "jacs_id": "conformance-test-agent-001",
+          "signer": "agent@hai.ai",
+          "valid": true
+        }
       ],
+      "dns_verified": true,
       "error": null,
-      "agent_status": "active",
-      "benchmarks_completed": ["free_chaotic"]
+      "field_results": [
+        {
+          "current_hash": "sha256:aaa",
+          "field": "subject",
+          "original_hash": "sha256:aaa",
+          "status": "pass"
+        },
+        {
+          "field": "body",
+          "status": "pass"
+        },
+        {
+          "field": "from",
+          "status": "pass"
+        },
+        {
+          "current_value": "2026-02-27T12:00:01Z",
+          "field": "date",
+          "original_value": "2026-02-27T12:00:00Z",
+          "status": "modified"
+        }
+      ],
+      "jacs_id": "conformance-test-agent-001",
+      "reputation_tier": "established",
+      "valid": true
     }
-  }
+  },
+  "raw_email_not_stored": {
+    "description": "Legacy row: no raw persisted. Endpoint returns available:false, omitted_reason:not_stored.",
+    "expected_available": false,
+    "expected_omitted_reason": "not_stored",
+    "expected_raw_b64": null,
+    "expected_size_bytes": null
+  },
+  "raw_email_oversize": {
+    "description": "Oversize path: MIME > 25 MB. Persisted as NULL with raw_mime_omitted_reason='oversize'. Endpoint returns available:false, omitted_reason:oversize.",
+    "expected_available": false,
+    "expected_omitted_reason": "oversize",
+    "expected_raw_b64": null,
+    "expected_size_bytes": null
+  },
+  "raw_email_roundtrip": {
+    "description": "Sign → persist → fetch → decode → verify chain. Bytes MUST byte-equal the signed input (R2), AND verify_email(bytes) MUST return valid=true when the HAI registry is mocked with the verify_registry data below. Re-generate with: cargo run --example regen_raw_email_fixture --features jacs-crate.",
+    "expected_available": true,
+    "expected_omitted_reason": null,
+    "expected_raw_b64": "RnJvbTogc2VuZGVyQGV4YW1wbGUuY29tDQpUbzogcmVjaXBpZW50QGV4YW1wbGUuY29tDQpTdWJqZWN0OiBSYXcgRW1haWwgUmV0cmlldmFsIENvbmZvcm1hbmNlDQpEYXRlOiBUaHUsIDIzIEFwciAyMDI2IDEyOjAwOjAwICswMDAwDQpNZXNzYWdlLUlEOiA8cmF3LWNvbmZvcm1hbmNlLTAwMUBoYWkuYWk+DQpNSU1FLVZlcnNpb246IDEuMA0KQ29udGVudC1UeXBlOiBtdWx0aXBhcnQvbWl4ZWQ7IGJvdW5kYXJ5PSJqYWNzXzNlMzFmMGU3ZTQzZmY3MDgiDQoNCi0tamFjc18zZTMxZjBlN2U0M2ZmNzA4DQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9dXRmLTgNCkNvbnRlbnQtVHJhbnNmZXItRW5jb2Rpbmc6IDdiaXQNCg0KSGVsbG8sIHRoaXMgYm9keSBjb250YWlucyBDUkxGIGxpbmUgZW5kaW5ncywgYSBub24tQVNDSUkgY2hhciAow6kpLCBhbmQNCmEgTlVMIGJ5dGU6IAAgYmV0d2VlbiB3b3Jkcy4gQnl0ZS1maWRlbGl0eSBpcyBtYW5kYXRvcnkuDQotLWphY3NfM2UzMWYwZTdlNDNmZjcwOA0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uOyBuYW1lPSJqYWNzLXNpZ25hdHVyZS5qc29uIg0KQ29udGVudC1EaXNwb3NpdGlvbjogYXR0YWNobWVudDsgZmlsZW5hbWU9ImphY3Mtc2lnbmF0dXJlLmpzb24iDQpDb250ZW50LVRyYW5zZmVyLUVuY29kaW5nOiA3Yml0DQoNCnsiJHNjaGVtYSI6Imh0dHBzOi8vaGFpLmFpL3NjaGVtYXMvaGVhZGVyL3YxL2hlYWRlci5zY2hlbWEuanNvbiIsImNvbnRlbnQiOnsiYXR0YWNobWVudHMiOltdLCJib2R5X3BsYWluIjp7ImNvbnRlbnRfaGFzaCI6InNoYTI1Njo2ZWIzMmE2YjU0ZGU2MzQ4ZGIyZjk5OTJkYzEwNGMyOWU2ZjEyNzc1ODBmMDIwMGRlYjg3ZDUzM2IyMzc2MjE1IiwibWltZV9oZWFkZXJzX2hhc2giOiJzaGEyNTY6N2E4YjU2M2EwNjA4NDRjYjRhNTBkOTBmNTFiNzk4NzZmZDFlMmM1NTM1ZjlkMmY1NzU2ZDRlNjRjMzVkYjQ3MCJ9LCJoZWFkZXJzIjp7ImRhdGUiOnsiaGFzaCI6InNoYTI1NjoxZDA5YjlhOTA1YTI4MDZiZjVkZWQ3ZDFlMzg5M2I0NzI0MjgyNWQ3MGYyYTRjNDZlNTlkMDIxMDIzMDA3NDc2IiwidmFsdWUiOiJUaHUsIDIzIEFwciAyMDI2IDEyOjAwOjAwICswMDAwIn0sImZyb20iOnsiaGFzaCI6InNoYTI1NjplMzgwMTM3ZGUwN2ZlMjliZjUxMGI3NDZmNDc5YWRjOGI4MTUzMWQ4YjI1ZDI0MDA4YTlmODkwZjgwODM1ZGMyIiwidmFsdWUiOiJzZW5kZXJAZXhhbXBsZS5jb20ifSwibWVzc2FnZV9pZCI6eyJoYXNoIjoic2hhMjU2OjQ0YmJiMDI0Y2M4NTNlOTdiNmJlMjE4ZGY0Zjc0MWVkZDczMTYzZWEyN2Q4MTNlZTgwZDlkNWQ0YTAyM2I4MjYiLCJ2YWx1ZSI6IjxyYXctY29uZm9ybWFuY2UtMDAxQGhhaS5haT4ifSwic3ViamVjdCI6eyJoYXNoIjoic2hhMjU2OjFmZDdlNmViZTYzMzdlMDY5ODVkMWJjYTJlMDAwZWM4Nzg5NmEzYzk5YTMwYWY5ODVlMWVlZDAwNmZmYzBlZmIiLCJ2YWx1ZSI6IlJhdyBFbWFpbCBSZXRyaWV2YWwgQ29uZm9ybWFuY2UifSwidG8iOnsiaGFzaCI6InNoYTI1Njo1ZWZiYTNkZjFjM2JlNDk5MzgwY2YwYzU5Y2VkYTI4NjE3MWI5MGFiYzA1Y2ZhYzI1Yjg4MmZjNDM2OGIzOTFjIiwidmFsdWUiOiJyZWNpcGllbnRAZXhhbXBsZS5jb20ifX19LCJqYWNzSWQiOiI3NmNkMmFkMi1jYTIzLTRjYzEtYTY4Zi04ZmU2OWQ1NTFjNTEiLCJqYWNzTGV2ZWwiOiJyYXciLCJqYWNzT3JpZ2luYWxEYXRlIjoiMjAyNi0wNC0yNFQwNzo0MzoyMS45Njc3MjQrMDA6MDAiLCJqYWNzT3JpZ2luYWxWZXJzaW9uIjoiYThiZTk1Y2QtOGNlYi00NTdjLTg2NmMtZThkZDcyMDhjMjE3IiwiamFjc1NoYTI1NiI6IjU1NDA4MjNmOWMyYjMzODYzNTI1MWZmMjRkMWEyYTNkZDJiZjkyOTNkY2YyMTVjZTEzMDZhZTYzOTg4NTdiNWIiLCJqYWNzU2lnbmF0dXJlIjp7ImFnZW50SUQiOiI5NjE2MGM0NC05ZTUyLTQ4ODktYjViYi01YTVhZWM0MWJmMzIiLCJhZ2VudFZlcnNpb24iOiJhNmIwNjM0MS1hNGM3LTRkYWUtOWRmZC01NzAzMDFkNzgxY2IiLCJkYXRlIjoiMjAyNi0wNC0yNFQwNzo0MzoyNi43MTg4OTkrMDA6MDAiLCJmaWVsZHMiOlsiJHNjaGVtYSIsImNvbnRlbnQiLCJqYWNzSWQiLCJqYWNzTGV2ZWwiLCJqYWNzT3JpZ2luYWxEYXRlIiwiamFjc09yaWdpbmFsVmVyc2lvbiIsImphY3NUeXBlIiwiamFjc1ZlcnNpb24iLCJqYWNzVmVyc2lvbkRhdGUiXSwiaWF0IjoxNzc3MDE2NjA2LCJqdGkiOiIwMTlkYmU3MS04ZmZlLTdlNDItODMyMy1mYjJhMDhjMTBmNGUiLCJwdWJsaWNLZXlIYXNoIjoiMjE2YmJhOTlkMjkwZWU5NTdhNzc2MWQzZDY5OTQzOTRmZDkwM2U3YzJjZGNlYzIzNTgyZmQ4YjE0M2M1ZTA2MyIsInNpZ25hdHVyZSI6ImpyY0VxamJlQkhqeHZ0OE9wSnErOTVNMDNBSWM0a1FuelAvY2sxSXB0RDBhRmpRVDM0RXZmdUpwT1JQRGtwOUJrWlRBMHA1a2p0dGsyekRhcGRXTC8vZGxGZGIvY2YzZWY5WjcwMVVJejNmVTlWM0doZTdCUXRFczloVThLaDdJaHU2aVNpbU9xSSt5eFo3T3dIRFJDYjF6bTRMNDlkcVVTZWcxZkM0aTlVSS9IeG1LSUpzQlNjT1BRQTRhbG1kUFBBSko1UlJHaVFMaDJNdFdXaW0xVW1OWG8rUndMeDlrMjFaNGNjVi9aUm9hTWN5OUhpaTJ3a0JnU2hINW80c0JDQ1JjWXZuaENtNG5HRjE4MTg5VWhuWjFRSGlOTm9JeFJCczRSRnBGUFE4aC9QbG0waUVBTkE4NWtwamYwcThUc1FtMjlKRlQ0UGhXMGdMSDM5Qnl1YjcraTBIbzNtZS84ZSswWnB5N3lobGZGUmFEWWJiYnFtdU1XTC9QL1RHZzgrRVNrWDVnWlhMNkM4bGkxRzlwMDZrYko3d0w1WVBuZUZ4OHpoQWxRd2l3eHl4N3BEdzQ4VlJaWTE2U09OUTgxRnU3eGUwYkNsY0JqOGtEZTl6RnliRHBxUHZwTzhXd2NBbXN5aElBcVhNb1hXWmFsTDN2OVBmc0VDWXB2L2lyWGxsMVZ0cGdZRkdBbklmenUvVFBWd0tQcGJHTU9TWjhaUytPUTl3bDgwNGpEYzVvaWQ3aWUzYWxsMkpWaWlxR0hNRFhrcUJzOG1jRW5TK2NDeTJFZVNJY25XTloremV6cDZ0aWVlZWZPdUpoZ0I1eXhuMU83T0wyWDNYSGhwU0NzUFFrenZQQndJZlJ5Qy9aclRCWU52dkFvY3RLUi9GeUQrcHp1WVRTRmJvZitLeTFFVnVjT3ZMZVNYUTBtZDlvc3FqZDQ5cU9UOWVISU1PL3hDWFpnZzUxL1R5VENnNFZ0VTRtMW81cFZObDJ1cEJsZ2Z3a3BGQ3F2RnNybkJld2k3VG15SjNUbUJwQ2ZqZVhSQkYzdWtEalgwREp3dEdBanBNd2dxN0xxazJDYXQ1aERueU9KUDkra0hrV3gyM0J3a3l0Szljc045bHJjajZiRHZSZS9tYkNVVS9aL3N4TzhTaVNyVXFtRGlmTVlhWnJhYlJBVUx3eCs5Sm5ySGIxZEZTZktPTVdsQ1V0WHk2S2EvY3ZPSlAvaDd1VzVoMno0UFhrTWZkcmNaUE1yWU9IY0F4SUduUU40NnFVNFlVTTBRei9NZWJUS3VLcmtHMERNRUZ6RlR3bjZQRndiTDdsTTRlNlVhVWFhSmNOR01iVEdvNmwzRUxTanNvTkluakdCRE9ZaUl4Rmgwc1p4L3g4a3FnTnlrMldEZmVLQnB1eEcrQmNpMjgwYnBxamZncXlVUVVvRi92L1VhVzgvME5qUGVVQU0xZ2tJM25tY0t3TVRiQVk5cnhlc0E0ZlM2TlcvUG81WFF3NytJdUhEZjFGb1U3WWJIeTNHQUpzMGxDQmkwZ3AzZEZud2VDNVNRWG54WG9ldGlmQlNwZFJUdFMvMndVbkI0RHc1S3RFaUlJZVRPdnBTUkZ6Q0V3MGowQmF4OVduWHljeDJXeVMwQVg3ZlNmTTNnYnYzYlVVVnJIQThST08vVWdPbmNlMHRDditaTFRiTldrVis0WCtyRTBQeW0yTGJsck5VTnkvZmkxWk4vV3FjelRORThqNW16aE9xTFRIN1R1ZzUzRWVjdk5HbG11M3FESFRsU0lRV0hISXVoODZXMXBNNmxRNGd6eGZzS05DSWZ3eCtERmhkZU11VHFJVzUzeFc5MlZVaTlzd29SdmhLd3dGbkNiYzJtc2lkNE5saHZvRmNObHZWV01SZXpHSUtJNHV3TUFyWGNYdHQwenFSSDVJOE1ubEEybHNiNi9sRTU2dGJ5ajkvb2RrcndITVFkSGo0NXdMWGpNR1MxUjYvR3JUQ2hKOGFxT2xxeWlodzBUS2g4ZGROczk5T1FaSjVkejJKdkpCRHdiMkppKzRFc1RnSzh2L2hRSUdoMXNrZk1ZSnppWnhac2UxMXNNOVNxcFlZTmxrNU9yQW1vdEtwS1Z4ZUx5U28wdXZJaW1BR2kzRGo3Q3B2Qk5rdGpOZThHOHFqbTd0bHVmcnZ1VEFCTzVNcUx2SC9NNkY4TE5hajcwWmZQOGlYRzk0cVRacDdFcG9za0phRmVPNGJMLzJ2RDhLUThyUmx2WEFyeDRjdlF6RTNoR0RnMVZKR0lOaUN1VmZDRUVxTXovZnNJWEI3UmI1TUtqblJzMHA5TlVmcC9QQlhTcnV1OEtIT0RKbTFUVzFyTVM1SGwybzhmUGU0S1hJR0QzNFAwRENQTHhHeWt5eXJneng4RnhpQ0tDTVZRcnlIOG9xbkh0bFVpNlE2WWN6SHI0bXFvUFMwQ2VsUlpVV0FqUTROaklqTm9ZVE04dDdpU2FIOUhLaWMzZis2cmpZUE4wWVVYVDFkMEZkbFFoampweXNpbVR3Y2toVW43WmlTREFHckw2M2dmOGl3emlBTkJkZ21BYk42aGNNVWI4LzlnZXE3K1NUWm8rZzBNSGQ0ZmlDY3ZZV1JUY0FYNWV5bTZ0cXU3b0dsM3NZeFR0UHF2TFV1c2N3SG5xalExUWZwZTlOUm8xZEYzMkNWRFExMWt3S29DbDF0bW9UWTRMWFpuajJkYVh2L1hJMENpb0Fjc2R3RGdNcVRZNmV1T0ZsVWk3SElTUkFCMHpTVitJNnp0WEdGbVlzZ3dEVUpPY09ZQjExaGVFMktSaVZvTG5id1NtbTgrajlIRSttWGZaZTRMRVJRa2ZNdWQrQW5zWUNwMFprelpjbFYxOGdpdmR6UkF4RllrRjlVc1hFWGt2YktPZk95Wmg1am1HbkltRXIxN3RCR21SUnpwNVI0U0dvWXFJdWhFUGZVUmhWUStGRTFkRms0ZThaMFNzVjZqZHk2WEFZVWFtS0F0UTRwbC9lMElGYThPWG1jL2x6WDVlbmM1T3A1VENIYms3aklIRDltZDY0QjBBVDNFUjlFd2xnb1NwWStwR3NCS3kzeWwvRlNDbElrc0paYnlWWWF5dStZV0xzOWdkL3Z5eHp6NWZPY0lEOUpFUTR6ZHNZSWlaVGUrZS9tU1IzUGxqUU1qM2RkUTd0VnZoTWJJdGo3YUUzc0IwVWJCdmNFbUJLdnpLMGdiRGNsQVJFU2FjVDU4U2l6WHdodWVOUitqK3VtSFlTbXViTUI2RUNPa0I5UGpTOUNjMFI2ZjdVWnpKck4wRkJOVFRYMmM3M2NkeUZPYVRJQjZoRFk1TWZ5Z1Fad1RtRTg1UXR0S3BQMGlkbGdwZE8xalRtWHk5dmxiNkFEcFloRFAxTGFIUi8yYSsxbDd2bkJobGNOTlI5M2krSkoyaGx6cmVabXoxSmNxK2p5djFyTXlLVjhLRTg1T0Q0SUFtdFZkOGUrQ1FRT2ZtZzcxL01Fb3plRVdhTjdVSThRVGZ6cng3THB5WmxkY25kWjVsUkRMVXgxOHhOa0phaGRrWmptTWFDSUpMUE1YRjMzK1FDM2NDVll4NTFubmZmb2w5bTVZUjRsdmFPbTg2YmhDN3VNVG9UNXMyK0Uzb1BxUWJNSlZDVGFMMUNaWDBTWHZlRUlwbzJwVW90VlNlS2ROVSsvcmszWUdndnNjY3lhdzM2MGFJRm8xWktNRHorVXNaVEswdGNzeFpzajVsZ2M4dXVmRzdTa2RMUGNGL2VpbjZQRU4wRW9RWUZhMUdaWm1XenVyRFgvbEpheE92ZmFZV2J5dSsrdW1LQ21qTXpVc21mbFV2ekZtZHp0M3U4YU0yeVo2WHVYU2U5ekUvcjZ1T2w2Z3pVenpUMGVsUEdwSTl5UTlaU1A1d0p3RHhHN0dKL0ZxYm05YmdnbG1MdlY2SzlFSk1WVGd1NlZPRDJGNGp5RVpqVGxNYzd2MktOQ1A4SnMzdExVd2YrUEZmTStCa3crUCtKejlQbjNSNFdXUGtmQkdxVit1TkFjOWQ2YTRNM0NYN0s3TmpiUytNUWUwNGgzaW1ZekxaendOakpRSndGYkJxdC9QWENYTnJDVnh3QXluQ2FVRGxucDhtd3d2aUZ2MmpiNGM4SUZPdEE1enI4ZWpvQklHakljZi84THY0em0vNk91OHk4MForWW9FTWxFV0pNZE54a0NOUGIrWjY5TklmRTVMUVVOL2dzK3plcURHVCtRdHRRUkdCZU9vOUZHbURsMys5TUtjTk5ZazZwbmx4ZFB3c1I5b2pTbG5jVkhPWnlSTWZLbEtXY0UwbklWY1gyR3BJc08wcnljZ1dJU3ZxUzVvOWc2RUphVHNvM2lnOU0yR1NORldNTGwrbkpnNXJ1eitUaVZaSVZIaVgwYXk0Y1I5MWU1R2xpb3dFT1dyL3h0SDRuOTF4UmZsSkh4VE5TTUFDNERHSXd3bE9QZ25DUG9NTk4rVUJnS1NIZXNJRzZpVGlVOGZON2loRGc1dS9DTG54U0FXc0orbDhqWUZ0UVZYdnlaTklzTWg2WkNESmc0Rm1FWjkvd3o0WlRWY0tERFhyTlREMWpiMnZ0YVhXVHE4S0ZSWVdQc0hFWVMwYnY3K1lqZzBEZmV5NjJVQkx6Qmw1YXUzYmV0MDZDbFNybW5ENHJrT05tU1RVRWJiM2gyWlpPSEFJNXpBOW41V3RkWjdVUndMWkc1Qnhvem9ad1EybWh3YVp4Zk5kYzEzcm1NVDNtcWtpeWxwZ2c2Qjlwa21rWkNreFFqMnZZOFdKQUFVQWVSZDUwUndjVVlkd1BCUlVSZmx3UHRxZVZGZUZSSlVLemdNUTUveUtuUFNQVFNaUkNERHJnV1hScHpBUXI0ZCtSS3pCRHNCVUtOdkVFWkgxYjc0bG4vSk02N0tLSjk0SEZmSUNQN1h4a3JHRzFaQVR2QnhOOENRT2ZKSkhvUS9KcWNCc25Tc2M3MDBZMGg2dVNVWVRmVi9WWUgybGg3MTlQWldIQUgxV1RYNmR3YURUV1kyRlYyOE1IRTMra3NMejhtVE95WHdBTTluSGlCRHA3MDZnUDROMUUvSkdVK0RIY2g4RWZtMzN6WHpxSFVMR2YwaytaVmFvcjVWYWxYQkhmM05PdFVBMzJtbWZLMEpZendhVW42aHZYOEl5NnIxbnhxaFQzb3Y4M0NkTDk2Zis5SXcvc2Q1anJJK2tLYnc4bDhvYjlmanFtZUJQK0N4Y00wR0kvTThJVnArcWNZMzRjMTZpNGREZVA3NDcvdmpKRHRlelhuWkFWOGQ2WURlbHMwWm9zRlpCT2xockI2RUFOeU51VE9JSmdKcG5MbWdiTDBRNWFlbzg0a2ZzaWZKUWg0cHVFZ1ZwQ2VSd3VaNFV6U0ZKR256ditiM0JCOTBiMC9kL0hEa29CV05lUjZJazgxLy9XMmkyN2lhdVB5QXh4WWtrd2h1bStPa0VVck1BVHhoZ2hGWUk2cEVNMFdSVUg1VnBSRTk4L1AwQjdlQnpSWDRPT09RYXNZNTIybUlZdEFjYW84R2VGK29KdDZkS1EvTWZ4YkNicVpCUzhPL1MxeVcvK2xoNHNUUWNVOHpNTERvZ3duaTRNaFNldzI2Tk1paElCaE5rbVlyRDJ2SmZ4WEdXL2RONkdtSHA1aUdJTFJoTUUzeWNmUGRpYXh5SUhEU1Z5VEwxUjRZZXJvVlcyZkJzb0U1NDVkY3Jqb0VhTzgwbGxoME00UzFIQzVvMzlZVVRQQnh3Y1UxbS93SURWYythdi9mdzhrTmNnSk9tNnBoNFpTeFR6NGpPY2dWNjdyZUorTExIWE5QWmRtZlpRRncrbFY4SDlvODhwbmFLaUtHNU0xalR2NFdCdVluMDFQZjFlQXdQWUxDYmNEQm4zYVkxTUoxWnpVak81UnBheXY1cS93bWVNT0hPakhXRlViMGtnc001c2xsWGhQQUx4TDRERlIvaGtxL0E4TzFBTU9HcCtyeXBzdHptR3Y5aHBQV2VWSGdreUF3K3NLd1NoVVpOajhIK1U1eEFZeVRqbWVjcmhEUFNUZTJHbnRXNWdwN3k2T1Q2TTNDU0l6eHVuWnpTVTFuOVZRV3cvL0JuTkF5UlBUK0lvSTFsQ2VONUQxUlcwaG5JYlpuZURjWm13TmlUS2M1eWk2Ly83US8vTWZPSkhoQmZJRkNEdWNuTHRHaVh2aGFER2tGNjJkRytta1lhRnB2V0RPbSthRHdxeHF1cnBiS1cxVGJreFYvanhSSEIwNFpxOEZxeU12UytUZFhFY2MxTmVlMjlkeVN1ZENTeVA0aVIxRHBiRThWcjF4RHR2U1NsZ00vR3llaWg5clZjS0VocG5zdUdWdnY4NjZjVGppQ1cvTXVHRlljaDdJRlc2d3ZyMVFFNHhiMDZicUJkZ2tUcE1VRlRLSG5ZYzJNdzhXeGVHNGF5a1l3VTI0bXRUa05seEo4U0NkMXBDS1NlTGV0VGs2cWJqTG1GNS9GL0ZLT2RJYXVZK1ljem4vVEZJdUxuWG9zTEUzbzB5UW5rKzdRaUZzbWxPQVlvN3FNL3JIcHZobzFMSCsrYXJGMURoV0FZdk05VmFKRUZ4NnNCdU1LUlRsUVk1cWZJcGp3Y2Y5K1BhcXJNV0dIUEtGaXRTYUo0bFFkYS9hVVFOQjVnQVp4aXA5THcxdXYwdG53cUVsYWgrWGFxZWVqSUt0YWhCcDNFSFc4eCszUnFKVU4rWHc0RU5pbE44WUw2cGpmaDNyNXB3cnNMa0ZXQSttVkNTcHRkcTFoUXFOTmwzbFROYUNHcjFUN0dvWlhCdGNldFNvRlVMVUIwYkVRRTlpK2ZQclUrb01udmwvc1NHTkF5K2Jib1Z5aFA1Mm5OenpvWUNRQWcvaEJaUW4yQXdVUmN2bmcyOUwrUHViQ1hmaWFWZVh2eHJKYjl0dHcwNEt2bXdMZVNDSzhLbHlLSXE5RkxZVUx4UFcvVXd0SC93MndRN0dJQjBGSFdweGY3QTZndFcxSkJXSHdPRVl1SGIrdnVZMUx6bWNYNGtEZW9FNGg4Q3lqMDNNaDVVd001UnRzdFc5YkNXVDRlQTBDVmlpRlJ5MThLd2FHSzR2Q1dWMTdObEFaKy9aWnJZUkZESmowNjRvb1RCdExUUHRkQXBJbXB2RXJ4WGpMd29TejN6cU9uRU5wWkQ2a3BJUVJUc0cwQlFoS2lOTTM3eHNzT2xoQVVzazM3OU5hNzMvaDJyaldIZjZIK1FVWmM2aG8zVTMzQXpncC9ESE9mdDd1UXlOUzhtTTBxYURvUWJIR2l2REU5ZUZEc3lzRWwwcjJOWlFQQVFmMUVWSGRsQUJpMjJsK1lrRlpIYUFSeUwvV1o3SG82dVpiTWpMQWRhNk5uMVlPM0Vnays3ODluT1YyUDJMajM3ekNUbFlzWUdsNHRodjlFYnk3c0M3V1BMbWNDaDhYbjVwd2lQallTbUo2cnNtNnRsTGxYZWM4WnJtT0s5SFBTRmhIZGZRSURCd1RWQWtFNGJaSVV5Zk5vSHRPM1B5eVBnVXVSb0NDRktwSnY4cUE2NVhiRjNQWlQ5R3lBWEUyMUlkcTZnT1kzUG0wNFFObWZUNEVVdWlpR2FFSCtLd1RWaEh4OTh6U2M3QzcxdGhxR2tTL0E4dGg3OGlGSlh5TEdiL1VPTXhXdDMwLytJVDI1ZlVHQkxiRXo2bitRcUtUVjFoTzFRczEyU0oxSVJ1dnVUdmpnMzVPRXpyWk5ValMxRUtwdlAwa2xVUlNnTWEyNzhxSUQ0UkxJYktuR1RucE9NQkJVaXB0MDFSRVlUdTlrQ2hwRnRTdUE2blgrY2h4bmYrdGxlUExnS0c5THVteHFoeXBpTDhYM3dhazNjZGw5dk03aU9BS01JMnpFVzI3bS9NbjNrUEVRUEhNTUwveXNaUjRHWEg5bUZSeGdkUy9GRFVwU2l4cHlVd0ZRLzYxVFBQV1dhQTZpckhjcm9uaXZwWGloRHd0SGF2c25nLzc5VUg0a3dyYzNCVWpJM0tqNTdTaDdxRlR3UkVtMXhrN0sxMitjdU5EZFZmbzJjOWlBcU1EYzVYbU51bHVmNE9vZVV0c0hjM3VJTUpUOXcyRkYybzdDNHZ0amNkM3JSNVRuZzRRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUpFUndrS1RFMU9BPT0iLCJzaWduaW5nQWxnb3JpdGhtIjoicHEyMDI1In0sImphY3NUeXBlIjoibWVzc2FnZSIsImphY3NWZXJzaW9uIjoiYThiZTk1Y2QtOGNlYi00NTdjLTg2NmMtZThkZDcyMDhjMjE3IiwiamFjc1ZlcnNpb25EYXRlIjoiMjAyNi0wNC0yNFQwNzo0MzoyMS45Njc3MjQrMDA6MDAifQ0KLS1qYWNzXzNlMzFmMGU3ZTQzZmY3MDgtLQ0K",
+    "expected_size_bytes": 8700,
+    "expected_verify_valid": true,
+    "input_raw_b64": "RnJvbTogc2VuZGVyQGV4YW1wbGUuY29tDQpUbzogcmVjaXBpZW50QGV4YW1wbGUuY29tDQpTdWJqZWN0OiBSYXcgRW1haWwgUmV0cmlldmFsIENvbmZvcm1hbmNlDQpEYXRlOiBUaHUsIDIzIEFwciAyMDI2IDEyOjAwOjAwICswMDAwDQpNZXNzYWdlLUlEOiA8cmF3LWNvbmZvcm1hbmNlLTAwMUBoYWkuYWk+DQpNSU1FLVZlcnNpb246IDEuMA0KQ29udGVudC1UeXBlOiBtdWx0aXBhcnQvbWl4ZWQ7IGJvdW5kYXJ5PSJqYWNzXzNlMzFmMGU3ZTQzZmY3MDgiDQoNCi0tamFjc18zZTMxZjBlN2U0M2ZmNzA4DQpDb250ZW50LVR5cGU6IHRleHQvcGxhaW47IGNoYXJzZXQ9dXRmLTgNCkNvbnRlbnQtVHJhbnNmZXItRW5jb2Rpbmc6IDdiaXQNCg0KSGVsbG8sIHRoaXMgYm9keSBjb250YWlucyBDUkxGIGxpbmUgZW5kaW5ncywgYSBub24tQVNDSUkgY2hhciAow6kpLCBhbmQNCmEgTlVMIGJ5dGU6IAAgYmV0d2VlbiB3b3Jkcy4gQnl0ZS1maWRlbGl0eSBpcyBtYW5kYXRvcnkuDQotLWphY3NfM2UzMWYwZTdlNDNmZjcwOA0KQ29udGVudC1UeXBlOiBhcHBsaWNhdGlvbi9qc29uOyBuYW1lPSJqYWNzLXNpZ25hdHVyZS5qc29uIg0KQ29udGVudC1EaXNwb3NpdGlvbjogYXR0YWNobWVudDsgZmlsZW5hbWU9ImphY3Mtc2lnbmF0dXJlLmpzb24iDQpDb250ZW50LVRyYW5zZmVyLUVuY29kaW5nOiA3Yml0DQoNCnsiJHNjaGVtYSI6Imh0dHBzOi8vaGFpLmFpL3NjaGVtYXMvaGVhZGVyL3YxL2hlYWRlci5zY2hlbWEuanNvbiIsImNvbnRlbnQiOnsiYXR0YWNobWVudHMiOltdLCJib2R5X3BsYWluIjp7ImNvbnRlbnRfaGFzaCI6InNoYTI1Njo2ZWIzMmE2YjU0ZGU2MzQ4ZGIyZjk5OTJkYzEwNGMyOWU2ZjEyNzc1ODBmMDIwMGRlYjg3ZDUzM2IyMzc2MjE1IiwibWltZV9oZWFkZXJzX2hhc2giOiJzaGEyNTY6N2E4YjU2M2EwNjA4NDRjYjRhNTBkOTBmNTFiNzk4NzZmZDFlMmM1NTM1ZjlkMmY1NzU2ZDRlNjRjMzVkYjQ3MCJ9LCJoZWFkZXJzIjp7ImRhdGUiOnsiaGFzaCI6InNoYTI1NjoxZDA5YjlhOTA1YTI4MDZiZjVkZWQ3ZDFlMzg5M2I0NzI0MjgyNWQ3MGYyYTRjNDZlNTlkMDIxMDIzMDA3NDc2IiwidmFsdWUiOiJUaHUsIDIzIEFwciAyMDI2IDEyOjAwOjAwICswMDAwIn0sImZyb20iOnsiaGFzaCI6InNoYTI1NjplMzgwMTM3ZGUwN2ZlMjliZjUxMGI3NDZmNDc5YWRjOGI4MTUzMWQ4YjI1ZDI0MDA4YTlmODkwZjgwODM1ZGMyIiwidmFsdWUiOiJzZW5kZXJAZXhhbXBsZS5jb20ifSwibWVzc2FnZV9pZCI6eyJoYXNoIjoic2hhMjU2OjQ0YmJiMDI0Y2M4NTNlOTdiNmJlMjE4ZGY0Zjc0MWVkZDczMTYzZWEyN2Q4MTNlZTgwZDlkNWQ0YTAyM2I4MjYiLCJ2YWx1ZSI6IjxyYXctY29uZm9ybWFuY2UtMDAxQGhhaS5haT4ifSwic3ViamVjdCI6eyJoYXNoIjoic2hhMjU2OjFmZDdlNmViZTYzMzdlMDY5ODVkMWJjYTJlMDAwZWM4Nzg5NmEzYzk5YTMwYWY5ODVlMWVlZDAwNmZmYzBlZmIiLCJ2YWx1ZSI6IlJhdyBFbWFpbCBSZXRyaWV2YWwgQ29uZm9ybWFuY2UifSwidG8iOnsiaGFzaCI6InNoYTI1Njo1ZWZiYTNkZjFjM2JlNDk5MzgwY2YwYzU5Y2VkYTI4NjE3MWI5MGFiYzA1Y2ZhYzI1Yjg4MmZjNDM2OGIzOTFjIiwidmFsdWUiOiJyZWNpcGllbnRAZXhhbXBsZS5jb20ifX19LCJqYWNzSWQiOiI3NmNkMmFkMi1jYTIzLTRjYzEtYTY4Zi04ZmU2OWQ1NTFjNTEiLCJqYWNzTGV2ZWwiOiJyYXciLCJqYWNzT3JpZ2luYWxEYXRlIjoiMjAyNi0wNC0yNFQwNzo0MzoyMS45Njc3MjQrMDA6MDAiLCJqYWNzT3JpZ2luYWxWZXJzaW9uIjoiYThiZTk1Y2QtOGNlYi00NTdjLTg2NmMtZThkZDcyMDhjMjE3IiwiamFjc1NoYTI1NiI6IjU1NDA4MjNmOWMyYjMzODYzNTI1MWZmMjRkMWEyYTNkZDJiZjkyOTNkY2YyMTVjZTEzMDZhZTYzOTg4NTdiNWIiLCJqYWNzU2lnbmF0dXJlIjp7ImFnZW50SUQiOiI5NjE2MGM0NC05ZTUyLTQ4ODktYjViYi01YTVhZWM0MWJmMzIiLCJhZ2VudFZlcnNpb24iOiJhNmIwNjM0MS1hNGM3LTRkYWUtOWRmZC01NzAzMDFkNzgxY2IiLCJkYXRlIjoiMjAyNi0wNC0yNFQwNzo0MzoyNi43MTg4OTkrMDA6MDAiLCJmaWVsZHMiOlsiJHNjaGVtYSIsImNvbnRlbnQiLCJqYWNzSWQiLCJqYWNzTGV2ZWwiLCJqYWNzT3JpZ2luYWxEYXRlIiwiamFjc09yaWdpbmFsVmVyc2lvbiIsImphY3NUeXBlIiwiamFjc1ZlcnNpb24iLCJqYWNzVmVyc2lvbkRhdGUiXSwiaWF0IjoxNzc3MDE2NjA2LCJqdGkiOiIwMTlkYmU3MS04ZmZlLTdlNDItODMyMy1mYjJhMDhjMTBmNGUiLCJwdWJsaWNLZXlIYXNoIjoiMjE2YmJhOTlkMjkwZWU5NTdhNzc2MWQzZDY5OTQzOTRmZDkwM2U3YzJjZGNlYzIzNTgyZmQ4YjE0M2M1ZTA2MyIsInNpZ25hdHVyZSI6ImpyY0VxamJlQkhqeHZ0OE9wSnErOTVNMDNBSWM0a1FuelAvY2sxSXB0RDBhRmpRVDM0RXZmdUpwT1JQRGtwOUJrWlRBMHA1a2p0dGsyekRhcGRXTC8vZGxGZGIvY2YzZWY5WjcwMVVJejNmVTlWM0doZTdCUXRFczloVThLaDdJaHU2aVNpbU9xSSt5eFo3T3dIRFJDYjF6bTRMNDlkcVVTZWcxZkM0aTlVSS9IeG1LSUpzQlNjT1BRQTRhbG1kUFBBSko1UlJHaVFMaDJNdFdXaW0xVW1OWG8rUndMeDlrMjFaNGNjVi9aUm9hTWN5OUhpaTJ3a0JnU2hINW80c0JDQ1JjWXZuaENtNG5HRjE4MTg5VWhuWjFRSGlOTm9JeFJCczRSRnBGUFE4aC9QbG0waUVBTkE4NWtwamYwcThUc1FtMjlKRlQ0UGhXMGdMSDM5Qnl1YjcraTBIbzNtZS84ZSswWnB5N3lobGZGUmFEWWJiYnFtdU1XTC9QL1RHZzgrRVNrWDVnWlhMNkM4bGkxRzlwMDZrYko3d0w1WVBuZUZ4OHpoQWxRd2l3eHl4N3BEdzQ4VlJaWTE2U09OUTgxRnU3eGUwYkNsY0JqOGtEZTl6RnliRHBxUHZwTzhXd2NBbXN5aElBcVhNb1hXWmFsTDN2OVBmc0VDWXB2L2lyWGxsMVZ0cGdZRkdBbklmenUvVFBWd0tQcGJHTU9TWjhaUytPUTl3bDgwNGpEYzVvaWQ3aWUzYWxsMkpWaWlxR0hNRFhrcUJzOG1jRW5TK2NDeTJFZVNJY25XTloremV6cDZ0aWVlZWZPdUpoZ0I1eXhuMU83T0wyWDNYSGhwU0NzUFFrenZQQndJZlJ5Qy9aclRCWU52dkFvY3RLUi9GeUQrcHp1WVRTRmJvZitLeTFFVnVjT3ZMZVNYUTBtZDlvc3FqZDQ5cU9UOWVISU1PL3hDWFpnZzUxL1R5VENnNFZ0VTRtMW81cFZObDJ1cEJsZ2Z3a3BGQ3F2RnNybkJld2k3VG15SjNUbUJwQ2ZqZVhSQkYzdWtEalgwREp3dEdBanBNd2dxN0xxazJDYXQ1aERueU9KUDkra0hrV3gyM0J3a3l0Szljc045bHJjajZiRHZSZS9tYkNVVS9aL3N4TzhTaVNyVXFtRGlmTVlhWnJhYlJBVUx3eCs5Sm5ySGIxZEZTZktPTVdsQ1V0WHk2S2EvY3ZPSlAvaDd1VzVoMno0UFhrTWZkcmNaUE1yWU9IY0F4SUduUU40NnFVNFlVTTBRei9NZWJUS3VLcmtHMERNRUZ6RlR3bjZQRndiTDdsTTRlNlVhVWFhSmNOR01iVEdvNmwzRUxTanNvTkluakdCRE9ZaUl4Rmgwc1p4L3g4a3FnTnlrMldEZmVLQnB1eEcrQmNpMjgwYnBxamZncXlVUVVvRi92L1VhVzgvME5qUGVVQU0xZ2tJM25tY0t3TVRiQVk5cnhlc0E0ZlM2TlcvUG81WFF3NytJdUhEZjFGb1U3WWJIeTNHQUpzMGxDQmkwZ3AzZEZud2VDNVNRWG54WG9ldGlmQlNwZFJUdFMvMndVbkI0RHc1S3RFaUlJZVRPdnBTUkZ6Q0V3MGowQmF4OVduWHljeDJXeVMwQVg3ZlNmTTNnYnYzYlVVVnJIQThST08vVWdPbmNlMHRDditaTFRiTldrVis0WCtyRTBQeW0yTGJsck5VTnkvZmkxWk4vV3FjelRORThqNW16aE9xTFRIN1R1ZzUzRWVjdk5HbG11M3FESFRsU0lRV0hISXVoODZXMXBNNmxRNGd6eGZzS05DSWZ3eCtERmhkZU11VHFJVzUzeFc5MlZVaTlzd29SdmhLd3dGbkNiYzJtc2lkNE5saHZvRmNObHZWV01SZXpHSUtJNHV3TUFyWGNYdHQwenFSSDVJOE1ubEEybHNiNi9sRTU2dGJ5ajkvb2RrcndITVFkSGo0NXdMWGpNR1MxUjYvR3JUQ2hKOGFxT2xxeWlodzBUS2g4ZGROczk5T1FaSjVkejJKdkpCRHdiMkppKzRFc1RnSzh2L2hRSUdoMXNrZk1ZSnppWnhac2UxMXNNOVNxcFlZTmxrNU9yQW1vdEtwS1Z4ZUx5U28wdXZJaW1BR2kzRGo3Q3B2Qk5rdGpOZThHOHFqbTd0bHVmcnZ1VEFCTzVNcUx2SC9NNkY4TE5hajcwWmZQOGlYRzk0cVRacDdFcG9za0phRmVPNGJMLzJ2RDhLUThyUmx2WEFyeDRjdlF6RTNoR0RnMVZKR0lOaUN1VmZDRUVxTXovZnNJWEI3UmI1TUtqblJzMHA5TlVmcC9QQlhTcnV1OEtIT0RKbTFUVzFyTVM1SGwybzhmUGU0S1hJR0QzNFAwRENQTHhHeWt5eXJneng4RnhpQ0tDTVZRcnlIOG9xbkh0bFVpNlE2WWN6SHI0bXFvUFMwQ2VsUlpVV0FqUTROaklqTm9ZVE04dDdpU2FIOUhLaWMzZis2cmpZUE4wWVVYVDFkMEZkbFFoampweXNpbVR3Y2toVW43WmlTREFHckw2M2dmOGl3emlBTkJkZ21BYk42aGNNVWI4LzlnZXE3K1NUWm8rZzBNSGQ0ZmlDY3ZZV1JUY0FYNWV5bTZ0cXU3b0dsM3NZeFR0UHF2TFV1c2N3SG5xalExUWZwZTlOUm8xZEYzMkNWRFExMWt3S29DbDF0bW9UWTRMWFpuajJkYVh2L1hJMENpb0Fjc2R3RGdNcVRZNmV1T0ZsVWk3SElTUkFCMHpTVitJNnp0WEdGbVlzZ3dEVUpPY09ZQjExaGVFMktSaVZvTG5id1NtbTgrajlIRSttWGZaZTRMRVJRa2ZNdWQrQW5zWUNwMFprelpjbFYxOGdpdmR6UkF4RllrRjlVc1hFWGt2YktPZk95Wmg1am1HbkltRXIxN3RCR21SUnpwNVI0U0dvWXFJdWhFUGZVUmhWUStGRTFkRms0ZThaMFNzVjZqZHk2WEFZVWFtS0F0UTRwbC9lMElGYThPWG1jL2x6WDVlbmM1T3A1VENIYms3aklIRDltZDY0QjBBVDNFUjlFd2xnb1NwWStwR3NCS3kzeWwvRlNDbElrc0paYnlWWWF5dStZV0xzOWdkL3Z5eHp6NWZPY0lEOUpFUTR6ZHNZSWlaVGUrZS9tU1IzUGxqUU1qM2RkUTd0VnZoTWJJdGo3YUUzc0IwVWJCdmNFbUJLdnpLMGdiRGNsQVJFU2FjVDU4U2l6WHdodWVOUitqK3VtSFlTbXViTUI2RUNPa0I5UGpTOUNjMFI2ZjdVWnpKck4wRkJOVFRYMmM3M2NkeUZPYVRJQjZoRFk1TWZ5Z1Fad1RtRTg1UXR0S3BQMGlkbGdwZE8xalRtWHk5dmxiNkFEcFloRFAxTGFIUi8yYSsxbDd2bkJobGNOTlI5M2krSkoyaGx6cmVabXoxSmNxK2p5djFyTXlLVjhLRTg1T0Q0SUFtdFZkOGUrQ1FRT2ZtZzcxL01Fb3plRVdhTjdVSThRVGZ6cng3THB5WmxkY25kWjVsUkRMVXgxOHhOa0phaGRrWmptTWFDSUpMUE1YRjMzK1FDM2NDVll4NTFubmZmb2w5bTVZUjRsdmFPbTg2YmhDN3VNVG9UNXMyK0Uzb1BxUWJNSlZDVGFMMUNaWDBTWHZlRUlwbzJwVW90VlNlS2ROVSsvcmszWUdndnNjY3lhdzM2MGFJRm8xWktNRHorVXNaVEswdGNzeFpzajVsZ2M4dXVmRzdTa2RMUGNGL2VpbjZQRU4wRW9RWUZhMUdaWm1XenVyRFgvbEpheE92ZmFZV2J5dSsrdW1LQ21qTXpVc21mbFV2ekZtZHp0M3U4YU0yeVo2WHVYU2U5ekUvcjZ1T2w2Z3pVenpUMGVsUEdwSTl5UTlaU1A1d0p3RHhHN0dKL0ZxYm05YmdnbG1MdlY2SzlFSk1WVGd1NlZPRDJGNGp5RVpqVGxNYzd2MktOQ1A4SnMzdExVd2YrUEZmTStCa3crUCtKejlQbjNSNFdXUGtmQkdxVit1TkFjOWQ2YTRNM0NYN0s3TmpiUytNUWUwNGgzaW1ZekxaendOakpRSndGYkJxdC9QWENYTnJDVnh3QXluQ2FVRGxucDhtd3d2aUZ2MmpiNGM4SUZPdEE1enI4ZWpvQklHakljZi84THY0em0vNk91OHk4MForWW9FTWxFV0pNZE54a0NOUGIrWjY5TklmRTVMUVVOL2dzK3plcURHVCtRdHRRUkdCZU9vOUZHbURsMys5TUtjTk5ZazZwbmx4ZFB3c1I5b2pTbG5jVkhPWnlSTWZLbEtXY0UwbklWY1gyR3BJc08wcnljZ1dJU3ZxUzVvOWc2RUphVHNvM2lnOU0yR1NORldNTGwrbkpnNXJ1eitUaVZaSVZIaVgwYXk0Y1I5MWU1R2xpb3dFT1dyL3h0SDRuOTF4UmZsSkh4VE5TTUFDNERHSXd3bE9QZ25DUG9NTk4rVUJnS1NIZXNJRzZpVGlVOGZON2loRGc1dS9DTG54U0FXc0orbDhqWUZ0UVZYdnlaTklzTWg2WkNESmc0Rm1FWjkvd3o0WlRWY0tERFhyTlREMWpiMnZ0YVhXVHE4S0ZSWVdQc0hFWVMwYnY3K1lqZzBEZmV5NjJVQkx6Qmw1YXUzYmV0MDZDbFNybW5ENHJrT05tU1RVRWJiM2gyWlpPSEFJNXpBOW41V3RkWjdVUndMWkc1Qnhvem9ad1EybWh3YVp4Zk5kYzEzcm1NVDNtcWtpeWxwZ2c2Qjlwa21rWkNreFFqMnZZOFdKQUFVQWVSZDUwUndjVVlkd1BCUlVSZmx3UHRxZVZGZUZSSlVLemdNUTUveUtuUFNQVFNaUkNERHJnV1hScHpBUXI0ZCtSS3pCRHNCVUtOdkVFWkgxYjc0bG4vSk02N0tLSjk0SEZmSUNQN1h4a3JHRzFaQVR2QnhOOENRT2ZKSkhvUS9KcWNCc25Tc2M3MDBZMGg2dVNVWVRmVi9WWUgybGg3MTlQWldIQUgxV1RYNmR3YURUV1kyRlYyOE1IRTMra3NMejhtVE95WHdBTTluSGlCRHA3MDZnUDROMUUvSkdVK0RIY2g4RWZtMzN6WHpxSFVMR2YwaytaVmFvcjVWYWxYQkhmM05PdFVBMzJtbWZLMEpZendhVW42aHZYOEl5NnIxbnhxaFQzb3Y4M0NkTDk2Zis5SXcvc2Q1anJJK2tLYnc4bDhvYjlmanFtZUJQK0N4Y00wR0kvTThJVnArcWNZMzRjMTZpNGREZVA3NDcvdmpKRHRlelhuWkFWOGQ2WURlbHMwWm9zRlpCT2xockI2RUFOeU51VE9JSmdKcG5MbWdiTDBRNWFlbzg0a2ZzaWZKUWg0cHVFZ1ZwQ2VSd3VaNFV6U0ZKR256ditiM0JCOTBiMC9kL0hEa29CV05lUjZJazgxLy9XMmkyN2lhdVB5QXh4WWtrd2h1bStPa0VVck1BVHhoZ2hGWUk2cEVNMFdSVUg1VnBSRTk4L1AwQjdlQnpSWDRPT09RYXNZNTIybUlZdEFjYW84R2VGK29KdDZkS1EvTWZ4YkNicVpCUzhPL1MxeVcvK2xoNHNUUWNVOHpNTERvZ3duaTRNaFNldzI2Tk1paElCaE5rbVlyRDJ2SmZ4WEdXL2RONkdtSHA1aUdJTFJoTUUzeWNmUGRpYXh5SUhEU1Z5VEwxUjRZZXJvVlcyZkJzb0U1NDVkY3Jqb0VhTzgwbGxoME00UzFIQzVvMzlZVVRQQnh3Y1UxbS93SURWYythdi9mdzhrTmNnSk9tNnBoNFpTeFR6NGpPY2dWNjdyZUorTExIWE5QWmRtZlpRRncrbFY4SDlvODhwbmFLaUtHNU0xalR2NFdCdVluMDFQZjFlQXdQWUxDYmNEQm4zYVkxTUoxWnpVak81UnBheXY1cS93bWVNT0hPakhXRlViMGtnc001c2xsWGhQQUx4TDRERlIvaGtxL0E4TzFBTU9HcCtyeXBzdHptR3Y5aHBQV2VWSGdreUF3K3NLd1NoVVpOajhIK1U1eEFZeVRqbWVjcmhEUFNUZTJHbnRXNWdwN3k2T1Q2TTNDU0l6eHVuWnpTVTFuOVZRV3cvL0JuTkF5UlBUK0lvSTFsQ2VONUQxUlcwaG5JYlpuZURjWm13TmlUS2M1eWk2Ly83US8vTWZPSkhoQmZJRkNEdWNuTHRHaVh2aGFER2tGNjJkRytta1lhRnB2V0RPbSthRHdxeHF1cnBiS1cxVGJreFYvanhSSEIwNFpxOEZxeU12UytUZFhFY2MxTmVlMjlkeVN1ZENTeVA0aVIxRHBiRThWcjF4RHR2U1NsZ00vR3llaWg5clZjS0VocG5zdUdWdnY4NjZjVGppQ1cvTXVHRlljaDdJRlc2d3ZyMVFFNHhiMDZicUJkZ2tUcE1VRlRLSG5ZYzJNdzhXeGVHNGF5a1l3VTI0bXRUa05seEo4U0NkMXBDS1NlTGV0VGs2cWJqTG1GNS9GL0ZLT2RJYXVZK1ljem4vVEZJdUxuWG9zTEUzbzB5UW5rKzdRaUZzbWxPQVlvN3FNL3JIcHZobzFMSCsrYXJGMURoV0FZdk05VmFKRUZ4NnNCdU1LUlRsUVk1cWZJcGp3Y2Y5K1BhcXJNV0dIUEtGaXRTYUo0bFFkYS9hVVFOQjVnQVp4aXA5THcxdXYwdG53cUVsYWgrWGFxZWVqSUt0YWhCcDNFSFc4eCszUnFKVU4rWHc0RU5pbE44WUw2cGpmaDNyNXB3cnNMa0ZXQSttVkNTcHRkcTFoUXFOTmwzbFROYUNHcjFUN0dvWlhCdGNldFNvRlVMVUIwYkVRRTlpK2ZQclUrb01udmwvc1NHTkF5K2Jib1Z5aFA1Mm5OenpvWUNRQWcvaEJaUW4yQXdVUmN2bmcyOUwrUHViQ1hmaWFWZVh2eHJKYjl0dHcwNEt2bXdMZVNDSzhLbHlLSXE5RkxZVUx4UFcvVXd0SC93MndRN0dJQjBGSFdweGY3QTZndFcxSkJXSHdPRVl1SGIrdnVZMUx6bWNYNGtEZW9FNGg4Q3lqMDNNaDVVd001UnRzdFc5YkNXVDRlQTBDVmlpRlJ5MThLd2FHSzR2Q1dWMTdObEFaKy9aWnJZUkZESmowNjRvb1RCdExUUHRkQXBJbXB2RXJ4WGpMd29TejN6cU9uRU5wWkQ2a3BJUVJUc0cwQlFoS2lOTTM3eHNzT2xoQVVzazM3OU5hNzMvaDJyaldIZjZIK1FVWmM2aG8zVTMzQXpncC9ESE9mdDd1UXlOUzhtTTBxYURvUWJIR2l2REU5ZUZEc3lzRWwwcjJOWlFQQVFmMUVWSGRsQUJpMjJsK1lrRlpIYUFSeUwvV1o3SG82dVpiTWpMQWRhNk5uMVlPM0Vnays3ODluT1YyUDJMajM3ekNUbFlzWUdsNHRodjlFYnk3c0M3V1BMbWNDaDhYbjVwd2lQallTbUo2cnNtNnRsTGxYZWM4WnJtT0s5SFBTRmhIZGZRSURCd1RWQWtFNGJaSVV5Zk5vSHRPM1B5eVBnVXVSb0NDRktwSnY4cUE2NVhiRjNQWlQ5R3lBWEUyMUlkcTZnT1kzUG0wNFFObWZUNEVVdWlpR2FFSCtLd1RWaEh4OTh6U2M3QzcxdGhxR2tTL0E4dGg3OGlGSlh5TEdiL1VPTXhXdDMwLytJVDI1ZlVHQkxiRXo2bitRcUtUVjFoTzFRczEyU0oxSVJ1dnVUdmpnMzVPRXpyWk5ValMxRUtwdlAwa2xVUlNnTWEyNzhxSUQ0UkxJYktuR1RucE9NQkJVaXB0MDFSRVlUdTlrQ2hwRnRTdUE2blgrY2h4bmYrdGxlUExnS0c5THVteHFoeXBpTDhYM3dhazNjZGw5dk03aU9BS01JMnpFVzI3bS9NbjNrUEVRUEhNTUwveXNaUjRHWEg5bUZSeGdkUy9GRFVwU2l4cHlVd0ZRLzYxVFBQV1dhQTZpckhjcm9uaXZwWGloRHd0SGF2c25nLzc5VUg0a3dyYzNCVWpJM0tqNTdTaDdxRlR3UkVtMXhrN0sxMitjdU5EZFZmbzJjOWlBcU1EYzVYbU51bHVmNE9vZVV0c0hjM3VJTUpUOXcyRkYybzdDNHZ0amNkM3JSNVRuZzRRQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUpFUndrS1RFMU9BPT0iLCJzaWduaW5nQWxnb3JpdGhtIjoicHEyMDI1In0sImphY3NUeXBlIjoibWVzc2FnZSIsImphY3NWZXJzaW9uIjoiYThiZTk1Y2QtOGNlYi00NTdjLTg2NmMtZThkZDcyMDhjMjE3IiwiamFjc1ZlcnNpb25EYXRlIjoiMjAyNi0wNC0yNFQwNzo0MzoyMS45Njc3MjQrMDA6MDAifQ0KLS1qYWNzXzNlMzFmMGU3ZTQzZmY3MDgtLQ0K",
+    "input_sha256": "f5820bd3feaafcd71d4c1d1346f0caba93b2ae55ebc3be93e93e1ec371506da4",
+    "verify_registry": {
+      "agent_status": "active",
+      "algorithm": "pq2025",
+      "benchmarks_completed": [],
+      "email": "sender@example.com",
+      "jacs_id": "96160c44-9e52-4889-b5bb-5a5aec41bf32",
+      "public_key": "-----BEGIN PUBLIC KEY-----\nmHPZqM8F4JJoQ1jh0Qu4kPe53SjUeBpvIeIvx1vciqEcXmWVqI6clf0XqBl8HxKd\nl//jjqItN0pu/6xZVbd7/10oQG5Ulb4vG9cm2JjZ/KpiWP+BXpTyWctlf6S2FRFY\nu5Khx61o+WWm6kbhDuiHFiLYz614NRh9pQX1sJYRve828C6W1bCRCala2i/YSad6\ngkg7c+/X68IMNasQW/mGUznDEDZBbwEF0Vc1QLnR9MQQhLFF9r9TLqk/rxlvUR/s\ns/3I3uYYxA7ka+ehfbPU88NVj+O3sGxSDn5DQcfAJ853esuGFARgBNV49KCTco/V\nVSSTzp9HHyHPTsqmTeXFn0Ze1oS6EMzMj4WxVWtZ30J5eRCD0oWEKilpZiUrnsSc\nmez3jCP2e1r5KmV1CgRbacir4cms3dx3UiYxLC6tJCKMXZt3DCOjpCO1wIwc9Afc\nGcf0xua9CowgMXaICqjRq5AyIWDSwh3nwXazEgI8WpDtHD+exmt6kQvX4J0oj8Ok\nKImbGv1YA1hpvSeHn4/EC5YRs630hKJWDEpZHelHPtN+swsZCLePQ/ud08htcWSq\nH3vv5VU+qLn8S8QJJ7kcVyNbQK2P5IHSRRA1EmC5GaT2Lz9DJpa1v4qzMeTjqTNf\nv9CLZrsF7hZ7qsVV8rbyL3vjVzllIrDKEBKZf7UwjFrE44DAU27VSJzlcXcJ/ftK\nIDfjtKKXkyLOQCaEu85yeES/OcFXpsTpK3DkBFn4mbRtrbyUhT796Yce9xvFWqBK\nuPNrkdM2Cybvn0UKtnkOzIAJ4LpoQTLSB9MHCsEuUuxyGj4AW8gaHVw3y/R2U9tb\naHtixQSfmQA7VxwiRpyBEVMuXQBOof/M1er6V+fgqWBgcWk7KpnwT5gWfaPAt/YF\njj4nxoHh6Bxnvl3J/RAsOg/x8kufIhREDyRBdILMwuQLcATOmlAsOKHDaBod1qb2\ndRkolBVJxjnLqyLMRkx9cJRNovs/nu2HlB39uib+b4t8nPIN1LhQoTBBg6iVztkZ\nVuiWxymmw+7b5BHDgTUelQrUqJ0OaLNRGMTupPMne5NADf32EZ/z8ehMtuB4tcyF\n/OL1rAPsqAzWJWcm5bw1XXdr6/ATe3gBSdlV3neFpg2WkvppEDb/aodtWRo4/MAu\naJyLcIkLQZLjwgG+/kv9Do60wR5sjHW1aGPiJFy7RJ6be4YC6Ed9izfk7SierJIS\nkX0+IX+R3sP5DpmM8xjICL+6Dr4svkQ0vIPvNeP0QM36ZFvAUfywbQeiAziH0sxt\n20JoBVtcAtJKAoxFvs+SrWxOsxDFzdMPuutcxB1ACb6j3y/BN+PMylXxFFoeHPet\nvDDgUrqWvARBxmeUKEXOln7Q1A8JDf0FPSUQTIj+KFFYgg7RdDTDqA/RPCV3qLL4\nXN4cR66ryUImH/EmSqCk/n4rwTT+V0w3kAMELTYMD4z9bRil05fAu8F0Hkm++dCe\nfnQg9xj6zPRlGWnX5fmYrd3n9DoBNJzzpIDoVfE85S+sOwBybHN0NHaR+Ql0lvXT\nVXmrb9XKBuDKHn/S9DPkG6e+563aRbrk4HSV2oL4uSY2HMM5GtsWSf8C1oO9OB5s\nHBMn2KJY/R0UBKqG2Zn6bNqRwoq2l4CW6R4RU1JaESrm/WTRba1XrT8zXk0pa+Ek\nkI0z8fXnW0j25uhScXYgeLkkOGaewwYQMIRB+giBgs+8TnDUmqFlVVafuDfcixzz\nt6CzHpzHR7cdeLN3yWYd/VZi95E4jMtmZaQ29F56gWvMGUHj/7TLIaSJ3+j8IidI\nvARghR6+Von85envQ+2VkEJ2lSgx9pBLoNADHk1q7F+xiXFkTmJEnTlffitidZ3B\nuoH9RuFH68scJk6RLE5EjLgJbtgICy21xdSXgVj5eqSVBcVa3TJC9jipLDp3uR96\nyZdekJYfeh1ixVKCxkfpodPwekRnSfy49hE/tpQ866+CzryC2HpVhLi3zseRHTRp\ndr1o0zcTG2FMTlQUZomkdNv+lZUvsjzUEO4kMFWsfL4DFAqUdgLtY6raKZKU67ea\nkU4+CHD7sb1vUXCr62zwVgVsdmDSegsbjekoWinzsOmIjaFNwJwfj/rfSPNVdUWl\no+e4DLqcYp/Lx7bxl39A3AZU+cYtUI8HEQYYp2Zad1WHW/S1w55CqxgfuE6Haxwo\nWVZc61CFTI+zNW+lrng6Gu/WACwizAaibjgcUzphY8mmrmHaVFsRXnXDykv2TM0o\nqM0wP0bccN55aZnTM2Ur9PHCmf03MXG10XGwKWd6m3hmwl4XD/RmkCZvcWbOD5JJ\nPhgzwH5YcMRlr+VTfcJbN6+XvWCr1iYmRafVRDI02EdJ7jq+Aej3WHj0D6L5vKeG\n0HuurAbkC3J7m/+0zPi43alCQajDEJKdjYhJCwtxzH1P0268Za2U+PvkyEg654Af\nXYuX+1nqaMxR5dRw5w+q1ODMPk1PSFldH6Gzs/KQAnzKK9KB9/0W1D4rXznnMadi\nbVyg1YCutUfvZWQbyQKnSJRv+cOQ14/V8l5ludRO+gNFYvm9RfnQ11sMdLRHBikH\ny4roawmRj7leBgmau/sRBWxlRt0A4Cdu7DGzimkBHCZc9qUYfDwHkz+No3HBWJ9p\ne6tbkJ/1M/Nnpngi+h/vxcwxwl4z7/s3MdegHS8v+MhXZnVUIPNhl1+A+KWEE8at\nvJEPWqnSDwunkaDTWx/JoD3zkWmHadqob/wT+JjbCqaVLFszhZ6f92bQQSjJDlDP\nbEgBGrzfsr5n9Ylhpm6U2UNTYXC/5VhmUgmBzFnS8YRD7VCKvTLFnTP5rA5XRmrC\nYS0lFYbKSPS9peUaTNRioaaPAiZFnvlIBw/tefmCN0uRfADaLhDAJxH0jByaTljo\nSc/7+9fYS61RgzD0rZ4XBEXmiuLElbCYx2T/Um0Qz/g2qYTGk7dHnEsHNBHTd7/l\nsnhLg9gSbVIRmGBYUVjzSImqqOKJbJDk56bejEIkEKHdo3q20Do2xdc8rhJKKkTo\nL/nISPFpRsWRuXdM4Ga/tUxV2Co483hOMK/V+yI0n0QV7aaQgPu+G/0B7k9qoulW\n/sv5Vwthuet3jbRVVFrd2VCEco7a/fxJSeyHjY54CAIZLf93/FsR0UtbkbhpvR34\nYYPKjqiGDmCwfqOTuFNZ5JKHm6/gc9Z2yhlevXjb3E0SB7xFxZUY4jHahGm3I+Fz\nPyiRaidtVIkwTPtBtBcUmGfoXYTUt8pGC60WRsVL3cLoWRKVf4ae7EiofwlHRecf\n/ZeGgBOryDrVSfd99NTWAsTrMAmjUjTohATeAxM4ykSC5a244k36ri/pd2kJcSsU\nKtX+xZTRnxl6hOxHd62B+KH5VoOnFNk4In+wdFnpep5+YrD42Cdw4cH8mBm8b+yh\namTF+bi9yRQoqtJSh8RDWJ4Z1hFmIRaTd3k7vMTdO6SuxAGE8VarCcwOWmXmkBWy\n-----END PUBLIC KEY-----\n",
+      "registered_at": "2026-04-23T12:00:00Z",
+      "reputation_tier": "free_chaotic"
+    }
+  },
+  "verification_result_v2_schema": {
+    "chain_entry_schema": {
+      "required_fields": {
+        "forwarded": "boolean",
+        "jacs_id": "string",
+        "signer": "string",
+        "valid": "boolean"
+      }
+    },
+    "description": "All SDKs must return structurally equivalent EmailVerificationResultV2 with these fields",
+    "field_result_schema": {
+      "optional_fields": {
+        "current_hash": "string_or_null",
+        "current_value": "string_or_null",
+        "original_hash": "string_or_null",
+        "original_value": "string_or_null"
+      },
+      "required_fields": {
+        "field": "string",
+        "status": "field_status_enum"
+      }
+    },
+    "field_status_values": [
+      "pass",
+      "modified",
+      "fail",
+      "unverifiable"
+    ],
+    "required_fields": {
+      "algorithm": "string",
+      "chain": "array_of_chain_entry",
+      "dns_verified": "boolean_or_null",
+      "error": "string_or_null",
+      "field_results": "array_of_field_result",
+      "jacs_id": "string",
+      "reputation_tier": "string",
+      "valid": "boolean"
+    }
+  },
+  "version": "1.0"
 }

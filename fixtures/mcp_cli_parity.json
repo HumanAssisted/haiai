@@ -20,7 +20,8 @@
     { "mcp_tool": "hai_search_email_templates", "cli_command": "template" },
     { "mcp_tool": "hai_get_email_template", "cli_command": "template" },
     { "mcp_tool": "hai_update_email_template", "cli_command": "template" },
-    { "mcp_tool": "hai_delete_email_template", "cli_command": "template" }
+    { "mcp_tool": "hai_delete_email_template", "cli_command": "template" },
+    { "mcp_tool": "hai_get_raw_email", "cli_command": "get-raw-email" }
   ],
   "mcp_only": [
     { "name": "hai_verify_status", "reason": "MCP exposes per-agent lookup; CLI 'status' is self-only" },

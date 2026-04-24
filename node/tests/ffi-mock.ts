@@ -40,6 +40,7 @@ export function createMockFFI(overrides?: Partial<MockFFI>): FFIClientAdapter {
     updateLabels: defaultReject,
     getEmailStatus: defaultReject,
     getMessage: defaultReject,
+    getRawEmail: defaultReject,
     getUnreadCount: defaultReject,
     // Email Actions
     markRead: defaultReject,

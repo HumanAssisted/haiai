@@ -42,6 +42,7 @@ import type {
   VerifyAgentDocumentOnHaiOptions,
   EmailVerificationResultV2,
   FieldStatus,
+  RawEmailResult,
 } from './types.js';
 import {
   HaiError,
@@ -1345,6 +1346,26 @@ export class HaiClient {
   }
 
   /**
+   * Fetch the raw RFC 5322 MIME bytes for a message, suitable for local
+   * JACS verification via {@link verifyEmail}.
+   *
+   * Byte-fidelity (PRD R2): `rawEmail`, when present, is byte-identical to
+   * what JACS signed. Pair with `verifyEmail(rawEmail)` to verify offline.
+   *
+   * When `available` is `false`, `rawEmail` is `null` and `omittedReason`
+   * is one of `"not_stored"` (legacy row) or `"oversize"` (>25 MB cap).
+   *
+   * @param messageId - The message ID whose raw bytes to fetch.
+   */
+  async getRawEmail(messageId: string): Promise<RawEmailResult> {
+    if (!messageId) {
+      throw new HaiError("'messageId' is required");
+    }
+    const wire = await this.ffi.getRawEmail(messageId);
+    return parseRawEmailJson(wire);
+  }
+
+  /**
    * Delete an email message.
    *
    * @param messageId - The message ID to delete
@@ -1859,6 +1880,32 @@ interface RegisterNewAgentCommonOptions {
   dataDir?: string;
   configPath?: string;
   password?: string;
+}
+
+/**
+ * Parse the raw-email FFI wire JSON into a language-native
+ * {@link RawEmailResult}, decoding base64 into a `Buffer`.
+ *
+ * Single decode site (PRD §4.5 DRY): this is the only place in the Node
+ * SDK that converts `raw_email_b64` → `Buffer`.
+ */
+function parseRawEmailJson(wire: Record<string, unknown>): RawEmailResult {
+  const b64 = wire.raw_email_b64;
+  let rawEmail: Buffer | null = null;
+  if (typeof b64 === 'string' && b64.length > 0) {
+    rawEmail = Buffer.from(b64, 'base64');
+  }
+  const sizeBytes = wire.size_bytes;
+  const omittedReason = wire.omitted_reason;
+  const rfcMessageId = wire.rfc_message_id;
+  return {
+    messageId: typeof wire.message_id === 'string' ? wire.message_id : '',
+    rfcMessageId: typeof rfcMessageId === 'string' ? rfcMessageId : null,
+    available: wire.available === true,
+    rawEmail,
+    sizeBytes: typeof sizeBytes === 'number' ? sizeBytes : null,
+    omittedReason: typeof omittedReason === 'string' ? omittedReason : null,
+  };
 }
 
 /**

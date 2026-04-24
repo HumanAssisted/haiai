@@ -870,6 +870,25 @@ func (c *Client) GetMessage(ctx context.Context, messageID string) (*EmailMessag
 	return &msg, nil
 }
 
+// GetRawEmail fetches the raw RFC 5322 MIME bytes for a message, suitable
+// for local JACS verification via VerifyEmail.
+//
+// Byte-fidelity (PRD R2): RawEmail, when present, is byte-identical to what
+// JACS signed. No trimming, no line-ending normalization, no UTF-8 lossy.
+//
+// When Available is false, RawEmail is nil and OmittedReason is either
+// "not_stored" (legacy row) or "oversize" (>25 MB cap).
+func (c *Client) GetRawEmail(ctx context.Context, messageID string) (*RawEmailResult, error) {
+	if messageID == "" {
+		return nil, wrapError(ErrInvalidResponse, nil, "messageID is required")
+	}
+	raw, err := c.ffi.GetRawEmail(messageID)
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	return parseRawEmailJSON(raw)
+}
+
 // DeleteMessage deletes an email message by ID.
 func (c *Client) DeleteMessage(ctx context.Context, messageID string) error {
 	err := c.ffi.DeleteMessage(messageID)
@@ -1457,4 +1476,47 @@ func (c *Client) DeleteEmailTemplate(ctx context.Context, templateID string) err
 		return mapFFIErr(err)
 	}
 	return nil
+}
+
+// parseRawEmailJSON decodes the raw-email FFI wire JSON into a
+// language-native RawEmailResult, base64-decoding raw_email_b64.
+//
+// Single decode site (PRD §4.5 DRY): this is the only place in the Go SDK
+// that converts raw_email_b64 into []byte.
+func parseRawEmailJSON(raw json.RawMessage) (*RawEmailResult, error) {
+	var wire struct {
+		MessageID     string  `json:"message_id"`
+		RfcMessageID  *string `json:"rfc_message_id"`
+		Available     bool    `json:"available"`
+		RawEmailB64   *string `json:"raw_email_b64"`
+		SizeBytes     *int    `json:"size_bytes"`
+		OmittedReason *string `json:"omitted_reason"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode raw email response")
+	}
+	result := &RawEmailResult{
+		MessageID: wire.MessageID,
+		Available: wire.Available,
+	}
+	if wire.RfcMessageID != nil {
+		result.RfcMessageID = *wire.RfcMessageID
+		result.hasRfcMessageID = true
+	}
+	if wire.SizeBytes != nil {
+		result.SizeBytes = *wire.SizeBytes
+		result.hasSizeBytes = true
+	}
+	if wire.OmittedReason != nil {
+		result.OmittedReason = *wire.OmittedReason
+		result.hasOmittedReason = true
+	}
+	if wire.RawEmailB64 != nil && *wire.RawEmailB64 != "" {
+		bytes, err := base64.StdEncoding.DecodeString(*wire.RawEmailB64)
+		if err != nil {
+			return nil, wrapError(ErrInvalidResponse, err, "invalid base64 in raw_email_b64")
+		}
+		result.RawEmail = bytes
+	}
+	return result, nil
 }

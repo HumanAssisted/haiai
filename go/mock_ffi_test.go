@@ -279,6 +279,11 @@ func (m *mockFFIClient) GetMessage(messageID string) (json.RawMessage, error) {
 	return m.doGet(path)
 }
 
+func (m *mockFFIClient) GetRawEmail(messageID string) (json.RawMessage, error) {
+	path := fmt.Sprintf("/api/agents/%s/email/messages/%s/raw", urlEncode(m.agentID), urlEncode(messageID))
+	return m.doGet(path)
+}
+
 func (m *mockFFIClient) GetUnreadCount() (json.RawMessage, error) {
 	path := fmt.Sprintf("/api/agents/%s/email/unread-count", urlEncode(m.agentID))
 	return m.doGet(path)

@@ -212,6 +212,13 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
+    def get_raw_email(self, message_id: str) -> dict[str, Any]:
+        try:
+            raw = self._native.get_raw_email_sync(message_id)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
     def get_unread_count(self) -> int:
         try:
             raw = self._native.get_unread_count_sync()
@@ -718,6 +725,13 @@ class AsyncFFIAdapter:
     async def get_message(self, message_id: str) -> dict[str, Any]:
         try:
             raw = await self._native.get_message(message_id)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def get_raw_email(self, message_id: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.get_raw_email(message_id)
             return json.loads(raw)
         except RuntimeError as err:
             raise map_ffi_error(err) from err

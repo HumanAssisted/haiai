@@ -1,7 +1,7 @@
 {
   "description": "CLI command parity contract. The haiai binary must expose exactly these subcommands. Tests verify bidirectional parity between this fixture and the Commands enum.",
   "version": "1.0.0",
-  "total_command_count": 27,
+  "total_command_count": 28,
   "commands": [
     {
       "name": "init",
@@ -113,6 +113,10 @@
       "name": "deploy",
       "args": [],
       "subcommands": ["anthropic", "list-sessions", "list-versions", "message"]
+    },
+    {
+      "name": "get-raw-email",
+      "args": ["message_id:string", "output:string?", "base64:bool"]
     }
   ]
 }

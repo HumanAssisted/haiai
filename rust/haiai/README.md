@@ -74,6 +74,19 @@ let doc = provider.sign_and_store(&serde_json::json!({"title": "My Document"}))?
 let found = provider.search_documents("title", 10, 0)?;
 ```
 
+### Local JACS verification (raw MIME round-trip)
+
+```rust
+let raw = client.get_raw_email("m.uuid").await?;
+if !raw.available { anyhow::bail!("{:?}", raw.omitted_reason); }
+let bytes = raw.raw_email.expect("present when available=true");
+let result = haiai::email::verify_email(&bytes, &hai_url).await?;
+assert!(result.valid, "tampered or revoked");
+```
+
+Bytes are byte-identical to what JACS signed (25 MB cap). See
+[`docs/haisdk/EMAIL_VERIFICATION.md`](../../docs/haisdk/EMAIL_VERIFICATION.md).
+
 ## A2A Integration
 
 ```rust

@@ -33,6 +33,7 @@ chrono = "0.4"
 rpassword = "7"
 atty = "0.2"
 percent-encoding.workspace = true
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

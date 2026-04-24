@@ -352,6 +352,10 @@ func (r *recordingFFIClient) GetMessage(messageID string) (json.RawMessage, erro
 	*r.calls = append(*r.calls, "GetMessage")
 	return r.inner.GetMessage(messageID)
 }
+func (r *recordingFFIClient) GetRawEmail(messageID string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "GetRawEmail")
+	return r.inner.GetRawEmail(messageID)
+}
 func (r *recordingFFIClient) GetUnreadCount() (json.RawMessage, error) {
 	*r.calls = append(*r.calls, "GetUnreadCount")
 	return r.inner.GetUnreadCount()

@@ -253,6 +253,21 @@ enum Commands {
         message_id: String,
     },
 
+    /// Fetch the raw RFC 5322 MIME bytes for a message (suitable for local JACS verification)
+    GetRawEmail {
+        /// Message ID whose raw bytes to retrieve
+        message_id: String,
+
+        /// Write output to FILE instead of stdout. When --base64 is set, the
+        /// base64 string is written to the file; otherwise raw decoded bytes.
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+
+        /// Print the base64-encoded MIME on one line instead of decoded bytes
+        #[arg(long)]
+        base64: bool,
+    },
+
     /// List contacts derived from email history
     ListContacts,
 
@@ -1428,6 +1443,48 @@ async fn main() -> anyhow::Result<()> {
                 .await
                 .context("unarchive failed")?;
             println!("  Unarchived: {}", message_id);
+        }
+
+        Commands::GetRawEmail {
+            message_id,
+            output,
+            base64,
+        } => {
+            use std::io::Write;
+            let client = load_client()?;
+            let resp = client
+                .get_raw_email(&message_id)
+                .await
+                .context("get-raw-email failed")?;
+
+            if !resp.available {
+                let reason = resp.omitted_reason.as_deref().unwrap_or("unknown");
+                eprintln!("raw email unavailable: {reason}");
+                std::process::exit(2);
+            }
+
+            let bytes = resp
+                .raw_email
+                .ok_or_else(|| anyhow::anyhow!("server reported available but returned no bytes"))?;
+
+            if base64 {
+                use base64::Engine;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                if let Some(path) = output {
+                    std::fs::write(&path, b64)
+                        .with_context(|| format!("write base64 to {}", path.display()))?;
+                } else {
+                    println!("{}", b64);
+                }
+            } else if let Some(path) = output {
+                std::fs::write(&path, &bytes)
+                    .with_context(|| format!("write raw bytes to {}", path.display()))?;
+            } else {
+                let mut stdout = std::io::stdout().lock();
+                stdout
+                    .write_all(&bytes)
+                    .context("write raw bytes to stdout")?;
+            }
         }
 
         Commands::ListContacts => {
@@ -3035,6 +3092,82 @@ mod tests {
             }
             _ => panic!("expected UnarchiveMessage command"),
         }
+    }
+
+    #[test]
+    fn parse_get_raw_email_defaults() {
+        let cli = Cli::parse_from(["haiai", "get-raw-email", "msg-1"]);
+        match cli.command {
+            Commands::GetRawEmail { message_id, output, base64 } => {
+                assert_eq!(message_id, "msg-1");
+                assert!(output.is_none());
+                assert!(!base64);
+            }
+            _ => panic!("expected GetRawEmail command"),
+        }
+    }
+
+    #[test]
+    fn parse_get_raw_email_with_output() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "get-raw-email",
+            "msg-2",
+            "--output",
+            "/tmp/out.eml",
+        ]);
+        match cli.command {
+            Commands::GetRawEmail { message_id, output, base64 } => {
+                assert_eq!(message_id, "msg-2");
+                assert_eq!(output.unwrap().to_string_lossy(), "/tmp/out.eml");
+                assert!(!base64);
+            }
+            _ => panic!("expected GetRawEmail command"),
+        }
+    }
+
+    #[test]
+    fn parse_get_raw_email_base64_flag() {
+        let cli = Cli::parse_from(["haiai", "get-raw-email", "msg-3", "--base64"]);
+        match cli.command {
+            Commands::GetRawEmail { message_id, output, base64 } => {
+                assert_eq!(message_id, "msg-3");
+                assert!(output.is_none());
+                assert!(base64);
+            }
+            _ => panic!("expected GetRawEmail command"),
+        }
+    }
+
+    #[test]
+    fn parse_get_raw_email_base64_with_output() {
+        // Regression for issue 008: --base64 combined with --output writes the
+        // base64 string to the file (not the raw bytes). The old help text
+        // claimed --output was "ignored when --base64 is set" but the
+        // implementation always honored --output. This test locks down the
+        // updated contract: both flags together is a valid invocation.
+        let cli = Cli::parse_from([
+            "haiai",
+            "get-raw-email",
+            "msg-4",
+            "--base64",
+            "--output",
+            "/tmp/out.b64",
+        ]);
+        match cli.command {
+            Commands::GetRawEmail { message_id, output, base64 } => {
+                assert_eq!(message_id, "msg-4");
+                assert_eq!(output.unwrap().to_string_lossy(), "/tmp/out.b64");
+                assert!(base64);
+            }
+            _ => panic!("expected GetRawEmail command"),
+        }
+    }
+
+    #[test]
+    fn parse_get_raw_email_missing_arg_fails() {
+        let result = Cli::try_parse_from(["haiai", "get-raw-email"]);
+        assert!(result.is_err(), "get-raw-email without message_id should fail");
     }
 
     #[test]

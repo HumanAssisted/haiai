@@ -313,6 +313,7 @@ ffi_method_str!(hai_list_messages, list_messages);
 ffi_method_str!(hai_update_labels, update_labels);
 ffi_method_noarg!(hai_get_email_status, get_email_status);
 ffi_method_str!(hai_get_message, get_message);
+ffi_method_str!(hai_get_raw_email, get_raw_email);
 ffi_method_noarg!(hai_get_unread_count, get_unread_count);
 
 // =============================================================================

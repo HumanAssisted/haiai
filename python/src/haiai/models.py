@@ -360,6 +360,45 @@ class EmailMessage:
 
 
 @dataclass
+class RawEmailResult:
+    """Result of `get_raw_email` — raw RFC 5322 bytes for local JACS verification.
+
+    Byte-fidelity (PRD R2): `raw_email`, when present, is the exact bytes that
+    JACS signed. No trimming, no line-ending normalization, no UTF-8 lossy.
+
+    On `available: false`, `raw_email is None` and `omitted_reason` explains
+    why:
+      - "not_stored": legacy row predating the feature.
+      - "oversize": MIME exceeded the 25 MB storage cap.
+    """
+
+    message_id: str
+    available: bool
+    raw_email: Optional[bytes] = None
+    size_bytes: Optional[int] = None
+    omitted_reason: Optional[str] = None
+    rfc_message_id: Optional[str] = None
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> RawEmailResult:
+        """Parse the FFI wire JSON dict, base64-decoding bytes at the boundary."""
+        import base64 as _b64
+
+        b64 = data.get("raw_email_b64")
+        raw_bytes: Optional[bytes] = None
+        if b64:
+            raw_bytes = _b64.b64decode(b64)
+        return RawEmailResult(
+            message_id=data.get("message_id", ""),
+            available=bool(data.get("available", False)),
+            raw_email=raw_bytes,
+            size_bytes=data.get("size_bytes"),
+            omitted_reason=data.get("omitted_reason"),
+            rfc_message_id=data.get("rfc_message_id"),
+        )
+
+
+@dataclass
 class Contact:
     """A contact derived from email message history."""
 

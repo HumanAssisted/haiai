@@ -699,6 +699,17 @@ impl HaiClientWrapper {
         Ok(serde_json::to_string(&result)?)
     }
 
+    /// Fetch the raw RFC 5322 MIME bytes for a message.
+    ///
+    /// Returns a JSON string with the PRD wire shape:
+    /// `{message_id, rfc_message_id, available, raw_email_b64, size_bytes, omitted_reason}`.
+    /// Language SDKs decode `raw_email_b64` into native byte types.
+    pub async fn get_raw_email(&self, message_id: &str) -> HaiBindingResult<String> {
+        let client = self.inner.read().await;
+        let result = client.get_raw_email(message_id).await?;
+        Ok(serde_json::to_string(&result.to_wire_json())?)
+    }
+
     /// Get unread message count.
     pub async fn get_unread_count(&self) -> HaiBindingResult<String> {
         let client = self.inner.read().await;
@@ -1823,6 +1834,70 @@ mod tests {
     #[tokio::test]
     async fn verify_email_raw_method_exists_on_wrapper() {
         let _method_exists = HaiClientWrapper::verify_email_raw;
+    }
+
+    #[tokio::test]
+    async fn get_raw_email_method_exists_on_wrapper() {
+        let _method_exists = HaiClientWrapper::get_raw_email;
+    }
+
+    #[test]
+    fn get_raw_email_wire_shape_contains_all_keys_available_true() {
+        // End-to-end JSON shape check: serialize a RawEmailResponse
+        // through the same path get_raw_email uses (to_wire_json).
+        // This is what clients parse across the FFI boundary.
+        use haiai::RawEmailResponse;
+        let resp = RawEmailResponse {
+            message_id: "m.1".into(),
+            rfc_message_id: Some("<a@b>".into()),
+            available: true,
+            raw_email: Some(b"hello".to_vec()),
+            size_bytes: Some(5),
+            omitted_reason: None,
+        };
+        let wire = serde_json::to_string(&resp.to_wire_json()).expect("serialize");
+        assert!(wire.contains("\"available\":true"));
+        assert!(wire.contains("\"raw_email_b64\":\"aGVsbG8=\""));
+        assert!(wire.contains("\"message_id\":\"m.1\""));
+        assert!(wire.contains("\"size_bytes\":5"));
+        assert!(wire.contains("\"omitted_reason\":null"));
+    }
+
+    #[test]
+    fn get_raw_email_wire_shape_available_false_not_stored() {
+        use haiai::RawEmailResponse;
+        let resp = RawEmailResponse {
+            message_id: "m.2".into(),
+            rfc_message_id: None,
+            available: false,
+            raw_email: None,
+            size_bytes: None,
+            omitted_reason: Some("not_stored".into()),
+        };
+        let wire = serde_json::to_string(&resp.to_wire_json()).expect("serialize");
+        assert!(wire.contains("\"available\":false"));
+        assert!(wire.contains("\"raw_email_b64\":null"));
+        assert!(wire.contains("\"omitted_reason\":\"not_stored\""));
+    }
+
+    /// Fixture parity: `get_raw_email` must appear in `ffi_method_parity.json`
+    /// under `email_core` to keep the contract coherent across all SDKs.
+    #[test]
+    fn get_raw_email_is_declared_in_ffi_fixture() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/ffi_method_parity.json");
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let json: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+        let email_core = json
+            .get("methods")
+            .and_then(|m| m.get("email_core"))
+            .and_then(|a| a.as_array())
+            .expect("methods.email_core array");
+        let has = email_core
+            .iter()
+            .any(|m| m.get("name").and_then(|n| n.as_str()) == Some("get_raw_email"));
+        assert!(has, "fixture missing get_raw_email in email_core");
     }
 
     #[tokio::test]

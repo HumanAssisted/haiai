@@ -50,6 +50,7 @@ pub fn has_tool(name: &str) -> bool {
             | "hai_get_email_template"
             | "hai_update_email_template"
             | "hai_delete_email_template"
+            | "hai_get_raw_email"
     )
 }
 
@@ -94,6 +95,7 @@ pub async fn dispatch(
         "hai_get_email_template" => call_get_email_template(context, &args).await,
         "hai_update_email_template" => call_update_email_template(context, &args).await,
         "hai_delete_email_template" => call_delete_email_template(context, &args).await,
+        "hai_get_raw_email" => call_get_raw_email(context, &args).await,
         _ => Err(ToolError::InvalidParams(format!(
             "unknown HAI tool: {name}"
         ))),
@@ -480,6 +482,19 @@ fn definition_values() -> Vec<Value> {
                 "required": ["template_id"]
             }
         }),
+        json!({
+            "name": "hai_get_raw_email",
+            "description": "Fetch the raw RFC 5322 MIME bytes for a message, suitable for local JACS verification via verify_email. Returns base64-encoded raw MIME.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "message_id": { "type": "string", "description": "Message UUID" },
+                    "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["message_id"]
+            }
+        }),
     ]
 }
 
@@ -695,6 +710,34 @@ async fn call_get_message(context: &HaiServerContext, args: &Value) -> ToolResul
         ),
         json!({ "message": result }),
     ))
+}
+
+async fn call_get_raw_email(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let message_id = required_string(args, "message_id")?;
+    let client = prepare_email_client(context, args).await?;
+    let result = client
+        .get_raw_email(message_id)
+        .await
+        .map_err(tool_message)?;
+
+    // Emit the wire JSON verbatim (base64 preserved) — mirrors
+    // sign_email_raw / verify_email_raw. MCP clients that know JACS
+    // decode raw_email_b64 themselves.
+    let wire = result.to_wire_json();
+    let summary = if result.available {
+        format!(
+            "raw email message_id={} size_bytes={}",
+            result.message_id,
+            result.size_bytes.unwrap_or(0)
+        )
+    } else {
+        format!(
+            "raw email unavailable message_id={} omitted_reason={}",
+            result.message_id,
+            result.omitted_reason.as_deref().unwrap_or("unknown"),
+        )
+    };
+    Ok(success_tool_result(summary, wire))
 }
 
 async fn call_delete_message(context: &HaiServerContext, args: &Value) -> ToolResult {

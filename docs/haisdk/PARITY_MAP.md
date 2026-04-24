@@ -108,6 +108,16 @@ This document maps every stable JACS 0.9.4 public capability to its SDK exposure
 | `email::remove_jacs_attachment()` | `JacsEmailProvider::remove_jacs_attachment()` | Exposed |
 | `email::extract_email_parts()` | `JacsEmailProvider::extract_email_parts()` | Exposed |
 
+### HAI Email API (not JACS — listed here for parity visibility)
+
+| HTTP | FFI | Rust | Python | Node | Go | MCP | CLI |
+|---|---|---|---|---|---|---|---|
+| `GET .../messages/{id}/raw` | `get_raw_email` | `HaiClient::get_raw_email` | `HaiClient.get_raw_email` / `AsyncHaiClient.get_raw_email` | `HaiClient.getRawEmail` | `Client.GetRawEmail` | `hai_get_raw_email` | `get-raw-email` |
+
+Returns exact RFC 5322 bytes JACS signed (25 MB cap). Pair with
+`verifyEmail` / `verify_email` for local offline verification. See
+`docs/haisdk/EMAIL_VERIFICATION.md`.
+
 ## Layer 6: Agreements (`JacsAgreementProvider`, feature-gated)
 
 | JACS Capability | SDK Method | Status |

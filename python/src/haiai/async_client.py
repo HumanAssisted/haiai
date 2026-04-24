@@ -61,6 +61,7 @@ from haiai.models import (
     HelloWorldResult,
     JobResponseResult,
     PublicKeyInfo,
+    RawEmailResult,
     RotationResult,
     SendEmailResult,
     TranscriptMessage,
@@ -737,6 +738,17 @@ class AsyncHaiClient:
         ffi = self._get_ffi()
         m = await ffi.get_message(message_id)
         return EmailMessage.from_dict(m)
+
+    async def get_raw_email(self, hai_url: str, message_id: str) -> RawEmailResult:
+        """Fetch the raw RFC 5322 bytes of a message for local JACS verification.
+
+        Returns :class:`RawEmailResult` with ``raw_email`` as ``bytes`` on the
+        happy path, or ``None`` when ``available`` is False. Byte-identical to
+        what JACS signed (PRD R2).
+        """
+        ffi = self._get_ffi()
+        data = await ffi.get_raw_email(message_id)
+        return RawEmailResult.from_dict(data)
 
     async def delete_message(self, hai_url: str, message_id: str) -> bool:
         """Delete an email message."""

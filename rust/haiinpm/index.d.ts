@@ -31,6 +31,7 @@ export declare class HaiClient {
   updateLabels(paramsJson: string): Promise<string>
   getEmailStatus(): Promise<string>
   getMessage(messageId: string): Promise<string>
+  getRawEmail(messageId: string): Promise<string>
   getUnreadCount(): Promise<string>
   markRead(messageId: string): Promise<void>
   markUnread(messageId: string): Promise<void>

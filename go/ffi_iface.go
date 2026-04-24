@@ -28,6 +28,7 @@ type FFIClient interface {
 	UpdateLabels(paramsJSON string) (json.RawMessage, error)
 	GetEmailStatus() (json.RawMessage, error)
 	GetMessage(messageID string) (json.RawMessage, error)
+	GetRawEmail(messageID string) (json.RawMessage, error)
 	GetUnreadCount() (json.RawMessage, error)
 
 	// Email Actions

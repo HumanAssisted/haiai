@@ -508,6 +508,52 @@ func (e *HaiAPIError) Error() string {
 	return fmt.Sprintf("%s (HTTP %d)", e.Message, e.Status)
 }
 
+// RawEmailResult is the result of GetRawEmail — raw RFC 5322 bytes for
+// local JACS verification.
+//
+// Byte-fidelity (PRD R2): RawEmail, when present, is byte-identical to what
+// JACS signed. No trimming, no line-ending normalization, no UTF-8 lossy.
+//
+// When Available is false, RawEmail is nil and OmittedReason is one of:
+//   - "not_stored": legacy row predating the feature.
+//   - "oversize":  MIME exceeded the 25 MB storage cap.
+//
+// The server distinguishes "field present and empty" from "field absent (null)"
+// on the wire. Go exposes the primary fields as plain string/int for ergonomics
+// (see PRD §4.5 Go signature), and tracks nullability with the optional
+// hasSizeBytes / hasOmittedReason / hasRfcMessageID bookkeeping consulted via
+// RawEmailResult.HasSizeBytes / HasOmittedReason / HasRfcMessageID.
+// Happy-path (available=true) payloads usually have a non-null size_bytes, so
+// the sentinel convention ("" / 0 = unknown) is enough for most callers; the
+// accessors are there when the distinction matters.
+type RawEmailResult struct {
+	MessageID     string
+	RfcMessageID  string
+	Available     bool
+	RawEmail      []byte
+	SizeBytes     int
+	OmittedReason string
+
+	// Explicit null-vs-default trackers. Set to true when the wire carried a
+	// non-null value for the corresponding field.
+	hasRfcMessageID  bool
+	hasSizeBytes     bool
+	hasOmittedReason bool
+}
+
+// HasSizeBytes reports whether the server supplied a non-null size_bytes.
+// Returns false for legacy rows and any payload where size_bytes was null.
+// Happy-path rows always return true.
+func (r *RawEmailResult) HasSizeBytes() bool { return r.hasSizeBytes }
+
+// HasOmittedReason reports whether the server supplied a non-null omitted_reason.
+// Returns true iff OmittedReason was explicitly set to "not_stored" or "oversize".
+// Happy-path rows (available=true, bytes stored) always return false.
+func (r *RawEmailResult) HasOmittedReason() bool { return r.hasOmittedReason }
+
+// HasRfcMessageID reports whether the server supplied a non-null rfc_message_id.
+func (r *RawEmailResult) HasRfcMessageID() bool { return r.hasRfcMessageID }
+
 // Contact represents a contact derived from email history.
 type Contact struct {
 	Email          string `json:"email"`

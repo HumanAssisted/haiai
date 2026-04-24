@@ -90,6 +90,7 @@ var mcpToolToFFIMethods = map[string][]string{
 	"hai_get_email_template":     {"GetEmailTemplate"},
 	"hai_update_email_template":  {"UpdateEmailTemplate"},
 	"hai_delete_email_template":  {"DeleteEmailTemplate"},
+	"hai_get_raw_email":          {"GetRawEmail"},
 }
 
 // ---------------------------------------------------------------------------

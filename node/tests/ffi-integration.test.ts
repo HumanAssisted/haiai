@@ -103,6 +103,37 @@ describe('FFI method parity (Node)', () => {
     const names = getAllFixtureMethodNames();
     expect(names.length).toBe(fixture.total_method_count);
   });
+
+  it('native haiinpm binding exports every email_core method on HaiClient.prototype', async () => {
+    // Guards against Issue 001-style regressions where a TypeScript adapter
+    // method silently references a native function that does not exist.
+    // We only probe this for email_core (the historical gap); expanding is
+    // easy if future issues find more.
+    // Uses createRequire so this test works in ESM/CJS alike, mirroring
+    // the production load path in ffi-client.ts.
+    const { createRequire } = await import('node:module');
+    const req = createRequire(__filename);
+    type NativeModule = { HaiClient: new (cfg: string) => object };
+    let native: NativeModule | undefined;
+    try {
+      native = req('haiinpm') as NativeModule;
+    } catch {
+      // On CI without the prebuilt native binary, skip. Local dev
+      // + `cd rust/haiinpm && npm run build` populates this.
+      return;
+    }
+    const fixture = loadParityFixture();
+    const emailCore = fixture.methods.email_core ?? [];
+    const proto = native.HaiClient.prototype as Record<string, unknown>;
+    const missing: string[] = [];
+    for (const method of emailCore) {
+      const camel = toCamelCase(method.name);
+      if (typeof proto[camel] !== 'function') {
+        missing.push(camel);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------

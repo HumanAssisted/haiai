@@ -58,6 +58,7 @@ MCP_TOOL_TO_FFI_METHODS: dict[str, list[str]] = {
     "hai_get_email_template": ["get_email_template"],
     "hai_update_email_template": ["update_email_template"],
     "hai_delete_email_template": ["delete_email_template"],
+    "hai_get_raw_email": ["get_raw_email"],
 }
 
 

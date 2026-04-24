@@ -61,6 +61,7 @@ extern char* hai_list_messages(HaiClientHandle handle, const char* options_json)
 extern char* hai_update_labels(HaiClientHandle handle, const char* params_json);
 extern char* hai_get_email_status(HaiClientHandle handle);
 extern char* hai_get_message(HaiClientHandle handle, const char* message_id);
+extern char* hai_get_raw_email(HaiClientHandle handle, const char* message_id);
 extern char* hai_get_unread_count(HaiClientHandle handle);
 
 // Email Actions
@@ -435,6 +436,17 @@ func (c *Client) GetMessage(messageID string) (json.RawMessage, error) {
 	cs := cString(messageID)
 	defer C.free(unsafe.Pointer(cs))
 	return parseEnvelope(goString(C.hai_get_message(c.handle, cs)))
+}
+
+func (c *Client) GetRawEmail(messageID string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(messageID)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_get_raw_email(c.handle, cs)))
 }
 
 func (c *Client) GetUnreadCount() (json.RawMessage, error) {

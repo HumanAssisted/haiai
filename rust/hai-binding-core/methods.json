@@ -146,6 +146,14 @@
       "auth_required": true
     },
     {
+      "name": "get_raw_email",
+      "category": "async",
+      "group": "email_core",
+      "params": { "message_id": "string" },
+      "returns": "RawEmailResponse",
+      "auth_required": true
+    },
+    {
       "name": "delete_message",
       "category": "async",
       "group": "email_actions",
@@ -608,13 +616,13 @@
     }
   ],
   "summary": {
-    "async_methods": 49,
+    "async_methods": 50,
     "streaming_methods": 6,
     "callback_methods": 2,
     "sync_methods": 11,
     "mutating_methods": 2,
     "excluded_methods": 5,
-    "total_public_methods": 75,
-    "binding_core_scope": "49 async + 6 streaming + 11 sync + 2 mutating = 68 methods"
+    "total_public_methods": 76,
+    "binding_core_scope": "50 async + 6 streaming + 11 sync + 2 mutating = 69 methods"
   }
 }

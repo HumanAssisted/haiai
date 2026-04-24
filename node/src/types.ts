@@ -485,6 +485,26 @@ export interface SearchOptions {
   until?: string;
 }
 
+/**
+ * Result of `getRawEmail` — raw RFC 5322 bytes for local JACS verification.
+ *
+ * Byte-fidelity (PRD R2): `rawEmail`, when present, is byte-identical to
+ * what JACS signed. No trimming, no line-ending normalization.
+ *
+ * When `available` is `false`, `rawEmail` is `null` and `omittedReason`
+ * explains why:
+ * - `"not_stored"`: legacy row predating the feature.
+ * - `"oversize"`: MIME exceeded the 25 MB storage cap.
+ */
+export interface RawEmailResult {
+  messageId: string;
+  rfcMessageId: string | null;
+  available: boolean;
+  rawEmail: Buffer | null;
+  sizeBytes: number | null;
+  omittedReason: string | null;
+}
+
 /** A contact derived from email message history. */
 export interface Contact {
   /** Contact email address. */
