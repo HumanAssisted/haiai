@@ -518,7 +518,8 @@ fn definition_values() -> Vec<Value> {
                 "properties": {
                     "path": { "type": "string", "description": "Relative path to the file to sign" },
                     "no_backup": { "type": "boolean", "description": "Skip writing <path>.bak before modifying" },
-                    "allow_duplicate": { "type": "boolean", "description": "Re-add a signature even if already valid for this signer" }
+                    "allow_duplicate": { "type": "boolean", "description": "Re-add a signature even if already valid for this signer" },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
                 },
                 "required": ["path"]
             }
@@ -531,7 +532,8 @@ fn definition_values() -> Vec<Value> {
                 "properties": {
                     "path": { "type": "string", "description": "Relative path to the signed file" },
                     "key_dir": { "type": "string", "description": "Optional directory of <signer_id>.public.pem files" },
-                    "strict": { "type": "boolean", "description": "Treat missing/malformed as failure (default permissive)" }
+                    "strict": { "type": "boolean", "description": "Treat missing/malformed as failure (default permissive)" },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
                 },
                 "required": ["path"]
             }
@@ -546,7 +548,8 @@ fn definition_values() -> Vec<Value> {
                     "output_path": { "type": "string", "description": "Relative output path for the signed image" },
                     "robust": { "type": "boolean", "description": "Also embed via LSB steganography (PNG/JPEG only — WebP unsupported)" },
                     "format": { "type": "string", "description": "Force a format (png|jpeg|webp); default auto-detect" },
-                    "refuse_overwrite": { "type": "boolean", "description": "Refuse to overwrite an existing JACS signature in the input" }
+                    "refuse_overwrite": { "type": "boolean", "description": "Refuse to overwrite an existing JACS signature in the input" },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
                 },
                 "required": ["input_path", "output_path"]
             }
@@ -560,7 +563,8 @@ fn definition_values() -> Vec<Value> {
                     "file_path": { "type": "string", "description": "Relative path to the signed image" },
                     "key_dir": { "type": "string", "description": "Optional directory of <signer_id>.public.pem files" },
                     "strict": { "type": "boolean", "description": "Treat missing signature as failure (default permissive)" },
-                    "robust": { "type": "boolean", "description": "Scan the LSB channel if the metadata channel is absent" }
+                    "robust": { "type": "boolean", "description": "Scan the LSB channel if the metadata channel is absent" },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
                 },
                 "required": ["file_path"]
             }
@@ -572,7 +576,8 @@ fn definition_values() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "file_path": { "type": "string", "description": "Relative path to the signed image" },
-                    "raw_payload": { "type": "boolean", "description": "Return the raw base64url-no-pad wire payload (default: decoded JSON string)" }
+                    "raw_payload": { "type": "boolean", "description": "Return the raw base64url-no-pad wire payload (default: decoded JSON string)" },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
                 },
                 "required": ["file_path"]
             }
