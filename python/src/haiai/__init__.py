@@ -104,6 +104,7 @@ from haiai.models import (
     EmailMessage,
     EmailStatus,
     EmailVerificationResultV2,
+    ExtractMediaSignatureResult,
     FieldResult,
     FieldStatus,
     FreeChaoticResult,
@@ -119,7 +120,12 @@ from haiai.models import (
     RegistrationResult,
     RotationResult,
     SendEmailResult,
+    SignImageResult,
+    SignTextResult,
     TranscriptMessage,
+    VerifyImageResult,
+    VerifyTextResult,
+    VerifyTextSignature,
 )
 from haiai import a2a
 from haiai import integrations
@@ -150,6 +156,7 @@ __all__ = [
     "EmailMessage",
     "EmailStatus",
     "EmailVerificationResultV2",
+    "ExtractMediaSignatureResult",
     "FieldResult",
     "FieldStatus",
     "FreeChaoticResult",
@@ -165,7 +172,12 @@ __all__ = [
     "RegistrationResult",
     "RotationResult",
     "SendEmailResult",
+    "SignImageResult",
+    "SignTextResult",
     "TranscriptMessage",
+    "VerifyImageResult",
+    "VerifyTextResult",
+    "VerifyTextSignature",
     # Hash functions
     "compute_content_hash",
     # Constants

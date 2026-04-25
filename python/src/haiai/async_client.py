@@ -51,6 +51,7 @@ from haiai.models import (
     EmailStatus,
     EmailVerificationResultV2,
     EmailVolumeInfo,
+    ExtractMediaSignatureResult,
     FieldResult,
     FieldStatus,
     FreeChaoticResult,
@@ -64,7 +65,12 @@ from haiai.models import (
     RawEmailResult,
     RotationResult,
     SendEmailResult,
+    SignImageResult,
+    SignTextResult,
     TranscriptMessage,
+    VerifyImageResult,
+    VerifyTextResult,
+    VerifyTextSignature,
 )
 
 logger = logging.getLogger("haiai.async_client")
@@ -595,6 +601,121 @@ class AsyncHaiClient:
         b64_input = base64.b64encode(raw_email).decode("ascii")
         b64_result = await ffi.sign_email_raw(b64_input)
         return base64.b64decode(b64_result)
+
+    # =========================================================================
+    # Layer 8: Local Media Sign/Verify (TASK_007)
+    # =========================================================================
+
+    async def sign_text(
+        self,
+        path: str,
+        *,
+        no_backup: bool = False,
+        allow_duplicate: bool = False,
+    ) -> SignTextResult:
+        """Sign a text/markdown file in place. Local-only."""
+        ffi = self._get_ffi()
+        opts = {"backup": not no_backup, "allow_duplicate": allow_duplicate}
+        data = await ffi.sign_text(path, opts)
+        return SignTextResult(
+            path=data["path"],
+            signers_added=int(data["signers_added"]),
+            backup_path=data.get("backup_path"),
+        )
+
+    async def verify_text(
+        self,
+        path: str,
+        *,
+        key_dir: Optional[str] = None,
+        strict: bool = False,
+    ) -> VerifyTextResult:
+        """Verify all signature blocks in a text file. Local-only."""
+        ffi = self._get_ffi()
+        opts: dict[str, Any] = {"strict": strict}
+        if key_dir is not None:
+            opts["key_dir"] = key_dir
+        data = await ffi.verify_text(path, opts)
+        sigs = [
+            VerifyTextSignature(
+                signer_id=s["signer_id"],
+                algorithm=s["algorithm"],
+                timestamp=s["timestamp"],
+                status=s["status"],
+            )
+            for s in data.get("signatures") or []
+        ]
+        return VerifyTextResult(
+            status=data["status"],
+            signatures=sigs,
+            malformed_detail=data.get("malformed_detail"),
+        )
+
+    async def sign_image(
+        self,
+        in_path: str,
+        out_path: str,
+        *,
+        robust: bool = False,
+        format: Optional[str] = None,
+        refuse_overwrite: bool = False,
+    ) -> SignImageResult:
+        """Sign an image (PNG/JPEG/WebP). Local-only."""
+        ffi = self._get_ffi()
+        opts: dict[str, Any] = {
+            "robust": robust,
+            "refuse_overwrite": refuse_overwrite,
+            "backup": True,
+        }
+        if format is not None:
+            opts["format_hint"] = format
+        data = await ffi.sign_image(in_path, out_path, opts)
+        return SignImageResult(
+            out_path=data["out_path"],
+            signer_id=data["signer_id"],
+            format=data["format"],
+            robust=bool(data.get("robust", False)),
+            backup_path=data.get("backup_path"),
+        )
+
+    async def verify_image(
+        self,
+        path: str,
+        *,
+        key_dir: Optional[str] = None,
+        strict: bool = False,
+        robust: bool = False,
+    ) -> VerifyImageResult:
+        """Verify the JACS signature embedded in an image. Local-only."""
+        ffi = self._get_ffi()
+        opts: dict[str, Any] = {"strict": strict, "robust": robust}
+        if key_dir is not None:
+            opts["key_dir"] = key_dir
+        data = await ffi.verify_image(path, opts)
+        # binding-core flattens the Malformed variant via media_verify_result_to_json;
+        # `status` is always a plain snake_case string here.
+        return VerifyImageResult(
+            status=str(data.get("status", "")),
+            signer_id=data.get("signer_id"),
+            algorithm=data.get("algorithm"),
+            format=data.get("format"),
+            embedding_channels=data.get("embedding_channels"),
+            malformed_detail=data.get("malformed_detail"),
+        )
+
+    async def extract_media_signature(
+        self,
+        path: str,
+        *,
+        raw_payload: bool = False,
+    ) -> ExtractMediaSignatureResult:
+        """Extract the JACS payload from a signed image without verifying."""
+        ffi = self._get_ffi()
+        data = await ffi.extract_media_signature(path, {"raw_payload": raw_payload})
+        return ExtractMediaSignatureResult(
+            present=bool(data.get("present", False)),
+            payload=data.get("payload"),
+        )
 
     async def verify_email(self, hai_url: str, raw_email: bytes) -> EmailVerificationResultV2:
         """Verify a JACS-signed email via the HAI API."""

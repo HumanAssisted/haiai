@@ -164,4 +164,16 @@ export type {
   VerifyAgentDocumentOnHaiOptions,
   HaiErrorCode,
   ApiErrorResponse,
+  // Layer 8: Local Media (TASK_008)
+  SignTextOptions,
+  SignTextResult,
+  VerifyTextOptions,
+  VerifyTextSignature,
+  VerifyTextResult,
+  SignImageOptions,
+  SignImageResult,
+  VerifyImageOptions,
+  VerifyImageResult,
+  ExtractMediaSignatureOptions,
+  ExtractMediaSignatureResult,
 } from './types.js';

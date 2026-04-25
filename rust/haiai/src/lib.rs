@@ -92,6 +92,12 @@ pub use jacs::{
     JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider, JacsProvider,
     JacsVerificationProvider, NoopJacsProvider, StaticJacsProvider,
 };
+#[cfg(feature = "jacs-crate")]
+pub use jacs::{
+    JacsMediaProvider, MediaVerificationResult, MediaVerifyStatus, SignImageOptions,
+    SignTextOptions, SignTextOutcome, SignedMedia, TextSignatureEntry, TextSignatureStatus,
+    VerifyImageOptions, VerifyTextOptions, VerifyTextResult,
+};
 #[cfg(feature = "agreements")]
 pub use jacs::JacsAgreementProvider;
 #[cfg(feature = "attestation")]

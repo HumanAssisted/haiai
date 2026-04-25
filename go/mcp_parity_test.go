@@ -91,6 +91,12 @@ var mcpToolToFFIMethods = map[string][]string{
 	"hai_update_email_template":  {"UpdateEmailTemplate"},
 	"hai_delete_email_template":  {"DeleteEmailTemplate"},
 	"hai_get_raw_email":          {"GetRawEmail"},
+	// Layer 8: local media (sign/verify/extract for inline text + images).
+	"hai_sign_text":               {"SignText"},
+	"hai_verify_text":             {"VerifyText"},
+	"hai_sign_image":              {"SignImage"},
+	"hai_verify_image":            {"VerifyImage"},
+	"hai_extract_media_signature": {"ExtractMediaSignature"},
 }
 
 // ---------------------------------------------------------------------------

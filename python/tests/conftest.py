@@ -345,6 +345,22 @@ class MockFFIAdapter:
     def verify_email_raw(self, raw_email_b64: str) -> dict:
         return self._record("verify_email_raw", raw_email_b64)
 
+    # Local Media (Layer 8 / TASK_007)
+    def sign_text(self, path: str, opts: dict) -> dict:
+        return self._record("sign_text", path, opts)
+
+    def verify_text(self, path: str, opts: dict) -> dict:
+        return self._record("verify_text", path, opts)
+
+    def sign_image(self, in_path: str, out_path: str, opts: dict) -> dict:
+        return self._record("sign_image", in_path, out_path, opts)
+
+    def verify_image(self, path: str, opts: dict) -> dict:
+        return self._record("verify_image", path, opts)
+
+    def extract_media_signature(self, path: str, opts: dict) -> dict:
+        return self._record("extract_media_signature", path, opts)
+
     # Email Templates
     def create_email_template(self, options: dict) -> dict:
         return self._record("create_email_template", options)
@@ -535,6 +551,22 @@ class MockAsyncFFIAdapter(MockFFIAdapter):
 
     async def verify_email_raw(self, raw_email_b64: str) -> dict:  # type: ignore[override]
         return self._record("verify_email_raw", raw_email_b64)
+
+    # Local Media (Layer 8 / TASK_007)
+    async def sign_text(self, path: str, opts: dict) -> dict:  # type: ignore[override]
+        return self._record("sign_text", path, opts)
+
+    async def verify_text(self, path: str, opts: dict) -> dict:  # type: ignore[override]
+        return self._record("verify_text", path, opts)
+
+    async def sign_image(self, in_path: str, out_path: str, opts: dict) -> dict:  # type: ignore[override]
+        return self._record("sign_image", in_path, out_path, opts)
+
+    async def verify_image(self, path: str, opts: dict) -> dict:  # type: ignore[override]
+        return self._record("verify_image", path, opts)
+
+    async def extract_media_signature(self, path: str, opts: dict) -> dict:  # type: ignore[override]
+        return self._record("extract_media_signature", path, opts)
 
     async def create_email_template(self, options: dict) -> dict:  # type: ignore[override]
         return self._record("create_email_template", options)

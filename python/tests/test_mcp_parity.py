@@ -59,6 +59,12 @@ MCP_TOOL_TO_FFI_METHODS: dict[str, list[str]] = {
     "hai_update_email_template": ["update_email_template"],
     "hai_delete_email_template": ["delete_email_template"],
     "hai_get_raw_email": ["get_raw_email"],
+    # Layer 8: local media (sign/verify/extract for inline text + images).
+    "hai_sign_text": ["sign_text"],
+    "hai_verify_text": ["verify_text"],
+    "hai_sign_image": ["sign_image"],
+    "hai_verify_image": ["verify_image"],
+    "hai_extract_media_signature": ["extract_media_signature"],
 }
 
 

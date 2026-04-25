@@ -45,6 +45,11 @@ export declare class HaiClient {
   fetchServerKeys(): Promise<string>
   signEmailRaw(rawEmailB64: string): Promise<string>
   verifyEmailRaw(rawEmailB64: string): Promise<string>
+  signText(path: string, optsJson: string): Promise<string>
+  verifyText(path: string, optsJson: string): Promise<string>
+  signImage(inPath: string, outPath: string, optsJson: string): Promise<string>
+  verifyImage(path: string, optsJson: string): Promise<string>
+  extractMediaSignature(path: string, optsJson: string): Promise<string>
   createAttestation(paramsJson: string): Promise<string>
   listAttestations(paramsJson: string): Promise<string>
   getAttestation(agentId: string, docId: string): Promise<string>

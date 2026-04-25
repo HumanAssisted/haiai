@@ -12,6 +12,8 @@ use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use rmcp::{transport::stdio, ServiceExt};
 use serde_json::Value;
 
+mod media_cmds;
+
 /// Characters that must be percent-encoded in URL query values.
 /// Encodes everything except unreserved characters (RFC 3986 section 2.3).
 const QUERY_ENCODE_SET: &AsciiSet = &CONTROLS
@@ -374,6 +376,103 @@ enum Commands {
     Deploy {
         #[command(subcommand)]
         command: DeployCommands,
+    },
+
+    // =========================================================================
+    // Layer 8: Local Media Sign/Verify (JACS 0.10.0)
+    // =========================================================================
+    /// Sign a markdown / text file in place by appending a YAML signature block
+    SignText {
+        /// Path to the file to sign
+        file: String,
+
+        /// Skip writing a `<file>.bak` backup before modifying
+        #[arg(long)]
+        no_backup: bool,
+
+        /// Re-add a signature even if one with this signer is already valid
+        #[arg(long)]
+        allow_duplicate: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Verify all signature blocks in a text file
+    VerifyText {
+        /// Path to the signed file
+        file: String,
+
+        /// Optional directory of `<signer_id>.public.pem` files to consult
+        #[arg(long)]
+        key_dir: Option<String>,
+
+        /// Treat missing or malformed signature as exit-1 instead of exit-2
+        #[arg(long)]
+        strict: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Sign an image (PNG/JPEG/WebP) by embedding a JACS signature in metadata
+    SignImage {
+        /// Input image path
+        input: String,
+
+        /// Output path for the signed image
+        #[arg(long)]
+        out: String,
+
+        /// Also embed via LSB steganography (PNG/JPEG only — WebP is unsupported)
+        #[arg(long)]
+        robust: bool,
+
+        /// Force a specific format (png|jpeg|webp). None = auto-detect from bytes.
+        #[arg(long)]
+        format: Option<String>,
+
+        /// Refuse to overwrite an existing JACS signature in the input image
+        #[arg(long)]
+        refuse_overwrite: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Verify the JACS signature embedded in an image
+    VerifyImage {
+        /// Path to the signed image
+        file: String,
+
+        /// Optional directory of `<signer_id>.public.pem` files to consult
+        #[arg(long)]
+        key_dir: Option<String>,
+
+        /// Treat missing signature as exit-1 instead of exit-2
+        #[arg(long)]
+        strict: bool,
+
+        /// Scan the LSB channel if the metadata channel is absent
+        #[arg(long)]
+        robust: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Extract the JACS signature payload from a signed image without verifying
+    ExtractMediaSignature {
+        /// Path to the signed image
+        file: String,
+
+        /// Print the raw base64url-no-pad payload as embedded; default decodes
+        #[arg(long)]
+        raw_payload: bool,
     },
 }
 
@@ -2417,6 +2516,60 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+
+        // -----------------------------------------------------------------
+        // Layer 8: Local Media (sign-text/verify-text/sign-image/verify-image/extract)
+        // -----------------------------------------------------------------
+        Commands::SignText {
+            file,
+            no_backup,
+            allow_duplicate,
+            json,
+        } => media_cmds::handle_sign_text(&file, no_backup, allow_duplicate, json)?,
+        Commands::VerifyText {
+            file,
+            key_dir,
+            strict,
+            json,
+        } => {
+            let code =
+                media_cmds::handle_verify_text(&file, key_dir.as_deref(), strict, json)?;
+            std::process::exit(code);
+        }
+        Commands::SignImage {
+            input,
+            out,
+            robust,
+            format,
+            refuse_overwrite,
+            json,
+        } => media_cmds::handle_sign_image(
+            &input,
+            &out,
+            robust,
+            format.as_deref(),
+            refuse_overwrite,
+            json,
+        )?,
+        Commands::VerifyImage {
+            file,
+            key_dir,
+            strict,
+            robust,
+            json,
+        } => {
+            let code = media_cmds::handle_verify_image(
+                &file,
+                key_dir.as_deref(),
+                strict,
+                robust,
+                json,
+            )?;
+            std::process::exit(code);
+        }
+        Commands::ExtractMediaSignature { file, raw_payload } => {
+            media_cmds::handle_extract_media_signature(&file, raw_payload)?
+        }
     }
 
     Ok(())
@@ -2797,6 +2950,130 @@ mod tests {
             result.is_err(),
             "send-email without --subject and --body should fail"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // TASK_004: Media-signing command parse tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn parse_sign_text_command() {
+        let cli = Cli::try_parse_from(["haiai", "sign-text", "README.md"]).expect("parse");
+        match cli.command {
+            Commands::SignText {
+                file,
+                no_backup,
+                allow_duplicate,
+                json,
+            } => {
+                assert_eq!(file, "README.md");
+                assert!(!no_backup);
+                assert!(!allow_duplicate);
+                assert!(!json);
+            }
+            _ => panic!("expected SignText"),
+        }
+    }
+
+    #[test]
+    fn parse_sign_image_requires_out() {
+        let result = Cli::try_parse_from(["haiai", "sign-image", "in.png"]);
+        assert!(result.is_err(), "sign-image without --out should fail");
+    }
+
+    #[test]
+    fn parse_sign_image_with_robust() {
+        let cli = Cli::try_parse_from([
+            "haiai",
+            "sign-image",
+            "in.png",
+            "--out",
+            "out.png",
+            "--robust",
+        ])
+        .expect("parse");
+        match cli.command {
+            Commands::SignImage {
+                input,
+                out,
+                robust,
+                format,
+                refuse_overwrite,
+                json,
+            } => {
+                assert_eq!(input, "in.png");
+                assert_eq!(out, "out.png");
+                assert!(robust);
+                assert!(format.is_none());
+                assert!(!refuse_overwrite);
+                assert!(!json);
+            }
+            _ => panic!("expected SignImage"),
+        }
+    }
+
+    #[test]
+    fn parse_verify_image_strict() {
+        let cli =
+            Cli::try_parse_from(["haiai", "verify-image", "x.png", "--strict"]).expect("parse");
+        match cli.command {
+            Commands::VerifyImage {
+                file,
+                strict,
+                key_dir,
+                robust,
+                json,
+            } => {
+                assert_eq!(file, "x.png");
+                assert!(strict);
+                assert!(key_dir.is_none());
+                assert!(!robust);
+                assert!(!json);
+            }
+            _ => panic!("expected VerifyImage"),
+        }
+    }
+
+    #[test]
+    fn cli_command_parity_includes_media_commands() {
+        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/cli_command_parity.json");
+        let raw = std::fs::read_to_string(&fixture_path).expect("read parity fixture");
+        let fixture: serde_json::Value =
+            serde_json::from_str(&raw).expect("parse parity fixture");
+        let names: Vec<&str> = fixture["commands"]
+            .as_array()
+            .expect("commands array")
+            .iter()
+            .filter_map(|c| c["name"].as_str())
+            .collect();
+        for required in &[
+            "sign-text",
+            "verify-text",
+            "sign-image",
+            "verify-image",
+            "extract-media-signature",
+        ] {
+            assert!(
+                names.contains(required),
+                "fixture missing media command: {required}"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_command_parity_total_count_is_33() {
+        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/cli_command_parity.json");
+        let raw = std::fs::read_to_string(&fixture_path).expect("read parity fixture");
+        let fixture: serde_json::Value =
+            serde_json::from_str(&raw).expect("parse parity fixture");
+        let total = fixture["total_command_count"]
+            .as_u64()
+            .expect("total_command_count");
+        let count = fixture["commands"].as_array().expect("commands").len() as u64;
+        assert_eq!(total, 33, "total_command_count must be 33 after media-signing PRD");
+        assert_eq!(count, 33, "commands array length must be 33");
     }
 
     #[test]

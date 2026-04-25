@@ -1,6 +1,6 @@
 [package]
 name = "hai-mcp"
-version = "0.2.3"
+version = "0.3.0"
 description = "HAIAI MCP server: extends jacs-mcp with HAI.AI platform tools"
 readme = "README.md"
 keywords = ["hai", "mcp", "agent", "sdk"]
@@ -12,10 +12,10 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-haiai = { version = "=0.2.3", path = "../haiai" }
-jacs = { version = "=0.10.0", features = ["a2a"] }
-jacs-binding-core = "=0.10.0"
-jacs-mcp = { version = "=0.10.0", features = ["mcp", "full-tools"] }
+haiai = { version = "=0.3.0", path = "../haiai" }
+jacs = { version = "=0.11.0", features = ["a2a"] }
+jacs-binding-core = "=0.11.0"
+jacs-mcp = { version = "=0.11.0", features = ["mcp", "full-tools"] }
 anyhow = "1"
 base64.workspace = true
 rmcp = { version = "0.12", features = ["server", "transport-io", "macros"] }
@@ -32,3 +32,5 @@ uuid.workspace = true
 [dev-dependencies]
 regex = "1"
 tempfile = "3"
+# Used to generate test PNG bytes for media-signing tests (Layer 8).
+image = { version = "0.25", default-features = false, features = ["png"] }

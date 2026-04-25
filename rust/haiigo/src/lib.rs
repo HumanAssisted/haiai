@@ -187,6 +187,66 @@ macro_rules! ffi_method_str {
     };
 }
 
+/// Generate a simple FFI function that takes a handle and two string args.
+/// Used for media operations (e.g. sign_text(path, opts_json)).
+macro_rules! ffi_method_str_two_args {
+    ($fn_name:ident, $method:ident) => {
+        #[no_mangle]
+        pub extern "C" fn $fn_name(
+            handle: HaiClientHandle,
+            arg1: *const c_char,
+            arg2: *const c_char,
+        ) -> *mut c_char {
+            if handle.is_null() {
+                return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+            }
+            let client = unsafe { &*handle }.clone();
+            let arg1 = unsafe { c_str_to_string(arg1) };
+            let arg2 = unsafe { c_str_to_string(arg2) };
+            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                let (tx, rx) = std::sync::mpsc::channel();
+                RT.spawn(async move {
+                    let r = client.$method(&arg1, &arg2).await;
+                    let _ = tx.send(r);
+                });
+                to_c_string(result_to_json(rx.recv().unwrap()))
+            }));
+            result.unwrap_or_else(|_| panic_json())
+        }
+    };
+}
+
+/// Generate a simple FFI function that takes a handle and three string args.
+/// Used for `sign_image(in_path, out_path, opts_json)`.
+macro_rules! ffi_method_str_three_args {
+    ($fn_name:ident, $method:ident) => {
+        #[no_mangle]
+        pub extern "C" fn $fn_name(
+            handle: HaiClientHandle,
+            arg1: *const c_char,
+            arg2: *const c_char,
+            arg3: *const c_char,
+        ) -> *mut c_char {
+            if handle.is_null() {
+                return to_c_string(r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string());
+            }
+            let client = unsafe { &*handle }.clone();
+            let arg1 = unsafe { c_str_to_string(arg1) };
+            let arg2 = unsafe { c_str_to_string(arg2) };
+            let arg3 = unsafe { c_str_to_string(arg3) };
+            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                let (tx, rx) = std::sync::mpsc::channel();
+                RT.spawn(async move {
+                    let r = client.$method(&arg1, &arg2, &arg3).await;
+                    let _ = tx.send(r);
+                });
+                to_c_string(result_to_json(rx.recv().unwrap()))
+            }));
+            result.unwrap_or_else(|_| panic_json())
+        }
+    };
+}
+
 /// Generate a simple FFI function that takes a handle and no args.
 macro_rules! ffi_method_noarg {
     ($fn_name:ident, $method:ident) => {
@@ -347,6 +407,13 @@ ffi_method_noarg!(hai_fetch_server_keys, fetch_server_keys);
 
 ffi_method_str!(hai_sign_email_raw, sign_email_raw);
 ffi_method_str!(hai_verify_email_raw, verify_email_raw);
+
+// Layer 8: Local Media (TASK_009)
+ffi_method_str_two_args!(hai_sign_text, sign_text);
+ffi_method_str_two_args!(hai_verify_text, verify_text);
+ffi_method_str_three_args!(hai_sign_image, sign_image);
+ffi_method_str_two_args!(hai_verify_image, verify_image);
+ffi_method_str_two_args!(hai_extract_media_signature, extract_media_signature);
 
 // =============================================================================
 // FFI Methods — Attestations

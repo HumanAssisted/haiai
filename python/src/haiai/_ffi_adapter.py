@@ -319,6 +319,43 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
+    # --- Local Media (Layer 8 / TASK_007) ---
+
+    def sign_text(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.sign_text_sync(path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def verify_text(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.verify_text_sync(path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def sign_image(self, in_path: str, out_path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.sign_image_sync(in_path, out_path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def verify_image(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.verify_image_sync(path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def extract_media_signature(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.extract_media_signature_sync(path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
     # --- Attestations ---
 
     def create_attestation(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -832,6 +869,43 @@ class AsyncFFIAdapter:
     async def verify_email_raw(self, raw_email_b64: str) -> dict[str, Any]:
         try:
             raw = await self._native.verify_email_raw(raw_email_b64)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # --- Local Media (Layer 8 / TASK_007) ---
+
+    async def sign_text(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.sign_text(path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def verify_text(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.verify_text(path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def sign_image(self, in_path: str, out_path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.sign_image(in_path, out_path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def verify_image(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.verify_image(path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def extract_media_signature(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.extract_media_signature(path, json.dumps(opts))
             return json.loads(raw)
         except RuntimeError as err:
             raise map_ffi_error(err) from err

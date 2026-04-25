@@ -229,6 +229,35 @@ impl HaiClient {
     }
 
     // =========================================================================
+    // Local Media Sign/Verify (Layer 8 / TASK_008)
+    // =========================================================================
+
+    #[napi]
+    pub async fn sign_text(&self, path: String, opts_json: String) -> Result<String> {
+        self.inner.sign_text(&path, &opts_json).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn verify_text(&self, path: String, opts_json: String) -> Result<String> {
+        self.inner.verify_text(&path, &opts_json).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn sign_image(&self, in_path: String, out_path: String, opts_json: String) -> Result<String> {
+        self.inner.sign_image(&in_path, &out_path, &opts_json).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn verify_image(&self, path: String, opts_json: String) -> Result<String> {
+        self.inner.verify_image(&path, &opts_json).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn extract_media_signature(&self, path: String, opts_json: String) -> Result<String> {
+        self.inner.extract_media_signature(&path, &opts_json).await.map_err(to_napi_err)
+    }
+
+    // =========================================================================
     // Attestations
     // =========================================================================
 

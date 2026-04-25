@@ -604,6 +604,32 @@ func (m *mockFFIClient) DeleteEmailTemplate(templateID string) (json.RawMessage,
 	return m.doDelete(path)
 }
 
+// --- Local Media (Layer 8 / TASK_009) ---
+//
+// The mock is HTTP-based; media operations are local-only and not exercised
+// by HTTP-driven tests. Stub implementations let the interface compile and
+// surface a clear error if any test accidentally invokes them.
+
+func (m *mockFFIClient) SignText(path, optsJSON string) (json.RawMessage, error) {
+	return nil, fmt.Errorf("mock: SignText is local-only and not supported by mockFFIClient")
+}
+
+func (m *mockFFIClient) VerifyText(path, optsJSON string) (json.RawMessage, error) {
+	return nil, fmt.Errorf("mock: VerifyText is local-only and not supported by mockFFIClient")
+}
+
+func (m *mockFFIClient) SignImage(inPath, outPath, optsJSON string) (json.RawMessage, error) {
+	return nil, fmt.Errorf("mock: SignImage is local-only and not supported by mockFFIClient")
+}
+
+func (m *mockFFIClient) VerifyImage(filePath, optsJSON string) (json.RawMessage, error) {
+	return nil, fmt.Errorf("mock: VerifyImage is local-only and not supported by mockFFIClient")
+}
+
+func (m *mockFFIClient) ExtractMediaSignature(filePath, optsJSON string) (json.RawMessage, error) {
+	return nil, fmt.Errorf("mock: ExtractMediaSignature is local-only and not supported by mockFFIClient")
+}
+
 // --- SSE Streaming ---
 
 func (m *mockFFIClient) ConnectSSE() (uint64, error) {

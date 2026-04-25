@@ -1,7 +1,7 @@
 {
   "description": "CLI command parity contract. The haiai binary must expose exactly these subcommands. Tests verify bidirectional parity between this fixture and the Commands enum.",
   "version": "1.0.0",
-  "total_command_count": 28,
+  "total_command_count": 33,
   "commands": [
     {
       "name": "init",
@@ -117,6 +117,26 @@
     {
       "name": "get-raw-email",
       "args": ["message_id:string", "output:string?", "base64:bool"]
+    },
+    {
+      "name": "sign-text",
+      "args": ["file:string", "no_backup:bool", "allow_duplicate:bool", "json:bool"]
+    },
+    {
+      "name": "verify-text",
+      "args": ["file:string", "key_dir:string?", "strict:bool", "json:bool"]
+    },
+    {
+      "name": "sign-image",
+      "args": ["input:string", "out:string", "robust:bool", "format:string?", "refuse_overwrite:bool", "json:bool"]
+    },
+    {
+      "name": "verify-image",
+      "args": ["file:string", "key_dir:string?", "strict:bool", "robust:bool", "json:bool"]
+    },
+    {
+      "name": "extract-media-signature",
+      "args": ["file:string", "raw_payload:bool"]
     }
   ]
 }

@@ -1,6 +1,6 @@
-# HAIAI SDK Parity Map (JACS 0.9.4)
+# HAIAI SDK Parity Map (JACS 0.11.0)
 
-This document maps every stable JACS 0.9.4 public capability to its SDK exposure status.
+This document maps every stable JACS 0.11.0 public capability to its SDK exposure status.
 
 **Statuses:**
 - **Exposed** -- Directly accessible through an SDK trait method
@@ -21,12 +21,13 @@ This document maps every stable JACS 0.9.4 public capability to its SDK exposure
 | Email (Layer 5) | 6 | 0 | 0 | 6 |
 | Agreements (Layer 6) | 3 | 0 | 3 | 6 |
 | Attestation (Layer 7) | 2 | 0 | 3 | 5 |
+| Local Media (Layer 8) | 5 | 0 | 0 | 5 |
 | Protocol | 2 | 0 | 1 | 3 |
 | DNS | 1 | 0 | 1 | 2 |
 | A2A Provenance | 1 | 0 | 0 | 1 |
 | Storage Internals | 0 | 0 | 4 | 4 |
 | Crypto Internals | 0 | 0 | 5 | 5 |
-| **Total** | **55** | **0** | **19** | **74** |
+| **Total** | **60** | **0** | **19** | **79** |
 
 ---
 
@@ -139,6 +140,30 @@ Returns exact RFC 5322 bytes JACS signed (25 MB cap). Pair with
 | `attestation::simple::lift()` | -- | **Excluded**: Convenience wrapper; consumers can create attestations referencing existing docs directly |
 | `attestation::simple::export_dsse()` | -- | **Excluded**: DSSE export is interop-only; not needed for SDK core |
 
+## Layer 8: Local Media (`JacsMediaProvider`)
+
+Local-only sign/verify/extract for inline text and PNG/JPEG/WebP images.
+Operations do not touch the HAI server; identity follows the loaded JACS agent.
+
+| JACS Capability | SDK Method | Status |
+|---|---|---|
+| `simple::advanced::sign_text_file()` | `JacsMediaProvider::sign_text_file()` | Exposed |
+| `simple::advanced::verify_text_file()` | `JacsMediaProvider::verify_text_file()` | Exposed |
+| `simple::advanced::sign_image()` | `JacsMediaProvider::sign_image()` | Exposed |
+| `simple::advanced::verify_image()` | `JacsMediaProvider::verify_image()` | Exposed |
+| `simple::advanced::extract_media_signature()` / `_raw()` | `JacsMediaProvider::extract_media_signature()` | Exposed |
+
+Per-language exports:
+- **Rust:** `haiai::JacsMediaProvider`, `LocalJacsProvider`, `EmbeddedJacsProvider`.
+- **CLI:** `haiai sign-text`, `verify-text`, `sign-image`, `verify-image`, `extract-media-signature` (exit codes 0/1/2 per JACS reference CLI).
+- **MCP:** `hai_sign_text`, `hai_verify_text`, `hai_sign_image`, `hai_verify_image`, `hai_extract_media_signature`.
+- **Python:** `HaiClient.sign_text/verify_text/sign_image/verify_image/extract_media_signature` (sync) + `AsyncHaiClient` parallel.
+- **Node:** `HaiClient.signText/verifyText/signImage/verifyImage/extractMediaSignature` (TypeScript, async).
+- **Go:** `Client.SignText/VerifyText/SignImage/VerifyImage/ExtractMediaSignature` (context-aware).
+
+User-facing JSON contract is **flat**: `{ "robust": true }` (NOT `scan_robust`). The
+binding-core parser maps `robust` → JACS-internal `VerifyImageOptions.scan_robust`.
+
 ## Protocol
 
 | JACS Capability | SDK Method | Status |
@@ -181,4 +206,4 @@ Returns exact RFC 5322 bytes JACS signed (25 MB cap). Pair with
 
 ---
 
-*Generated for JACS 0.9.4. Last updated: 2026-03-13.*
+*Generated for JACS 0.11.0. Last updated: 2026-04-25.*

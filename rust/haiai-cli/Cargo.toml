@@ -1,6 +1,6 @@
 [package]
 name = "haiai-cli"
-version = "0.2.3"
+version = "0.3.0"
 description = "HAIAI CLI: command-line interface for HAI.AI agent SDK"
 readme = "README.md"
 keywords = ["hai", "jacs", "agent", "cli", "mcp"]
@@ -16,10 +16,10 @@ name = "haiai"
 path = "src/main.rs"
 
 [dependencies]
-hai-mcp = { version = "=0.2.3", path = "../hai-mcp" }
-haiai = { version = "=0.2.3", path = "../haiai" }
-jacs = { version = "=0.10.0", features = ["keychain"] }
-jacs-mcp = { version = "=0.10.0", features = ["mcp"] }
+hai-mcp = { version = "=0.3.0", path = "../hai-mcp" }
+haiai = { version = "=0.3.0", path = "../haiai" }
+jacs = { version = "=0.11.0", features = ["keychain"] }
+jacs-mcp = { version = "=0.11.0", features = ["mcp"] }
 anyhow = "1"
 rmcp = { version = "0.12", features = ["server", "transport-io", "macros"] }
 clap = { version = "4", features = ["derive", "env"] }
@@ -37,3 +37,5 @@ base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
+# Used to build PNG/JPEG bytes for media-signing CLI integration tests.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

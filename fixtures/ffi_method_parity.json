@@ -80,6 +80,13 @@
       {"name": "ws_next_event", "args": ["handle_id:u64"], "returns": "json?"},
       {"name": "ws_close", "args": ["handle_id:u64"], "returns": "void"}
     ],
+    "media_local": [
+      {"name": "sign_text", "args": ["path:string", "opts_json:string"], "returns": "json"},
+      {"name": "verify_text", "args": ["path:string", "opts_json:string"], "returns": "json"},
+      {"name": "sign_image", "args": ["in_path:string", "out_path:string", "opts_json:string"], "returns": "json"},
+      {"name": "verify_image", "args": ["path:string", "opts_json:string"], "returns": "json"},
+      {"name": "extract_media_signature", "args": ["path:string", "opts_json:string"], "returns": "json"}
+    ],
     "jacs_delegation": [
       {"name": "build_auth_header", "args": [], "returns": "string"},
       {"name": "sign_message", "args": ["message:string"], "returns": "string"},
@@ -108,5 +115,5 @@
     "ProviderError"
   ],
   "error_format": "{ErrorKind}: {message}",
-  "total_method_count": 67
+  "total_method_count": 72
 }

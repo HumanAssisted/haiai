@@ -73,6 +73,12 @@ const MCP_TOOL_TO_FFI_METHODS: Record<string, string[]> = {
   hai_update_email_template: ['updateEmailTemplate'],
   hai_delete_email_template: ['deleteEmailTemplate'],
   hai_get_raw_email: ['getRawEmail'],
+  // Layer 8: local media (sign/verify/extract for inline text + images).
+  hai_sign_text: ['signText'],
+  hai_verify_text: ['verifyText'],
+  hai_sign_image: ['signImage'],
+  hai_verify_image: ['verifyImage'],
+  hai_extract_media_signature: ['extractMediaSignature'],
 };
 
 // ---------------------------------------------------------------------------

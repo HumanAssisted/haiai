@@ -582,3 +582,85 @@ class PublicKeyInfo:
     dns_verified: bool
     created_at: str
     public_key_raw_b64: str = ""
+
+
+# =============================================================================
+# Layer 8: Local Media (TASK_007 / JACS 0.10.0)
+# =============================================================================
+
+
+@dataclass
+class SignTextResult:
+    """Result of signing a text/markdown file."""
+
+    path: str
+    signers_added: int
+    backup_path: Optional[str] = None
+
+
+@dataclass
+class VerifyTextSignature:
+    """Per-block signature entry inside a `VerifyTextResult`.
+
+    ``status`` is one of ``"valid" | "invalid_signature" | "hash_mismatch" |
+    "key_not_found" | "unsupported_algorithm" | "malformed"``.
+    """
+
+    signer_id: str
+    algorithm: str
+    timestamp: str
+    status: str
+
+
+@dataclass
+class VerifyTextResult:
+    """Top-level result of verifying a signed text file.
+
+    ``status`` is one of ``"signed" | "missing_signature" | "malformed"``.
+    """
+
+    status: str
+    signatures: list[VerifyTextSignature] = field(default_factory=list)
+    malformed_detail: Optional[str] = None
+
+
+@dataclass
+class SignImageResult:
+    """Result of signing an image file (PNG/JPEG/WebP)."""
+
+    out_path: str
+    signer_id: str
+    format: str
+    robust: bool
+    backup_path: Optional[str] = None
+
+
+@dataclass
+class VerifyImageResult:
+    """Result of verifying a signed image.
+
+    ``status`` is one of ``"valid" | "invalid_signature" | "hash_mismatch" |
+    "missing_signature" | "key_not_found" | "unsupported_format" | "malformed"``.
+    ``malformed_detail`` carries the decoder error string when ``status ==
+    "malformed"``; ``None`` otherwise.
+    """
+
+    status: str
+    signer_id: Optional[str] = None
+    algorithm: Optional[str] = None
+    format: Optional[str] = None
+    embedding_channels: Optional[str] = None
+    malformed_detail: Optional[str] = None
+
+
+@dataclass
+class ExtractMediaSignatureResult:
+    """Result of extracting the JACS payload from a signed image.
+
+    ``payload`` is the decoded JSON string by default, or the base64url-no-pad
+    bytes when ``raw_payload=True`` was passed to ``extract_media_signature``.
+    """
+
+    present: bool
+    payload: Optional[str] = None
+

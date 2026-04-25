@@ -1,7 +1,7 @@
 {
   "description": "Canonical MCP tool parity contract. The Rust MCP server (hai-mcp) must expose exactly these tools with matching names, properties, and required fields. Other SDKs validate against this fixture to ensure cross-language parity.",
   "version": "2.0.0",
-  "total_tool_count": 27,
+  "total_tool_count": 32,
   "required_tools": [
     {
       "name": "hai_hello",
@@ -317,6 +317,64 @@
       },
       "required": [
         "message_id"
+      ]
+    },
+    {
+      "name": "hai_sign_text",
+      "properties": {
+        "path": "string",
+        "no_backup": "boolean",
+        "allow_duplicate": "boolean"
+      },
+      "required": [
+        "path"
+      ]
+    },
+    {
+      "name": "hai_verify_text",
+      "properties": {
+        "path": "string",
+        "key_dir": "string",
+        "strict": "boolean"
+      },
+      "required": [
+        "path"
+      ]
+    },
+    {
+      "name": "hai_sign_image",
+      "properties": {
+        "input_path": "string",
+        "output_path": "string",
+        "robust": "boolean",
+        "format": "string",
+        "refuse_overwrite": "boolean"
+      },
+      "required": [
+        "input_path",
+        "output_path"
+      ]
+    },
+    {
+      "name": "hai_verify_image",
+      "properties": {
+        "file_path": "string",
+        "key_dir": "string",
+        "strict": "boolean",
+        "robust": "boolean"
+      },
+      "required": [
+        "file_path"
+      ]
+    },
+    {
+      "name": "hai_extract_media_signature",
+      "properties": {
+        "file_path": "string",
+        "raw_payload": "boolean"
+      },
+      "required": [
+        "file_path"
       ]
     }
   ]

@@ -627,3 +627,140 @@ var (
 	ErrRecipientNotFound = errors.New("recipient not found")
 	ErrEmailRateLimited  = errors.New("email rate limited")
 )
+
+// =============================================================================
+// Layer 8: Local Media (TASK_009 / JACS 0.10.0)
+// =============================================================================
+
+// MediaVerifyStatus discriminator strings (snake_case wire format).
+const (
+	MediaVerifyStatusValid             = "valid"
+	MediaVerifyStatusInvalidSignature  = "invalid_signature"
+	MediaVerifyStatusHashMismatch      = "hash_mismatch"
+	MediaVerifyStatusMissingSignature  = "missing_signature"
+	MediaVerifyStatusKeyNotFound       = "key_not_found"
+	MediaVerifyStatusUnsupportedFormat = "unsupported_format"
+	MediaVerifyStatusMalformed         = "malformed"
+)
+
+// VerifyTextStatus is the file-level discriminator on `VerifyTextResult`.
+const (
+	VerifyTextStatusSigned           = "signed"
+	VerifyTextStatusMissingSignature = "missing_signature"
+	VerifyTextStatusMalformed        = "malformed"
+)
+
+// SignTextOptions controls `Client.SignText`.
+//
+// Backup defaults to true. Use NoBackup=true to skip writing the
+// `<path>.bak` file before modifying. The Go struct tag `json:"-"` keeps
+// the field out of the wire JSON; `Client.SignText` injects the inverted
+// `backup` key at marshal time so the binding-core parser receives the
+// JACS-internal field. This mirrors the Python (`no_backup`) and Node
+// (`noBackup`) public-API conventions and prevents Go zero-value
+// semantics from silently disabling backups.
+type SignTextOptions struct {
+	// NoBackup skips the `<path>.bak` write. Default false (i.e., backup
+	// IS written, matching CLI `sign-text` and Python/Node defaults).
+	NoBackup bool `json:"-"`
+	// AllowDuplicate re-adds a signature even if one already valid.
+	AllowDuplicate bool `json:"allow_duplicate"`
+}
+
+// VerifyTextOptions controls `Client.VerifyText`.
+type VerifyTextOptions struct {
+	// KeyDir is an optional directory of `<signer_id>.public.pem` files.
+	KeyDir string `json:"key_dir,omitempty"`
+	// Strict treats missing/malformed as failure (default permissive).
+	Strict bool `json:"strict"`
+}
+
+// SignImageOptions controls `Client.SignImage`. The wire JSON keys are
+// snake_case to match the binding-core parser. Note that the Go field
+// `Robust` and the JSON key `robust` deliberately do NOT use the JACS
+// internal name `scan_robust` — that nesting is hidden inside Rust.
+//
+// Backup defaults to true; use NoBackup=true to skip the `<out>.bak` write.
+// The Go struct tag `json:"-"` keeps the field out of the wire JSON;
+// `Client.SignImage` injects the inverted `backup` key at marshal time so
+// callers can opt out of backups (the previous behavior force-overrode any
+// caller intent and silently re-enabled backup, even when explicitly
+// disabled).
+type SignImageOptions struct {
+	// Robust enables LSB steganography (PNG/JPEG only — WebP unsupported).
+	Robust bool `json:"robust"`
+	// FormatHint forces a specific format ("png" | "jpeg" | "webp").
+	// Empty means auto-detect from input bytes.
+	FormatHint string `json:"format_hint,omitempty"`
+	// RefuseOverwrite refuses to overwrite an existing JACS signature in input.
+	RefuseOverwrite bool `json:"refuse_overwrite"`
+	// NoBackup skips the `<out>.bak` write. Default false (backup IS taken).
+	NoBackup bool `json:"-"`
+	// UnsafeBakMode optionally overrides the default 0o600 backup permission.
+	UnsafeBakMode *uint32 `json:"unsafe_bak_mode,omitempty"`
+}
+
+// VerifyImageOptions controls `Client.VerifyImage`.
+type VerifyImageOptions struct {
+	// KeyDir is an optional directory of `<signer_id>.public.pem` files.
+	KeyDir string `json:"key_dir,omitempty"`
+	// Strict treats missing signature as failure (default permissive).
+	Strict bool `json:"strict"`
+	// Robust scans the LSB channel if metadata channel is absent.
+	// User-facing key `robust` maps to JACS-internal `scan_robust` via the
+	// binding-core parser.
+	Robust bool `json:"robust"`
+}
+
+// SignTextResult is returned by `Client.SignText`.
+type SignTextResult struct {
+	Path         string  `json:"path"`
+	SignersAdded uint32  `json:"signers_added"`
+	BackupPath   *string `json:"backup_path,omitempty"`
+}
+
+// VerifyTextSignature is one signature block inside `VerifyTextResult`.
+type VerifyTextSignature struct {
+	SignerID  string `json:"signer_id"`
+	Algorithm string `json:"algorithm"`
+	Timestamp string `json:"timestamp"`
+	// Status is one of MediaVerifyStatus* discriminators (per-block layer).
+	Status string `json:"status"`
+}
+
+// VerifyTextResult is returned by `Client.VerifyText`.
+type VerifyTextResult struct {
+	// Status is one of VerifyTextStatus* values.
+	Status          string                `json:"status"`
+	Signatures      []VerifyTextSignature `json:"signatures,omitempty"`
+	MalformedDetail *string               `json:"malformed_detail,omitempty"`
+}
+
+// SignImageResult is returned by `Client.SignImage`.
+type SignImageResult struct {
+	OutPath    string  `json:"out_path"`
+	SignerID   string  `json:"signer_id"`
+	Format     string  `json:"format"`
+	Robust     bool    `json:"robust"`
+	BackupPath *string `json:"backup_path,omitempty"`
+}
+
+// VerifyImageResult is returned by `Client.VerifyImage`.
+type VerifyImageResult struct {
+	// Status is one of MediaVerifyStatus* values.
+	Status            string  `json:"status"`
+	SignerID          *string `json:"signer_id,omitempty"`
+	Algorithm         *string `json:"algorithm,omitempty"`
+	Format            *string `json:"format,omitempty"`
+	EmbeddingChannels *string `json:"embedding_channels,omitempty"`
+	// MalformedDetail carries the decoder error string when Status ==
+	// "malformed"; nil otherwise. binding-core flattens the JACS-internal
+	// tagged Malformed variant into this sibling field.
+	MalformedDetail *string `json:"malformed_detail,omitempty"`
+}
+
+// ExtractMediaSignatureResult is returned by `Client.ExtractMediaSignature`.
+type ExtractMediaSignatureResult struct {
+	Present bool    `json:"present"`
+	Payload *string `json:"payload,omitempty"`
+}

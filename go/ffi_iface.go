@@ -84,6 +84,13 @@ type FFIClient interface {
 	SignEmailRaw(rawEmailB64 string) (json.RawMessage, error)
 	VerifyEmailRaw(rawEmailB64 string) (json.RawMessage, error)
 
+	// Local Media (Layer 8 / TASK_009)
+	SignText(path, optsJSON string) (json.RawMessage, error)
+	VerifyText(path, optsJSON string) (json.RawMessage, error)
+	SignImage(inPath, outPath, optsJSON string) (json.RawMessage, error)
+	VerifyImage(filePath, optsJSON string) (json.RawMessage, error)
+	ExtractMediaSignature(filePath, optsJSON string) (json.RawMessage, error)
+
 	// Attestations
 	CreateAttestation(paramsJSON string) (json.RawMessage, error)
 	ListAttestations(paramsJSON string) (json.RawMessage, error)

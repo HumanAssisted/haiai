@@ -100,6 +100,12 @@ export function createMockFFI(overrides?: Partial<MockFFI>): FFIClientAdapter {
     agentEmail: defaultReject,
     setHaiAgentId: defaultReject,
     setAgentEmail: defaultReject,
+    // Layer 8: local media (sign/verify/extract for inline text + images).
+    signText: defaultReject,
+    verifyText: defaultReject,
+    signImage: defaultReject,
+    verifyImage: defaultReject,
+    extractMediaSignature: defaultReject,
   };
 
   if (overrides) {

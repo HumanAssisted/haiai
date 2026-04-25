@@ -49,6 +49,13 @@ interface NativeHaiClient {
   sendSignedEmail(optionsJson: string): Promise<string>;
   signEmailRaw(rawEmailB64: string): Promise<string>;
   verifyEmailRaw(rawEmailB64: string): Promise<string>;
+
+  // Local Media (Layer 8 / TASK_008)
+  signText(path: string, optsJson: string): Promise<string>;
+  verifyText(path: string, optsJson: string): Promise<string>;
+  signImage(inPath: string, outPath: string, optsJson: string): Promise<string>;
+  verifyImage(filePath: string, optsJson: string): Promise<string>;
+  extractMediaSignature(filePath: string, optsJson: string): Promise<string>;
   listMessages(optionsJson: string): Promise<string>;
   updateLabels(paramsJson: string): Promise<string>;
   getEmailStatus(): Promise<string>;
@@ -380,6 +387,62 @@ export class FFIClientAdapter {
   async verifyEmailRaw(rawEmailB64: string): Promise<Record<string, unknown>> {
     try {
       const json = await this.native.verifyEmailRaw(rawEmailB64);
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Local Media (Layer 8 / TASK_008)
+  // ---------------------------------------------------------------------
+
+  async signText(path: string, opts: Record<string, unknown>): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.signText(path, JSON.stringify(opts));
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async verifyText(path: string, opts: Record<string, unknown>): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.verifyText(path, JSON.stringify(opts));
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async signImage(
+    inPath: string,
+    outPath: string,
+    opts: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.signImage(inPath, outPath, JSON.stringify(opts));
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async verifyImage(filePath: string, opts: Record<string, unknown>): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.verifyImage(filePath, JSON.stringify(opts));
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async extractMediaSignature(
+    filePath: string,
+    opts: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.extractMediaSignature(filePath, JSON.stringify(opts));
       return JSON.parse(json) as Record<string, unknown>;
     } catch (err) {
       throw mapFFIError(err);

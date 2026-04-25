@@ -537,6 +537,29 @@ func (r *recordingFFIClient) DeleteEmailTemplate(templateID string) (json.RawMes
 	return r.inner.DeleteEmailTemplate(templateID)
 }
 
+// --- Local Media (Layer 8 / TASK_009) ---
+
+func (r *recordingFFIClient) SignText(path, optsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "SignText")
+	return r.inner.SignText(path, optsJSON)
+}
+func (r *recordingFFIClient) VerifyText(path, optsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "VerifyText")
+	return r.inner.VerifyText(path, optsJSON)
+}
+func (r *recordingFFIClient) SignImage(inPath, outPath, optsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "SignImage")
+	return r.inner.SignImage(inPath, outPath, optsJSON)
+}
+func (r *recordingFFIClient) VerifyImage(filePath, optsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "VerifyImage")
+	return r.inner.VerifyImage(filePath, optsJSON)
+}
+func (r *recordingFFIClient) ExtractMediaSignature(filePath, optsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "ExtractMediaSignature")
+	return r.inner.ExtractMediaSignature(filePath, optsJSON)
+}
+
 // --- SSE Streaming ---
 
 func (r *recordingFFIClient) ConnectSSE() (uint64, error) {

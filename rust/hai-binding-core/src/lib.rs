@@ -20,8 +20,13 @@ use std::path::Path;
 
 use haiai::client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
 use haiai::error::HaiError;
-use haiai::jacs::{JacsProvider, StaticJacsProvider};
+use haiai::jacs::{
+    JacsMediaProvider, JacsProvider, MediaVerificationResult, MediaVerifyStatus, SignImageOptions,
+    SignTextOptions, StaticJacsProvider, TextSignatureStatus, VerifyImageOptions, VerifyTextOptions,
+    VerifyTextResult,
+};
 use haiai::jacs_local::LocalJacsProvider;
+use std::path::PathBuf;
 
 // =============================================================================
 // Static tokio runtime for FFI callers
@@ -233,7 +238,7 @@ pub type HaiBindingResult<T> = Result<T, HaiBindingError>;
 /// Standard read-only methods acquire a read lock; mutating methods acquire
 /// a write lock.
 pub struct HaiClientWrapper {
-    inner: Arc<RwLock<HaiClient<Box<dyn JacsProvider>>>>,
+    inner: Arc<RwLock<HaiClient<Box<dyn JacsMediaProvider>>>>,
     /// The resolved client identifier string (e.g. "haiai-python/0.3.0").
     /// Stored here for test verification since reqwest::Client doesn't
     /// expose default headers after construction.
@@ -249,7 +254,7 @@ impl fmt::Debug for HaiClientWrapper {
 impl HaiClientWrapper {
     /// Create a new `HaiClientWrapper` from a boxed `JacsProvider` and options.
     pub fn new(
-        jacs: Box<dyn JacsProvider>,
+        jacs: Box<dyn JacsMediaProvider>,
         options: HaiClientOptions,
     ) -> HaiBindingResult<Self> {
         let resolved_id = options.client_identifier.clone().unwrap_or_else(|| {
@@ -279,7 +284,7 @@ impl HaiClientWrapper {
     /// cannot be deserialized from JSON (they hold cryptographic state).
     pub fn from_config_json(
         config_json: &str,
-        jacs: Box<dyn JacsProvider>,
+        jacs: Box<dyn JacsMediaProvider>,
     ) -> HaiBindingResult<Self> {
         let config: Value = serde_json::from_str(config_json)
             .map_err(|e| HaiBindingError::new(ErrorKind::ConfigFailed, e.to_string()))?;
@@ -349,7 +354,7 @@ impl HaiClientWrapper {
             .unwrap_or("")
             .to_string();
 
-        let provider: Box<dyn JacsProvider> = if let Some(path) = jacs_config_path {
+        let provider: Box<dyn JacsMediaProvider> = if let Some(path) = jacs_config_path {
             let local = LocalJacsProvider::from_config_path(
                 Some(Path::new(path)),
                 None,
@@ -845,6 +850,91 @@ impl HaiClientWrapper {
     }
 
     // =========================================================================
+    // Local Media Sign/Verify (Layer 8 / TASK_003)
+    // =========================================================================
+    //
+    // Five local-only methods backed by JacsMediaProvider. Opts JSON contract
+    // is FLAT for both sign_image and verify_image — `"robust": true` (NOT
+    // the JACS-internal `scan_robust`). `parse_verify_image_opts` maps the
+    // user's flat key into the nested `VerifyImageOptions.scan_robust` field.
+
+    /// Sign a markdown / text file in place. Opts JSON: `{"backup": bool, "allow_duplicate": bool}`.
+    pub async fn sign_text(&self, path: &str, opts_json: &str) -> HaiBindingResult<String> {
+        let opts = parse_sign_text_opts(opts_json)?;
+        let client = self.inner.read().await;
+        let outcome = client.sign_text_file(path, opts).map_err(HaiBindingError::from)?;
+        serde_json::to_string(&outcome).map_err(HaiBindingError::from)
+    }
+
+    /// Verify all signature blocks in a text file. Opts JSON:
+    /// `{"strict": bool, "key_dir": string?}`. Returns a flat envelope:
+    /// `{"status": "signed"|"missing_signature"|"malformed", "signatures": [...], "malformed_detail": ?}`.
+    pub async fn verify_text(&self, path: &str, opts_json: &str) -> HaiBindingResult<String> {
+        let opts = parse_verify_text_opts(opts_json)?;
+        let client = self.inner.read().await;
+        let result = client.verify_text_file(path, opts).map_err(HaiBindingError::from)?;
+        let envelope = verify_text_result_to_json(&result);
+        serde_json::to_string(&envelope).map_err(HaiBindingError::from)
+    }
+
+    /// Sign an image file (PNG/JPEG/WebP). Opts JSON:
+    /// `{"robust": bool, "format_hint": string?, "refuse_overwrite": bool, "backup": bool, "unsafe_bak_mode": uint32?}`.
+    pub async fn sign_image(
+        &self,
+        in_path: &str,
+        out_path: &str,
+        opts_json: &str,
+    ) -> HaiBindingResult<String> {
+        let opts = parse_sign_image_opts(opts_json)?;
+        let client = self.inner.read().await;
+        let signed = client
+            .sign_image(in_path, out_path, opts)
+            .map_err(HaiBindingError::from)?;
+        serde_json::to_string(&signed).map_err(HaiBindingError::from)
+    }
+
+    /// Verify the JACS signature embedded in an image. Opts JSON:
+    /// `{"strict": bool, "key_dir": string?, "robust": bool}`.
+    /// Public key `"robust"` maps to JACS-internal `scan_robust`.
+    ///
+    /// Returns a flat JSON envelope produced by [`media_verify_result_to_json`] —
+    /// `status` is always a plain snake_case string (never the JACS-internal
+    /// `{"malformed": detail}` shape) and `malformed_detail` carries the detail
+    /// when applicable. This is the single conversion site; language SDKs
+    /// always read this shape.
+    pub async fn verify_image(&self, path: &str, opts_json: &str) -> HaiBindingResult<String> {
+        let opts = parse_verify_image_opts(opts_json)?;
+        let client = self.inner.read().await;
+        let result = client.verify_image(path, opts).map_err(HaiBindingError::from)?;
+        let envelope = media_verify_result_to_json(&result);
+        serde_json::to_string(&envelope).map_err(HaiBindingError::from)
+    }
+
+    /// Extract the JACS signature payload from a signed image without verifying.
+    /// Opts JSON: `{"raw_payload": bool}`. Returns
+    /// `{"present": bool, "payload": string?}`. The MCP layer wraps this in a
+    /// `success` envelope (success = present); binding-core itself emits the
+    /// flat shape so language SDKs and the CLI can decide their own error
+    /// signaling (CLI exits 2 on `present: false`, MCP returns
+    /// `success: false`, language SDKs surface `present` directly).
+    pub async fn extract_media_signature(
+        &self,
+        path: &str,
+        opts_json: &str,
+    ) -> HaiBindingResult<String> {
+        let raw_payload = parse_extract_opts(opts_json)?;
+        let client = self.inner.read().await;
+        let payload = client
+            .extract_media_signature(path, raw_payload)
+            .map_err(HaiBindingError::from)?;
+        let envelope = serde_json::json!({
+            "present": payload.is_some(),
+            "payload": payload,
+        });
+        serde_json::to_string(&envelope).map_err(HaiBindingError::from)
+    }
+
+    // =========================================================================
     // Attestations
     // =========================================================================
 
@@ -1121,6 +1211,210 @@ impl HaiClientWrapper {
         });
         Ok(handle)
     }
+}
+
+// =============================================================================
+// Media-signing option parsers (Layer 8 / TASK_003)
+// =============================================================================
+//
+// JACS's `SignTextOptions` / `SignImageOptions` / `VerifyImageOptions` /
+// `inline::VerifyOptions` are NOT Serde-able — they only derive Debug+Clone(+Default).
+// These helpers construct them field-by-field from a `serde_json::Value`,
+// applying defaults on `""` / `"null"` / `"{}"` per the binding-core convention.
+
+fn parse_opts_root(s: &str) -> HaiBindingResult<Value> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() || trimmed == "null" {
+        return Ok(Value::Object(Default::default()));
+    }
+    serde_json::from_str(trimmed).map_err(|e| {
+        HaiBindingError::new(
+            ErrorKind::InvalidArgument,
+            format!("invalid options JSON: {e}"),
+        )
+    })
+}
+
+fn coerce_bool(v: &Value, key: &str) -> HaiBindingResult<Option<bool>> {
+    match v.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(b)) => Ok(Some(*b)),
+        Some(other) => Err(HaiBindingError::new(
+            ErrorKind::InvalidArgument,
+            format!("option '{key}' must be a boolean, got: {other}"),
+        )),
+    }
+}
+
+fn coerce_string(v: &Value, key: &str) -> HaiBindingResult<Option<String>> {
+    match v.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(other) => Err(HaiBindingError::new(
+            ErrorKind::InvalidArgument,
+            format!("option '{key}' must be a string, got: {other}"),
+        )),
+    }
+}
+
+fn coerce_u32(v: &Value, key: &str) -> HaiBindingResult<Option<u32>> {
+    match v.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(n)) => {
+            let val = n.as_u64().ok_or_else(|| {
+                HaiBindingError::new(
+                    ErrorKind::InvalidArgument,
+                    format!("option '{key}' must be a non-negative integer"),
+                )
+            })?;
+            if val > u32::MAX as u64 {
+                return Err(HaiBindingError::new(
+                    ErrorKind::InvalidArgument,
+                    format!("option '{key}' out of u32 range"),
+                ));
+            }
+            Ok(Some(val as u32))
+        }
+        Some(other) => Err(HaiBindingError::new(
+            ErrorKind::InvalidArgument,
+            format!("option '{key}' must be an integer, got: {other}"),
+        )),
+    }
+}
+
+pub(crate) fn parse_sign_text_opts(s: &str) -> HaiBindingResult<SignTextOptions> {
+    let v = parse_opts_root(s)?;
+    Ok(SignTextOptions {
+        backup: coerce_bool(&v, "backup")?.unwrap_or(true),
+        allow_duplicate: coerce_bool(&v, "allow_duplicate")?.unwrap_or(false),
+        unsafe_bak_mode: coerce_u32(&v, "unsafe_bak_mode")?,
+    })
+}
+
+pub(crate) fn parse_verify_text_opts(s: &str) -> HaiBindingResult<VerifyTextOptions> {
+    let v = parse_opts_root(s)?;
+    Ok(VerifyTextOptions {
+        strict: coerce_bool(&v, "strict")?.unwrap_or(false),
+        key_dir: coerce_string(&v, "key_dir")?.map(PathBuf::from),
+    })
+}
+
+pub(crate) fn parse_sign_image_opts(s: &str) -> HaiBindingResult<SignImageOptions> {
+    let v = parse_opts_root(s)?;
+    Ok(SignImageOptions {
+        robust: coerce_bool(&v, "robust")?.unwrap_or(false),
+        format_hint: coerce_string(&v, "format_hint")?,
+        refuse_overwrite: coerce_bool(&v, "refuse_overwrite")?.unwrap_or(false),
+        backup: coerce_bool(&v, "backup")?.unwrap_or(true),
+        unsafe_bak_mode: coerce_u32(&v, "unsafe_bak_mode")?,
+    })
+}
+
+/// Parse the FLAT user-facing JSON contract `{strict, key_dir, robust}` into
+/// the JACS-internal nested `VerifyImageOptions { base: VerifyOptions{...},
+/// scan_robust }` shape. Only the wire field name `robust` is exposed; the
+/// JACS-internal `scan_robust` name does not appear in any public surface
+/// (CLI flag, MCP param, language SDK kwarg).
+pub(crate) fn parse_verify_image_opts(s: &str) -> HaiBindingResult<VerifyImageOptions> {
+    let v = parse_opts_root(s)?;
+    let base = VerifyTextOptions {
+        strict: coerce_bool(&v, "strict")?.unwrap_or(false),
+        key_dir: coerce_string(&v, "key_dir")?.map(PathBuf::from),
+    };
+    Ok(VerifyImageOptions {
+        base,
+        scan_robust: coerce_bool(&v, "robust")?.unwrap_or(false),
+    })
+}
+
+pub(crate) fn parse_extract_opts(s: &str) -> HaiBindingResult<bool> {
+    let v = parse_opts_root(s)?;
+    Ok(coerce_bool(&v, "raw_payload")?.unwrap_or(false))
+}
+
+/// Translate the not-Serde-able `VerifyTextResult` into a JSON envelope.
+/// Single conversion site: language SDKs and CLI/MCP downstream of this
+/// always read this envelope shape and never see the raw JACS enum.
+fn verify_text_result_to_json(result: &VerifyTextResult) -> Value {
+    fn signature_status_str(s: &TextSignatureStatus) -> &'static str {
+        match s {
+            TextSignatureStatus::Valid => "valid",
+            TextSignatureStatus::InvalidSignature => "invalid_signature",
+            TextSignatureStatus::HashMismatch => "hash_mismatch",
+            TextSignatureStatus::KeyNotFound => "key_not_found",
+            TextSignatureStatus::UnsupportedAlgorithm => "unsupported_algorithm",
+            TextSignatureStatus::Malformed(_) => "malformed",
+        }
+    }
+
+    match result {
+        VerifyTextResult::Signed { signatures } => {
+            let entries: Vec<Value> = signatures
+                .iter()
+                .map(|sig| {
+                    let mut entry = serde_json::json!({
+                        "signer_id": sig.signer_id,
+                        "algorithm": sig.algorithm,
+                        "timestamp": sig.timestamp,
+                        "status": signature_status_str(&sig.status),
+                    });
+                    if let TextSignatureStatus::Malformed(detail) = &sig.status {
+                        entry["malformed_detail"] = Value::String(detail.clone());
+                    }
+                    entry
+                })
+                .collect();
+            serde_json::json!({
+                "status": "signed",
+                "signatures": entries,
+            })
+        }
+        VerifyTextResult::MissingSignature => serde_json::json!({
+            "status": "missing_signature",
+            "signatures": [],
+        }),
+        VerifyTextResult::Malformed(detail) => serde_json::json!({
+            "status": "malformed",
+            "signatures": [],
+            "malformed_detail": detail,
+        }),
+    }
+}
+
+/// Translate the partly-Serde-able `MediaVerificationResult` into a JSON
+/// envelope with a flat snake_case `status` string. JACS's `MediaVerifyStatus`
+/// uses `serde(rename_all = "snake_case")` which serializes the
+/// `Malformed(String)` variant as `{"malformed": detail}` — a tagged shape
+/// that downstream language SDKs cannot consume uniformly. This helper
+/// flattens that variant so callers always see `status: "malformed"` plus a
+/// sibling `malformed_detail` field.
+///
+/// Single conversion site: language SDKs (Python/Node/Go) and CLI/MCP always
+/// read this shape and never see the raw JACS enum.
+fn media_verify_result_to_json(result: &MediaVerificationResult) -> Value {
+    fn status_str(s: &MediaVerifyStatus) -> &'static str {
+        match s {
+            MediaVerifyStatus::Valid => "valid",
+            MediaVerifyStatus::InvalidSignature => "invalid_signature",
+            MediaVerifyStatus::HashMismatch => "hash_mismatch",
+            MediaVerifyStatus::MissingSignature => "missing_signature",
+            MediaVerifyStatus::KeyNotFound => "key_not_found",
+            MediaVerifyStatus::UnsupportedFormat => "unsupported_format",
+            MediaVerifyStatus::Malformed(_) => "malformed",
+        }
+    }
+
+    let mut envelope = serde_json::json!({
+        "status": status_str(&result.status),
+        "signer_id": result.signer_id,
+        "algorithm": result.algorithm,
+        "format": result.format,
+        "embedding_channels": result.embedding_channels,
+    });
+    if let MediaVerifyStatus::Malformed(detail) = &result.status {
+        envelope["malformed_detail"] = Value::String(detail.clone());
+    }
+    envelope
 }
 
 // =============================================================================
@@ -2014,5 +2308,413 @@ mod tests {
         let result = wrapper.rotate_keys("not json").await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind, ErrorKind::SerializationFailed);
+    }
+
+    // =========================================================================
+    // TASK_003: Media-signing wrapper methods
+    // =========================================================================
+
+    /// Materialize the fixture JACS agent into a tempdir with adjusted paths.
+    /// Returns (TempDir, config_path).
+    fn write_temp_media_fixture_config() -> (tempfile::TempDir, std::path::PathBuf) {
+        std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "secretpassord");
+
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/jacs-agent/jacs.config.json")
+            .canonicalize()
+            .expect("fixtures/jacs-agent/jacs.config.json must exist");
+        let source_dir = source.parent().expect("fixture config dir");
+        let mut value: Value =
+            serde_json::from_str(&std::fs::read_to_string(&source).expect("read fixture"))
+                .expect("parse fixture");
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+
+        // Copy keys
+        let source_key_dir = value
+            .get("jacs_key_directory")
+            .and_then(Value::as_str)
+            .map(|p| {
+                if std::path::PathBuf::from(p).is_absolute() {
+                    std::path::PathBuf::from(p)
+                } else {
+                    source_dir.join(p)
+                }
+            })
+            .expect("key dir");
+        let temp_key_dir = temp_dir.path().join("keys");
+        std::fs::create_dir_all(&temp_key_dir).expect("temp key dir");
+        for entry in std::fs::read_dir(&source_key_dir).expect("read keys") {
+            let entry = entry.expect("key entry");
+            std::fs::copy(entry.path(), temp_key_dir.join(entry.file_name()))
+                .expect("copy key");
+        }
+
+        // Copy data (with underscore→colon filename normalization)
+        let source_data_dir = value
+            .get("jacs_data_directory")
+            .and_then(Value::as_str)
+            .map(|p| {
+                if std::path::PathBuf::from(p).is_absolute() {
+                    std::path::PathBuf::from(p)
+                } else {
+                    source_dir.join(p)
+                }
+            })
+            .expect("data dir");
+        let temp_data_dir = temp_dir.path().join("data");
+        fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
+            std::fs::create_dir_all(dst).expect("create dst");
+            for entry in std::fs::read_dir(src).expect("read src") {
+                let entry = entry.expect("entry");
+                let src_path = entry.path();
+                let name = entry.file_name().to_string_lossy().replace('_', ":");
+                let dst_path = dst.join(&name);
+                if src_path.is_dir() {
+                    copy_dir_recursive(&src_path, &dst_path);
+                } else {
+                    std::fs::copy(&src_path, &dst_path).expect("copy file");
+                }
+            }
+        }
+        copy_dir_recursive(&source_data_dir, &temp_data_dir);
+
+        value["jacs_data_directory"] =
+            Value::String(temp_data_dir.to_string_lossy().into_owned());
+        value["jacs_key_directory"] =
+            Value::String(temp_key_dir.to_string_lossy().into_owned());
+
+        let config_path = temp_dir.path().join("media-binding.config.json");
+        std::fs::write(
+            &config_path,
+            serde_json::to_vec_pretty(&value).expect("serialize config"),
+        )
+        .expect("write config");
+        (temp_dir, config_path)
+    }
+
+    fn make_media_test_png(width: u32, height: u32) -> Vec<u8> {
+        let img =
+            image::RgbaImage::from_pixel(width, height, image::Rgba([32, 64, 128, 255]));
+        let mut buf = Vec::new();
+        let mut cur = std::io::Cursor::new(&mut buf);
+        img.write_to(&mut cur, image::ImageFormat::Png)
+            .expect("png encode");
+        buf
+    }
+
+    fn build_media_wrapper(config_path: &std::path::Path) -> HaiClientWrapper {
+        let json = format!(
+            r#"{{"base_url":"https://beta.hai.ai","jacs_config_path":"{}","jacs_id":"media-binding-test"}}"#,
+            config_path.display()
+        );
+        HaiClientWrapper::from_config_json_auto(&json).expect("build wrapper")
+    }
+
+    #[test]
+    fn parse_sign_text_opts_defaults_when_empty() {
+        let opts = parse_sign_text_opts("").expect("default");
+        assert!(opts.backup);
+        assert!(!opts.allow_duplicate);
+    }
+
+    #[test]
+    fn parse_sign_text_opts_explicit() {
+        let opts = parse_sign_text_opts(r#"{"backup": false, "allow_duplicate": true}"#)
+            .expect("parse");
+        assert!(!opts.backup);
+        assert!(opts.allow_duplicate);
+    }
+
+    #[test]
+    fn parse_verify_image_opts_flat_robust_maps_to_scan_robust() {
+        // PRD §4.3: user-facing key "robust" maps to JACS-internal scan_robust.
+        let opts =
+            parse_verify_image_opts(r#"{"robust": true, "strict": true}"#).expect("parse");
+        assert!(opts.scan_robust, "flat 'robust' must populate scan_robust");
+        assert!(opts.base.strict);
+    }
+
+    #[test]
+    fn parse_sign_image_opts_invalid_robust_returns_invalid_argument() {
+        let err = parse_sign_image_opts(r#"{"robust": "yes"}"#).expect_err("must fail");
+        assert_eq!(err.kind, ErrorKind::InvalidArgument);
+    }
+
+    #[test]
+    fn parse_extract_opts_defaults_to_decoded() {
+        assert!(!parse_extract_opts("").expect("default"));
+        assert!(parse_extract_opts(r#"{"raw_payload": true}"#).expect("parse"));
+    }
+
+    #[test]
+    fn methods_json_includes_media_methods() {
+        let json_str = include_str!("../methods.json");
+        let val: Value = serde_json::from_str(json_str).unwrap();
+        let methods = val["methods"].as_array().unwrap();
+        let names: Vec<&str> = methods
+            .iter()
+            .filter_map(|m| m.get("name").and_then(|n| n.as_str()))
+            .collect();
+        for required in &[
+            "sign_text",
+            "verify_text",
+            "sign_image",
+            "verify_image",
+            "extract_media_signature",
+        ] {
+            assert!(
+                names.contains(required),
+                "methods.json missing entry: {required}"
+            );
+        }
+        for required in &[
+            "sign_text",
+            "verify_text",
+            "sign_image",
+            "verify_image",
+            "extract_media_signature",
+        ] {
+            let entry = methods
+                .iter()
+                .find(|m| m.get("name").and_then(|n| n.as_str()) == Some(required))
+                .unwrap();
+            assert_eq!(
+                entry.get("group").and_then(|g| g.as_str()),
+                Some("media_local"),
+                "{required} should be in group media_local"
+            );
+            assert_eq!(
+                entry.get("category").and_then(|c| c.as_str()),
+                Some("async"),
+                "{required} should be category async"
+            );
+        }
+        let summary = val.get("summary").unwrap();
+        assert_eq!(summary["async_methods"].as_u64(), Some(55));
+        assert_eq!(summary["total_public_methods"].as_u64(), Some(81));
+    }
+
+    #[tokio::test]
+    async fn wrapper_verify_text_missing_signature_envelope() {
+        let (temp_dir, config_path) = write_temp_media_fixture_config();
+        let wrapper = build_media_wrapper(&config_path);
+        let path = temp_dir.path().join("unsigned.md");
+        std::fs::write(&path, b"# unsigned\n").expect("write");
+
+        let json = wrapper
+            .verify_text(path.to_str().unwrap(), "{}")
+            .await
+            .expect("verify_text");
+        let parsed: Value = serde_json::from_str(&json).expect("envelope JSON");
+        assert_eq!(parsed["status"].as_str(), Some("missing_signature"));
+        assert!(parsed["signatures"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn wrapper_sign_text_round_trip() {
+        let (temp_dir, config_path) = write_temp_media_fixture_config();
+        let wrapper = build_media_wrapper(&config_path);
+        let path = temp_dir.path().join("hello.md");
+        std::fs::write(&path, b"# Hello\n").expect("write");
+
+        let outcome_json = wrapper
+            .sign_text(path.to_str().unwrap(), "{}")
+            .await
+            .expect("sign_text");
+        let parsed: Value = serde_json::from_str(&outcome_json).expect("outcome JSON");
+        assert_eq!(parsed["signers_added"].as_u64(), Some(1));
+
+        let verify_json = wrapper
+            .verify_text(path.to_str().unwrap(), "{}")
+            .await
+            .expect("verify_text");
+        let parsed: Value = serde_json::from_str(&verify_json).expect("verify JSON");
+        assert_eq!(parsed["status"].as_str(), Some("signed"));
+        let sigs = parsed["signatures"].as_array().expect("signatures");
+        assert_eq!(sigs.len(), 1);
+        assert_eq!(sigs[0]["status"].as_str(), Some("valid"));
+    }
+
+    #[tokio::test]
+    async fn wrapper_sign_image_round_trip() {
+        let (temp_dir, config_path) = write_temp_media_fixture_config();
+        let wrapper = build_media_wrapper(&config_path);
+        let in_path = temp_dir.path().join("in.png");
+        std::fs::write(&in_path, &make_media_test_png(32, 32)).expect("write");
+        let out_path = temp_dir.path().join("out.png");
+
+        let signed_json = wrapper
+            .sign_image(
+                in_path.to_str().unwrap(),
+                out_path.to_str().unwrap(),
+                "{}",
+            )
+            .await
+            .expect("sign_image");
+        let parsed: Value = serde_json::from_str(&signed_json).expect("signed JSON");
+        assert_eq!(parsed["format"].as_str(), Some("png"));
+        let signer_id = parsed["signer_id"].as_str().unwrap().to_string();
+
+        let verify_json = wrapper
+            .verify_image(out_path.to_str().unwrap(), "{}")
+            .await
+            .expect("verify_image");
+        let parsed: Value = serde_json::from_str(&verify_json).expect("verify JSON");
+        assert_eq!(parsed["status"].as_str(), Some("valid"));
+        assert_eq!(parsed["signer_id"].as_str(), Some(signer_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn wrapper_verify_image_tampered_returns_hash_mismatch() {
+        let (temp_dir, config_path) = write_temp_media_fixture_config();
+        let wrapper = build_media_wrapper(&config_path);
+        let in_path = temp_dir.path().join("in.png");
+        std::fs::write(&in_path, &make_media_test_png(32, 32)).expect("write");
+        let out_path = temp_dir.path().join("out.png");
+        wrapper
+            .sign_image(in_path.to_str().unwrap(), out_path.to_str().unwrap(), "{}")
+            .await
+            .expect("sign");
+
+        // Mutate one byte in the IDAT region (after the iTXt chunk holding the
+        // signature). Our prebuilt PNG's IDAT starts ~ byte 49.
+        let mut bytes = std::fs::read(&out_path).expect("read signed");
+        let idat_start = bytes
+            .windows(4)
+            .position(|w| w == b"IDAT")
+            .expect("IDAT marker");
+        // Flip one byte in the compressed data (well past the marker).
+        if let Some(b) = bytes.get_mut(idat_start + 6) {
+            *b ^= 0x01;
+        }
+        std::fs::write(&out_path, &bytes).expect("write tampered");
+
+        let verify_json = wrapper
+            .verify_image(out_path.to_str().unwrap(), "{}")
+            .await
+            .expect("verify");
+        let parsed: Value = serde_json::from_str(&verify_json).expect("verify JSON");
+        let status = parsed["status"].as_str().unwrap_or("");
+        assert!(
+            status == "hash_mismatch" || status == "invalid_signature",
+            "tampered image should fail with hash_mismatch or invalid_signature, got {status}"
+        );
+    }
+
+    #[tokio::test]
+    async fn wrapper_extract_media_signature_returns_envelope() {
+        let (temp_dir, config_path) = write_temp_media_fixture_config();
+        let wrapper = build_media_wrapper(&config_path);
+        let in_path = temp_dir.path().join("in.png");
+        std::fs::write(&in_path, &make_media_test_png(32, 32)).expect("write");
+        let out_path = temp_dir.path().join("out.png");
+        wrapper
+            .sign_image(in_path.to_str().unwrap(), out_path.to_str().unwrap(), "{}")
+            .await
+            .expect("sign");
+
+        let env_json = wrapper
+            .extract_media_signature(out_path.to_str().unwrap(), "{}")
+            .await
+            .expect("extract");
+        let parsed: Value = serde_json::from_str(&env_json).expect("envelope JSON");
+        assert_eq!(parsed["present"].as_bool(), Some(true));
+        let payload = parsed["payload"].as_str().expect("payload string");
+        let inner: Value =
+            serde_json::from_str(payload).expect("decoded payload should be JSON");
+        assert!(inner.is_object());
+    }
+
+    #[tokio::test]
+    async fn wrapper_sign_image_invalid_opts_json_returns_invalid_argument() {
+        let (_temp_dir, config_path) = write_temp_media_fixture_config();
+        let wrapper = build_media_wrapper(&config_path);
+        let result = wrapper
+            .sign_image("a.png", "b.png", r#"{"robust": "yes"}"#)
+            .await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind, ErrorKind::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn wrapper_sign_image_with_static_provider_returns_provider_error() {
+        // No jacs_config_path → falls back to StaticJacsProvider → media op
+        // returns Provider error from the test-only fallback impl.
+        let wrapper =
+            HaiClientWrapper::from_config_json_auto(r#"{"jacs_id":"static-only"}"#).expect("ok");
+        let dir = tempfile::tempdir().unwrap();
+        let in_path = dir.path().join("a.png");
+        std::fs::write(&in_path, &make_media_test_png(32, 32)).unwrap();
+        let result = wrapper
+            .sign_image(
+                in_path.to_str().unwrap(),
+                dir.path().join("b.png").to_str().unwrap(),
+                "{}",
+            )
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("test-only") || err.message.contains("StaticJacsProvider"),
+            "expected test-only provider error, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn media_verify_result_to_json_flattens_malformed_variant() {
+        // Regression for Issue 001: JACS serializes Malformed as
+        // {"malformed": "<detail>"} which language SDKs decoded as a tagged
+        // object (Python str(dict), Node "[object Object]", Go decode error).
+        // The translation site must produce status == "malformed" (lowercase
+        // string) plus a sibling malformed_detail field.
+        let result = MediaVerificationResult {
+            status: MediaVerifyStatus::Malformed("garbled iTXt chunk".to_string()),
+            signer_id: None,
+            algorithm: None,
+            format: Some("png".to_string()),
+            embedding_channels: None,
+        };
+        let envelope = media_verify_result_to_json(&result);
+        assert_eq!(envelope["status"].as_str(), Some("malformed"));
+        assert_eq!(
+            envelope["malformed_detail"].as_str(),
+            Some("garbled iTXt chunk")
+        );
+        assert_eq!(envelope["format"].as_str(), Some("png"));
+        // No tagged-object leak: status must be a plain string.
+        assert!(envelope["status"].is_string());
+    }
+
+    #[test]
+    fn media_verify_result_to_json_flat_string_for_simple_variants() {
+        // Each unit-style variant should serialize as a plain snake_case
+        // string and NOT carry malformed_detail.
+        for (variant, expected) in [
+            (MediaVerifyStatus::Valid, "valid"),
+            (MediaVerifyStatus::InvalidSignature, "invalid_signature"),
+            (MediaVerifyStatus::HashMismatch, "hash_mismatch"),
+            (MediaVerifyStatus::MissingSignature, "missing_signature"),
+            (MediaVerifyStatus::KeyNotFound, "key_not_found"),
+            (MediaVerifyStatus::UnsupportedFormat, "unsupported_format"),
+        ] {
+            let result = MediaVerificationResult {
+                status: variant.clone(),
+                signer_id: Some("agent-1".to_string()),
+                algorithm: Some("ED25519".to_string()),
+                format: Some("png".to_string()),
+                embedding_channels: None,
+            };
+            let envelope = media_verify_result_to_json(&result);
+            assert_eq!(
+                envelope["status"].as_str(),
+                Some(expected),
+                "variant {:?} should serialize as {}",
+                variant,
+                expected
+            );
+            assert!(envelope.get("malformed_detail").is_none());
+        }
     }
 }

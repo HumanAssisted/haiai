@@ -49,6 +49,7 @@ from haiai.models import (
     EmailStatus,
     EmailVerificationResultV2,
     EmailVolumeInfo,
+    ExtractMediaSignatureResult,
     FieldResult,
     FieldStatus,
     FreeChaoticResult,
@@ -63,7 +64,12 @@ from haiai.models import (
     RegistrationResult,
     RotationResult,
     SendEmailResult,
+    SignImageResult,
+    SignTextResult,
     TranscriptMessage,
+    VerifyImageResult,
+    VerifyTextResult,
+    VerifyTextSignature,
 )
 from haiai.signing import is_signed_event, sign_response, unwrap_signed_event
 
@@ -1286,6 +1292,138 @@ class HaiClient:
         b64_input = base64.b64encode(raw_email).decode("ascii")
         b64_result = ffi.sign_email_raw(b64_input)
         return base64.b64decode(b64_result)
+
+    # =========================================================================
+    # Layer 8: Local Media Sign/Verify (TASK_007)
+    # =========================================================================
+
+    def sign_text(
+        self,
+        path: str,
+        *,
+        no_backup: bool = False,
+        allow_duplicate: bool = False,
+    ) -> SignTextResult:
+        """Sign a text/markdown file in place by appending a YAML signature block.
+
+        Local-only — no HAI server roundtrip. The agent's identity comes from
+        the loaded JACS config (same as ``sign_email``).
+        """
+        ffi = self._get_ffi()
+        opts = {"backup": not no_backup, "allow_duplicate": allow_duplicate}
+        data = ffi.sign_text(path, opts)
+        return SignTextResult(
+            path=data["path"],
+            signers_added=int(data["signers_added"]),
+            backup_path=data.get("backup_path"),
+        )
+
+    def verify_text(
+        self,
+        path: str,
+        *,
+        key_dir: Optional[str] = None,
+        strict: bool = False,
+    ) -> VerifyTextResult:
+        """Verify all signature blocks in a text file. Local-only."""
+        ffi = self._get_ffi()
+        opts: dict[str, Any] = {"strict": strict}
+        if key_dir is not None:
+            opts["key_dir"] = key_dir
+        data = ffi.verify_text(path, opts)
+        sigs = [
+            VerifyTextSignature(
+                signer_id=s["signer_id"],
+                algorithm=s["algorithm"],
+                timestamp=s["timestamp"],
+                status=s["status"],
+            )
+            for s in data.get("signatures") or []
+        ]
+        return VerifyTextResult(
+            status=data["status"],
+            signatures=sigs,
+            malformed_detail=data.get("malformed_detail"),
+        )
+
+    def sign_image(
+        self,
+        in_path: str,
+        out_path: str,
+        *,
+        robust: bool = False,
+        format: Optional[str] = None,
+        refuse_overwrite: bool = False,
+    ) -> SignImageResult:
+        """Sign an image (PNG/JPEG/WebP) by embedding a JACS signature.
+
+        ``robust`` adds LSB steganography (PNG/JPEG only — WebP returns
+        ``Unsupported`` per the JACS PRD).
+        """
+        ffi = self._get_ffi()
+        opts: dict[str, Any] = {
+            "robust": robust,
+            "refuse_overwrite": refuse_overwrite,
+            "backup": True,
+        }
+        if format is not None:
+            opts["format_hint"] = format
+        data = ffi.sign_image(in_path, out_path, opts)
+        return SignImageResult(
+            out_path=data["out_path"],
+            signer_id=data["signer_id"],
+            format=data["format"],
+            robust=bool(data.get("robust", False)),
+            backup_path=data.get("backup_path"),
+        )
+
+    def verify_image(
+        self,
+        path: str,
+        *,
+        key_dir: Optional[str] = None,
+        strict: bool = False,
+        robust: bool = False,
+    ) -> VerifyImageResult:
+        """Verify the JACS signature embedded in an image. Local-only.
+
+        The user-facing kwarg ``robust`` maps to the JACS-internal
+        ``scan_robust`` field via the binding-core parser. No leak.
+        """
+        ffi = self._get_ffi()
+        opts: dict[str, Any] = {"strict": strict, "robust": robust}
+        if key_dir is not None:
+            opts["key_dir"] = key_dir
+        data = ffi.verify_image(path, opts)
+        # binding-core flattens MediaVerifyStatus into a snake_case string
+        # via media_verify_result_to_json — `status` is always a plain string;
+        # the Malformed variant carries detail in `malformed_detail`.
+        return VerifyImageResult(
+            status=str(data.get("status", "")),
+            signer_id=data.get("signer_id"),
+            algorithm=data.get("algorithm"),
+            format=data.get("format"),
+            embedding_channels=data.get("embedding_channels"),
+            malformed_detail=data.get("malformed_detail"),
+        )
+
+    def extract_media_signature(
+        self,
+        path: str,
+        *,
+        raw_payload: bool = False,
+    ) -> ExtractMediaSignatureResult:
+        """Extract the JACS payload embedded in an image without verifying.
+
+        ``raw_payload=True`` returns the base64url-no-pad bytes verbatim;
+        the default returns the decoded JSON string.
+        """
+        ffi = self._get_ffi()
+        data = ffi.extract_media_signature(path, {"raw_payload": raw_payload})
+        return ExtractMediaSignatureResult(
+            present=bool(data.get("present", False)),
+            payload=data.get("payload"),
+        )
 
     def send_signed_email(
         self,

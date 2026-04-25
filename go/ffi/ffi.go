@@ -84,6 +84,13 @@ extern char* hai_fetch_server_keys(HaiClientHandle handle);
 extern char* hai_sign_email_raw(HaiClientHandle handle, const char* raw_email_b64);
 extern char* hai_verify_email_raw(HaiClientHandle handle, const char* raw_email_b64);
 
+// Layer 8: Local Media (TASK_009)
+extern char* hai_sign_text(HaiClientHandle handle, const char* path, const char* opts_json);
+extern char* hai_verify_text(HaiClientHandle handle, const char* path, const char* opts_json);
+extern char* hai_sign_image(HaiClientHandle handle, const char* in_path, const char* out_path, const char* opts_json);
+extern char* hai_verify_image(HaiClientHandle handle, const char* file_path, const char* opts_json);
+extern char* hai_extract_media_signature(HaiClientHandle handle, const char* file_path, const char* opts_json);
+
 // Attestations
 extern char* hai_create_attestation(HaiClientHandle handle, const char* params_json);
 extern char* hai_list_attestations(HaiClientHandle handle, const char* params_json);
@@ -597,6 +604,75 @@ func (c *Client) VerifyEmailRaw(rawEmailB64 string) (json.RawMessage, error) {
 	cs := cString(rawEmailB64)
 	defer C.free(unsafe.Pointer(cs))
 	return parseEnvelope(goString(C.hai_verify_email_raw(c.handle, cs)))
+}
+
+// --- Local Media (Layer 8 / TASK_009) ---
+
+func (c *Client) SignText(path, optsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cp := cString(path)
+	defer C.free(unsafe.Pointer(cp))
+	co := cString(optsJSON)
+	defer C.free(unsafe.Pointer(co))
+	return parseEnvelope(goString(C.hai_sign_text(c.handle, cp, co)))
+}
+
+func (c *Client) VerifyText(path, optsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cp := cString(path)
+	defer C.free(unsafe.Pointer(cp))
+	co := cString(optsJSON)
+	defer C.free(unsafe.Pointer(co))
+	return parseEnvelope(goString(C.hai_verify_text(c.handle, cp, co)))
+}
+
+func (c *Client) SignImage(inPath, outPath, optsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	ci := cString(inPath)
+	defer C.free(unsafe.Pointer(ci))
+	co := cString(outPath)
+	defer C.free(unsafe.Pointer(co))
+	cj := cString(optsJSON)
+	defer C.free(unsafe.Pointer(cj))
+	return parseEnvelope(goString(C.hai_sign_image(c.handle, ci, co, cj)))
+}
+
+func (c *Client) VerifyImage(filePath, optsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cf := cString(filePath)
+	defer C.free(unsafe.Pointer(cf))
+	co := cString(optsJSON)
+	defer C.free(unsafe.Pointer(co))
+	return parseEnvelope(goString(C.hai_verify_image(c.handle, cf, co)))
+}
+
+func (c *Client) ExtractMediaSignature(filePath, optsJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cf := cString(filePath)
+	defer C.free(unsafe.Pointer(cf))
+	co := cString(optsJSON)
+	defer C.free(unsafe.Pointer(co))
+	return parseEnvelope(goString(C.hai_extract_media_signature(c.handle, cf, co)))
 }
 
 // --- Attestations ---

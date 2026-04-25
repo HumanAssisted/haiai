@@ -43,6 +43,17 @@ import type {
   EmailVerificationResultV2,
   FieldStatus,
   RawEmailResult,
+  SignTextOptions,
+  SignTextResult,
+  VerifyTextOptions,
+  VerifyTextResult,
+  VerifyTextSignature,
+  SignImageOptions,
+  SignImageResult,
+  VerifyImageOptions,
+  VerifyImageResult,
+  ExtractMediaSignatureOptions,
+  ExtractMediaSignatureResult,
 } from './types.js';
 import {
   HaiError,
@@ -1257,6 +1268,102 @@ export class HaiClient {
       error: data.error as string | null | undefined,
       agentStatus: data.agent_status as string | null | undefined,
       benchmarksCompleted: (data.benchmarks_completed as string[]) ?? [],
+    };
+  }
+
+  // ===========================================================================
+  // Layer 8: Local Media Sign/Verify (TASK_008)
+  // ===========================================================================
+
+  async signText(path: string, options?: SignTextOptions): Promise<SignTextResult> {
+    const opts: Record<string, unknown> = {
+      backup: !options?.noBackup,
+      allow_duplicate: options?.allowDuplicate ?? false,
+    };
+    const data = await this.ffi.signText(path, opts);
+    return {
+      path: data.path as string,
+      signersAdded: Number(data.signers_added ?? 0),
+      backupPath: (data.backup_path as string | null | undefined) ?? undefined,
+    };
+  }
+
+  async verifyText(path: string, options?: VerifyTextOptions): Promise<VerifyTextResult> {
+    const opts: Record<string, unknown> = {
+      strict: options?.strict ?? false,
+    };
+    if (options?.keyDir != null) opts.key_dir = options.keyDir;
+    const data = await this.ffi.verifyText(path, opts);
+    const sigs = ((data.signatures as Array<Record<string, unknown>>) ?? []).map(
+      (s): VerifyTextSignature => ({
+        signerId: s.signer_id as string,
+        algorithm: s.algorithm as string,
+        timestamp: s.timestamp as string,
+        status: s.status as string,
+      }),
+    );
+    return {
+      status: data.status as string,
+      signatures: sigs,
+      malformedDetail: (data.malformed_detail as string | null | undefined) ?? undefined,
+    };
+  }
+
+  async signImage(
+    inPath: string,
+    outPath: string,
+    options?: SignImageOptions,
+  ): Promise<SignImageResult> {
+    const opts: Record<string, unknown> = {
+      robust: options?.robust ?? false,
+      refuse_overwrite: options?.refuseOverwrite ?? false,
+      backup: true,
+    };
+    if (options?.format != null) opts.format_hint = options.format;
+    const data = await this.ffi.signImage(inPath, outPath, opts);
+    return {
+      outPath: data.out_path as string,
+      signerId: data.signer_id as string,
+      format: data.format as string,
+      robust: Boolean(data.robust ?? false),
+      backupPath: (data.backup_path as string | null | undefined) ?? undefined,
+    };
+  }
+
+  async verifyImage(
+    filePath: string,
+    options?: VerifyImageOptions,
+  ): Promise<VerifyImageResult> {
+    const opts: Record<string, unknown> = {
+      strict: options?.strict ?? false,
+      robust: options?.robust ?? false,
+    };
+    if (options?.keyDir != null) opts.key_dir = options.keyDir;
+    const data = await this.ffi.verifyImage(filePath, opts);
+    // binding-core flattens MediaVerifyStatus into a snake_case string via
+    // media_verify_result_to_json — `data.status` is always a plain string;
+    // the Malformed variant carries its detail in `malformed_detail`.
+    return {
+      status: String(data.status ?? ''),
+      signerId: (data.signer_id as string | null | undefined) ?? undefined,
+      algorithm: (data.algorithm as string | null | undefined) ?? undefined,
+      format: (data.format as string | null | undefined) ?? undefined,
+      embeddingChannels: (data.embedding_channels as string | null | undefined) ?? undefined,
+      malformedDetail: (data.malformed_detail as string | null | undefined) ?? undefined,
+    };
+  }
+
+  async extractMediaSignature(
+    filePath: string,
+    options?: ExtractMediaSignatureOptions,
+  ): Promise<ExtractMediaSignatureResult> {
+    const opts: Record<string, unknown> = {
+      raw_payload: options?.rawPayload ?? false,
+    };
+    const data = await this.ffi.extractMediaSignature(filePath, opts);
+    return {
+      present: Boolean(data.present ?? false),
+      payload: (data.payload as string | null | undefined) ?? undefined,
     };
   }
 

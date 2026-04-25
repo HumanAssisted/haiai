@@ -881,3 +881,107 @@ export interface VerifyAgentDocumentOnHaiOptions {
   /** Optional domain override for DNS verification. */
   domain?: string;
 }
+
+// =============================================================================
+// Layer 8: Local Media (TASK_008 / JACS 0.10.0)
+// =============================================================================
+
+/** Options for `signText`. */
+export interface SignTextOptions {
+  /** Skip writing a `<path>.bak` backup before modifying. Default: false. */
+  noBackup?: boolean;
+  /** Re-add a signature even if one with this signer is already valid. */
+  allowDuplicate?: boolean;
+}
+
+/** Options for `verifyText`. */
+export interface VerifyTextOptions {
+  /** Optional directory of `<signer_id>.public.pem` files. */
+  keyDir?: string;
+  /** Treat missing/malformed signature as failure (default permissive). */
+  strict?: boolean;
+}
+
+/**
+ * Options for `signImage`.
+ *
+ * NOTE: the public option key is `robust` (not `scanRobust`). The Rust
+ * binding-core parser maps `robust` → JACS-internal `scan_robust`. Do not
+ * leak the JACS internal name into the public API.
+ */
+export interface SignImageOptions {
+  /** Also embed via LSB steganography (PNG/JPEG only — WebP unsupported). */
+  robust?: boolean;
+  /** Force a specific format (`"png" | "jpeg" | "webp"`); default auto-detect. */
+  format?: string;
+  /** Refuse to overwrite an existing JACS signature in the input. */
+  refuseOverwrite?: boolean;
+}
+
+/** Options for `verifyImage`. */
+export interface VerifyImageOptions {
+  /** Optional directory of `<signer_id>.public.pem` files. */
+  keyDir?: string;
+  /** Treat missing signature as failure (default permissive). */
+  strict?: boolean;
+  /** Scan the LSB channel if the metadata channel is absent. */
+  robust?: boolean;
+}
+
+/** Result of `signText`. */
+export interface SignTextResult {
+  path: string;
+  signersAdded: number;
+  backupPath?: string;
+}
+
+/** Per-block signature inside a `VerifyTextResult`. */
+export interface VerifyTextSignature {
+  signerId: string;
+  algorithm: string;
+  timestamp: string;
+  /** One of `"valid" | "invalid_signature" | "hash_mismatch" | "key_not_found" | "unsupported_algorithm" | "malformed"`. */
+  status: string;
+}
+
+/** Result of `verifyText`. */
+export interface VerifyTextResult {
+  /** One of `"signed" | "missing_signature" | "malformed"`. */
+  status: string;
+  signatures: VerifyTextSignature[];
+  malformedDetail?: string;
+}
+
+/** Result of `signImage`. */
+export interface SignImageResult {
+  outPath: string;
+  signerId: string;
+  format: string;
+  robust: boolean;
+  backupPath?: string;
+}
+
+/** Result of `verifyImage`. */
+export interface VerifyImageResult {
+  /** One of `"valid" | "invalid_signature" | "hash_mismatch" | "missing_signature" | "key_not_found" | "unsupported_format" | "malformed"`. */
+  status: string;
+  signerId?: string;
+  algorithm?: string;
+  format?: string;
+  embeddingChannels?: string;
+  /** Decoder error string when `status === "malformed"`; otherwise undefined. */
+  malformedDetail?: string;
+}
+
+/** Options for `extractMediaSignature`. */
+export interface ExtractMediaSignatureOptions {
+  /** Return raw base64url-no-pad bytes instead of decoded JSON. Default: false. */
+  rawPayload?: boolean;
+}
+
+/** Result of `extractMediaSignature`. */
+export interface ExtractMediaSignatureResult {
+  present: boolean;
+  /** Decoded JSON string by default; base64url bytes when `rawPayload=true`. */
+  payload?: string;
+}

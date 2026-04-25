@@ -543,6 +543,85 @@ impl HaiClient {
     }
 
     // =========================================================================
+    // Local Media Sign/Verify (Layer 8 / TASK_007)
+    // =========================================================================
+
+    fn sign_text<'py>(&self, py: Python<'py>, path: String, opts_json: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.sign_text(&path, &opts_json).await.map_err(to_py_err)
+        })
+    }
+
+    fn sign_text_sync(&self, py: Python, path: String, opts_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.sign_text(&path, &opts_json).await })
+        }).map_err(to_py_err)
+    }
+
+    fn verify_text<'py>(&self, py: Python<'py>, path: String, opts_json: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.verify_text(&path, &opts_json).await.map_err(to_py_err)
+        })
+    }
+
+    fn verify_text_sync(&self, py: Python, path: String, opts_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.verify_text(&path, &opts_json).await })
+        }).map_err(to_py_err)
+    }
+
+    fn sign_image<'py>(&self, py: Python<'py>, in_path: String, out_path: String, opts_json: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.sign_image(&in_path, &out_path, &opts_json).await.map_err(to_py_err)
+        })
+    }
+
+    fn sign_image_sync(&self, py: Python, in_path: String, out_path: String, opts_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.sign_image(&in_path, &out_path, &opts_json).await })
+        }).map_err(to_py_err)
+    }
+
+    fn verify_image<'py>(&self, py: Python<'py>, path: String, opts_json: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.verify_image(&path, &opts_json).await.map_err(to_py_err)
+        })
+    }
+
+    fn verify_image_sync(&self, py: Python, path: String, opts_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.verify_image(&path, &opts_json).await })
+        }).map_err(to_py_err)
+    }
+
+    fn extract_media_signature<'py>(&self, py: Python<'py>, path: String, opts_json: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.extract_media_signature(&path, &opts_json).await.map_err(to_py_err)
+        })
+    }
+
+    fn extract_media_signature_sync(&self, py: Python, path: String, opts_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.extract_media_signature(&path, &opts_json).await })
+        }).map_err(to_py_err)
+    }
+
+    // =========================================================================
     // Attestations
     // =========================================================================
 

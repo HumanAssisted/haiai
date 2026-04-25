@@ -13,6 +13,32 @@ use crate::types::{
 };
 
 // =============================================================================
+// JACS 0.10.0 media types — re-exported for haiai library consumers.
+// =============================================================================
+//
+// Image side: SignImageOptions / SignedMedia / MediaVerifyStatus /
+// MediaVerificationResult / VerifyImageOptions / SignTextOptions / SignTextOutcome.
+//
+// Inline-text side: VerifyOptions (re-exported as VerifyTextOptions) /
+// VerifyTextResult / SignatureStatus / SignatureEntry.
+//
+// Note: SignImageOptions / VerifyImageOptions / SignTextOptions / VerifyOptions
+// derive only Debug+Clone(+Default) — they are NOT Serde-able. Binding-core
+// constructs them field-by-field from JSON via local parse_* helpers.
+// VerifyTextResult / SignatureEntry / SignatureStatus also lack Serde derives;
+// binding-core converts them to a JSON envelope for FFI transport.
+#[cfg(feature = "jacs-crate")]
+pub use jacs::simple::types::{
+    MediaVerificationResult, MediaVerifyStatus, SignImageOptions, SignTextOptions,
+    SignTextOutcome, SignedMedia, VerifyImageOptions,
+};
+#[cfg(feature = "jacs-crate")]
+pub use jacs::inline::{
+    SignatureEntry as TextSignatureEntry, SignatureStatus as TextSignatureStatus,
+    VerifyOptions as VerifyTextOptions, VerifyTextResult,
+};
+
+// =============================================================================
 // Layer 0: Core Signing (JacsProvider)
 // =============================================================================
 
@@ -332,6 +358,57 @@ pub trait JacsEmailProvider: JacsProvider {
 }
 
 // =============================================================================
+// Layer 8: Local Media (JacsMediaProvider) — JACS 0.10.0
+// =============================================================================
+//
+// Local-only inline-text + image sign/verify/extract. Operations do not touch
+// the HAI server: the trait is reachable from any provider that holds (or can
+// reload) a `jacs::simple::SimpleAgent`. PRD: docs/MEDIA_SIGNING_PRD.md §4.2.
+
+/// Extension trait for local image (PNG/JPEG/WebP) and inline-text sign/verify.
+///
+/// All operations are local — no HTTP, no server roundtrip. Identity follows
+/// the loaded JACS agent (same as `JacsEmailProvider::sign_email`).
+///
+/// `extract_media_signature` does not consult the agent; the implementation
+/// dispatches on `raw_payload` to either `extract_media_signature_raw` (raw
+/// base64url payload) or `extract_media_signature` (decoded JSON string) in
+/// JACS's `simple::advanced` module.
+#[cfg(feature = "jacs-crate")]
+pub trait JacsMediaProvider: JacsProvider {
+    /// Sign a markdown / text file in place by appending a YAML signature
+    /// block (`-----BEGIN JACS SIGNATURE-----`). Optional `.bak` backup.
+    fn sign_text_file(&self, path: &str, opts: SignTextOptions) -> Result<SignTextOutcome>;
+
+    /// Verify all signature blocks in a text file. File-level discriminators
+    /// (`MissingSignature`, `Malformed`) only escalate to `Err` under
+    /// `opts.strict`; per-block status entries always land inside the result.
+    fn verify_text_file(&self, path: &str, opts: VerifyTextOptions) -> Result<VerifyTextResult>;
+
+    /// Sign an image file by embedding a JACS signed-document JSON payload
+    /// in the format-appropriate metadata chunk (PNG iTXt / JPEG APP11 /
+    /// WebP XMP) and writing to `out_path`. With `opts.robust = true`, also
+    /// embeds via LSB steganography (PNG/JPEG only — WebP returns Unsupported).
+    fn sign_image(
+        &self,
+        in_path: &str,
+        out_path: &str,
+        opts: SignImageOptions,
+    ) -> Result<SignedMedia>;
+
+    /// Verify the JACS signature embedded in an image. Returns a status
+    /// discriminator (`Valid`, `HashMismatch`, `MissingSignature`, etc.) and
+    /// the signer info when available.
+    fn verify_image(&self, path: &str, opts: VerifyImageOptions) -> Result<MediaVerificationResult>;
+
+    /// Extract the JACS signature payload from a signed image without
+    /// verifying it. `raw_payload = false` returns the decoded JSON string;
+    /// `raw_payload = true` returns the base64url-no-pad wire payload as it
+    /// was embedded in the metadata chunk.
+    fn extract_media_signature(&self, path: &str, raw_payload: bool) -> Result<Option<String>>;
+}
+
+// =============================================================================
 // Layer 6: Agreements (feature-gated)
 // =============================================================================
 
@@ -422,6 +499,94 @@ impl JacsProvider for Box<dyn JacsProvider> {
 
     fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
         (**self).update_agent(new_agent_data)
+    }
+}
+
+// Blanket impl so `HaiClient<Box<dyn JacsMediaProvider>>` works. The wrapper
+// holds a single trait object that satisfies both the base `JacsProvider`
+// supertrait and the media-layer methods. PRD §4.3.
+//
+// Two impls together: `JacsProvider for Box<dyn JacsMediaProvider>` (so the
+// supertrait bound is satisfied for trait objects of the more-specific trait)
+// plus `JacsMediaProvider for Box<dyn JacsMediaProvider>` (so the trait-method
+// dispatch goes through). The base `Box<dyn JacsProvider>` blanket above is
+// unaffected — it only matches trait objects of `JacsProvider` itself.
+#[cfg(feature = "jacs-crate")]
+impl JacsProvider for Box<dyn JacsMediaProvider> {
+    fn jacs_id(&self) -> &str {
+        (**self).jacs_id()
+    }
+
+    fn sign_string(&self, message: &str) -> Result<String> {
+        (**self).sign_string(message)
+    }
+
+    fn sign_bytes(&self, data: &[u8]) -> Result<Vec<u8>> {
+        (**self).sign_bytes(data)
+    }
+
+    fn key_id(&self) -> &str {
+        (**self).key_id()
+    }
+
+    fn algorithm(&self) -> &str {
+        (**self).algorithm()
+    }
+
+    fn canonical_json(&self, value: &Value) -> Result<String> {
+        (**self).canonical_json(value)
+    }
+
+    fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
+        (**self).sign_response(payload)
+    }
+
+    fn verify_a2a_artifact(&self, wrapped_json: &str) -> Result<String> {
+        (**self).verify_a2a_artifact(wrapped_json)
+    }
+
+    fn sign_email_locally(&self, raw_email: &[u8]) -> Result<Vec<u8>> {
+        (**self).sign_email_locally(raw_email)
+    }
+
+    fn rotate(&self) -> Result<RotationResult> {
+        (**self).rotate()
+    }
+
+    fn export_agent_json(&self) -> Result<String> {
+        (**self).export_agent_json()
+    }
+
+    fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
+        (**self).update_agent(new_agent_data)
+    }
+}
+
+#[cfg(feature = "jacs-crate")]
+impl JacsMediaProvider for Box<dyn JacsMediaProvider> {
+    fn sign_text_file(&self, path: &str, opts: SignTextOptions) -> Result<SignTextOutcome> {
+        (**self).sign_text_file(path, opts)
+    }
+
+    fn verify_text_file(&self, path: &str, opts: VerifyTextOptions) -> Result<VerifyTextResult> {
+        (**self).verify_text_file(path, opts)
+    }
+
+    fn sign_image(
+        &self,
+        in_path: &str,
+        out_path: &str,
+        opts: SignImageOptions,
+    ) -> Result<SignedMedia> {
+        (**self).sign_image(in_path, out_path, opts)
+    }
+
+    fn verify_image(&self, path: &str, opts: VerifyImageOptions) -> Result<MediaVerificationResult> {
+        (**self).verify_image(path, opts)
+    }
+
+    fn extract_media_signature(&self, path: &str, raw_payload: bool) -> Result<Option<String>> {
+        (**self).extract_media_signature(path, raw_payload)
     }
 }
 
@@ -570,6 +735,118 @@ impl JacsProvider for StaticJacsProvider {
             signed_document: serde_json::to_string(&doc)?,
             agent_jacs_id: self.jacs_id.clone(),
         })
+    }
+}
+
+// =============================================================================
+// JacsMediaProvider fallback impls for the test-only providers.
+//
+// PRD §4.3 / TASK_003: hai-binding-core widens its trait object to
+// `Box<dyn JacsMediaProvider>`. Static and Noop providers cannot perform real
+// media signing (they have no SimpleAgent / no real key material), so each
+// method returns a clear `HaiError::Provider` describing the limitation.
+// Real signing requires `LocalJacsProvider` or `EmbeddedJacsProvider`.
+// =============================================================================
+
+#[cfg(feature = "jacs-crate")]
+fn media_op_test_only_error(provider: &str, op: &str) -> HaiError {
+    HaiError::Provider(format!(
+        "media operation '{op}' requires a real LocalJacsProvider — current provider is {provider} (test-only)"
+    ))
+}
+
+#[cfg(feature = "jacs-crate")]
+impl JacsMediaProvider for NoopJacsProvider {
+    fn sign_text_file(&self, _path: &str, _opts: SignTextOptions) -> Result<SignTextOutcome> {
+        Err(media_op_test_only_error("NoopJacsProvider", "sign_text_file"))
+    }
+
+    fn verify_text_file(
+        &self,
+        _path: &str,
+        _opts: VerifyTextOptions,
+    ) -> Result<VerifyTextResult> {
+        Err(media_op_test_only_error("NoopJacsProvider", "verify_text_file"))
+    }
+
+    fn sign_image(
+        &self,
+        _in_path: &str,
+        _out_path: &str,
+        _opts: SignImageOptions,
+    ) -> Result<SignedMedia> {
+        Err(media_op_test_only_error("NoopJacsProvider", "sign_image"))
+    }
+
+    fn verify_image(
+        &self,
+        _path: &str,
+        _opts: VerifyImageOptions,
+    ) -> Result<MediaVerificationResult> {
+        Err(media_op_test_only_error("NoopJacsProvider", "verify_image"))
+    }
+
+    fn extract_media_signature(
+        &self,
+        _path: &str,
+        _raw_payload: bool,
+    ) -> Result<Option<String>> {
+        Err(media_op_test_only_error(
+            "NoopJacsProvider",
+            "extract_media_signature",
+        ))
+    }
+}
+
+#[cfg(feature = "jacs-crate")]
+impl JacsMediaProvider for StaticJacsProvider {
+    fn sign_text_file(&self, _path: &str, _opts: SignTextOptions) -> Result<SignTextOutcome> {
+        Err(media_op_test_only_error(
+            "StaticJacsProvider",
+            "sign_text_file",
+        ))
+    }
+
+    fn verify_text_file(
+        &self,
+        _path: &str,
+        _opts: VerifyTextOptions,
+    ) -> Result<VerifyTextResult> {
+        Err(media_op_test_only_error(
+            "StaticJacsProvider",
+            "verify_text_file",
+        ))
+    }
+
+    fn sign_image(
+        &self,
+        _in_path: &str,
+        _out_path: &str,
+        _opts: SignImageOptions,
+    ) -> Result<SignedMedia> {
+        Err(media_op_test_only_error("StaticJacsProvider", "sign_image"))
+    }
+
+    fn verify_image(
+        &self,
+        _path: &str,
+        _opts: VerifyImageOptions,
+    ) -> Result<MediaVerificationResult> {
+        Err(media_op_test_only_error(
+            "StaticJacsProvider",
+            "verify_image",
+        ))
+    }
+
+    fn extract_media_signature(
+        &self,
+        _path: &str,
+        _raw_payload: bool,
+    ) -> Result<Option<String>> {
+        Err(media_op_test_only_error(
+            "StaticJacsProvider",
+            "extract_media_signature",
+        ))
     }
 }
 

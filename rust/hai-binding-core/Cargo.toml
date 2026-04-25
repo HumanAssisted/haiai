@@ -1,6 +1,6 @@
 [package]
 name = "hai-binding-core"
-version = "0.2.3"
+version = "0.3.0"
 description = "Shared binding core for HAI SDK FFI (Python, Node, Go)"
 readme = "README.md"
 keywords = ["hai", "jacs", "agent", "ffi", "binding"]
@@ -12,7 +12,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-haiai = { version = "=0.2.3", path = "../haiai" }
+haiai = { version = "=0.3.0", path = "../haiai" }
 serde = { workspace = true }
 serde_json.workspace = true
 thiserror.workspace = true
@@ -21,3 +21,6 @@ tokio.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 regex = "1"
+tempfile = "3"
+# Used to generate test PNG bytes for media-signing wrapper tests (Layer 8).
+image = { version = "0.25", default-features = false, features = ["png"] }

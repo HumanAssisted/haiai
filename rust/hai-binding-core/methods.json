@@ -359,6 +359,51 @@
       "notes": "Base64 encoding/decoding crosses FFI boundary. Content-Type: message/rfc822."
     },
     {
+      "name": "sign_text",
+      "category": "async",
+      "group": "media_local",
+      "params": { "path": "string", "opts_json": "{backup?, allow_duplicate?} (JSON)" },
+      "returns": "string (SignTextOutcome JSON)",
+      "auth_required": false,
+      "notes": "Local-only — no HTTP. Delegates to JacsMediaProvider trait."
+    },
+    {
+      "name": "verify_text",
+      "category": "async",
+      "group": "media_local",
+      "params": { "path": "string", "opts_json": "{strict?, key_dir?} (JSON)" },
+      "returns": "string ({status, signatures[], malformed_detail?} envelope JSON)",
+      "auth_required": false,
+      "notes": "Local-only — no HTTP. VerifyTextResult is converted to a flat JSON envelope."
+    },
+    {
+      "name": "sign_image",
+      "category": "async",
+      "group": "media_local",
+      "params": { "in_path": "string", "out_path": "string", "opts_json": "{robust?, format_hint?, refuse_overwrite?, backup?, unsafe_bak_mode?} (JSON)" },
+      "returns": "string (SignedMedia JSON)",
+      "auth_required": false,
+      "notes": "Local-only — no HTTP. PNG/JPEG/WebP. Robust mode is PNG/JPEG only."
+    },
+    {
+      "name": "verify_image",
+      "category": "async",
+      "group": "media_local",
+      "params": { "path": "string", "opts_json": "{strict?, key_dir?, robust?} (JSON)" },
+      "returns": "string (MediaVerificationResult JSON)",
+      "auth_required": false,
+      "notes": "Local-only. User-facing key 'robust' maps to JACS-internal scan_robust."
+    },
+    {
+      "name": "extract_media_signature",
+      "category": "async",
+      "group": "media_local",
+      "params": { "path": "string", "opts_json": "{raw_payload?} (JSON)" },
+      "returns": "string ({present, payload?} envelope JSON)",
+      "auth_required": false,
+      "notes": "Local-only. Decodes the JACS payload from a signed image."
+    },
+    {
       "name": "create_attestation",
       "category": "async",
       "group": "attestations",
@@ -616,13 +661,13 @@
     }
   ],
   "summary": {
-    "async_methods": 50,
+    "async_methods": 55,
     "streaming_methods": 6,
     "callback_methods": 2,
     "sync_methods": 11,
     "mutating_methods": 2,
     "excluded_methods": 5,
-    "total_public_methods": 76,
-    "binding_core_scope": "50 async + 6 streaming + 2 callback + 11 sync + 2 mutating = 71 methods"
+    "total_public_methods": 81,
+    "binding_core_scope": "55 async + 6 streaming + 2 callback + 11 sync + 2 mutating = 76 methods"
   }
 }

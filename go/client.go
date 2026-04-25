@@ -812,6 +812,137 @@ func (c *Client) VerifyEmail(ctx context.Context, rawEmail []byte) (*EmailVerifi
 	return &result, nil
 }
 
+// =============================================================================
+// Layer 8: Local Media Sign/Verify (TASK_009)
+// =============================================================================
+
+// SignText signs a text/markdown file in place by appending a JACS YAML
+// signature block. Local-only — no HAI server roundtrip.
+//
+// Backup defaults to true (the JACS-internal `backup` JSON key). To skip
+// the backup file, set `opts.NoBackup = true`. The wire JSON is shaped here
+// (NOT by `json.Marshal(opts)`) so the inverted convention does not leak
+// across the FFI boundary.
+func (c *Client) SignText(ctx context.Context, path string, opts SignTextOptions) (*SignTextResult, error) {
+	wire := struct {
+		Backup         bool `json:"backup"`
+		AllowDuplicate bool `json:"allow_duplicate"`
+	}{
+		Backup:         !opts.NoBackup,
+		AllowDuplicate: opts.AllowDuplicate,
+	}
+	optsJSON, err := json.Marshal(wire)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal sign_text options")
+	}
+	raw, err := c.ffi.SignText(path, string(optsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	var result SignTextResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode sign_text response")
+	}
+	return &result, nil
+}
+
+// VerifyText verifies all signature blocks in a text file. Local-only.
+func (c *Client) VerifyText(ctx context.Context, path string, opts VerifyTextOptions) (*VerifyTextResult, error) {
+	optsJSON, err := json.Marshal(opts)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal verify_text options")
+	}
+	raw, err := c.ffi.VerifyText(path, string(optsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	var result VerifyTextResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode verify_text response")
+	}
+	return &result, nil
+}
+
+// SignImage signs a PNG/JPEG/WebP image by embedding a JACS signature.
+//
+// Backup defaults to true (the safer default for image overwrite). Callers
+// who explicitly want no backup file written set `opts.NoBackup = true`.
+// The wire JSON is shaped here so the inverted-convention field does not
+// leak across the FFI boundary; previous behavior force-enabled backup
+// regardless of caller intent and is replaced with this honors-caller path.
+func (c *Client) SignImage(ctx context.Context, inPath, outPath string, opts SignImageOptions) (*SignImageResult, error) {
+	wire := struct {
+		Robust          bool    `json:"robust"`
+		FormatHint      string  `json:"format_hint,omitempty"`
+		RefuseOverwrite bool    `json:"refuse_overwrite"`
+		Backup          bool    `json:"backup"`
+		UnsafeBakMode   *uint32 `json:"unsafe_bak_mode,omitempty"`
+	}{
+		Robust:          opts.Robust,
+		FormatHint:      opts.FormatHint,
+		RefuseOverwrite: opts.RefuseOverwrite,
+		Backup:          !opts.NoBackup,
+		UnsafeBakMode:   opts.UnsafeBakMode,
+	}
+	optsJSON, err := json.Marshal(wire)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal sign_image options")
+	}
+	raw, err := c.ffi.SignImage(inPath, outPath, string(optsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	var result SignImageResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode sign_image response")
+	}
+	return &result, nil
+}
+
+// VerifyImage verifies the JACS signature embedded in an image. Local-only.
+//
+// binding-core flattens the JACS-internal MediaVerifyStatus into a flat snake_case
+// string via media_verify_result_to_json, so the Go decoder simply reads `status`
+// directly and never sees the tagged `{"malformed": detail}` shape.
+func (c *Client) VerifyImage(ctx context.Context, filePath string, opts VerifyImageOptions) (*VerifyImageResult, error) {
+	optsJSON, err := json.Marshal(opts)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal verify_image options")
+	}
+	raw, err := c.ffi.VerifyImage(filePath, string(optsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	var result VerifyImageResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode verify_image response")
+	}
+	return &result, nil
+}
+
+// ExtractMediaSignature returns the JACS payload embedded in a signed image
+// without verifying. With `rawPayload=true` returns the base64url bytes
+// verbatim; otherwise decodes the JSON payload.
+func (c *Client) ExtractMediaSignature(
+	ctx context.Context,
+	filePath string,
+	rawPayload bool,
+) (*ExtractMediaSignatureResult, error) {
+	optsJSON, err := json.Marshal(map[string]bool{"raw_payload": rawPayload})
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal extract options")
+	}
+	raw, err := c.ffi.ExtractMediaSignature(filePath, string(optsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	var result ExtractMediaSignatureResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode extract_media_signature response")
+	}
+	return &result, nil
+}
+
 // ListMessages retrieves messages from the agent's mailbox.
 func (c *Client) ListMessages(ctx context.Context, opts ListMessagesOptions) ([]EmailMessage, error) {
 	optsJSON, err := json.Marshal(opts)

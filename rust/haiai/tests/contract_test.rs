@@ -282,3 +282,65 @@ fn contract_trust_score_round_trip() {
         "serialized JSON should not contain trust_score key when None"
     );
 }
+
+// =============================================================================
+// TASK_010: ffi_method_parity.json — media_local section + total count
+// =============================================================================
+
+#[test]
+fn ffi_method_parity_includes_media_local_section() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/ffi_method_parity.json");
+    let raw = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let val: serde_json::Value =
+        serde_json::from_str(&raw).expect("ffi_method_parity.json must be valid JSON");
+    let media = val
+        .get("methods")
+        .and_then(|m| m.get("media_local"))
+        .and_then(|a| a.as_array())
+        .expect("methods.media_local must exist");
+    let names: Vec<&str> = media
+        .iter()
+        .filter_map(|m| m.get("name").and_then(|n| n.as_str()))
+        .collect();
+    assert_eq!(media.len(), 5, "media_local must contain exactly 5 methods");
+    for required in &[
+        "sign_text",
+        "verify_text",
+        "sign_image",
+        "verify_image",
+        "extract_media_signature",
+    ] {
+        assert!(
+            names.contains(required),
+            "media_local missing entry: {required}"
+        );
+    }
+}
+
+#[test]
+fn ffi_method_parity_total_count_is_72() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/ffi_method_parity.json");
+    let raw = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let val: serde_json::Value =
+        serde_json::from_str(&raw).expect("ffi_method_parity.json must be valid JSON");
+    let total = val["total_method_count"]
+        .as_u64()
+        .expect("total_method_count must be a number");
+    assert_eq!(total, 72, "total_method_count must equal 72 after media-signing PRD");
+
+    let methods = val["methods"]
+        .as_object()
+        .expect("methods must be an object");
+    let mut sum: u64 = 0;
+    for (_section, arr) in methods.iter() {
+        sum += arr.as_array().expect("section must be an array").len() as u64;
+    }
+    assert_eq!(
+        sum, 72,
+        "Sum of method counts across all sections must equal total_method_count"
+    );
+}

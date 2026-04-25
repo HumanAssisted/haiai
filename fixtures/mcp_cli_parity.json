@@ -21,7 +21,12 @@
     { "mcp_tool": "hai_get_email_template", "cli_command": "template" },
     { "mcp_tool": "hai_update_email_template", "cli_command": "template" },
     { "mcp_tool": "hai_delete_email_template", "cli_command": "template" },
-    { "mcp_tool": "hai_get_raw_email", "cli_command": "get-raw-email" }
+    { "mcp_tool": "hai_get_raw_email", "cli_command": "get-raw-email" },
+    { "mcp_tool": "hai_sign_text", "cli_command": "sign-text" },
+    { "mcp_tool": "hai_verify_text", "cli_command": "verify-text" },
+    { "mcp_tool": "hai_sign_image", "cli_command": "sign-image" },
+    { "mcp_tool": "hai_verify_image", "cli_command": "verify-image" },
+    { "mcp_tool": "hai_extract_media_signature", "cli_command": "extract-media-signature" }
   ],
   "mcp_only": [
     { "name": "hai_verify_status", "reason": "MCP exposes per-agent lookup; CLI 'status' is self-only" },

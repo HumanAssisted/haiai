@@ -61,9 +61,9 @@ scripts/ci/              # CI enforcement (crypto policy denylist)
   +---------+ +-------+ +--------+
 ```
 
-## Trait Architecture (JACS 0.9.4)
+## Trait Architecture (JACS 0.11.0)
 
-The Rust SDK exposes JACS capabilities through 8 layered extension traits defined in `rust/haiai/src/jacs.rs`, implemented in `rust/haiai/src/jacs_local.rs`:
+The Rust SDK exposes JACS capabilities through 9 layered extension traits defined in `rust/haiai/src/jacs.rs`, implemented in `rust/haiai/src/jacs_local.rs`:
 
 - **Layer 0** `JacsProvider` -- Core signing, identity, canonical JSON
 - **Layer 1** `JacsAgentLifecycle` -- Key rotation, migration, diagnostics, quickstart
@@ -73,10 +73,11 @@ The Rust SDK exposes JACS capabilities through 8 layered extension traits define
 - **Layer 5** `JacsEmailProvider` -- Email signing/verification, attachments
 - **Layer 6** `JacsAgreementProvider` -- Multi-party agreements (feature: `agreements`)
 - **Layer 7** `JacsAttestationProvider` -- Attestation claims (feature: `attestation`)
+- **Layer 8** `JacsMediaProvider` -- Local image (PNG/JPEG/WebP) and inline-text sign/verify/extract
 
 Storage backend selection: `rust/haiai/src/config.rs` (`resolve_storage_backend()`). Labels: `fs`, `rusqlite`, `sqlite` (alias).
 
-Full parity map: `docs/haisdk/PARITY_MAP.md` (53 exposed, 18 excluded, 71 total).
+Full parity map: `docs/haisdk/PARITY_MAP.md` (60 exposed, 19 excluded, 79 total).
 
 ## Rules
 

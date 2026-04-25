@@ -12,8 +12,10 @@ use serde_json::Value;
 
 use crate::error::{HaiError, Result};
 use crate::jacs::{
-    JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider, JacsProvider,
-    JacsVerificationProvider,
+    JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider,
+    JacsMediaProvider, JacsProvider, JacsVerificationProvider, MediaVerificationResult,
+    SignImageOptions, SignTextOptions, SignTextOutcome, SignedMedia, VerifyImageOptions,
+    VerifyTextOptions, VerifyTextResult,
 };
 #[cfg(feature = "agreements")]
 use crate::jacs::JacsAgreementProvider;
@@ -1203,6 +1205,62 @@ impl JacsAttestationProvider for LocalJacsProvider {
             .map_err(|e| HaiError::Provider(format!("verify_attestation failed: {e}")))?;
         serde_json::to_value(&result)
             .map_err(|e| HaiError::Provider(format!("serialize attestation result: {e}")))
+    }
+}
+
+// =============================================================================
+// JacsMediaProvider implementation (Layer 8) — JACS 0.10.0
+// =============================================================================
+//
+// Local-only sign/verify for inline text and PNG/JPEG/WebP images. Each method
+// reloads a `SimpleAgent` view via `load_simple_agent()` (cheap; config IO),
+// then delegates to the JACS free functions in `jacs::simple::advanced`.
+// PRD: docs/MEDIA_SIGNING_PRD.md §4.2 / §7 R2.
+
+impl JacsMediaProvider for LocalJacsProvider {
+    fn sign_text_file(&self, path: &str, opts: SignTextOptions) -> Result<SignTextOutcome> {
+        let simple = self.load_simple_agent()?;
+        jacs::simple::advanced::sign_text_file(&simple, path, opts)
+            .map_err(|e| HaiError::Provider(format!("sign_text_file failed: {e}")))
+    }
+
+    fn verify_text_file(&self, path: &str, opts: VerifyTextOptions) -> Result<VerifyTextResult> {
+        let simple = self.load_simple_agent()?;
+        jacs::simple::advanced::verify_text_file(&simple, path, opts)
+            .map_err(|e| HaiError::Provider(format!("verify_text_file failed: {e}")))
+    }
+
+    fn sign_image(
+        &self,
+        in_path: &str,
+        out_path: &str,
+        opts: SignImageOptions,
+    ) -> Result<SignedMedia> {
+        let simple = self.load_simple_agent()?;
+        jacs::simple::advanced::sign_image(&simple, in_path, out_path, opts)
+            .map_err(|e| HaiError::Provider(format!("sign_image failed: {e}")))
+    }
+
+    fn verify_image(
+        &self,
+        path: &str,
+        opts: VerifyImageOptions,
+    ) -> Result<MediaVerificationResult> {
+        let simple = self.load_simple_agent()?;
+        jacs::simple::advanced::verify_image(&simple, path, opts)
+            .map_err(|e| HaiError::Provider(format!("verify_image failed: {e}")))
+    }
+
+    fn extract_media_signature(&self, path: &str, raw_payload: bool) -> Result<Option<String>> {
+        // PRD §4.2 / TASK_001 Step 5: JACS exposes two free functions, not one
+        // with a flag. Neither takes the SimpleAgent — extraction does not need
+        // a signer. The provider is here for trait dispatch consistency.
+        let result = if raw_payload {
+            jacs::simple::advanced::extract_media_signature_raw(path)
+        } else {
+            jacs::simple::advanced::extract_media_signature(path)
+        };
+        result.map_err(|e| HaiError::Provider(format!("extract_media_signature failed: {e}")))
     }
 }
 
