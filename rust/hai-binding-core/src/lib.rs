@@ -21,8 +21,9 @@ use std::path::Path;
 use haiai::client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
 use haiai::error::HaiError;
 use haiai::jacs::{
-    JacsMediaProvider, JacsProvider, MediaVerificationResult, MediaVerifyStatus, SignImageOptions,
-    SignTextOptions, StaticJacsProvider, TextSignatureStatus, VerifyImageOptions, VerifyTextOptions,
+    media_verify_status_to_str, text_signature_status_to_str, JacsMediaProvider, JacsProvider,
+    MediaVerificationResult, MediaVerifyStatus, SignImageOptions, SignTextOptions,
+    StaticJacsProvider, TextSignatureStatus, VerifyImageOptions, VerifyTextOptions,
     VerifyTextResult,
 };
 use haiai::jacs_local::LocalJacsProvider;
@@ -1335,18 +1336,11 @@ pub(crate) fn parse_extract_opts(s: &str) -> HaiBindingResult<bool> {
 /// Translate the not-Serde-able `VerifyTextResult` into a JSON envelope.
 /// Single conversion site: language SDKs and CLI/MCP downstream of this
 /// always read this envelope shape and never see the raw JACS enum.
+///
+/// Status labels are produced via [`text_signature_status_to_str`] in
+/// `haiai::jacs` (Issue 011 — single source of truth for the wire string
+/// across binding-core/MCP/CLI).
 fn verify_text_result_to_json(result: &VerifyTextResult) -> Value {
-    fn signature_status_str(s: &TextSignatureStatus) -> &'static str {
-        match s {
-            TextSignatureStatus::Valid => "valid",
-            TextSignatureStatus::InvalidSignature => "invalid_signature",
-            TextSignatureStatus::HashMismatch => "hash_mismatch",
-            TextSignatureStatus::KeyNotFound => "key_not_found",
-            TextSignatureStatus::UnsupportedAlgorithm => "unsupported_algorithm",
-            TextSignatureStatus::Malformed(_) => "malformed",
-        }
-    }
-
     match result {
         VerifyTextResult::Signed { signatures } => {
             let entries: Vec<Value> = signatures
@@ -1356,7 +1350,7 @@ fn verify_text_result_to_json(result: &VerifyTextResult) -> Value {
                         "signer_id": sig.signer_id,
                         "algorithm": sig.algorithm,
                         "timestamp": sig.timestamp,
-                        "status": signature_status_str(&sig.status),
+                        "status": text_signature_status_to_str(&sig.status),
                     });
                     if let TextSignatureStatus::Malformed(detail) = &sig.status {
                         entry["malformed_detail"] = Value::String(detail.clone());
@@ -1391,21 +1385,13 @@ fn verify_text_result_to_json(result: &VerifyTextResult) -> Value {
 ///
 /// Single conversion site: language SDKs (Python/Node/Go) and CLI/MCP always
 /// read this shape and never see the raw JACS enum.
+///
+/// Status labels are produced via [`media_verify_status_to_str`] in
+/// `haiai::jacs` (Issue 011 — single source of truth for the wire string
+/// across binding-core/MCP/CLI).
 fn media_verify_result_to_json(result: &MediaVerificationResult) -> Value {
-    fn status_str(s: &MediaVerifyStatus) -> &'static str {
-        match s {
-            MediaVerifyStatus::Valid => "valid",
-            MediaVerifyStatus::InvalidSignature => "invalid_signature",
-            MediaVerifyStatus::HashMismatch => "hash_mismatch",
-            MediaVerifyStatus::MissingSignature => "missing_signature",
-            MediaVerifyStatus::KeyNotFound => "key_not_found",
-            MediaVerifyStatus::UnsupportedFormat => "unsupported_format",
-            MediaVerifyStatus::Malformed(_) => "malformed",
-        }
-    }
-
     let mut envelope = serde_json::json!({
-        "status": status_str(&result.status),
+        "status": media_verify_status_to_str(&result.status),
         "signer_id": result.signer_id,
         "algorithm": result.algorithm,
         "format": result.format,

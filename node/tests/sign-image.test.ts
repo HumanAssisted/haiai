@@ -13,8 +13,11 @@
  * side.
  */
 
-import { afterAll, beforeAll, describe, it, expect } from 'vitest';
+import { afterAll, beforeAll, describe, it, expect, vi } from 'vitest';
 import { createRequire } from 'node:module';
+import { HaiClient } from '../src/client.js';
+import { generateTestKeypair } from './setup.js';
+import { createMockFFI } from './ffi-mock.js';
 import {
   mkdtempSync,
   mkdirSync,
@@ -249,5 +252,94 @@ describeMaybe('Node SDK signing-side parity (sign_image)', () => {
     const env = JSON.parse(await ffiClient!.extractMediaSignature(path, '{}'));
     expect(env.present).toBe(false);
     expect(env.payload).toBeNull();
+  });
+
+  it('signImage with noBackup skips bak (Issue 009 parity)', async () => {
+    // Issue 009: Node SDK option `noBackup` must propagate to JACS as
+    // `backup=false`. Mirrors Go's TestSignImageNoBackupSkipsBak and
+    // python's test_sign_image_no_backup_skips_bak.
+    const inPath = stagedPath('in_nobak.png');
+    const outPath = join(stageTmpDir!, 'out_nobak.png');
+    await ffiClient!.signImage(
+      inPath,
+      outPath,
+      JSON.stringify({ backup: false }),
+    );
+    expect(existsSync(outPath + '.bak')).toBe(false);
+  });
+});
+
+// =============================================================================
+// SDK-level wire option mapping (Issue 009 — verifies the SDK wrapper
+// translates `noBackup`/`unsafeBakMode` into the wire JSON `backup`/
+// `unsafe_bak_mode` keys consumed by binding-core).
+// =============================================================================
+
+describe('signImage SDK option translation (Issue 009)', () => {
+  it('noBackup=true maps to wire backup=false', async () => {
+    const keypair = generateTestKeypair();
+    const client = await HaiClient.fromCredentials('agent-issue-009-1', keypair.privateKeyPem, {
+      url: 'https://hai.example',
+    });
+    const signImageMock = vi.fn(
+      async (_in: string, _out: string, opts: Record<string, unknown>) => {
+        expect(opts.backup).toBe(false);
+        expect(opts.unsafe_bak_mode).toBeUndefined();
+        return {
+          out_path: _out,
+          signer_id: 'agent-issue-009-1',
+          format: 'png',
+          robust: false,
+          backup_path: null,
+        };
+      },
+    );
+    client._setFFIAdapter(createMockFFI({ signImage: signImageMock }));
+    await client.signImage('/x/in.png', '/x/out.png', { noBackup: true });
+    expect(signImageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('default (no noBackup) maps to wire backup=true', async () => {
+    const keypair = generateTestKeypair();
+    const client = await HaiClient.fromCredentials('agent-issue-009-2', keypair.privateKeyPem, {
+      url: 'https://hai.example',
+    });
+    const signImageMock = vi.fn(
+      async (_in: string, _out: string, opts: Record<string, unknown>) => {
+        expect(opts.backup).toBe(true);
+        return {
+          out_path: _out,
+          signer_id: 'agent-issue-009-2',
+          format: 'png',
+          robust: false,
+          backup_path: '/x/out.png.bak',
+        };
+      },
+    );
+    client._setFFIAdapter(createMockFFI({ signImage: signImageMock }));
+    await client.signImage('/x/in.png', '/x/out.png');
+    expect(signImageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('unsafeBakMode=0o644 maps to wire unsafe_bak_mode=0o644', async () => {
+    const keypair = generateTestKeypair();
+    const client = await HaiClient.fromCredentials('agent-issue-009-3', keypair.privateKeyPem, {
+      url: 'https://hai.example',
+    });
+    const signImageMock = vi.fn(
+      async (_in: string, _out: string, opts: Record<string, unknown>) => {
+        expect(opts.unsafe_bak_mode).toBe(0o644);
+        return {
+          out_path: _out,
+          signer_id: 'agent-issue-009-3',
+          format: 'png',
+          robust: false,
+          backup_path: '/x/out.png.bak',
+        };
+      },
+    );
+    client._setFFIAdapter(createMockFFI({ signImage: signImageMock }));
+    await client.signImage('/x/in.png', '/x/out.png', { unsafeBakMode: 0o644 });
+    expect(signImageMock).toHaveBeenCalledTimes(1);
   });
 });

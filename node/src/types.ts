@@ -916,6 +916,19 @@ export interface SignImageOptions {
   format?: string;
   /** Refuse to overwrite an existing JACS signature in the input. */
   refuseOverwrite?: boolean;
+  /**
+   * Skip the `<out>.bak` write. Default `false` (i.e., backup IS taken when
+   * out_path overwrites an existing file). Mirrors `signText`'s `noBackup`
+   * toggle and Go's `SignImageOptions.NoBackup` (Issue 003 / Issue 009 —
+   * cross-language parity).
+   */
+  noBackup?: boolean;
+  /**
+   * Override the default `0o600` backup file permission. Set only when
+   * integrating with tooling that needs a broader mode (default unset →
+   * 0o600).
+   */
+  unsafeBakMode?: number;
 }
 
 /** Options for `verifyImage`. */

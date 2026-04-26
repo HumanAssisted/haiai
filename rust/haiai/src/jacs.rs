@@ -39,6 +39,57 @@ pub use jacs::inline::{
 };
 
 // =============================================================================
+// Issue 011: shared snake_case status-string helpers.
+//
+// These translate the JACS-side `MediaVerifyStatus` and `TextSignatureStatus`
+// enums to the canonical wire string used uniformly by binding-core (FFI
+// JSON envelopes), hai-mcp (MCP `status` field), and haiai-cli (human label
+// + JSON `status` field). Before, three identical match-arm copies lived in
+// each crate; the next variant added in JACS would have required three
+// edits in three files. Centralizing here makes the wire contract and CLI
+// label drift-impossible by construction.
+//
+// Strings are stable wire identifiers (not human messages). Do not
+// localize. New variants must be added by JACS first; the match here will
+// then fail to compile, surfacing the breakage at the closest review point.
+// =============================================================================
+
+/// Map a JACS [`MediaVerifyStatus`] to its canonical snake_case wire string.
+///
+/// This is the single source of truth for the status label across the
+/// binding-core JSON envelopes, the MCP `verify_image` envelope, and the
+/// haiai-cli human label. Centralized per Issue 011 to prevent drift when
+/// JACS adds a variant.
+#[cfg(feature = "jacs-crate")]
+pub fn media_verify_status_to_str(s: &MediaVerifyStatus) -> &'static str {
+    match s {
+        MediaVerifyStatus::Valid => "valid",
+        MediaVerifyStatus::InvalidSignature => "invalid_signature",
+        MediaVerifyStatus::HashMismatch => "hash_mismatch",
+        MediaVerifyStatus::MissingSignature => "missing_signature",
+        MediaVerifyStatus::KeyNotFound => "key_not_found",
+        MediaVerifyStatus::UnsupportedFormat => "unsupported_format",
+        MediaVerifyStatus::Malformed(_) => "malformed",
+    }
+}
+
+/// Map a JACS [`TextSignatureStatus`] to its canonical snake_case wire
+/// string. Single source of truth across binding-core JSON envelopes,
+/// the MCP `verify_text` envelope, and the haiai-cli human label
+/// (Issue 011).
+#[cfg(feature = "jacs-crate")]
+pub fn text_signature_status_to_str(s: &TextSignatureStatus) -> &'static str {
+    match s {
+        TextSignatureStatus::Valid => "valid",
+        TextSignatureStatus::InvalidSignature => "invalid_signature",
+        TextSignatureStatus::HashMismatch => "hash_mismatch",
+        TextSignatureStatus::KeyNotFound => "key_not_found",
+        TextSignatureStatus::UnsupportedAlgorithm => "unsupported_algorithm",
+        TextSignatureStatus::Malformed(_) => "malformed",
+    }
+}
+
+// =============================================================================
 // Layer 0: Core Signing (JacsProvider)
 // =============================================================================
 

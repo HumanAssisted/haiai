@@ -285,3 +285,43 @@ def test_extract_media_signature_unsigned_returns_present_false(
     extracted = sdk_client.extract_media_signature(str(in_path))
     assert extracted.present is False
     assert extracted.payload is None
+
+
+def test_sign_image_no_backup_skips_bak(sdk_client: Any, stage_dir: Path) -> None:
+    """Issue 009 parity: ``no_backup=True`` must propagate to JACS as
+    ``backup=False`` so no ``<out>.bak`` file is written. Mirrors Go's
+    ``TestSignImageNoBackupSkipsBak`` and Node's
+    ``signImage with noBackup skips bak`` test.
+    """
+    in_path = stage_dir / "in_nobak.png"
+    in_path.write_bytes(_make_test_png())
+    out_path = stage_dir / "out_nobak.png"
+
+    sdk_client.sign_image(str(in_path), str(out_path), no_backup=True)
+    assert not (stage_dir / "out_nobak.png.bak").exists(), (
+        "no_backup=True must skip writing <out>.bak"
+    )
+
+
+def test_sign_image_default_writes_backup_when_overwriting(
+    sdk_client: Any, stage_dir: Path
+) -> None:
+    """Default ``no_backup=False`` (i.e., ``backup=True``) writes ``<out>.bak``
+    when the output path overwrites an existing file. Mirrors the JACS-side
+    contract: backup is only created when ``in_path == out_path`` or when the
+    output already exists.
+    """
+    in_path = stage_dir / "in_bak.png"
+    in_path.write_bytes(_make_test_png())
+    # Pre-populate out_path so JACS treats this as an overwrite.
+    out_path = stage_dir / "out_bak.png"
+    out_path.write_bytes(_make_test_png())
+
+    signed = sdk_client.sign_image(str(in_path), str(out_path))
+    # JACS may either return the bak path or write the backup silently;
+    # the contract is that no_backup=False does NOT skip the bak write
+    # when overwriting.
+    bak_present = (stage_dir / "out_bak.png.bak").exists() or signed.backup_path is not None
+    assert bak_present, (
+        "default no_backup=False should write <out>.bak when overwriting"
+    )

@@ -1,9 +1,10 @@
 use haiai::{
-    generate_verify_link, generate_verify_link_hosted, CreateEmailTemplateOptions, HaiClient,
-    JacsMediaProvider, JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions,
-    MediaVerifyStatus, RegisterAgentOptions, SearchOptions, SendEmailOptions, SignImageOptions,
-    SignTextOptions, TextSignatureStatus, UpdateEmailTemplateOptions, VerifyImageOptions,
-    VerifyTextOptions, VerifyTextResult,
+    generate_verify_link, generate_verify_link_hosted, media_verify_status_to_str,
+    text_signature_status_to_str, CreateEmailTemplateOptions, HaiClient, JacsMediaProvider,
+    JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions, MediaVerifyStatus,
+    RegisterAgentOptions, SearchOptions, SendEmailOptions, SignImageOptions, SignTextOptions,
+    TextSignatureStatus, UpdateEmailTemplateOptions, VerifyImageOptions, VerifyTextOptions,
+    VerifyTextResult,
 };
 use jacs::validation::require_relative_path_safe;
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
@@ -842,28 +843,10 @@ fn guard_relative_path(label: &str, path: &str) -> Result<(), ToolError> {
     })
 }
 
-fn signature_status_str(s: &TextSignatureStatus) -> &'static str {
-    match s {
-        TextSignatureStatus::Valid => "valid",
-        TextSignatureStatus::InvalidSignature => "invalid_signature",
-        TextSignatureStatus::HashMismatch => "hash_mismatch",
-        TextSignatureStatus::KeyNotFound => "key_not_found",
-        TextSignatureStatus::UnsupportedAlgorithm => "unsupported_algorithm",
-        TextSignatureStatus::Malformed(_) => "malformed",
-    }
-}
-
-fn media_verify_status_str(s: &MediaVerifyStatus) -> String {
-    match s {
-        MediaVerifyStatus::Valid => "valid".into(),
-        MediaVerifyStatus::InvalidSignature => "invalid_signature".into(),
-        MediaVerifyStatus::HashMismatch => "hash_mismatch".into(),
-        MediaVerifyStatus::MissingSignature => "missing_signature".into(),
-        MediaVerifyStatus::KeyNotFound => "key_not_found".into(),
-        MediaVerifyStatus::UnsupportedFormat => "unsupported_format".into(),
-        MediaVerifyStatus::Malformed(_) => "malformed".into(),
-    }
-}
+// Issue 011: status-string helpers were hoisted into `haiai::jacs` so the
+// wire labels are produced from one canonical source. These local helpers
+// were dropped; call `media_verify_status_to_str` /
+// `text_signature_status_to_str` directly.
 
 async fn call_sign_text(context: &HaiServerContext, args: &Value) -> ToolResult {
     let path = required_string(args, "path")?;
@@ -874,10 +857,12 @@ async fn call_sign_text(context: &HaiServerContext, args: &Value) -> ToolResult 
     let provider = context
         .embedded_provider(optional_string(args, "config_path"))
         .map_err(tool_message)?;
+    // Issue 010: use ..Default::default() so future JACS field additions
+    // (e.g., a new SignTextOptions field) don't break this call site.
     let opts = SignTextOptions {
         backup: !no_backup,
         allow_duplicate,
-        unsafe_bak_mode: None,
+        ..SignTextOptions::default()
     };
     let outcome = provider.sign_text_file(path, opts).map_err(tool_message)?;
     Ok(success_tool_result(
@@ -922,7 +907,7 @@ async fn call_verify_text(context: &HaiServerContext, args: &Value) -> ToolResul
                         "signer_id": sig.signer_id,
                         "algorithm": sig.algorithm,
                         "timestamp": sig.timestamp,
-                        "status": signature_status_str(&sig.status),
+                        "status": text_signature_status_to_str(&sig.status),
                     })
                 })
                 .collect();
@@ -976,12 +961,13 @@ async fn call_sign_image(context: &HaiServerContext, args: &Value) -> ToolResult
     let provider = context
         .embedded_provider(optional_string(args, "config_path"))
         .map_err(tool_message)?;
+    // Issue 010: use ..Default::default() so future JACS field additions
+    // (e.g., a new SignImageOptions field) don't break this call site.
     let opts = SignImageOptions {
         robust,
         format_hint,
         refuse_overwrite,
-        backup: true,
-        unsafe_bak_mode: None,
+        ..SignImageOptions::default()
     };
     let signed = provider
         .sign_image(input_path, output_path, opts)
@@ -1027,7 +1013,7 @@ async fn call_verify_image(context: &HaiServerContext, args: &Value) -> ToolResu
     };
     let result = provider.verify_image(file_path, opts).map_err(tool_message)?;
 
-    let status = media_verify_status_str(&result.status);
+    let status = media_verify_status_to_str(&result.status);
     let success = match &result.status {
         MediaVerifyStatus::Valid => true,
         MediaVerifyStatus::MissingSignature => !strict,

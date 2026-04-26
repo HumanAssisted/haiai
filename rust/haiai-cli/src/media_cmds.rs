@@ -7,8 +7,9 @@
 
 use anyhow::Context as _;
 use haiai::{
-    JacsMediaProvider, LocalJacsProvider, MediaVerifyStatus, SignImageOptions, SignTextOptions,
-    TextSignatureStatus, VerifyImageOptions, VerifyTextOptions, VerifyTextResult,
+    media_verify_status_to_str, text_signature_status_to_str, JacsMediaProvider, LocalJacsProvider,
+    MediaVerifyStatus, SignImageOptions, SignTextOptions, TextSignatureStatus, VerifyImageOptions,
+    VerifyTextOptions, VerifyTextResult,
 };
 use serde_json::json;
 
@@ -28,10 +29,12 @@ pub fn handle_sign_text(
     json_out: bool,
 ) -> anyhow::Result<()> {
     let provider = load_provider()?;
+    // Issue 010: use ..Default::default() so future JACS field additions
+    // (e.g., a new SignTextOptions field) don't break this call site.
     let opts = SignTextOptions {
         backup: !no_backup,
         allow_duplicate,
-        unsafe_bak_mode: None,
+        ..SignTextOptions::default()
     };
     let outcome = provider
         .sign_text_file(file, opts)
@@ -84,7 +87,7 @@ pub fn handle_verify_text(
                             "signer_id": sig.signer_id,
                             "algorithm": sig.algorithm,
                             "timestamp": sig.timestamp,
-                            "status": sig_status_str(&sig.status),
+                            "status": text_signature_status_to_str(&sig.status),
                         })
                     })
                     .collect();
@@ -115,7 +118,7 @@ pub fn handle_verify_text(
                         },
                         sig.signer_id,
                         sig.algorithm,
-                        sig_status_str(&sig.status)
+                        text_signature_status_to_str(&sig.status)
                     );
                 }
             }
@@ -162,16 +165,9 @@ pub fn handle_verify_text(
     }
 }
 
-fn sig_status_str(s: &TextSignatureStatus) -> &'static str {
-    match s {
-        TextSignatureStatus::Valid => "valid",
-        TextSignatureStatus::InvalidSignature => "invalid_signature",
-        TextSignatureStatus::HashMismatch => "hash_mismatch",
-        TextSignatureStatus::KeyNotFound => "key_not_found",
-        TextSignatureStatus::UnsupportedAlgorithm => "unsupported_algorithm",
-        TextSignatureStatus::Malformed(_) => "malformed",
-    }
-}
+// Issue 011: status-string helpers were hoisted into `haiai::jacs`. The
+// local `sig_status_str` was dropped — call `text_signature_status_to_str`
+// directly so all surfaces (binding-core/MCP/CLI) share one source.
 
 // ---------------------------------------------------------------------------
 // sign-image
@@ -186,12 +182,13 @@ pub fn handle_sign_image(
     json_out: bool,
 ) -> anyhow::Result<()> {
     let provider = load_provider()?;
+    // Issue 010: use ..Default::default() so future JACS field additions
+    // (e.g., a new SignImageOptions field) don't break this call site.
     let opts = SignImageOptions {
         robust,
         format_hint: format.map(str::to_string),
         refuse_overwrite,
-        backup: true,
-        unsafe_bak_mode: None,
+        ..SignImageOptions::default()
     };
     let signed = provider
         .sign_image(input, out, opts)
@@ -255,14 +252,15 @@ pub fn handle_verify_image(
     if json_out {
         println!("{}", serde_json::to_string(&result)?);
     } else {
+        // Issue 011: derive the wire label from the shared helper, then
+        // append the malformed detail (which is CLI-specific human formatting)
+        // — keeps the wire string drift-free while preserving the existing
+        // human-readable detail.
         let status_label = match &result.status {
-            MediaVerifyStatus::Valid => "valid".to_string(),
-            MediaVerifyStatus::InvalidSignature => "invalid_signature".to_string(),
-            MediaVerifyStatus::HashMismatch => "hash_mismatch".to_string(),
-            MediaVerifyStatus::MissingSignature => "missing_signature".to_string(),
-            MediaVerifyStatus::KeyNotFound => "key_not_found".to_string(),
-            MediaVerifyStatus::UnsupportedFormat => "unsupported_format".to_string(),
-            MediaVerifyStatus::Malformed(d) => format!("malformed ({d})"),
+            MediaVerifyStatus::Malformed(d) => {
+                format!("{} ({d})", media_verify_status_to_str(&result.status))
+            }
+            other => media_verify_status_to_str(other).to_string(),
         };
         println!("status: {}", status_label);
         if let Some(s) = &result.signer_id {

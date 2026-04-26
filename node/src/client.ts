@@ -1317,9 +1317,10 @@ export class HaiClient {
     const opts: Record<string, unknown> = {
       robust: options?.robust ?? false,
       refuse_overwrite: options?.refuseOverwrite ?? false,
-      backup: true,
+      backup: !(options?.noBackup ?? false),
     };
     if (options?.format != null) opts.format_hint = options.format;
+    if (options?.unsafeBakMode != null) opts.unsafe_bak_mode = options.unsafeBakMode;
     const data = await this.ffi.signImage(inPath, outPath, opts);
     return {
       outPath: data.out_path as string,

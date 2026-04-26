@@ -659,16 +659,26 @@ class AsyncHaiClient:
         robust: bool = False,
         format: Optional[str] = None,
         refuse_overwrite: bool = False,
+        no_backup: bool = False,
+        unsafe_bak_mode: Optional[int] = None,
     ) -> SignImageResult:
-        """Sign an image (PNG/JPEG/WebP). Local-only."""
+        """Sign an image (PNG/JPEG/WebP). Local-only.
+
+        ``no_backup`` skips the ``<out_path>.bak`` write (default False —
+        backup IS taken). ``unsafe_bak_mode`` overrides the 0o600 default.
+        See :meth:`HaiClient.sign_image` for the full contract — Issue 009
+        cross-language parity.
+        """
         ffi = self._get_ffi()
         opts: dict[str, Any] = {
             "robust": robust,
             "refuse_overwrite": refuse_overwrite,
-            "backup": True,
+            "backup": not no_backup,
         }
         if format is not None:
             opts["format_hint"] = format
+        if unsafe_bak_mode is not None:
+            opts["unsafe_bak_mode"] = unsafe_bak_mode
         data = await ffi.sign_image(in_path, out_path, opts)
         return SignImageResult(
             out_path=data["out_path"],
