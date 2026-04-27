@@ -1,6 +1,6 @@
-# HAIAI SDK Parity Map (JACS 0.11.0)
+# HAIAI SDK Parity Map (JACS 0.10.0)
 
-This document maps every stable JACS 0.11.0 public capability to its SDK exposure status.
+This document maps every stable JACS 0.10.0 public capability to its SDK exposure status.
 
 **Statuses:**
 - **Exposed** -- Directly accessible through an SDK trait method
@@ -206,4 +206,4 @@ binding-core parser maps `robust` → JACS-internal `VerifyImageOptions.scan_rob
 
 ---
 
-*Generated for JACS 0.11.0. Last updated: 2026-04-25.*
+*Generated for JACS 0.10.0. Last updated: 2026-04-25.*

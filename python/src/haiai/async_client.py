@@ -664,6 +664,11 @@ class AsyncHaiClient:
     ) -> SignImageResult:
         """Sign an image (PNG/JPEG/WebP). Local-only.
 
+        ``format`` is reserved for forward compatibility. The underlying jacs
+        ``sign_image`` magic-detects format from input bytes today and
+        ignores this hint (JACS REVIEW_002 — dead parameter pending upstream
+        fix). Passed through unchanged.
+
         ``no_backup`` skips the ``<out_path>.bak`` write (default False —
         backup IS taken). ``unsafe_bak_mode`` overrides the 0o600 default.
         See :meth:`HaiClient.sign_image` for the full contract — Issue 009

@@ -1362,6 +1362,11 @@ class HaiClient:
         ``robust`` adds LSB steganography (PNG/JPEG only — WebP returns
         ``Unsupported`` per the JACS PRD).
 
+        ``format`` is reserved for forward compatibility. The underlying jacs
+        ``sign_image`` magic-detects format from input bytes today and
+        ignores this hint (JACS REVIEW_002 — dead parameter pending upstream
+        fix). Passed through unchanged.
+
         ``no_backup`` skips the ``<out_path>.bak`` write. Default ``False``
         (i.e., backup IS taken when out_path overwrites an existing file).
         Mirrors ``sign_text``'s ``no_backup`` toggle and Go's

@@ -61,7 +61,7 @@ scripts/ci/              # CI enforcement (crypto policy denylist)
   +---------+ +-------+ +--------+
 ```
 
-## Trait Architecture (JACS 0.11.0)
+## Trait Architecture (JACS 0.10.0)
 
 The Rust SDK exposes JACS capabilities through 9 layered extension traits defined in `rust/haiai/src/jacs.rs`, implemented in `rust/haiai/src/jacs_local.rs`:
 

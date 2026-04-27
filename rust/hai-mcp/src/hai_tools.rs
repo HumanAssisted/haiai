@@ -6,7 +6,7 @@ use haiai::{
     TextSignatureStatus, UpdateEmailTemplateOptions, VerifyImageOptions, VerifyTextOptions,
     VerifyTextResult,
 };
-use jacs::validation::require_relative_path_safe;
+use jacs_mcp::path_policy::{resolve_input_path, resolve_output_path};
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 use rmcp::ErrorData as McpError;
 use serde_json::{json, Value};
@@ -548,7 +548,7 @@ fn definition_values() -> Vec<Value> {
                     "input_path": { "type": "string", "description": "Relative input image path" },
                     "output_path": { "type": "string", "description": "Relative output path for the signed image" },
                     "robust": { "type": "boolean", "description": "Also embed via LSB steganography (PNG/JPEG only — WebP unsupported)" },
-                    "format": { "type": "string", "description": "Force a format (png|jpeg|webp); default auto-detect" },
+                    "format": { "type": "string", "description": "Reserved (png|jpeg|webp). Currently a no-op: the underlying jacs sign_image always magic-detects format from input bytes (JACS REVIEW_002 — dead parameter pending upstream fix). Passed through unchanged for forward compatibility." },
                     "refuse_overwrite": { "type": "boolean", "description": "Refuse to overwrite an existing JACS signature in the input" },
                     "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
                 },
@@ -832,15 +832,32 @@ async fn call_get_raw_email(context: &HaiServerContext, args: &Value) -> ToolRes
 // Layer 8: Local Media (TASK_005)
 // =============================================================================
 //
-// Each handler validates a relative path (jacs::validation::require_relative_path_safe),
-// acquires the EmbeddedJacsProvider from context, calls the trait method, and
-// wraps the result into the haiai-MCP envelope shape: { success, ...result fields,
-// error?: "..." }. Mirrors call_send_email's envelope shape, NOT JACS-MCP's.
+// Each handler validates a relative path through `jacs_mcp::path_policy`
+// (Issue 014 — six-layer policy: structural / base-dir / canonicalisation /
+// symlink rejection / output-overwrite gate / backup-placement). Resolved
+// canonical PathBuf is forwarded to the EmbeddedJacsProvider. The handler
+// wraps the result into the haiai-MCP envelope shape: { success, ...result
+// fields, error?: "..." }. Mirrors call_send_email's envelope shape, NOT
+// JACS-MCP's.
 
-fn guard_relative_path(label: &str, path: &str) -> Result<(), ToolError> {
-    require_relative_path_safe(path).map_err(|e| {
-        ToolError::Message(format!("PATH_TRAVERSAL_BLOCKED: {label} '{path}' rejected: {e}"))
-    })
+fn guard_input_path(label: &str, path: &str) -> Result<String, ToolError> {
+    resolve_input_path(path)
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| {
+            ToolError::Message(format!(
+                "PATH_POLICY_BLOCKED: {label} '{path}' rejected: {e}"
+            ))
+        })
+}
+
+fn guard_output_path(label: &str, path: &str) -> Result<String, ToolError> {
+    resolve_output_path(path)
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| {
+            ToolError::Message(format!(
+                "PATH_POLICY_BLOCKED: {label} '{path}' rejected: {e}"
+            ))
+        })
 }
 
 // Issue 011: status-string helpers were hoisted into `haiai::jacs` so the
@@ -849,8 +866,11 @@ fn guard_relative_path(label: &str, path: &str) -> Result<(), ToolError> {
 // `text_signature_status_to_str` directly.
 
 async fn call_sign_text(context: &HaiServerContext, args: &Value) -> ToolResult {
-    let path = required_string(args, "path")?;
-    guard_relative_path("path", path)?;
+    let raw_path = required_string(args, "path")?;
+    // sign-text is in-place: the input file is also the output. Use the
+    // input resolver (resolve_input_path allows the existing file; the
+    // overwrite-policy gate is irrelevant for in-place rewrites).
+    let path = guard_input_path("path", raw_path)?;
     let no_backup = optional_bool(args, "no_backup").unwrap_or(false);
     let allow_duplicate = optional_bool(args, "allow_duplicate").unwrap_or(false);
 
@@ -864,7 +884,7 @@ async fn call_sign_text(context: &HaiServerContext, args: &Value) -> ToolResult 
         allow_duplicate,
         ..SignTextOptions::default()
     };
-    let outcome = provider.sign_text_file(path, opts).map_err(tool_message)?;
+    let outcome = provider.sign_text_file(&path, opts).map_err(tool_message)?;
     Ok(success_tool_result(
         format!(
             "signed text {} (signers_added={})",
@@ -880,8 +900,8 @@ async fn call_sign_text(context: &HaiServerContext, args: &Value) -> ToolResult 
 }
 
 async fn call_verify_text(context: &HaiServerContext, args: &Value) -> ToolResult {
-    let path = required_string(args, "path")?;
-    guard_relative_path("path", path)?;
+    let raw_path = required_string(args, "path")?;
+    let path = guard_input_path("path", raw_path)?;
     let strict = optional_bool(args, "strict").unwrap_or(false);
     let key_dir = optional_string(args, "key_dir").map(std::path::PathBuf::from);
 
@@ -896,7 +916,7 @@ async fn call_verify_text(context: &HaiServerContext, args: &Value) -> ToolResul
         strict: false,
         key_dir,
     };
-    let result = provider.verify_text_file(path, opts).map_err(tool_message)?;
+    let result = provider.verify_text_file(&path, opts).map_err(tool_message)?;
 
     let (status, sigs, malformed_detail) = match &result {
         VerifyTextResult::Signed { signatures } => {
@@ -950,10 +970,17 @@ async fn call_verify_text(context: &HaiServerContext, args: &Value) -> ToolResul
 }
 
 async fn call_sign_image(context: &HaiServerContext, args: &Value) -> ToolResult {
-    let input_path = required_string(args, "input_path")?;
-    let output_path = required_string(args, "output_path")?;
-    guard_relative_path("input_path", input_path)?;
-    guard_relative_path("output_path", output_path)?;
+    let raw_input = required_string(args, "input_path")?;
+    let raw_output = required_string(args, "output_path")?;
+    let resolved_input = guard_input_path("input_path", raw_input)?;
+    // Mirror JACS-MCP: the in-place sign case (input == output) reuses the
+    // input resolution; a distinct write target goes through the output
+    // policy (overwrite gate, layer 5).
+    let resolved_output = if raw_input == raw_output {
+        resolved_input.clone()
+    } else {
+        guard_output_path("output_path", raw_output)?
+    };
     let robust = optional_bool(args, "robust").unwrap_or(false);
     let refuse_overwrite = optional_bool(args, "refuse_overwrite").unwrap_or(false);
     let format_hint = optional_string(args, "format").map(str::to_string);
@@ -970,13 +997,13 @@ async fn call_sign_image(context: &HaiServerContext, args: &Value) -> ToolResult
         ..SignImageOptions::default()
     };
     let signed = provider
-        .sign_image(input_path, output_path, opts)
+        .sign_image(&resolved_input, &resolved_output, opts)
         .map_err(tool_message)?;
 
     Ok(success_tool_result(
         format!(
             "signed image {} -> {} (format={}, robust={})",
-            input_path, signed.out_path, signed.format, signed.robust
+            raw_input, signed.out_path, signed.format, signed.robust
         ),
         json!({
             "success": true,
@@ -990,8 +1017,8 @@ async fn call_sign_image(context: &HaiServerContext, args: &Value) -> ToolResult
 }
 
 async fn call_verify_image(context: &HaiServerContext, args: &Value) -> ToolResult {
-    let file_path = required_string(args, "file_path")?;
-    guard_relative_path("file_path", file_path)?;
+    let raw_path = required_string(args, "file_path")?;
+    let file_path = guard_input_path("file_path", raw_path)?;
     let strict = optional_bool(args, "strict").unwrap_or(false);
     let robust = optional_bool(args, "robust").unwrap_or(false);
     let key_dir = optional_string(args, "key_dir").map(std::path::PathBuf::from);
@@ -1011,7 +1038,7 @@ async fn call_verify_image(context: &HaiServerContext, args: &Value) -> ToolResu
         },
         scan_robust: robust,
     };
-    let result = provider.verify_image(file_path, opts).map_err(tool_message)?;
+    let result = provider.verify_image(&file_path, opts).map_err(tool_message)?;
 
     let status = media_verify_status_to_str(&result.status);
     let success = match &result.status {
@@ -1038,15 +1065,15 @@ async fn call_verify_image(context: &HaiServerContext, args: &Value) -> ToolResu
 }
 
 async fn call_extract_media_signature(context: &HaiServerContext, args: &Value) -> ToolResult {
-    let file_path = required_string(args, "file_path")?;
-    guard_relative_path("file_path", file_path)?;
+    let raw_path = required_string(args, "file_path")?;
+    let file_path = guard_input_path("file_path", raw_path)?;
     let raw_payload = optional_bool(args, "raw_payload").unwrap_or(false);
 
     let provider = context
         .embedded_provider(optional_string(args, "config_path"))
         .map_err(tool_message)?;
     let payload = provider
-        .extract_media_signature(file_path, raw_payload)
+        .extract_media_signature(&file_path, raw_payload)
         .map_err(tool_message)?;
 
     // Mirror the CLI exit-2-on-absent-payload semantic: a missing signature
@@ -1746,6 +1773,30 @@ mod tests {
         assert_eq!(count, 32);
     }
 
+    /// Issue 015: the `format` hint is a JACS REVIEW_002 dead parameter
+    /// today — the schema description must NOT promise it forces output
+    /// format. This test fails loudly if a future edit reverts to the
+    /// misleading "Force a format" wording, forcing an explicit doc edit
+    /// once JACS lands the encoder selection upstream.
+    #[test]
+    fn sign_image_format_schema_description_does_not_lie() {
+        let def = definition_values()
+            .into_iter()
+            .find(|t| t["name"].as_str() == Some("hai_sign_image"))
+            .expect("hai_sign_image registered");
+        let format_desc = def["inputSchema"]["properties"]["format"]["description"]
+            .as_str()
+            .expect("format description");
+        let lower = format_desc.to_lowercase();
+        assert!(
+            lower.contains("reserved")
+                || lower.contains("ignored")
+                || lower.contains("no-op"),
+            "format description must acknowledge upstream JACS REVIEW_002 \
+             (dead parameter); got: {format_desc}"
+        );
+    }
+
     #[tokio::test]
     async fn sign_image_rejects_path_traversal() {
         let context = build_context();
@@ -1765,7 +1816,9 @@ mod tests {
         .await
         .expect("dispatch result");
 
-        // Path traversal returns an error tool result with PATH_TRAVERSAL_BLOCKED.
+        // Issue 014: traversal returns an error tool result with PATH_POLICY_BLOCKED
+        // (the canonical six-layer label). Layer 2/3 (structural) catches `..`
+        // before layer 1 (base-dir confinement) needs to run.
         let text = result
             .content
             .first()
@@ -1775,8 +1828,8 @@ mod tests {
             })
             .unwrap_or_default();
         assert!(
-            text.contains("PATH_TRAVERSAL_BLOCKED"),
-            "expected PATH_TRAVERSAL_BLOCKED in error message, got: {text}"
+            text.contains("PATH_POLICY_BLOCKED"),
+            "expected PATH_POLICY_BLOCKED in error message, got: {text}"
         );
     }
 
@@ -2218,5 +2271,142 @@ mod tests {
         assert_eq!(env["status"].as_str(), Some("missing_signature"));
         assert_eq!(env["success"].as_bool(), Some(false));
         assert!(env["error"].as_str().unwrap().contains("missing_signature"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue 014: six-layer path policy parity with JACS-MCP.
+    //
+    // These mirror `JACS/jacs-mcp/src/path_policy.rs:206-300` and pin the new
+    // canonical behavior so a regression — e.g., a future edit reverting to
+    // `require_relative_path_safe` only — would fail loudly. The CWD_LOCK +
+    // CwdGuard pattern already serializes these against other media tests
+    // (CWD is process-global). The env-var transitions inside the lock window
+    // run in a known order and never escape the test scope.
+    // -------------------------------------------------------------------------
+
+    /// Scoped env-var override that restores the previous value on drop.
+    /// Must be created INSIDE the CwdGuard scope so the CWD_LOCK serializes
+    /// env mutations against parallel test threads.
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+    impl EnvVarGuard {
+        // `set` is provided for symmetry with `unset`; current tests only
+        // need to ensure JACS_MCP_* vars are absent before dispatch, but a
+        // future overwrite-allowed test will use `set("JACS_MCP_OVERWRITE_OK", "1")`.
+        #[allow(dead_code)]
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            // SAFETY: callers create EnvVarGuard inside a CwdGuard window,
+            // which holds the process-wide CWD_LOCK and serializes env-var
+            // mutations against other media tests.
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            EnvVarGuard { key, prev }
+        }
+        fn unset(key: &'static str) -> Self {
+            let prev = std::env::var(key).ok();
+            unsafe {
+                std::env::remove_var(key);
+            }
+            EnvVarGuard { key, prev }
+        }
+    }
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match self.prev.take() {
+                    Some(v) => std::env::set_var(self.key, v),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn extract_media_signature_rejects_symlink_to_outside_basedir() {
+        use std::os::unix::fs::symlink;
+
+        let (context, temp_dir, _config_path) = build_media_context_with_fixture();
+        let outside = tempfile::tempdir().expect("outside tempdir");
+        let target = outside.path().join("secret.png");
+        std::fs::write(&target, make_test_png(8, 8)).expect("write outside target");
+        let link = temp_dir.path().join("link.png");
+        symlink(&target, &link).expect("symlink");
+
+        // Enter the base tempdir so path_policy uses it as base_dir
+        // (JACS_MCP_BASE_DIR is unset → falls back to CWD).
+        let _guard = CwdGuard::enter(temp_dir.path());
+        let _follow = EnvVarGuard::unset("JACS_MCP_FOLLOW_SYMLINKS");
+
+        let result = dispatch(
+            &context,
+            "hai_extract_media_signature",
+            Some(
+                json!({ "file_path": "link.png" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch extract");
+
+        let text = result
+            .content
+            .first()
+            .and_then(|c| match c.raw {
+                rmcp::model::RawContent::Text(ref t) => Some(t.text.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        assert!(
+            text.contains("PATH_POLICY_BLOCKED"),
+            "symlink to outside base dir must be rejected, got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sign_image_rejects_existing_output_without_overwrite_ok() {
+        let (context, temp_dir, _config_path) = build_media_context_with_fixture();
+        std::fs::write(temp_dir.path().join("in.png"), make_test_png(16, 16))
+            .expect("write input");
+        std::fs::write(temp_dir.path().join("existing.png"), b"existing bytes")
+            .expect("write existing output target");
+
+        let _guard = CwdGuard::enter(temp_dir.path());
+        let _ok = EnvVarGuard::unset("JACS_MCP_OVERWRITE_OK");
+
+        let result = dispatch(
+            &context,
+            "hai_sign_image",
+            Some(
+                json!({
+                    "input_path": "in.png",
+                    "output_path": "existing.png"
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch sign_image");
+
+        let text = result
+            .content
+            .first()
+            .and_then(|c| match c.raw {
+                rmcp::model::RawContent::Text(ref t) => Some(t.text.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        assert!(
+            text.contains("PATH_POLICY_BLOCKED") && text.contains("already exists"),
+            "existing output without overwrite-ok must be rejected, got: {text}"
+        );
     }
 }

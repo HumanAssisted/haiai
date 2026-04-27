@@ -95,6 +95,107 @@ fn cli_verify_image_tampered_exits_1() {
 }
 
 #[test]
+fn cli_verify_image_json_status_field_is_flat_string() {
+    // Regression for Issue 013.1: `verify-image --json` previously serialized
+    // the JACS struct directly, leaking the tagged `Malformed` shape. The
+    // happy path must emit a flat snake_case `status` string matching the
+    // binding-core/MCP/SDK envelope contract.
+    let (temp, _config_path) = prepare_jacs_fixture();
+    write_to_fixture(temp.path(), "in.png", &make_png(32, 32));
+    let _ = run_haiai_in_fixture(
+        temp.path(),
+        &["sign-image", "in.png", "--out", "signed.png"],
+    );
+
+    let out = run_haiai_in_fixture(temp.path(), &["verify-image", "signed.png", "--json"]);
+    assert!(
+        out.status.success(),
+        "verify-image --json failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("verify-image --json must emit valid JSON");
+    assert!(
+        parsed["status"].is_string(),
+        "status must be a flat string, not a tagged object; got: {}",
+        parsed
+    );
+    assert_eq!(parsed["status"].as_str(), Some("valid"));
+    // Sibling fields documented by binding-core's `media_verify_result_to_json`.
+    assert!(parsed.get("signer_id").is_some());
+    assert!(parsed.get("algorithm").is_some());
+    assert!(parsed.get("format").is_some());
+}
+
+#[test]
+fn cli_verify_image_json_malformed_emits_flat_status_with_detail() {
+    // Regression for Issue 013.1: when JACS returns
+    // `MediaVerifyStatus::Malformed(detail)`, the CLI must NOT emit the
+    // tagged `{"status": {"malformed": "<detail>"}}` shape. Instead the
+    // envelope must be `{"status": "malformed", "malformed_detail": "<detail>", ...}`
+    // — matching binding-core/MCP/SDKs.
+    //
+    // To trigger Malformed deterministically we tamper the iTXt chunk
+    // payload (the JACS attachment) so it is no longer parseable as a
+    // signed envelope.
+    let (temp, _config_path) = prepare_jacs_fixture();
+    write_to_fixture(temp.path(), "in.png", &make_png(32, 32));
+    let _ = run_haiai_in_fixture(
+        temp.path(),
+        &["sign-image", "in.png", "--out", "signed.png"],
+    );
+
+    let path = temp.path().join("signed.png");
+    let mut bytes = std::fs::read(&path).expect("read signed");
+    // Find the iTXt chunk and corrupt its payload so JACS reports Malformed.
+    let itxt_idx = bytes
+        .windows(4)
+        .position(|w| w == b"iTXt")
+        .expect("iTXt marker present in signed PNG");
+    // The 4 bytes preceding iTXt are the chunk length; the chunk data starts
+    // 4 bytes after the type. Tamper bytes well into the payload (past the
+    // keyword) so the parser sees garbage instead of valid JACS data.
+    let tamper_offset = itxt_idx + 24;
+    if tamper_offset < bytes.len() {
+        bytes[tamper_offset] = 0xff;
+        bytes[tamper_offset + 1] = 0xfe;
+        bytes[tamper_offset + 2] = 0xfd;
+    }
+    std::fs::write(&path, &bytes).expect("write tampered");
+
+    let out = run_haiai_in_fixture(temp.path(), &["verify-image", "signed.png", "--json"]);
+    // verify-image returns exit 1 for Malformed (and other failures); JSON
+    // must still be emitted on stdout, regardless of exit code.
+    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect(
+        "verify-image --json must emit valid JSON even on malformed/invalid signatures",
+    );
+    assert!(
+        parsed["status"].is_string(),
+        "status must be a flat string; got tagged shape: {}",
+        parsed
+    );
+    // The exact failure reason can vary depending on which byte JACS hits
+    // first (Malformed vs InvalidSignature vs HashMismatch). The contract
+    // pinned here is: status is always a flat snake_case string, NEVER a
+    // tagged object. If status happens to be "malformed" we additionally
+    // require malformed_detail.
+    let status = parsed["status"].as_str().expect("status string");
+    assert_ne!(
+        status, "valid",
+        "tampered iTXt should not verify as valid; got envelope: {}",
+        parsed
+    );
+    if status == "malformed" {
+        assert!(
+            parsed["malformed_detail"].is_string(),
+            "malformed status requires sibling malformed_detail field: {}",
+            parsed
+        );
+    }
+}
+
+#[test]
 fn cli_extract_media_signature_returns_decoded_json() {
     let (temp, _config_path) = prepare_jacs_fixture();
     write_to_fixture(temp.path(), "in.png", &make_png(32, 32));

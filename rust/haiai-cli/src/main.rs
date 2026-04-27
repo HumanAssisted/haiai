@@ -430,7 +430,9 @@ enum Commands {
         #[arg(long)]
         robust: bool,
 
-        /// Force a specific format (png|jpeg|webp). None = auto-detect from bytes.
+        /// Reserved (png|jpeg|webp). Currently a no-op: jacs sign_image
+        /// magic-detects format from input bytes (JACS REVIEW_002 — dead
+        /// parameter pending upstream fix). Pass-through forward-compatible.
         #[arg(long)]
         format: Option<String>,
 

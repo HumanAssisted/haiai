@@ -8,7 +8,7 @@
 - **Python / Node / Go**: per-language wrappers on `HaiClient` and `AsyncHaiClient` (Python sync+async). Result dataclasses / interfaces / structs, plus `MediaVerifyStatus*` constants in Go.
 - **Public API contract**: the user-facing key is `robust` everywhere (CLI flag, MCP param, Python kwarg, Node interface, Go field). The JACS-internal `scan_robust` field is hidden inside binding-core's parser.
 - **Cross-language verify-parity contract**: pre-signed `fixtures/media/signed.{png,jpg,webp,md}` (signed once by `rust/haiai/tests/regen_media_fixtures.rs`, watchdog'd by `CHECKSUMS.txt` + `SIGNER.json`) drive 32 verify-parity tests — 8 each in Rust / Python / Node / Go — proving the four SDKs agree on `valid` and `hash_mismatch` for the same input bytes (PRD §5.5).
-- **JACS pinned to 0.11.0** across `rust/haiai`, `rust/haiai-cli`, and `rust/hai-mcp`. Binding-core widened to `Box<dyn JacsMediaProvider>` (supertrait `JacsProvider` continues to compile transparently).
+- **JACS pinned to 0.10.0** across `rust/haiai`, `rust/haiai-cli`, and `rust/hai-mcp`. Binding-core widened to `Box<dyn JacsMediaProvider>` (supertrait `JacsProvider` continues to compile transparently).
 
 ## 0.2.2
 

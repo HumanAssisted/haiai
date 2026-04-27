@@ -7,11 +7,11 @@
 
 use anyhow::Context as _;
 use haiai::{
-    media_verify_status_to_str, text_signature_status_to_str, JacsMediaProvider, LocalJacsProvider,
-    MediaVerifyStatus, SignImageOptions, SignTextOptions, TextSignatureStatus, VerifyImageOptions,
-    VerifyTextOptions, VerifyTextResult,
+    media_verify_result_to_json, media_verify_status_to_str, text_signature_status_to_str,
+    verify_text_result_to_json, JacsMediaProvider, LocalJacsProvider, MediaVerifyStatus,
+    SignImageOptions, SignTextOptions, TextSignatureStatus, VerifyImageOptions, VerifyTextOptions,
+    VerifyTextResult,
 };
-use serde_json::json;
 
 fn load_provider() -> anyhow::Result<LocalJacsProvider> {
     LocalJacsProvider::from_config_path(None, None)
@@ -74,93 +74,71 @@ pub fn handle_verify_text(
         key_dir: key_dir.map(std::path::PathBuf::from),
     };
 
-    match provider.verify_text_file(file, opts) {
-        Ok(VerifyTextResult::Signed { signatures }) => {
+    let result = match provider.verify_text_file(file, opts) {
+        Ok(r) => r,
+        Err(e) if strict => {
+            eprintln!("Verification failed: {e}");
+            return Ok(1);
+        }
+        Err(e) => {
+            eprintln!("Verification failed: {e}");
+            return Ok(2);
+        }
+    };
+
+    // Issue 013: route the JSON envelope through the shared helper so the
+    // CLI's wire shape matches binding-core/MCP/SDKs. Previously the Signed
+    // branch emitted `"status": "valid"|"invalid"` (per-signature vocabulary
+    // conflated with the file-level layer).
+    if json_out {
+        println!(
+            "{}",
+            serde_json::to_string(&verify_text_result_to_json(&result))?
+        );
+    }
+
+    match &result {
+        VerifyTextResult::Signed { signatures } => {
             let all_valid = signatures
                 .iter()
                 .all(|s| s.status == TextSignatureStatus::Valid);
-            if json_out {
-                let entries: Vec<_> = signatures
-                    .iter()
-                    .map(|sig| {
-                        json!({
-                            "signer_id": sig.signer_id,
-                            "algorithm": sig.algorithm,
-                            "timestamp": sig.timestamp,
-                            "status": text_signature_status_to_str(&sig.status),
-                        })
-                    })
-                    .collect();
-                println!(
-                    "{}",
-                    serde_json::to_string(&json!({
-                        "status": if all_valid { "valid" } else { "invalid" },
-                        "signatures": entries,
-                    }))?
-                );
-            } else if all_valid {
-                println!(
-                    "Signed by {} signer(s); all valid.",
-                    signatures.len()
-                );
-                for sig in &signatures {
-                    println!("  ✓ {} ({})", sig.signer_id, sig.algorithm);
-                }
-            } else {
-                println!("Signature verification FAILED:");
-                for sig in &signatures {
-                    println!(
-                        "  {} {} ({}) — {}",
-                        if sig.status == TextSignatureStatus::Valid {
-                            "✓"
-                        } else {
-                            "✗"
-                        },
-                        sig.signer_id,
-                        sig.algorithm,
-                        text_signature_status_to_str(&sig.status)
-                    );
+            if !json_out {
+                if all_valid {
+                    println!("Signed by {} signer(s); all valid.", signatures.len());
+                    for sig in signatures {
+                        println!("  ✓ {} ({})", sig.signer_id, sig.algorithm);
+                    }
+                } else {
+                    println!("Signature verification FAILED:");
+                    for sig in signatures {
+                        println!(
+                            "  {} {} ({}) — {}",
+                            if sig.status == TextSignatureStatus::Valid {
+                                "✓"
+                            } else {
+                                "✗"
+                            },
+                            sig.signer_id,
+                            sig.algorithm,
+                            text_signature_status_to_str(&sig.status)
+                        );
+                    }
                 }
             }
             Ok(if all_valid { 0 } else { 1 })
         }
-        Ok(VerifyTextResult::MissingSignature) => {
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string(&json!({
-                        "status": "missing_signature",
-                        "signatures": [],
-                    }))?
-                );
-            } else {
+        VerifyTextResult::MissingSignature => {
+            if !json_out {
                 eprintln!("No JACS signature found in {file}");
             }
             // Permissive default: exit 2; strict: exit 1
             Ok(if strict { 1 } else { 2 })
         }
-        Ok(VerifyTextResult::Malformed(detail)) => {
-            if json_out {
-                println!(
-                    "{}",
-                    serde_json::to_string(&json!({
-                        "status": "malformed",
-                        "malformed_detail": detail,
-                        "signatures": [],
-                    }))?
-                );
-            } else {
+        VerifyTextResult::Malformed(detail) => {
+            if !json_out {
                 eprintln!("Malformed signature: {detail}");
             }
             Ok(1)
-        }
-        Err(e) if strict => {
-            eprintln!("Verification failed: {e}");
-            Ok(1)
-        }
-        Err(e) => {
-            eprintln!("Verification failed: {e}");
-            Ok(2)
         }
     }
 }
@@ -250,7 +228,14 @@ pub fn handle_verify_image(
     };
 
     if json_out {
-        println!("{}", serde_json::to_string(&result)?);
+        // Issue 013: route through the shared helper so the CLI emits the
+        // same flat envelope as binding-core/MCP/SDKs. Previously this
+        // serialized `result` directly, which leaked the JACS-internal
+        // `{"status": {"malformed": "<detail>"}}` tagged shape.
+        println!(
+            "{}",
+            serde_json::to_string(&media_verify_result_to_json(&result))?
+        );
     } else {
         // Issue 011: derive the wire label from the shared helper, then
         // append the malformed detail (which is CLI-specific human formatting)

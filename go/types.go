@@ -689,8 +689,11 @@ type VerifyTextOptions struct {
 type SignImageOptions struct {
 	// Robust enables LSB steganography (PNG/JPEG only — WebP unsupported).
 	Robust bool `json:"robust"`
-	// FormatHint forces a specific format ("png" | "jpeg" | "webp").
-	// Empty means auto-detect from input bytes.
+	// FormatHint is reserved for forward compatibility. The underlying jacs
+	// sign_image magic-detects format from input bytes today and ignores
+	// this hint (JACS REVIEW_002 — dead parameter pending upstream fix).
+	// Passed through unchanged; once JACS picks the encoder by hint, this
+	// option will take effect.
 	FormatHint string `json:"format_hint,omitempty"`
 	// RefuseOverwrite refuses to overwrite an existing JACS signature in input.
 	RefuseOverwrite bool `json:"refuse_overwrite"`

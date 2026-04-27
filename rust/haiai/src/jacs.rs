@@ -89,6 +89,88 @@ pub fn text_signature_status_to_str(s: &TextSignatureStatus) -> &'static str {
     }
 }
 
+/// Translate the not-Serde-able [`VerifyTextResult`] into a JSON envelope
+/// with a flat snake_case `status` string.
+///
+/// Single conversion site (Issue 013): binding-core FFI envelopes, the MCP
+/// `verify_text` envelope, and the `haiai verify-text --json` CLI output all
+/// route through this helper, so the wire shape is identical across surfaces:
+///
+/// ```text
+/// { "status": "signed" | "missing_signature" | "malformed",
+///   "signatures": [...],
+///   "malformed_detail"?: string }
+/// ```
+///
+/// The `signatures[]` entries each carry their own per-signature `status`
+/// (produced via [`text_signature_status_to_str`]) — that is the right place
+/// for the valid-vs-invalid signal. The file-level `status` is `"signed"`
+/// whenever at least one signature was found, regardless of validity, to
+/// match the JACS reference CLI and the documented SDK contract.
+#[cfg(feature = "jacs-crate")]
+pub fn verify_text_result_to_json(result: &VerifyTextResult) -> Value {
+    match result {
+        VerifyTextResult::Signed { signatures } => {
+            let entries: Vec<Value> = signatures
+                .iter()
+                .map(|sig| {
+                    let mut entry = serde_json::json!({
+                        "signer_id": sig.signer_id,
+                        "algorithm": sig.algorithm,
+                        "timestamp": sig.timestamp,
+                        "status": text_signature_status_to_str(&sig.status),
+                    });
+                    if let TextSignatureStatus::Malformed(detail) = &sig.status {
+                        entry["malformed_detail"] = Value::String(detail.clone());
+                    }
+                    entry
+                })
+                .collect();
+            serde_json::json!({
+                "status": "signed",
+                "signatures": entries,
+            })
+        }
+        VerifyTextResult::MissingSignature => serde_json::json!({
+            "status": "missing_signature",
+            "signatures": [],
+        }),
+        VerifyTextResult::Malformed(detail) => serde_json::json!({
+            "status": "malformed",
+            "signatures": [],
+            "malformed_detail": detail,
+        }),
+    }
+}
+
+/// Translate the partly-Serde-able [`MediaVerificationResult`] into a JSON
+/// envelope with a flat snake_case `status` string.
+///
+/// JACS's [`MediaVerifyStatus`] uses `serde(rename_all = "snake_case")` which
+/// serializes the `Malformed(String)` variant as `{"malformed": detail}` — a
+/// tagged shape downstream language SDKs cannot consume uniformly (Issue 001).
+/// This helper flattens that variant so callers always see
+/// `status: "malformed"` plus a sibling `malformed_detail` field.
+///
+/// Single conversion site (Issue 013): binding-core FFI envelopes, the MCP
+/// `verify_image` envelope, and the `haiai verify-image --json` CLI output
+/// all route through this helper, so the wire shape is identical across
+/// surfaces.
+#[cfg(feature = "jacs-crate")]
+pub fn media_verify_result_to_json(result: &MediaVerificationResult) -> Value {
+    let mut envelope = serde_json::json!({
+        "status": media_verify_status_to_str(&result.status),
+        "signer_id": result.signer_id,
+        "algorithm": result.algorithm,
+        "format": result.format,
+        "embedding_channels": result.embedding_channels,
+    });
+    if let MediaVerifyStatus::Malformed(detail) = &result.status {
+        envelope["malformed_detail"] = Value::String(detail.clone());
+    }
+    envelope
+}
+
 // =============================================================================
 // Layer 0: Core Signing (JacsProvider)
 // =============================================================================

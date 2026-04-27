@@ -21,10 +21,8 @@ use std::path::Path;
 use haiai::client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
 use haiai::error::HaiError;
 use haiai::jacs::{
-    media_verify_status_to_str, text_signature_status_to_str, JacsMediaProvider, JacsProvider,
-    MediaVerificationResult, MediaVerifyStatus, SignImageOptions, SignTextOptions,
-    StaticJacsProvider, TextSignatureStatus, VerifyImageOptions, VerifyTextOptions,
-    VerifyTextResult,
+    media_verify_result_to_json, verify_text_result_to_json, JacsMediaProvider, JacsProvider,
+    SignImageOptions, SignTextOptions, StaticJacsProvider, VerifyImageOptions, VerifyTextOptions,
 };
 use haiai::jacs_local::LocalJacsProvider;
 use std::path::PathBuf;
@@ -1333,75 +1331,16 @@ pub(crate) fn parse_extract_opts(s: &str) -> HaiBindingResult<bool> {
     Ok(coerce_bool(&v, "raw_payload")?.unwrap_or(false))
 }
 
-/// Translate the not-Serde-able `VerifyTextResult` into a JSON envelope.
-/// Single conversion site: language SDKs and CLI/MCP downstream of this
-/// always read this envelope shape and never see the raw JACS enum.
-///
-/// Status labels are produced via [`text_signature_status_to_str`] in
-/// `haiai::jacs` (Issue 011 — single source of truth for the wire string
-/// across binding-core/MCP/CLI).
-fn verify_text_result_to_json(result: &VerifyTextResult) -> Value {
-    match result {
-        VerifyTextResult::Signed { signatures } => {
-            let entries: Vec<Value> = signatures
-                .iter()
-                .map(|sig| {
-                    let mut entry = serde_json::json!({
-                        "signer_id": sig.signer_id,
-                        "algorithm": sig.algorithm,
-                        "timestamp": sig.timestamp,
-                        "status": text_signature_status_to_str(&sig.status),
-                    });
-                    if let TextSignatureStatus::Malformed(detail) = &sig.status {
-                        entry["malformed_detail"] = Value::String(detail.clone());
-                    }
-                    entry
-                })
-                .collect();
-            serde_json::json!({
-                "status": "signed",
-                "signatures": entries,
-            })
-        }
-        VerifyTextResult::MissingSignature => serde_json::json!({
-            "status": "missing_signature",
-            "signatures": [],
-        }),
-        VerifyTextResult::Malformed(detail) => serde_json::json!({
-            "status": "malformed",
-            "signatures": [],
-            "malformed_detail": detail,
-        }),
-    }
-}
-
-/// Translate the partly-Serde-able `MediaVerificationResult` into a JSON
-/// envelope with a flat snake_case `status` string. JACS's `MediaVerifyStatus`
-/// uses `serde(rename_all = "snake_case")` which serializes the
-/// `Malformed(String)` variant as `{"malformed": detail}` — a tagged shape
-/// that downstream language SDKs cannot consume uniformly. This helper
-/// flattens that variant so callers always see `status: "malformed"` plus a
-/// sibling `malformed_detail` field.
-///
-/// Single conversion site: language SDKs (Python/Node/Go) and CLI/MCP always
-/// read this shape and never see the raw JACS enum.
-///
-/// Status labels are produced via [`media_verify_status_to_str`] in
-/// `haiai::jacs` (Issue 011 — single source of truth for the wire string
-/// across binding-core/MCP/CLI).
-fn media_verify_result_to_json(result: &MediaVerificationResult) -> Value {
-    let mut envelope = serde_json::json!({
-        "status": media_verify_status_to_str(&result.status),
-        "signer_id": result.signer_id,
-        "algorithm": result.algorithm,
-        "format": result.format,
-        "embedding_channels": result.embedding_channels,
-    });
-    if let MediaVerifyStatus::Malformed(detail) = &result.status {
-        envelope["malformed_detail"] = Value::String(detail.clone());
-    }
-    envelope
-}
+// =============================================================================
+// Issue 013: `verify_text_result_to_json` and `media_verify_result_to_json`
+// were hoisted into `haiai::jacs` so the haiai-cli surface can route through
+// the same conversion helper that binding-core/MCP use. The CLI previously
+// produced wire-incompatible JSON (raw `serde_json::to_string` on the JACS
+// struct leaked the tagged `{"malformed": ...}` shape; verify-text Signed
+// branch emitted `"status": "valid"|"invalid"` instead of `"signed"`). By
+// importing from `haiai::jacs` here, this module keeps a single source of
+// truth for the wire envelopes across all surfaces.
+// =============================================================================
 
 // =============================================================================
 // SSE streaming standalone functions (global handle access)
@@ -2655,6 +2594,7 @@ mod tests {
         // object (Python str(dict), Node "[object Object]", Go decode error).
         // The translation site must produce status == "malformed" (lowercase
         // string) plus a sibling malformed_detail field.
+        use haiai::jacs::{MediaVerificationResult, MediaVerifyStatus};
         let result = MediaVerificationResult {
             status: MediaVerifyStatus::Malformed("garbled iTXt chunk".to_string()),
             signer_id: None,
@@ -2677,6 +2617,7 @@ mod tests {
     fn media_verify_result_to_json_flat_string_for_simple_variants() {
         // Each unit-style variant should serialize as a plain snake_case
         // string and NOT carry malformed_detail.
+        use haiai::jacs::{MediaVerificationResult, MediaVerifyStatus};
         for (variant, expected) in [
             (MediaVerifyStatus::Valid, "valid"),
             (MediaVerifyStatus::InvalidSignature, "invalid_signature"),

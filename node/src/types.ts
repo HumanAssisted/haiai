@@ -912,7 +912,13 @@ export interface VerifyTextOptions {
 export interface SignImageOptions {
   /** Also embed via LSB steganography (PNG/JPEG only — WebP unsupported). */
   robust?: boolean;
-  /** Force a specific format (`"png" | "jpeg" | "webp"`); default auto-detect. */
+  /**
+   * Reserved (`"png" | "jpeg" | "webp"`). Currently a no-op: the underlying
+   * jacs `sign_image` magic-detects format from input bytes (JACS REVIEW_002
+   * — dead parameter pending upstream fix). Passed through unchanged for
+   * forward compatibility — once JACS picks the encoder by hint, this
+   * option will take effect.
+   */
   format?: string;
   /** Refuse to overwrite an existing JACS signature in the input. */
   refuseOverwrite?: boolean;
