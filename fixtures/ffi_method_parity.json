@@ -101,6 +101,28 @@
       {"name": "agent_email", "args": [], "returns": "string?"},
       {"name": "set_hai_agent_id", "args": ["id:string"], "returns": "void"},
       {"name": "set_agent_email", "args": ["email:string"], "returns": "void"}
+    ],
+    "jacs_document_store": [
+      {"name": "store_document", "args": ["signed_json:string"], "returns": "string"},
+      {"name": "sign_and_store", "args": ["data_json:string"], "returns": "json"},
+      {"name": "get_document", "args": ["key:string"], "returns": "string"},
+      {"name": "get_latest_document", "args": ["doc_id:string"], "returns": "string"},
+      {"name": "get_document_versions", "args": ["doc_id:string"], "returns": "json"},
+      {"name": "list_documents", "args": ["jacs_type:string?"], "returns": "json"},
+      {"name": "remove_document", "args": ["key:string"], "returns": "void"},
+      {"name": "update_document", "args": ["doc_id:string", "signed_json:string"], "returns": "json"},
+      {"name": "search_documents", "args": ["query:string", "limit:usize", "offset:usize"], "returns": "json"},
+      {"name": "query_by_type", "args": ["doc_type:string", "limit:usize", "offset:usize"], "returns": "json"},
+      {"name": "query_by_field", "args": ["field:string", "value:string", "limit:usize", "offset:usize"], "returns": "json"},
+      {"name": "query_by_agent", "args": ["agent_id:string", "limit:usize", "offset:usize"], "returns": "json"},
+      {"name": "storage_capabilities", "args": [], "returns": "json"},
+      {"name": "save_memory", "args": ["content:string?"], "returns": "string"},
+      {"name": "save_soul", "args": ["content:string?"], "returns": "string"},
+      {"name": "get_memory", "args": [], "returns": "string?"},
+      {"name": "get_soul", "args": [], "returns": "string?"},
+      {"name": "store_text_file", "args": ["path:string"], "returns": "string"},
+      {"name": "store_image_file", "args": ["path:string"], "returns": "string"},
+      {"name": "get_record_bytes", "args": ["key:string"], "returns": "bytes"}
     ]
   },
   "error_kinds": [
@@ -115,5 +137,5 @@
     "ProviderError"
   ],
   "error_format": "{ErrorKind}: {message}",
-  "total_method_count": 72
+  "total_method_count": 92
 }

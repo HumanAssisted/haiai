@@ -320,7 +320,7 @@ fn ffi_method_parity_includes_media_local_section() {
 }
 
 #[test]
-fn ffi_method_parity_total_count_is_72() {
+fn ffi_method_parity_total_count_is_92() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/ffi_method_parity.json");
     let raw = std::fs::read_to_string(&path)
@@ -330,7 +330,12 @@ fn ffi_method_parity_total_count_is_72() {
     let total = val["total_method_count"]
         .as_u64()
         .expect("total_method_count must be a number");
-    assert_eq!(total, 72, "total_method_count must equal 72 after media-signing PRD");
+    // Bumped from 72 → 92 (TASK_013): adds the `jacs_document_store` section
+    // — 13 trait methods + 4 MEMORY/SOUL wrappers (D5) + 3 D9 helpers.
+    assert_eq!(
+        total, 92,
+        "total_method_count must equal 92 after JACS Document Store PRD (D5 + D9)"
+    );
 
     let methods = val["methods"]
         .as_object()
@@ -340,7 +345,44 @@ fn ffi_method_parity_total_count_is_72() {
         sum += arr.as_array().expect("section must be an array").len() as u64;
     }
     assert_eq!(
-        sum, 72,
+        sum, 92,
         "Sum of method counts across all sections must equal total_method_count"
     );
+
+    // Pin the new section's exact membership so additions/removals are explicit.
+    let store_section = val["methods"]["jacs_document_store"]
+        .as_array()
+        .expect("jacs_document_store section must exist");
+    assert_eq!(store_section.len(), 20, "jacs_document_store must have 20 methods");
+    let names: std::collections::HashSet<String> = store_section
+        .iter()
+        .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
+        .collect();
+    for required in &[
+        "store_document",
+        "sign_and_store",
+        "get_document",
+        "get_latest_document",
+        "get_document_versions",
+        "list_documents",
+        "remove_document",
+        "update_document",
+        "search_documents",
+        "query_by_type",
+        "query_by_field",
+        "query_by_agent",
+        "storage_capabilities",
+        "save_memory",
+        "save_soul",
+        "get_memory",
+        "get_soul",
+        "store_text_file",
+        "store_image_file",
+        "get_record_bytes",
+    ] {
+        assert!(
+            names.contains(*required),
+            "jacs_document_store missing entry: {required}"
+        );
+    }
 }

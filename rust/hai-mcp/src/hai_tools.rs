@@ -1,8 +1,9 @@
 use haiai::{
     generate_verify_link, generate_verify_link_hosted, media_verify_status_to_str,
-    text_signature_status_to_str, CreateEmailTemplateOptions, HaiClient, JacsMediaProvider,
-    JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions, MediaVerifyStatus,
-    RegisterAgentOptions, SearchOptions, SendEmailOptions, SignImageOptions, SignTextOptions,
+    text_signature_status_to_str, CreateEmailTemplateOptions, HaiClient, JacsDocumentProvider,
+    JacsMediaProvider, JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions,
+    LocalJacsProvider, MediaVerifyStatus, RegisterAgentOptions, RemoteJacsProvider,
+    RemoteJacsProviderOptions, SearchOptions, SendEmailOptions, SignImageOptions, SignTextOptions,
     TextSignatureStatus, UpdateEmailTemplateOptions, VerifyImageOptions, VerifyTextOptions,
     VerifyTextResult,
 };
@@ -61,6 +62,14 @@ pub fn has_tool(name: &str) -> bool {
             | "hai_sign_image"
             | "hai_verify_image"
             | "hai_extract_media_signature"
+            // Issue 004: D5 / D9 record-store wrappers
+            | "hai_save_memory"
+            | "hai_get_memory"
+            | "hai_save_soul"
+            | "hai_get_soul"
+            | "hai_store_text_file"
+            | "hai_store_image_file"
+            | "hai_get_record_bytes"
     )
 }
 
@@ -111,6 +120,14 @@ pub async fn dispatch(
         "hai_sign_image" => call_sign_image(context, &args).await,
         "hai_verify_image" => call_verify_image(context, &args).await,
         "hai_extract_media_signature" => call_extract_media_signature(context, &args).await,
+        // Issue 004: D5 / D9 record-store wrappers
+        "hai_save_memory" => call_save_memory(context, &args).await,
+        "hai_get_memory" => call_get_memory(context, &args).await,
+        "hai_save_soul" => call_save_soul(context, &args).await,
+        "hai_get_soul" => call_get_soul(context, &args).await,
+        "hai_store_text_file" => call_store_text_file(context, &args).await,
+        "hai_store_image_file" => call_store_image_file(context, &args).await,
+        "hai_get_record_bytes" => call_get_record_bytes(context, &args).await,
         _ => Err(ToolError::InvalidParams(format!(
             "unknown HAI tool: {name}"
         ))),
@@ -581,6 +598,99 @@ fn definition_values() -> Vec<Value> {
                     "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
                 },
                 "required": ["file_path"]
+            }
+        }),
+        // ===================================================================
+        // Issue 004: D5 MEMORY / SOUL convenience wrappers (4 tools).
+        //
+        // These are thin wrappers on top of the generic record CRUD that set
+        // jacsType="memory" or jacsType="soul". The server treats them as
+        // ordinary records; the convenience is purely SDK-side so LLMs see
+        // them as discoverable named tools (PRD §4.5).
+        // ===================================================================
+        json!({
+            "name": "hai_save_memory",
+            "description": "Sign and store a MEMORY record on hai-api. Reads MEMORY.md from CWD when no `content` is provided. Returns the record key (id:version). The hai-api URL is pinned at MCP startup via HAI_URL — runtime overrides are not supported.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": { "type": "string", "description": "Inline memory text. If omitted, MEMORY.md is read from the current working directory." },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_get_memory",
+            "description": "Fetch the latest MEMORY record's signed envelope. Returns null when no memory record exists for the caller.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "config_path": { "type": "string" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_save_soul",
+            "description": "Sign and store a SOUL record on hai-api. Reads SOUL.md from CWD when no `content` is provided. Returns the record key.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": { "type": "string" },
+                    "config_path": { "type": "string" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_get_soul",
+            "description": "Fetch the latest SOUL record's signed envelope. Returns null when no soul record exists for the caller.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "config_path": { "type": "string" }
+                }
+            }
+        }),
+        // ===================================================================
+        // Issue 004: D9 typed-content helpers (3 tools).
+        //
+        // Read a local file, set the right Content-Type, POST to hai-api.
+        // Pre-flight refusal happens for unsigned bytes; the server runs the
+        // real verifier on the upload.
+        // ===================================================================
+        json!({
+            "name": "hai_store_text_file",
+            "description": "Read a JACS-signed markdown file (with -----BEGIN JACS SIGNATURE----- block) and POST it as text/markdown; profile=jacs-text-v1. Returns the record key.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Relative path to the signed markdown file" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "hai_store_image_file",
+            "description": "Detect a signed image's format from leading magic bytes and POST it with image/png|jpeg|webp. The bytes must already carry a JACS chunk (sign with hai_sign_image first). Returns the record key.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Relative path to the signed image file" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "hai_get_record_bytes",
+            "description": "Fetch the raw record bytes from hai-api by key (id:version). No UTF-8 decode, no JSON parse — used when reading binary content like signed images. Bytes are returned as base64.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string", "description": "Record key in `id:version` format" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["key"]
             }
         }),
     ]
@@ -1098,6 +1208,116 @@ async fn call_extract_media_signature(context: &HaiServerContext, args: &Value) 
             payload.is_some()
         ),
         envelope,
+    ))
+}
+
+// =============================================================================
+// Issue 004: D5 / D9 record-store handlers.
+//
+// These build a `RemoteJacsProvider` wrapping the local agent's signing
+// material and dispatch to the new trait methods on `JacsDocumentProvider`
+// (Issue 003). Local-only operations (sign_text/sign_image) use
+// `EmbeddedJacsProvider` directly; the record-store operations need the
+// network so they construct a fresh `RemoteJacsProvider<LocalJacsProvider>`.
+// =============================================================================
+
+fn build_remote_provider(
+    context: &HaiServerContext,
+    args: &Value,
+) -> Result<RemoteJacsProvider<LocalJacsProvider>, ToolError> {
+    // Issue 004: hai-mcp pins the outgoing hai-api URL at startup (HAI_URL env).
+    // Runtime hai_url overrides are explicitly NOT supported (matches the email
+    // path's `prepare_email_client` policy and the existing
+    // `hai_tool_definitions_do_not_expose_create_agent_or_runtime_hai_url_override`
+    // contract test).
+    let local = context
+        .local_provider(optional_string(args, "config_path"))
+        .map_err(ToolError::Message)?;
+    let base_url = context
+        .resolve_base_url(None)
+        .map_err(ToolError::Message)?;
+    RemoteJacsProvider::new(
+        local,
+        RemoteJacsProviderOptions {
+            base_url,
+            ..RemoteJacsProviderOptions::default()
+        },
+    )
+    .map_err(tool_message)
+}
+
+async fn call_save_memory(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let provider = build_remote_provider(context, args)?;
+    let content = optional_string(args, "content");
+    let key = JacsDocumentProvider::save_memory(&provider, content).map_err(tool_message)?;
+    Ok(success_tool_result(
+        format!("save_memory key={key}"),
+        json!({ "key": key }),
+    ))
+}
+
+async fn call_get_memory(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let provider = build_remote_provider(context, args)?;
+    let envelope = JacsDocumentProvider::get_memory(&provider).map_err(tool_message)?;
+    let success = envelope.is_some();
+    Ok(success_tool_result(
+        format!("get_memory present={}", success),
+        json!({ "present": success, "envelope": envelope }),
+    ))
+}
+
+async fn call_save_soul(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let provider = build_remote_provider(context, args)?;
+    let content = optional_string(args, "content");
+    let key = JacsDocumentProvider::save_soul(&provider, content).map_err(tool_message)?;
+    Ok(success_tool_result(
+        format!("save_soul key={key}"),
+        json!({ "key": key }),
+    ))
+}
+
+async fn call_get_soul(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let provider = build_remote_provider(context, args)?;
+    let envelope = JacsDocumentProvider::get_soul(&provider).map_err(tool_message)?;
+    let success = envelope.is_some();
+    Ok(success_tool_result(
+        format!("get_soul present={}", success),
+        json!({ "present": success, "envelope": envelope }),
+    ))
+}
+
+async fn call_store_text_file(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let raw_path = required_string(args, "path")?;
+    let path = guard_input_path("path", raw_path)?;
+    let provider = build_remote_provider(context, args)?;
+    let key = JacsDocumentProvider::store_text_file(&provider, &path).map_err(tool_message)?;
+    Ok(success_tool_result(
+        format!("store_text_file path={path} key={key}"),
+        json!({ "path": path, "key": key }),
+    ))
+}
+
+async fn call_store_image_file(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let raw_path = required_string(args, "path")?;
+    let path = guard_input_path("path", raw_path)?;
+    let provider = build_remote_provider(context, args)?;
+    let key = JacsDocumentProvider::store_image_file(&provider, &path).map_err(tool_message)?;
+    Ok(success_tool_result(
+        format!("store_image_file path={path} key={key}"),
+        json!({ "path": path, "key": key }),
+    ))
+}
+
+async fn call_get_record_bytes(context: &HaiServerContext, args: &Value) -> ToolResult {
+    use base64::Engine;
+    let key = required_string(args, "key")?;
+    let provider = build_remote_provider(context, args)?;
+    let bytes =
+        JacsDocumentProvider::get_record_bytes(&provider, key).map_err(tool_message)?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(success_tool_result(
+        format!("get_record_bytes key={key} bytes_len={}", bytes.len()),
+        json!({ "key": key, "bytes_b64": b64, "bytes_len": bytes.len() }),
     ))
 }
 
@@ -1760,7 +1980,10 @@ mod tests {
     }
 
     #[test]
-    fn mcp_tool_contract_total_count_is_32() {
+    fn mcp_tool_contract_total_count_is_39() {
+        // Issue 004: count bumped from 32 to 39 with the seven D5/D9 record-store
+        // tools (hai_save_memory, hai_get_memory, hai_save_soul, hai_get_soul,
+        // hai_store_text_file, hai_store_image_file, hai_get_record_bytes).
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/mcp_tool_contract.json");
         let raw = std::fs::read_to_string(&path).expect("read mcp_tool_contract.json");
@@ -1769,8 +1992,8 @@ mod tests {
             .as_u64()
             .expect("total_tool_count");
         let count = val["required_tools"].as_array().expect("required_tools").len() as u64;
-        assert_eq!(total, 32);
-        assert_eq!(count, 32);
+        assert_eq!(total, 39);
+        assert_eq!(count, 39);
     }
 
     /// Issue 015: the `format` hint is a JACS REVIEW_002 dead parameter

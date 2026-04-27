@@ -1,7 +1,7 @@
 {
   "description": "CLI command parity contract. The haiai binary must expose exactly these subcommands. Tests verify bidirectional parity between this fixture and the Commands enum.",
-  "version": "1.0.0",
-  "total_command_count": 33,
+  "version": "1.1.0",
+  "total_command_count": 36,
   "commands": [
     {
       "name": "init",
@@ -137,6 +137,21 @@
     {
       "name": "extract-media-signature",
       "args": ["file:string", "raw_payload:bool"]
+    },
+    {
+      "name": "memory",
+      "args": [],
+      "subcommands": ["save", "get"]
+    },
+    {
+      "name": "soul",
+      "args": [],
+      "subcommands": ["save", "get"]
+    },
+    {
+      "name": "records",
+      "args": [],
+      "subcommands": ["store-text", "store-image", "get-bytes"]
     }
   ]
 }

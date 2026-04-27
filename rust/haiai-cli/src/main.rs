@@ -4,8 +4,8 @@ use hai_mcp::{HaiMcpServer, HaiServerContext, LoadedSharedAgent};
 use haiai::{
     CreateAgentOptions, CreateEmailTemplateOptions, HaiClient, HaiClientOptions,
     JacsAgentLifecycle, JacsDocumentProvider, JacsProvider, ListEmailTemplatesOptions,
-    ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions, SearchOptions, SendEmailOptions,
-    UpdateEmailTemplateOptions,
+    ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions, RemoteJacsProvider,
+    RemoteJacsProviderOptions, SearchOptions, SendEmailOptions, UpdateEmailTemplateOptions,
 };
 use jacs_mcp::JacsMcpServer;
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
@@ -475,6 +475,91 @@ enum Commands {
         /// Print the raw base64url-no-pad payload as embedded; default decodes
         #[arg(long)]
         raw_payload: bool,
+    },
+
+    // =========================================================================
+    // Issue 005: D5 / D9 record-store CLI verbs.
+    //
+    // Mirror the seven MCP tools registered in Issue 004. These exist so
+    // non-Rust callers (Python/Node/Go via shell) and LLMs invoking via CLI
+    // can reach the same functionality the MCP layer exposes.
+    // =========================================================================
+
+    /// Sign and store a MEMORY record on hai-api (D5)
+    Memory {
+        #[command(subcommand)]
+        command: MemoryCommands,
+    },
+
+    /// Sign and store a SOUL record on hai-api (D5)
+    Soul {
+        #[command(subcommand)]
+        command: SoulCommands,
+    },
+
+    /// Manage typed records (signed text/image/binary) on hai-api (D9)
+    Records {
+        #[command(subcommand)]
+        command: RecordsCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum MemoryCommands {
+    /// Sign + store MEMORY content. Defaults to reading MEMORY.md from CWD when neither --from nor --content is given.
+    Save {
+        /// Read content from a file
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Inline content (overrides --from)
+        #[arg(long)]
+        content: Option<String>,
+    },
+
+    /// Fetch the latest MEMORY record's signed envelope JSON
+    Get,
+}
+
+#[derive(Subcommand)]
+enum SoulCommands {
+    /// Sign + store SOUL content. Defaults to reading SOUL.md from CWD when neither --from nor --content is given.
+    Save {
+        /// Read content from a file
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Inline content (overrides --from)
+        #[arg(long)]
+        content: Option<String>,
+    },
+
+    /// Fetch the latest SOUL record's signed envelope JSON
+    Get,
+}
+
+#[derive(Subcommand)]
+enum RecordsCommands {
+    /// POST a JACS-signed markdown file as text/markdown; profile=jacs-text-v1
+    StoreText {
+        /// Path to the signed markdown file
+        path: String,
+    },
+
+    /// POST a JACS-signed image (PNG/JPEG/WebP) with the right Content-Type
+    StoreImage {
+        /// Path to the signed image file
+        path: String,
+    },
+
+    /// Fetch the raw record bytes from hai-api by key (id:version)
+    GetBytes {
+        /// Record key in `id:version` format
+        key: String,
+
+        /// Output file path
+        #[arg(long)]
+        out: String,
     },
 }
 
@@ -2572,9 +2657,104 @@ async fn main() -> anyhow::Result<()> {
         Commands::ExtractMediaSignature { file, raw_payload } => {
             media_cmds::handle_extract_media_signature(&file, raw_payload)?
         }
+
+        // =====================================================================
+        // Issue 005: D5 / D9 record-store CLI handlers.
+        // =====================================================================
+        Commands::Memory { command } => match command {
+            MemoryCommands::Save { from, content } => {
+                let body = resolve_typed_body(content, from, "MEMORY.md")?;
+                let provider = build_remote_provider()?;
+                let key = JacsDocumentProvider::save_memory(&provider, Some(&body))
+                    .context("save_memory failed")?;
+                println!("MEMORY saved: {}", key);
+            }
+            MemoryCommands::Get => {
+                let provider = build_remote_provider()?;
+                match JacsDocumentProvider::get_memory(&provider).context("get_memory failed")? {
+                    Some(envelope) => println!("{}", envelope),
+                    None => {
+                        eprintln!("No MEMORY record found.");
+                        std::process::exit(2);
+                    }
+                }
+            }
+        },
+        Commands::Soul { command } => match command {
+            SoulCommands::Save { from, content } => {
+                let body = resolve_typed_body(content, from, "SOUL.md")?;
+                let provider = build_remote_provider()?;
+                let key = JacsDocumentProvider::save_soul(&provider, Some(&body))
+                    .context("save_soul failed")?;
+                println!("SOUL saved: {}", key);
+            }
+            SoulCommands::Get => {
+                let provider = build_remote_provider()?;
+                match JacsDocumentProvider::get_soul(&provider).context("get_soul failed")? {
+                    Some(envelope) => println!("{}", envelope),
+                    None => {
+                        eprintln!("No SOUL record found.");
+                        std::process::exit(2);
+                    }
+                }
+            }
+        },
+        Commands::Records { command } => match command {
+            RecordsCommands::StoreText { path } => {
+                let provider = build_remote_provider()?;
+                let key = JacsDocumentProvider::store_text_file(&provider, &path)
+                    .context("store_text_file failed")?;
+                println!("Record stored: {}", key);
+            }
+            RecordsCommands::StoreImage { path } => {
+                let provider = build_remote_provider()?;
+                let key = JacsDocumentProvider::store_image_file(&provider, &path)
+                    .context("store_image_file failed")?;
+                println!("Record stored: {}", key);
+            }
+            RecordsCommands::GetBytes { key, out } => {
+                let provider = build_remote_provider()?;
+                let bytes = JacsDocumentProvider::get_record_bytes(&provider, &key)
+                    .context("get_record_bytes failed")?;
+                std::fs::write(&out, &bytes)
+                    .with_context(|| format!("failed to write {}", out))?;
+                println!("Wrote {} bytes to {}", bytes.len(), out);
+            }
+        },
     }
 
     Ok(())
+}
+
+/// Issue 005: resolve memory/soul body content with explicit precedence:
+/// `--content` > `--from <file>` > default file (`MEMORY.md` / `SOUL.md`).
+fn resolve_typed_body(
+    content: Option<String>,
+    from: Option<String>,
+    default_filename: &str,
+) -> anyhow::Result<String> {
+    if let Some(s) = content {
+        return Ok(s);
+    }
+    let path = from.unwrap_or_else(|| default_filename.to_string());
+    std::fs::read_to_string(&path).with_context(|| format!("failed to read {}", path))
+}
+
+/// Issue 005: construct a `RemoteJacsProvider<LocalJacsProvider>` from the local
+/// agent's signing material plus the configured `HAI_URL`. Mirrors the MCP
+/// helper from Issue 004.
+fn build_remote_provider() -> anyhow::Result<RemoteJacsProvider<LocalJacsProvider>> {
+    let local = LocalJacsProvider::from_config_path(None, None)
+        .context("failed to load JACS agent from config")?;
+    let provider = RemoteJacsProvider::new(
+        local,
+        RemoteJacsProviderOptions {
+            base_url: hai_url(),
+            ..RemoteJacsProviderOptions::default()
+        },
+    )
+    .context("failed to construct RemoteJacsProvider")?;
+    Ok(provider)
 }
 
 #[cfg(test)]
@@ -3064,7 +3244,9 @@ mod tests {
     }
 
     #[test]
-    fn cli_command_parity_total_count_is_33() {
+    fn cli_command_parity_total_count_is_36() {
+        // Issue 005: bumped from 33 to 36 with the three D5/D9 record-store
+        // command groups (memory, soul, records).
         let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/cli_command_parity.json");
         let raw = std::fs::read_to_string(&fixture_path).expect("read parity fixture");
@@ -3074,8 +3256,8 @@ mod tests {
             .as_u64()
             .expect("total_command_count");
         let count = fixture["commands"].as_array().expect("commands").len() as u64;
-        assert_eq!(total, 33, "total_command_count must be 33 after media-signing PRD");
-        assert_eq!(count, 33, "commands array length must be 33");
+        assert_eq!(total, 36, "total_command_count must be 36 after Issue 005");
+        assert_eq!(count, 36, "commands array length must be 36");
     }
 
     #[test]

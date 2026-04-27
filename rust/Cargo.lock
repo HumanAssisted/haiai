@@ -1291,6 +1291,7 @@ dependencies = [
  "httpmock",
  "image",
  "jacs",
+ "jacs-media 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "percent-encoding",
  "reqwest 0.13.2",
  "serde",
@@ -1935,7 +1936,7 @@ dependencies = [
  "hex",
  "hickory-resolver",
  "hkdf",
- "jacs-media",
+ "jacs-media 0.10.0",
  "jsonschema",
  "keyring",
  "lazy_static",
@@ -2016,6 +2017,20 @@ dependencies = [
 [[package]]
 name = "jacs-media"
 version = "0.10.0"
+dependencies = [
+ "base64",
+ "image",
+ "img-parts",
+ "png 0.17.16",
+ "sha2",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "jacs-media"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd4b0dc0aa0d0b377a9adf0d2dcd3c32ce9a3faadeaeff2d910e928d8496228f"
 dependencies = [
  "base64",
  "image",

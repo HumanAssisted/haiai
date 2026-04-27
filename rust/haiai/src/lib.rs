@@ -44,6 +44,7 @@ pub mod error;
 pub mod jacs;
 #[cfg(feature = "jacs-crate")]
 pub mod jacs_local;
+pub mod jacs_remote;
 pub mod key_format;
 pub mod mime;
 pub mod self_knowledge;
@@ -105,6 +106,7 @@ pub use jacs::JacsAgreementProvider;
 pub use jacs::JacsAttestationProvider;
 #[cfg(feature = "jacs-crate")]
 pub use jacs_local::LocalJacsProvider;
+pub use jacs_remote::{RemoteJacsProvider, RemoteJacsProviderOptions};
 pub use types::*;
 pub use verify::{
     generate_verify_link, generate_verify_link_hosted, MAX_VERIFY_DOCUMENT_BYTES,

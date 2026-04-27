@@ -1,7 +1,8 @@
 {
-  "version": "0.1.8",
-  "description": "Complete method inventory for hai-binding-core FFI wrapper",
-  "generated": "2026-03-23",
+  "version": "0.1.9",
+  "description": "Documentation-grade summary of hai-binding-core FFI methods. The CANONICAL FFI parity contract is `fixtures/ffi_method_parity.json` (Issue 016) — that fixture is what cross-language facade tests assert against. This file is no longer required to enumerate every method; it remains as a per-method narrative supplement (auth_required, notes, etc.) that the fixture's terse type-only schema does not carry. New methods MUST be added to ffi_method_parity.json; adding them here is optional.",
+  "canonical_parity_fixture": "fixtures/ffi_method_parity.json",
+  "generated": "2026-04-27",
   "methods": [
     {
       "name": "hello",

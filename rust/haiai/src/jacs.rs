@@ -417,6 +417,77 @@ pub trait JacsDocumentProvider: JacsProvider {
 
     /// Report the capabilities of the configured storage backend.
     fn storage_capabilities(&self) -> Result<StorageCapabilities>;
+
+    // =========================================================================
+    // D5: MEMORY / SOUL convenience wrappers (Issue 003)
+    //
+    // These wrap the generic CRUD with a specific `jacsType` so the LLM caller
+    // and the CLI/MCP surfaces see them by name. Implementations that do not
+    // support typed records (e.g., `StaticJacsProvider`) inherit the default
+    // `Err("not supported")` shape — the Box<dyn JacsDocumentProvider> route
+    // works uniformly without a panic.
+    // =========================================================================
+
+    /// Sign and store a MEMORY record. If `content` is `None` the implementation
+    /// reads `MEMORY.md` from CWD. Returns the record key (`id:version`).
+    fn save_memory(&self, _content: Option<&str>) -> Result<String> {
+        Err(HaiError::Provider(
+            "save_memory: not implemented for this provider".to_string(),
+        ))
+    }
+
+    /// Sign and store a SOUL record. Mirror of `save_memory`.
+    fn save_soul(&self, _content: Option<&str>) -> Result<String> {
+        Err(HaiError::Provider(
+            "save_soul: not implemented for this provider".to_string(),
+        ))
+    }
+
+    /// Fetch the latest MEMORY record's signed envelope JSON. `Ok(None)` when
+    /// no memory record exists for the caller.
+    fn get_memory(&self) -> Result<Option<String>> {
+        Err(HaiError::Provider(
+            "get_memory: not implemented for this provider".to_string(),
+        ))
+    }
+
+    /// Fetch the latest SOUL record's signed envelope JSON. Mirror of `get_memory`.
+    fn get_soul(&self) -> Result<Option<String>> {
+        Err(HaiError::Provider(
+            "get_soul: not implemented for this provider".to_string(),
+        ))
+    }
+
+    // =========================================================================
+    // D9: typed-content helpers (Issue 003)
+    //
+    // Read a local file, set the right `Content-Type`, and POST it. Each method
+    // delegates to the generic record CRUD with format-specific handling.
+    // =========================================================================
+
+    /// Read a signed-text file (markdown w/ JACS signature block) and POST it
+    /// with `Content-Type: text/markdown; profile=jacs-text-v1`. Returns the key.
+    fn store_text_file(&self, _path: &str) -> Result<String> {
+        Err(HaiError::Provider(
+            "store_text_file: not implemented for this provider".to_string(),
+        ))
+    }
+
+    /// Detect a signed image's format from leading magic bytes and POST it with
+    /// `Content-Type: image/png|jpeg|webp`. Returns the key.
+    fn store_image_file(&self, _path: &str) -> Result<String> {
+        Err(HaiError::Provider(
+            "store_image_file: not implemented for this provider".to_string(),
+        ))
+    }
+
+    /// Fetch the raw record bytes — no UTF-8 decode, no JSON parse. Used by D9
+    /// callers reading binary content (signed images, signed-text envelopes).
+    fn get_record_bytes(&self, _key: &str) -> Result<Vec<u8>> {
+        Err(HaiError::Provider(
+            "get_record_bytes: not implemented for this provider".to_string(),
+        ))
+    }
 }
 
 // =============================================================================
