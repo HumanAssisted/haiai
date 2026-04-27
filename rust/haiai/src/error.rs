@@ -34,6 +34,15 @@ pub enum HaiError {
     #[error("validation error on '{field}': {message}")]
     Validation { field: String, message: String },
 
+    /// Issue 052: typed signal that a backend doesn't support a particular
+    /// trait method (e.g., `RemoteJacsProvider::query_by_field` cannot run
+    /// against a server whose envelope JSON lives in S3 rather than Postgres,
+    /// per PRD §10 Non-Goal #19). Cross-language consumers can match on this
+    /// without string-matching the error message; routes can fall back to a
+    /// supported method (e.g., `search_documents`) programmatically.
+    #[error("backend does not support method '{method}': {detail}")]
+    BackendUnsupported { method: String, detail: String },
+
     #[error("{0}")]
     Message(String),
 }

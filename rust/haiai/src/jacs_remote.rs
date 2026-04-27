@@ -304,14 +304,14 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
     }
 
     fn store_document(&self, signed_json: &str) -> Result<String> {
-        let body = signed_json.as_bytes().to_vec();
-        let resp = Self::block_on(self.post_record_bytes_async(body, CT_JSON))?;
-        let key = resp
-            .get("key")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| HaiError::Provider("server response missing 'key'".to_string()))?
-            .to_string();
-        Ok(key)
+        // DRY: route through the shared `post_record_for_key` helper so the
+        // POST + key-extraction sequence has exactly one definition site.
+        // Previously this method, `store_text_file`, `store_image_file`, and
+        // the D5 `save_typed_doc` helper each duplicated the
+        // `block_on(post_record_bytes_async(...)) → resp.get("key").as_str()`
+        // pattern (4 copies, 4 places to drift). See
+        // `Self::post_record_for_key` below.
+        self.post_record_for_key(signed_json.as_bytes().to_vec(), CT_JSON)
     }
 
     fn sign_and_store(&self, data: &Value) -> Result<SignedDocument> {
@@ -554,11 +554,19 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
         // surfacing the same "unsupported" error wrapped in PG-internal
         // terminology. Short-circuit before the network call so consumers
         // see a clear, locally-generated message.
-        Err(HaiError::Provider(format!(
-            "query_by_field is not supported by RemoteJacsProvider in v1 (envelope JSON \
-             lives in S3, not Postgres — see PRD §10 Non-Goal #19). Use \
-             search_documents(query) for full-text search instead. Field requested: '{field}'"
-        )))
+        //
+        // Issue 052: surface as the typed `BackendUnsupported` variant so
+        // cross-language consumers can branch programmatically (e.g., switch
+        // to `search_documents` automatically when the backend can't
+        // field-filter) without string-matching the message.
+        Err(HaiError::BackendUnsupported {
+            method: "query_by_field".to_string(),
+            detail: format!(
+                "RemoteJacsProvider does not support field-equality queries in v1 \
+                 (envelope JSON lives in S3, not Postgres — see PRD §10 Non-Goal #19). \
+                 Use search_documents(query) for full-text search instead. Field requested: '{field}'"
+            ),
+        })
     }
 
     fn query_by_agent(
@@ -658,11 +666,9 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
                 "text file has no JACS signature block — sign with sign_text_file first".to_string(),
             ));
         }
-        let resp = Self::block_on(self.post_record_bytes_async(bytes, CT_TEXT_MD))?;
-        resp.get("key")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| HaiError::Provider("server response missing 'key'".to_string()))
+        // DRY: shared POST + key-extraction with `store_document` /
+        // `store_image_file` / `save_typed_doc`.
+        self.post_record_for_key(bytes, CT_TEXT_MD)
     }
 
     /// Detect a signed image's format from leading magic bytes and POST it with
@@ -678,11 +684,9 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
                 "image has no JACS signature — sign with sign_image first".to_string(),
             ));
         }
-        let resp = Self::block_on(self.post_record_bytes_async(bytes, ct))?;
-        resp.get("key")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| HaiError::Provider("server response missing 'key'".to_string()))
+        // DRY: shared POST + key-extraction with `store_document` /
+        // `store_text_file` / `save_typed_doc`.
+        self.post_record_for_key(bytes, ct)
     }
 
     /// Fetch the raw record bytes (any content type — no UTF-8 decode, no JSON parse).
@@ -695,6 +699,35 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
 // Inherent helpers — private support for the D5/D9 trait methods.
 // =============================================================================
 impl<P: JacsProvider> RemoteJacsProvider<P> {
+    /// POST signed bytes (JSON envelope, signed markdown, or signed image) to
+    /// `/api/v1/records` and return the server-issued record key.
+    ///
+    /// **DRY single source of truth.** `store_document`, `store_text_file`,
+    /// `store_image_file`, and the D5 `save_typed_doc` (memory/soul) helper
+    /// all route through this method. Before this consolidation each call
+    /// site duplicated the `block_on(post_record_bytes_async(...)) →
+    /// resp.get("key").as_str()` sequence; the next "missing 'key'" error
+    /// message change would have required four edits in four places. Now a
+    /// single edit propagates everywhere.
+    fn post_record_for_key(&self, bytes: Vec<u8>, content_type: &str) -> Result<String> {
+        let resp = Self::block_on(self.post_record_bytes_async(bytes, content_type))?;
+        resp.get("key")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| HaiError::Provider("server response missing 'key'".to_string()))
+    }
+
+    /// Resolve `content` (or fall back to reading `default_filename` from
+    /// CWD), wrap it in a JACS-signed envelope tagged with `jacs_type`, and
+    /// POST to `/api/v1/records`.
+    ///
+    /// Backs `save_memory` (jacs_type="memory") and `save_soul`
+    /// (jacs_type="soul"); single source of truth for the typed-doc shape so
+    /// adding `save_<other_type>` becomes a 1-line wrapper. Routes through
+    /// the trait's `sign_document` + `store_document` rather than reaching
+    /// for `post_record_for_key` directly, so any provider extending
+    /// `RemoteJacsProvider` (e.g., a future audit-logging wrapper) still
+    /// observes the canonical sign/store pair.
     fn save_typed_doc(
         &self,
         jacs_type: &str,
@@ -1033,11 +1066,13 @@ mod tests {
         assert!(caps.tombstone);
     }
 
-    /// Issue 035: `query_by_field` MUST short-circuit before any network
+    /// Issue 035 / 052: `query_by_field` MUST short-circuit before any network
     /// activity. Previously the SDK built a URL with `?field=&value=`, fired
     /// a GET that the server hard-rejected with a 400, and surfaced the
     /// error wrapped in PG-internal terminology. The fix returns a clear
-    /// locally-generated error and skips the round-trip entirely.
+    /// locally-generated error and skips the round-trip entirely. Issue 052
+    /// upgrades this to a typed `BackendUnsupported` variant so cross-language
+    /// consumers can branch programmatically.
     #[tokio::test(flavor = "multi_thread")]
     async fn query_by_field_returns_unsupported_without_network_call() {
         let server = MockServer::start_async().await;
@@ -1053,15 +1088,16 @@ mod tests {
         let err = provider
             .query_by_field("foo", "bar", 10, 0)
             .expect_err("must error before any network call");
-        let msg = format!("{}", err);
-        assert!(
-            msg.contains("not supported"),
-            "expected unsupported message, got: {msg}"
-        );
-        assert!(
-            msg.contains("foo"),
-            "error must echo the requested field for debuggability, got: {msg}"
-        );
+        match &err {
+            HaiError::BackendUnsupported { method, detail } => {
+                assert_eq!(method, "query_by_field", "method name pinned for FFI consumers");
+                assert!(
+                    detail.contains("foo"),
+                    "detail must echo the requested field for debuggability, got: {detail}"
+                );
+            }
+            other => panic!("expected BackendUnsupported, got: {other:?}"),
+        }
         // Pin: zero HTTP calls.
         no_traffic.assert_calls_async(0).await;
     }

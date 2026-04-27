@@ -429,6 +429,17 @@ pub trait JacsDocumentProvider: JacsProvider {
     ) -> Result<Vec<String>>;
 
     /// Query documents by field value.
+    ///
+    /// **Backend-dependent.** `LocalJacsProvider` filters in-memory by the
+    /// requested field; `RemoteJacsProvider` (Issue 052) does NOT support
+    /// this method and returns
+    /// [`HaiError::BackendUnsupported`](crate::error::HaiError::BackendUnsupported)
+    /// — envelope JSON lives in S3 on the hai-api backend, not Postgres
+    /// (PRD §10 Non-Goal #19), so a server-side JSONB filter would require
+    /// fetching every candidate from S3. Cross-language consumers should
+    /// match on the typed error and fall back to `search_documents` for
+    /// full-text search, or call `query_by_type` / `query_by_agent` which
+    /// are supported across backends.
     fn query_by_field(
         &self,
         field: &str,

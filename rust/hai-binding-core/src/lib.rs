@@ -211,6 +211,13 @@ impl From<HaiError> for HaiBindingError {
             HaiError::Validation { .. } => {
                 HaiBindingError::new(ErrorKind::InvalidArgument, err.to_string())
             }
+            // Issue 052: backend-unsupported is closer to ProviderError than to
+            // Generic — cross-language consumers see "this backend can't do
+            // that" as a provider-shape signal and can branch on the
+            // ErrorKind without re-parsing the message.
+            HaiError::BackendUnsupported { .. } => {
+                HaiBindingError::new(ErrorKind::ProviderError, err.to_string())
+            }
             HaiError::VerifyUrlTooLong { .. }
             | HaiError::MissingHostedDocumentId
             | HaiError::Message(_) => HaiBindingError::new(ErrorKind::Generic, err.to_string()),
