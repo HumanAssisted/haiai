@@ -50,3 +50,6 @@ packages = ["src/haiai"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "native_smoke: tests that load the real haiipy native binding (skipped when haiipy is not built)",
+]

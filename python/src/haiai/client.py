@@ -2172,6 +2172,105 @@ class HaiClient:
         """Return True if currently connected."""
         return self._connected
 
+    # ------------------------------------------------------------------
+    # JACS Document Store (sync)
+    #
+    # 20 methods that delegate to RemoteJacsProvider via the FFI adapter.
+    # Naming matches `fixtures/ffi_method_parity.json["jacs_document_store"]`.
+    # ------------------------------------------------------------------
+
+    def store_document(self, signed_json: str) -> str:
+        """Store a pre-signed JACS document. Returns the record key (`id:version`)."""
+        return self._get_ffi().store_document(signed_json)
+
+    def sign_and_store(self, data_json: str) -> dict[str, Any]:
+        """Sign + store a JSON document in one call. Returns the SignedDocument shape."""
+        return self._get_ffi().sign_and_store(data_json)
+
+    def get_document(self, key: str) -> str:
+        """Fetch a document by key (`id` or `id:version`). Returns the signed envelope JSON."""
+        return self._get_ffi().get_document(key)
+
+    def get_latest_document(self, doc_id: str) -> str:
+        """Fetch the latest version of a document by id."""
+        return self._get_ffi().get_latest_document(doc_id)
+
+    def get_document_versions(self, doc_id: str) -> list[str]:
+        """List all versions of a document. Returns a list of keys."""
+        return self._get_ffi().get_document_versions(doc_id)
+
+    def list_documents(self, jacs_type: Optional[str] = None) -> list[str]:
+        """List document keys, optionally filtered by `jacsType`."""
+        return self._get_ffi().list_documents(jacs_type)
+
+    def remove_document(self, key: str) -> None:
+        """Tombstone (soft-delete) a document by key."""
+        self._get_ffi().remove_document(key)
+
+    def update_document(self, doc_id: str, signed_json: str) -> dict[str, Any]:
+        """Update a document, creating a new signed version. Returns the SignedDocument shape."""
+        return self._get_ffi().update_document(doc_id, signed_json)
+
+    def search_documents(
+        self, query: str, limit: int = 25, offset: int = 0
+    ) -> dict[str, Any]:
+        """Search documents (fulltext / hybrid). Returns the DocSearchResults shape."""
+        return self._get_ffi().search_documents(query, limit, offset)
+
+    def query_by_type(
+        self, doc_type: str, limit: int = 25, offset: int = 0
+    ) -> list[str]:
+        """Query documents by `jacsType`. Returns a list of keys."""
+        return self._get_ffi().query_by_type(doc_type, limit, offset)
+
+    def query_by_field(
+        self, field: str, value: str, limit: int = 25, offset: int = 0
+    ) -> list[str]:
+        """Query documents by an envelope field. Returns a list of keys."""
+        return self._get_ffi().query_by_field(field, value, limit, offset)
+
+    def query_by_agent(
+        self, agent_id: str, limit: int = 25, offset: int = 0
+    ) -> list[str]:
+        """Query documents signed by a specific agent. Returns a list of keys."""
+        return self._get_ffi().query_by_agent(agent_id, limit, offset)
+
+    def storage_capabilities(self) -> dict[str, Any]:
+        """Report storage backend capabilities (fulltext, vector, etc.)."""
+        return self._get_ffi().storage_capabilities()
+
+    # D5 — MEMORY / SOUL
+
+    def save_memory(self, content: Optional[str] = None) -> str:
+        """Sign and store a `MEMORY.md` record. If `content` is None, reads from CWD."""
+        return self._get_ffi().save_memory(content)
+
+    def save_soul(self, content: Optional[str] = None) -> str:
+        """Sign and store a `SOUL.md` record. If `content` is None, reads from CWD."""
+        return self._get_ffi().save_soul(content)
+
+    def get_memory(self) -> Optional[str]:
+        """Fetch the latest MEMORY record's signed envelope JSON."""
+        return self._get_ffi().get_memory()
+
+    def get_soul(self) -> Optional[str]:
+        """Fetch the latest SOUL record's signed envelope JSON."""
+        return self._get_ffi().get_soul()
+
+    # D9 — typed-content helpers
+
+    def store_text_file(self, path: str) -> str:
+        """Read a signed-text file and POST it to the records endpoint."""
+        return self._get_ffi().store_text_file(path)
+
+    def store_image_file(self, path: str) -> str:
+        """Detect a signed image's format and POST it with the matching content type."""
+        return self._get_ffi().store_image_file(path)
+
+    def get_record_bytes(self, key: str) -> bytes:
+        """Fetch raw record bytes (no UTF-8 decode, no JSON parse)."""
+        return self._get_ffi().get_record_bytes(key)
+
 
 # ---------------------------------------------------------------------------
 # Module-level convenience functions

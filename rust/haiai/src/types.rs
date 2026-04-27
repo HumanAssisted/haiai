@@ -745,7 +745,23 @@ pub struct SignedDocument {
 pub struct DocSearchResults {
     /// The matched documents, ordered by relevance.
     pub results: Vec<DocSearchHit>,
-    /// Total number of matching documents (for pagination).
+    /// Number of hits returned in `results`.
+    ///
+    /// # Backend semantics (Issue 033)
+    ///
+    /// - **`LocalJacsProvider`** sets this to the number of hits returned for
+    ///   the current page. There is no global match count for local stores.
+    /// - **`RemoteJacsProvider`** sets this to the number of hits accumulated
+    ///   across the cursor walk (`results.len()`). The server uses cursor
+    ///   pagination (`next_cursor`) and does NOT return a global total.
+    ///
+    /// In both cases this is a LOWER BOUND on the matching set, not the global
+    /// match count. To detect "more results may exist", consumers should use
+    /// `next_cursor` on the underlying server response (cursor pagination is
+    /// the documented contract — see PRD §3.5).
+    ///
+    /// This field is preserved for backwards compatibility; future versions
+    /// may deprecate it in favour of `has_more: bool`.
     pub total_count: usize,
     /// Which search method the backend used.
     pub method: String,

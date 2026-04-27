@@ -1,6 +1,6 @@
 {
   "version": "0.1.9",
-  "description": "Documentation-grade summary of hai-binding-core FFI methods. The CANONICAL FFI parity contract is `fixtures/ffi_method_parity.json` (Issue 016) — that fixture is what cross-language facade tests assert against. This file is no longer required to enumerate every method; it remains as a per-method narrative supplement (auth_required, notes, etc.) that the fixture's terse type-only schema does not carry. New methods MUST be added to ffi_method_parity.json; adding them here is optional.",
+  "description": "Documentation-grade summary of hai-binding-core FFI methods. The CANONICAL FFI parity contract is `fixtures/ffi_method_parity.json` (Issue 016) \u2014 that fixture is what cross-language facade tests assert against. This file is no longer required to enumerate every method; it remains as a per-method narrative supplement (auth_required, notes, etc.) that the fixture's terse type-only schema does not carry. New methods MUST be added to ffi_method_parity.json; adding them here is optional.",
   "canonical_parity_fixture": "fixtures/ffi_method_parity.json",
   "generated": "2026-04-27",
   "methods": [
@@ -8,7 +8,9 @@
       "name": "hello",
       "category": "async",
       "group": "registration",
-      "params": { "include_test": "bool" },
+      "params": {
+        "include_test": "bool"
+      },
       "returns": "HelloResult",
       "auth_required": true,
       "notes": "Smoke test method. First method implemented in binding-core."
@@ -17,7 +19,9 @@
       "name": "register",
       "category": "async",
       "group": "registration",
-      "params": { "options_json": "RegisterAgentOptions (JSON)" },
+      "params": {
+        "options_json": "RegisterAgentOptions (JSON)"
+      },
       "returns": "RegistrationResult",
       "auth_required": false,
       "notes": "Accepts RegisterAgentOptions as JSON. agent_json is a required field."
@@ -26,7 +30,9 @@
       "name": "register_new_agent",
       "category": "async",
       "group": "registration_and_identity",
-      "params": { "options_json": "CreateAgentOptions + registration fields (JSON)" },
+      "params": {
+        "options_json": "CreateAgentOptions + registration fields (JSON)"
+      },
       "returns": "CreateAgentResult + RegistrationResult (merged)",
       "auth_required": false,
       "notes": "Combined operation: creates JACS agent (keygen + doc), then registers with HAI server. Required fields: agent_name, password."
@@ -35,7 +41,9 @@
       "name": "rotate_keys",
       "category": "async",
       "group": "registration",
-      "params": { "options_json": "RotateKeysOptions (JSON, manually constructed)" },
+      "params": {
+        "options_json": "RotateKeysOptions (JSON, manually constructed)"
+      },
       "returns": "RotationResult",
       "auth_required": true,
       "notes": "RotateKeysOptions lacks Deserialize. Manually construct from parsed JSON."
@@ -44,7 +52,9 @@
       "name": "update_agent",
       "category": "async",
       "group": "registration",
-      "params": { "new_agent_data": "string (JSON)" },
+      "params": {
+        "new_agent_data": "string (JSON)"
+      },
       "returns": "UpdateAgentResult",
       "auth_required": true,
       "notes": "Delegates to JacsProvider::update_agent, then re-registers with HAI."
@@ -67,7 +77,9 @@
       "name": "verify_status",
       "category": "async",
       "group": "registration",
-      "params": { "agent_id": "string (optional, defaults to self)" },
+      "params": {
+        "agent_id": "string (optional, defaults to self)"
+      },
       "returns": "VerifyAgentResult",
       "auth_required": true
     },
@@ -75,7 +87,10 @@
       "name": "update_username",
       "category": "async",
       "group": "username",
-      "params": { "agent_id": "string", "username": "string" },
+      "params": {
+        "agent_id": "string",
+        "username": "string"
+      },
       "returns": "UpdateUsernameResult",
       "auth_required": true
     },
@@ -83,7 +98,9 @@
       "name": "delete_username",
       "category": "async",
       "group": "username",
-      "params": { "agent_id": "string" },
+      "params": {
+        "agent_id": "string"
+      },
       "returns": "DeleteUsernameResult",
       "auth_required": true
     },
@@ -91,7 +108,9 @@
       "name": "send_email",
       "category": "async",
       "group": "email_core",
-      "params": { "options_json": "SendEmailOptions (JSON)" },
+      "params": {
+        "options_json": "SendEmailOptions (JSON)"
+      },
       "returns": "SendEmailResult",
       "auth_required": true,
       "notes": "Requires agent_email to be set (register with a username first)."
@@ -100,7 +119,9 @@
       "name": "send_signed_email",
       "category": "async",
       "group": "email_core",
-      "params": { "options_json": "SendEmailOptions (JSON)" },
+      "params": {
+        "options_json": "SendEmailOptions (JSON)"
+      },
       "returns": "SendEmailResult",
       "auth_required": true,
       "notes": "Builds RFC 5322 MIME locally, signs with agent JACS key. Higher complexity than standard template."
@@ -109,7 +130,9 @@
       "name": "list_messages",
       "category": "async",
       "group": "email_core",
-      "params": { "options_json": "ListMessagesOptions (JSON)" },
+      "params": {
+        "options_json": "ListMessagesOptions (JSON)"
+      },
       "returns": "Vec<EmailMessage>",
       "auth_required": true
     },
@@ -117,7 +140,11 @@
       "name": "update_labels",
       "category": "async",
       "group": "email_core",
-      "params": { "message_id": "string", "add_json": "[string]", "remove_json": "[string]" },
+      "params": {
+        "message_id": "string",
+        "add_json": "[string]",
+        "remove_json": "[string]"
+      },
       "returns": "Vec<String>",
       "auth_required": true,
       "notes": "Takes &[&str] slices. Binding-core must collect into Vec<String> first."
@@ -126,7 +153,9 @@
       "name": "mark_read",
       "category": "async",
       "group": "email_actions",
-      "params": { "message_id": "string" },
+      "params": {
+        "message_id": "string"
+      },
       "returns": "()",
       "auth_required": true
     },
@@ -142,7 +171,9 @@
       "name": "get_message",
       "category": "async",
       "group": "email_core",
-      "params": { "message_id": "string" },
+      "params": {
+        "message_id": "string"
+      },
       "returns": "EmailMessage",
       "auth_required": true
     },
@@ -150,7 +181,9 @@
       "name": "get_raw_email",
       "category": "async",
       "group": "email_core",
-      "params": { "message_id": "string" },
+      "params": {
+        "message_id": "string"
+      },
       "returns": "RawEmailResponse",
       "auth_required": true
     },
@@ -158,7 +191,9 @@
       "name": "delete_message",
       "category": "async",
       "group": "email_actions",
-      "params": { "message_id": "string" },
+      "params": {
+        "message_id": "string"
+      },
       "returns": "()",
       "auth_required": true
     },
@@ -166,7 +201,9 @@
       "name": "mark_unread",
       "category": "async",
       "group": "email_actions",
-      "params": { "message_id": "string" },
+      "params": {
+        "message_id": "string"
+      },
       "returns": "()",
       "auth_required": true
     },
@@ -174,7 +211,9 @@
       "name": "archive",
       "category": "async",
       "group": "email_actions",
-      "params": { "message_id": "string" },
+      "params": {
+        "message_id": "string"
+      },
       "returns": "()",
       "auth_required": true
     },
@@ -182,7 +221,9 @@
       "name": "unarchive",
       "category": "async",
       "group": "email_actions",
-      "params": { "message_id": "string" },
+      "params": {
+        "message_id": "string"
+      },
       "returns": "()",
       "auth_required": true
     },
@@ -190,7 +231,9 @@
       "name": "search_messages",
       "category": "async",
       "group": "search",
-      "params": { "options_json": "SearchOptions (JSON)" },
+      "params": {
+        "options_json": "SearchOptions (JSON)"
+      },
       "returns": "Vec<EmailMessage>",
       "auth_required": true
     },
@@ -221,7 +264,11 @@
       "name": "forward",
       "category": "async",
       "group": "email_actions",
-      "params": { "message_id": "string", "to": "string", "comment": "string (optional)" },
+      "params": {
+        "message_id": "string",
+        "to": "string",
+        "comment": "string (optional)"
+      },
       "returns": "SendEmailResult",
       "auth_required": true
     },
@@ -237,7 +284,10 @@
       "name": "fetch_remote_key",
       "category": "async",
       "group": "keys",
-      "params": { "jacs_id": "string", "version": "string" },
+      "params": {
+        "jacs_id": "string",
+        "version": "string"
+      },
       "returns": "PublicKeyInfo",
       "auth_required": false
     },
@@ -245,7 +295,9 @@
       "name": "fetch_key_by_hash",
       "category": "async",
       "group": "keys",
-      "params": { "hash": "string" },
+      "params": {
+        "hash": "string"
+      },
       "returns": "PublicKeyInfo",
       "auth_required": false
     },
@@ -253,7 +305,9 @@
       "name": "fetch_key_by_email",
       "category": "async",
       "group": "keys",
-      "params": { "email": "string" },
+      "params": {
+        "email": "string"
+      },
       "returns": "PublicKeyInfo",
       "auth_required": false
     },
@@ -261,7 +315,9 @@
       "name": "fetch_key_by_domain",
       "category": "async",
       "group": "keys",
-      "params": { "domain": "string" },
+      "params": {
+        "domain": "string"
+      },
       "returns": "PublicKeyInfo",
       "auth_required": false
     },
@@ -269,7 +325,9 @@
       "name": "fetch_all_keys",
       "category": "async",
       "group": "keys",
-      "params": { "jacs_id": "string" },
+      "params": {
+        "jacs_id": "string"
+      },
       "returns": "AgentKeyHistory",
       "auth_required": false
     },
@@ -277,7 +335,9 @@
       "name": "verify_document",
       "category": "async",
       "group": "verification",
-      "params": { "document": "string (JSON)" },
+      "params": {
+        "document": "string (JSON)"
+      },
       "returns": "DocumentVerificationResult",
       "auth_required": false
     },
@@ -285,7 +345,9 @@
       "name": "get_verification",
       "category": "async",
       "group": "verification",
-      "params": { "agent_id": "string" },
+      "params": {
+        "agent_id": "string"
+      },
       "returns": "AgentVerificationResult",
       "auth_required": false
     },
@@ -293,7 +355,9 @@
       "name": "verify_agent_document",
       "category": "async",
       "group": "verification",
-      "params": { "request_json": "VerifyAgentDocumentRequest (JSON)" },
+      "params": {
+        "request_json": "VerifyAgentDocumentRequest (JSON)"
+      },
       "returns": "AgentVerificationResult",
       "auth_required": false
     },
@@ -301,7 +365,10 @@
       "name": "benchmark",
       "category": "async",
       "group": "benchmark",
-      "params": { "name": "string (optional)", "tier": "string (optional)" },
+      "params": {
+        "name": "string (optional)",
+        "tier": "string (optional)"
+      },
       "returns": "Value (raw JSON pass-through)",
       "auth_required": true,
       "notes": "Returns serde_json::Value, not a typed struct. Pass through raw JSON."
@@ -310,7 +377,9 @@
       "name": "free_run",
       "category": "async",
       "group": "benchmark",
-      "params": { "transport": "string (optional: sse|ws)" },
+      "params": {
+        "transport": "string (optional: sse|ws)"
+      },
       "returns": "FreeChaoticResult",
       "auth_required": true
     },
@@ -318,7 +387,9 @@
       "name": "pro_run",
       "category": "async",
       "group": "benchmark",
-      "params": { "options_json": "ProRunOptions (JSON, manually constructed)" },
+      "params": {
+        "options_json": "ProRunOptions (JSON, manually constructed)"
+      },
       "returns": "ProRunResult",
       "auth_required": true,
       "notes": "ProRunOptions lacks Deserialize. Manually construct from JSON. Contains internal poll loop (up to 300s default timeout)."
@@ -345,7 +416,9 @@
       "name": "sign_email_raw",
       "category": "async",
       "group": "email_core",
-      "params": { "raw_email_b64": "string (base64-encoded RFC 5822 bytes)" },
+      "params": {
+        "raw_email_b64": "string (base64-encoded RFC 5822 bytes)"
+      },
       "returns": "string (base64-encoded signed email bytes)",
       "auth_required": true,
       "notes": "Base64 encoding/decoding crosses FFI boundary. Content-Type: message/rfc822."
@@ -354,7 +427,9 @@
       "name": "verify_email_raw",
       "category": "async",
       "group": "email_core",
-      "params": { "raw_email_b64": "string (base64-encoded RFC 5822 bytes)" },
+      "params": {
+        "raw_email_b64": "string (base64-encoded RFC 5822 bytes)"
+      },
       "returns": "Value (JSON verification result)",
       "auth_required": true,
       "notes": "Base64 encoding/decoding crosses FFI boundary. Content-Type: message/rfc822."
@@ -363,34 +438,47 @@
       "name": "sign_text",
       "category": "async",
       "group": "media_local",
-      "params": { "path": "string", "opts_json": "{backup?, allow_duplicate?} (JSON)" },
+      "params": {
+        "path": "string",
+        "opts_json": "{backup?, allow_duplicate?} (JSON)"
+      },
       "returns": "string (SignTextOutcome JSON)",
       "auth_required": false,
-      "notes": "Local-only — no HTTP. Delegates to JacsMediaProvider trait."
+      "notes": "Local-only \u2014 no HTTP. Delegates to JacsMediaProvider trait."
     },
     {
       "name": "verify_text",
       "category": "async",
       "group": "media_local",
-      "params": { "path": "string", "opts_json": "{strict?, key_dir?} (JSON)" },
+      "params": {
+        "path": "string",
+        "opts_json": "{strict?, key_dir?} (JSON)"
+      },
       "returns": "string ({status, signatures[], malformed_detail?} envelope JSON)",
       "auth_required": false,
-      "notes": "Local-only — no HTTP. VerifyTextResult is converted to a flat JSON envelope."
+      "notes": "Local-only \u2014 no HTTP. VerifyTextResult is converted to a flat JSON envelope."
     },
     {
       "name": "sign_image",
       "category": "async",
       "group": "media_local",
-      "params": { "in_path": "string", "out_path": "string", "opts_json": "{robust?, format_hint?, refuse_overwrite?, backup?, unsafe_bak_mode?} (JSON)" },
+      "params": {
+        "in_path": "string",
+        "out_path": "string",
+        "opts_json": "{robust?, format_hint?, refuse_overwrite?, backup?, unsafe_bak_mode?} (JSON)"
+      },
       "returns": "string (SignedMedia JSON)",
       "auth_required": false,
-      "notes": "Local-only — no HTTP. PNG/JPEG/WebP. Robust mode is PNG/JPEG only."
+      "notes": "Local-only \u2014 no HTTP. PNG/JPEG/WebP. Robust mode is PNG/JPEG only."
     },
     {
       "name": "verify_image",
       "category": "async",
       "group": "media_local",
-      "params": { "path": "string", "opts_json": "{strict?, key_dir?, robust?} (JSON)" },
+      "params": {
+        "path": "string",
+        "opts_json": "{strict?, key_dir?, robust?} (JSON)"
+      },
       "returns": "string (MediaVerificationResult JSON)",
       "auth_required": false,
       "notes": "Local-only. User-facing key 'robust' maps to JACS-internal scan_robust."
@@ -399,7 +487,10 @@
       "name": "extract_media_signature",
       "category": "async",
       "group": "media_local",
-      "params": { "path": "string", "opts_json": "{raw_payload?} (JSON)" },
+      "params": {
+        "path": "string",
+        "opts_json": "{raw_payload?} (JSON)"
+      },
       "returns": "string ({present, payload?} envelope JSON)",
       "auth_required": false,
       "notes": "Local-only. Decodes the JACS payload from a signed image."
@@ -408,7 +499,9 @@
       "name": "create_attestation",
       "category": "async",
       "group": "attestations",
-      "params": { "params_json": "{agent_id, subject, claims, evidence?} (JSON)" },
+      "params": {
+        "params_json": "{agent_id, subject, claims, evidence?} (JSON)"
+      },
       "returns": "Value (JSON attestation)",
       "auth_required": true
     },
@@ -416,7 +509,9 @@
       "name": "list_attestations",
       "category": "async",
       "group": "attestations",
-      "params": { "params_json": "{agent_id, limit?, offset?} (JSON)" },
+      "params": {
+        "params_json": "{agent_id, limit?, offset?} (JSON)"
+      },
       "returns": "Value (JSON attestation list)",
       "auth_required": true
     },
@@ -424,7 +519,10 @@
       "name": "get_attestation",
       "category": "async",
       "group": "attestations",
-      "params": { "agent_id": "string", "doc_id": "string" },
+      "params": {
+        "agent_id": "string",
+        "doc_id": "string"
+      },
       "returns": "Value (JSON attestation)",
       "auth_required": true
     },
@@ -432,7 +530,9 @@
       "name": "verify_attestation",
       "category": "async",
       "group": "attestations",
-      "params": { "document": "string" },
+      "params": {
+        "document": "string"
+      },
       "returns": "Value (JSON verification result)",
       "auth_required": true
     },
@@ -440,7 +540,9 @@
       "name": "create_email_template",
       "category": "async",
       "group": "email_templates",
-      "params": { "options_json": "CreateEmailTemplateOptions (JSON)" },
+      "params": {
+        "options_json": "CreateEmailTemplateOptions (JSON)"
+      },
       "returns": "EmailTemplate",
       "auth_required": true
     },
@@ -448,7 +550,9 @@
       "name": "list_email_templates",
       "category": "async",
       "group": "email_templates",
-      "params": { "options_json": "ListEmailTemplatesOptions (JSON)" },
+      "params": {
+        "options_json": "ListEmailTemplatesOptions (JSON)"
+      },
       "returns": "ListEmailTemplatesResult",
       "auth_required": true
     },
@@ -456,7 +560,9 @@
       "name": "get_email_template",
       "category": "async",
       "group": "email_templates",
-      "params": { "template_id": "string" },
+      "params": {
+        "template_id": "string"
+      },
       "returns": "EmailTemplate",
       "auth_required": true
     },
@@ -464,7 +570,10 @@
       "name": "update_email_template",
       "category": "async",
       "group": "email_templates",
-      "params": { "template_id": "string", "options_json": "UpdateEmailTemplateOptions (JSON)" },
+      "params": {
+        "template_id": "string",
+        "options_json": "UpdateEmailTemplateOptions (JSON)"
+      },
       "returns": "EmailTemplate",
       "auth_required": true
     },
@@ -472,9 +581,228 @@
       "name": "delete_email_template",
       "category": "async",
       "group": "email_templates",
-      "params": { "template_id": "string" },
+      "params": {
+        "template_id": "string"
+      },
       "returns": "()",
       "auth_required": true
+    },
+    {
+      "name": "store_document",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "signed_json": "string (signed envelope JSON)"
+      },
+      "returns": "string (record key id:version)",
+      "auth_required": true,
+      "notes": "POSTs a pre-signed envelope to /api/v1/records. Returns the server-assigned key."
+    },
+    {
+      "name": "sign_and_store",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "data_json": "string (raw JSON to sign)"
+      },
+      "returns": "string (SignedDocument JSON: {key, json})",
+      "auth_required": true,
+      "notes": "Convenience: sign + store in one call. Body is JSON-serialized."
+    },
+    {
+      "name": "get_document",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "key": "string (id or id:version)"
+      },
+      "returns": "string (signed envelope JSON)",
+      "auth_required": true
+    },
+    {
+      "name": "get_latest_document",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "doc_id": "string"
+      },
+      "returns": "string (signed envelope JSON)",
+      "auth_required": true
+    },
+    {
+      "name": "get_document_versions",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "doc_id": "string"
+      },
+      "returns": "string (JSON array of keys: [\"id:v1\", ...])",
+      "auth_required": true,
+      "notes": "Adapters JSON-decode to list[str] / string[] / []string."
+    },
+    {
+      "name": "list_documents",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "jacs_type": "string? (optional filter)"
+      },
+      "returns": "string (JSON array of keys)",
+      "auth_required": true
+    },
+    {
+      "name": "remove_document",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "key": "string"
+      },
+      "returns": "()",
+      "auth_required": true,
+      "notes": "Tombstone (soft delete)."
+    },
+    {
+      "name": "update_document",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "doc_id": "string",
+        "signed_json": "string"
+      },
+      "returns": "string (SignedDocument JSON)",
+      "auth_required": true
+    },
+    {
+      "name": "search_documents",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "query": "string",
+        "limit": "usize",
+        "offset": "usize"
+      },
+      "returns": "string (DocSearchResults JSON)",
+      "auth_required": true,
+      "notes": "Typed numeric args at the FFI boundary (NOT a JSON params blob)."
+    },
+    {
+      "name": "query_by_type",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "doc_type": "string",
+        "limit": "usize",
+        "offset": "usize"
+      },
+      "returns": "string (JSON array of keys)",
+      "auth_required": true
+    },
+    {
+      "name": "query_by_field",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "field": "string",
+        "value": "string",
+        "limit": "usize",
+        "offset": "usize"
+      },
+      "returns": "string (JSON array of keys)",
+      "auth_required": true,
+      "notes": "RemoteJacsProvider returns 'not supported' (PRD Non-Goal #19)."
+    },
+    {
+      "name": "query_by_agent",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "agent_id": "string",
+        "limit": "usize",
+        "offset": "usize"
+      },
+      "returns": "string (JSON array of keys)",
+      "auth_required": true,
+      "notes": "Server enforces D4 owner-only \u2014 agent param must equal caller."
+    },
+    {
+      "name": "storage_capabilities",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {},
+      "returns": "string (StorageCapabilities JSON)",
+      "auth_required": false,
+      "notes": "Reports backend capabilities; no network call."
+    },
+    {
+      "name": "save_memory",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "content": "string? (defaults to MEMORY.md from CWD)"
+      },
+      "returns": "string (record key)",
+      "auth_required": true,
+      "notes": "D5 wrapper \u2014 sets jacsType='memory'."
+    },
+    {
+      "name": "save_soul",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "content": "string? (defaults to SOUL.md from CWD)"
+      },
+      "returns": "string (record key)",
+      "auth_required": true,
+      "notes": "D5 wrapper \u2014 sets jacsType='soul'."
+    },
+    {
+      "name": "get_memory",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {},
+      "returns": "Option<string> (latest MEMORY envelope JSON, or null)",
+      "auth_required": true
+    },
+    {
+      "name": "get_soul",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {},
+      "returns": "Option<string> (latest SOUL envelope JSON, or null)",
+      "auth_required": true
+    },
+    {
+      "name": "store_text_file",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "path": "string"
+      },
+      "returns": "string (record key)",
+      "auth_required": true,
+      "notes": "D9 wrapper \u2014 POSTs with Content-Type: text/markdown; profile=jacs-text-v1."
+    },
+    {
+      "name": "store_image_file",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "path": "string"
+      },
+      "returns": "string (record key)",
+      "auth_required": true,
+      "notes": "D9 wrapper \u2014 auto-detects PNG/JPEG/WebP magic bytes."
+    },
+    {
+      "name": "get_record_bytes",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "key": "string"
+      },
+      "returns": "Vec<u8> (raw bytes \u2014 NOT base64 across the FFI boundary, PRD Sec 3.6)",
+      "auth_required": true,
+      "notes": "Native bytes per language: Python bytes, Node Buffer, Go []byte."
     }
   ],
   "streaming": [
@@ -493,7 +821,9 @@
       "category": "streaming",
       "group": "streaming",
       "status": "implemented",
-      "params": { "handle_id": "u64" },
+      "params": {
+        "handle_id": "u64"
+      },
       "returns": "Option<String> (JSON HaiEvent or null if closed)",
       "auth_required": false,
       "notes": "Standalone function (not on HaiClientWrapper). Releases mutex lock during await."
@@ -503,7 +833,9 @@
       "category": "streaming",
       "group": "streaming",
       "status": "implemented",
-      "params": { "handle_id": "u64" },
+      "params": {
+        "handle_id": "u64"
+      },
       "returns": "()",
       "auth_required": false,
       "notes": "Standalone function. Safe to call with invalid handle (no-op)."
@@ -523,7 +855,9 @@
       "category": "streaming",
       "group": "streaming",
       "status": "implemented",
-      "params": { "handle_id": "u64" },
+      "params": {
+        "handle_id": "u64"
+      },
       "returns": "Option<String> (JSON HaiEvent or null if closed)",
       "auth_required": false,
       "notes": "Standalone function (not on HaiClientWrapper). Releases mutex lock during await."
@@ -533,7 +867,9 @@
       "category": "streaming",
       "group": "streaming",
       "status": "implemented",
-      "params": { "handle_id": "u64" },
+      "params": {
+        "handle_id": "u64"
+      },
       "returns": "()",
       "auth_required": false,
       "notes": "Standalone function. Safe to call with invalid handle (no-op)."
@@ -628,14 +964,18 @@
       "name": "set_hai_agent_id",
       "category": "mutating",
       "group": "state",
-      "params": { "id": "string" },
+      "params": {
+        "id": "string"
+      },
       "notes": "WRITE LOCK required (&mut self on HaiClient)."
     },
     {
       "name": "set_agent_email",
       "category": "mutating",
       "group": "state",
-      "params": { "email": "string" },
+      "params": {
+        "email": "string"
+      },
       "notes": "WRITE LOCK required (&mut self on HaiClient)."
     }
   ],
@@ -662,13 +1002,13 @@
     }
   ],
   "summary": {
-    "async_methods": 55,
+    "async_methods": 75,
     "streaming_methods": 6,
     "callback_methods": 2,
     "sync_methods": 11,
     "mutating_methods": 2,
     "excluded_methods": 5,
-    "total_public_methods": 81,
-    "binding_core_scope": "55 async + 6 streaming + 2 callback + 11 sync + 2 mutating = 76 methods"
+    "total_public_methods": 101,
+    "binding_core_scope": "75 async + 6 streaming + 2 callback + 11 sync + 2 mutating = 96 methods"
   }
 }

@@ -1246,6 +1246,7 @@ name = "hai-binding-core"
 version = "0.3.0"
 dependencies = [
  "haiai",
+ "httpmock",
  "image",
  "regex",
  "serde",
@@ -1291,7 +1292,7 @@ dependencies = [
  "httpmock",
  "image",
  "jacs",
- "jacs-media 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "jacs-media",
  "percent-encoding",
  "reqwest 0.13.2",
  "serde",
@@ -1919,6 +1920,8 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jacs"
 version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6c410b54339dd03e678f482c26ddf0e3df29d263bc039e3bba02ad1437bf90e"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1936,7 +1939,7 @@ dependencies = [
  "hex",
  "hickory-resolver",
  "hkdf",
- "jacs-media 0.10.0",
+ "jacs-media",
  "jsonschema",
  "keyring",
  "lazy_static",
@@ -1984,6 +1987,8 @@ dependencies = [
 [[package]]
 name = "jacs-binding-core"
 version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd1725c7392831521024e0db2cbc4a1d23964503d593fc2dbac01059da3ba855"
 dependencies = [
  "base64",
  "jacs",
@@ -1998,6 +2003,8 @@ dependencies = [
 [[package]]
 name = "jacs-mcp"
 version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9585e281b8203d684ca5b2876ae47c80f2577eb667d3e38950cdd88c00dcf6f6"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2012,18 +2019,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
-]
-
-[[package]]
-name = "jacs-media"
-version = "0.10.0"
-dependencies = [
- "base64",
- "image",
- "img-parts",
- "png 0.17.16",
- "sha2",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -5464,3 +5459,4 @@ checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
 ]
+

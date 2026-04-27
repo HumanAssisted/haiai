@@ -1,4 +1,5 @@
 .PHONY: test test-python test-node test-go test-rust \
+        smoke smoke-python smoke-node smoke-go \
         build-python-ffi build-node-ffi \
         versions check-versions check-jacs-versions \
         bump-version bump-jacs-version \
@@ -47,6 +48,34 @@ test-go:
 
 test-rust:
 	cd rust && cargo test --workspace
+
+# ============================================================================
+# SMOKE — real-FFI smoke tests (skip cleanly when native artifacts missing)
+# ============================================================================
+#
+# Each smoke test loads the real native binding (haiipy / haiinpm / libhaiigo)
+# and round-trips `save_memory("smoke")` against a real local HTTP listener.
+# This is the one test category that catches FFI-method-shape regressions
+# (i.e. surface declared but not implemented in the native layer).
+#
+# Smoke tests are SKIPPED when the native binding isn't built — they don't
+# fail. To run them, build the native artifacts first:
+#   make build-python-ffi build-node-ffi
+#   cargo build -p haiigo --release   # produces rust/target/release/libhaiigo.dylib
+
+smoke: smoke-python smoke-node smoke-go
+
+smoke-python:
+	cd python && pytest -m native_smoke -v
+
+smoke-node:
+	cd node && npm test -- --run ffi-native-smoke
+
+smoke-go:
+	cd go && CGO_ENABLED=1 \
+	    CGO_LDFLAGS="-L$(CURDIR)/rust/target/release" \
+	    DYLD_LIBRARY_PATH="$(CURDIR)/rust/target/release" \
+	    go test -tags cgo_smoke -run NativeSmoke -v ./...
 
 # ============================================================================
 # BUILD (local FFI wheel builds for development)

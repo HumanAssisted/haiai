@@ -4,7 +4,8 @@
 //! All tests in this file are `#[ignore]` by default — they require a live
 //! hosted stack with `HAI_URL` pointing at it. Run with:
 //!
-//!     cargo test -p haiai --test jacs_remote_integration -- --ignored
+//!     cargo test -p haiai --features jacs-crate \
+//!         --test jacs_remote_integration -- --ignored
 //!
 //! Per `~/.claude/projects/.../MEMORY.md::no_test_hacks` the tests exercise
 //! real production paths — no FFI bypasses, no mocks, no monkey-patches. If
@@ -15,6 +16,13 @@
 //!   - run localstack S3 reachable at the api's `AWS_ENDPOINT_URL`
 //!   - register the test agent's public key via the standard
 //!     `HaiClient::register` path
+//!
+//! Issue 041: there is now a runnable bring-up script —
+//!     scripts/hosted-stack-up.sh
+//! — that brings up LocalStack + the bucket and prints the env exports
+//! these tests need. The agent-registration step still requires an
+//! `hk_…` key from the dashboard (out of script scope), but everything
+//! else is automated.
 //!
 //! Per `MEMORY.md::test_cleanup_required`, every test that creates records
 //! tombstones them in a teardown so principals don't accumulate across runs.
@@ -38,15 +46,31 @@ const TEST_BASE_URL_ENV: &str = "HAI_JACS_REMOTE_TEST_URL";
 /// from Issue 015 plus the `HOSTED_STACK_LOCAL.md` setup walk-through cover
 /// these steps.
 fn build_provider() -> Result<RemoteJacsProvider<LocalJacsProvider>, HaiError> {
-    let base_url = std::env::var(TEST_BASE_URL_ENV)
-        .or_else(|_| std::env::var("HAI_URL"))
-        .expect("set HAI_JACS_REMOTE_TEST_URL or HAI_URL to point at the hosted stack");
+    // Issue 041: actionable error pointing at the bring-up script when the
+    // env is not set. The previous `expect("set HAI_JACS_REMOTE_TEST_URL …")`
+    // panic was technically informative but didn't tell the developer HOW
+    // to bring up a stack — they had to grep the docstring.
+    let base_url = match std::env::var(TEST_BASE_URL_ENV).or_else(|_| std::env::var("HAI_URL")) {
+        Ok(v) => v,
+        Err(_) => {
+            return Err(HaiError::Provider(
+                "Issue 041: hosted-stack URL env not set. Run \
+                 `scripts/hosted-stack-up.sh` from the haisdk repo to bring up the local \
+                 stack, then re-run the test. The script exports HAI_URL automatically. \
+                 Manual bring-up: cd ~/personal/hai/api && docker compose --profile jacsdb \
+                 up -d, register an agent via HaiClient::register, set \
+                 HAI_JACS_REMOTE_TEST_URL=http://localhost:8080 (or HAI_URL)."
+                    .to_string(),
+            ));
+        }
+    };
     let local = LocalJacsProvider::from_config_path(None, None).map_err(|e| {
         HaiError::Provider(format!(
-            "Issue 009: integration tests now require a real LocalJacsProvider — \
-             generate test agent keys via LocalJacsProvider::create_agent and \
-             register them with HaiClient::register before running --ignored. \
-             Underlying error: {e}"
+            "Issue 009 + 041: integration tests require a real LocalJacsProvider with \
+             registered keys. Run scripts/hosted-stack-up.sh (which calls \
+             LocalJacsProvider::create_agent + HaiClient::register and writes \
+             jacs.config.json), or follow the manual steps in the script's --help \
+             output. Underlying error: {e}"
         ))
     })?;
     RemoteJacsProvider::new(
@@ -275,5 +299,49 @@ fn config_remote_storage_label_resolves_without_hosted_stack() {
     assert!(
         resolve_storage_backend_label("").is_err(),
         "empty label must be rejected by resolve_storage_backend_label"
+    );
+}
+
+/// Issue 041: un-ignored smoke test that fails fast with an actionable
+/// message when the env is unset. The SDK's URL/request-body shape is
+/// pinned by the 20+ `httpmock` unit tests in `src/jacs_remote.rs::tests`
+/// (no live server required). This test sits at the integration boundary
+/// to give a single visible failure point with a pointer at
+/// `scripts/hosted-stack-up.sh` when a developer tries to run the
+/// `--ignored` suite without a stack.
+#[test]
+fn build_provider_emits_actionable_error_when_env_unset() {
+    // Ensure the env vars are NOT set for this assertion. The test is
+    // independent of process state so we read-and-restore.
+    let prev_a = std::env::var(TEST_BASE_URL_ENV).ok();
+    let prev_b = std::env::var("HAI_URL").ok();
+    unsafe {
+        std::env::remove_var(TEST_BASE_URL_ENV);
+        std::env::remove_var("HAI_URL");
+    }
+
+    let result = build_provider();
+
+    // Restore env to avoid bleed into other tests in the same process.
+    unsafe {
+        if let Some(v) = prev_a {
+            std::env::set_var(TEST_BASE_URL_ENV, v);
+        }
+        if let Some(v) = prev_b {
+            std::env::set_var("HAI_URL", v);
+        }
+    }
+
+    let err = match result {
+        Ok(_) => panic!(
+            "build_provider must error when HAI_URL/HAI_JACS_REMOTE_TEST_URL unset"
+        ),
+        Err(e) => e,
+    };
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("hosted-stack-up.sh"),
+        "Issue 041: error must reference scripts/hosted-stack-up.sh as the actionable next \
+         step, got: {msg}"
     );
 }

@@ -65,6 +65,14 @@ MCP_TOOL_TO_FFI_METHODS: dict[str, list[str]] = {
     "hai_sign_image": ["sign_image"],
     "hai_verify_image": ["verify_image"],
     "hai_extract_media_signature": ["extract_media_signature"],
+    # JACS Document Store: D5 (memory/soul) + D9 (typed-content) MCP tools.
+    "hai_save_memory": ["save_memory"],
+    "hai_save_soul": ["save_soul"],
+    "hai_get_memory": ["get_memory"],
+    "hai_get_soul": ["get_soul"],
+    "hai_store_text_file": ["store_text_file"],
+    "hai_store_image_file": ["store_image_file"],
+    "hai_get_record_bytes": ["get_record_bytes"],
 }
 
 

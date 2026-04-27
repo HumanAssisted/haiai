@@ -1970,6 +1970,134 @@ export class HaiClient {
       createdAt: (data.created_at as string) || '',
     };
   }
+
+  // ---------------------------------------------------------------------------
+  // JACS Document Store (20 methods)
+  //
+  // Thin delegations to the FFI adapter, which routes through napi-rs to
+  // RemoteJacsProvider in Rust. Naming follows the fixture's
+  // `jacs_document_store` group (camelCase per Node convention).
+  // ---------------------------------------------------------------------------
+
+  /** Store a pre-signed JACS document. Returns the record key (`id:version`). */
+  async storeDocument(signedJson: string): Promise<string> {
+    return this.ffi.storeDocument(signedJson);
+  }
+
+  /** Sign + store a JSON document. Returns the SignedDocument shape. */
+  async signAndStore(dataJson: string): Promise<Record<string, unknown>> {
+    return this.ffi.signAndStore(dataJson);
+  }
+
+  /** Fetch a document by key (`id` or `id:version`). Returns the signed envelope JSON. */
+  async getDocument(key: string): Promise<string> {
+    return this.ffi.getDocument(key);
+  }
+
+  /** Fetch the latest version of a document by id. */
+  async getLatestDocument(docId: string): Promise<string> {
+    return this.ffi.getLatestDocument(docId);
+  }
+
+  /** List all versions of a document. */
+  async getDocumentVersions(docId: string): Promise<string[]> {
+    return this.ffi.getDocumentVersions(docId);
+  }
+
+  /** List document keys, optionally filtered by `jacsType`. */
+  async listDocuments(jacsType?: string | null): Promise<string[]> {
+    return this.ffi.listDocuments(jacsType ?? null);
+  }
+
+  /** Tombstone (soft-delete) a document. */
+  async removeDocument(key: string): Promise<void> {
+    await this.ffi.removeDocument(key);
+  }
+
+  /** Update a document, creating a new signed version. */
+  async updateDocument(
+    docId: string,
+    signedJson: string,
+  ): Promise<Record<string, unknown>> {
+    return this.ffi.updateDocument(docId, signedJson);
+  }
+
+  /** Search documents (fulltext / hybrid). */
+  async searchDocuments(
+    query: string,
+    limit = 25,
+    offset = 0,
+  ): Promise<Record<string, unknown>> {
+    return this.ffi.searchDocuments(query, limit, offset);
+  }
+
+  /** Query documents by `jacsType`. */
+  async queryByType(
+    docType: string,
+    limit = 25,
+    offset = 0,
+  ): Promise<string[]> {
+    return this.ffi.queryByType(docType, limit, offset);
+  }
+
+  /** Query documents by an envelope field. */
+  async queryByField(
+    field: string,
+    value: string,
+    limit = 25,
+    offset = 0,
+  ): Promise<string[]> {
+    return this.ffi.queryByField(field, value, limit, offset);
+  }
+
+  /** Query documents signed by a specific agent. */
+  async queryByAgent(
+    agentId: string,
+    limit = 25,
+    offset = 0,
+  ): Promise<string[]> {
+    return this.ffi.queryByAgent(agentId, limit, offset);
+  }
+
+  /** Report storage backend capabilities. */
+  async storageCapabilities(): Promise<Record<string, unknown>> {
+    return this.ffi.storageCapabilities();
+  }
+
+  /** Sign and store a `MEMORY.md` record. If `content` is null, reads from CWD. */
+  async saveMemory(content?: string | null): Promise<string> {
+    return this.ffi.saveMemory(content ?? null);
+  }
+
+  /** Sign and store a `SOUL.md` record. */
+  async saveSoul(content?: string | null): Promise<string> {
+    return this.ffi.saveSoul(content ?? null);
+  }
+
+  /** Fetch the latest MEMORY record's signed envelope JSON. */
+  async getMemory(): Promise<string | null> {
+    return this.ffi.getMemory();
+  }
+
+  /** Fetch the latest SOUL record's signed envelope JSON. */
+  async getSoul(): Promise<string | null> {
+    return this.ffi.getSoul();
+  }
+
+  /** Read a signed-text file and POST it to the records endpoint. */
+  async storeTextFile(path: string): Promise<string> {
+    return this.ffi.storeTextFile(path);
+  }
+
+  /** POST a signed image file. */
+  async storeImageFile(path: string): Promise<string> {
+    return this.ffi.storeImageFile(path);
+  }
+
+  /** Fetch raw record bytes (no UTF-8 decode, no JSON parse). */
+  async getRecordBytes(key: string): Promise<Uint8Array> {
+    return this.ffi.getRecordBytes(key);
+  }
 }
 
 // =============================================================================

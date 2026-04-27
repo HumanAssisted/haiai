@@ -402,6 +402,40 @@ impl JacsProvider for LocalJacsProvider {
         Ok(jacs::protocol::canonicalize_json(value))
     }
 
+    /// Sign a JACS document envelope by delegating to JACS's
+    /// `create_document_and_load` (which itself runs `signing_procedure`).
+    ///
+    /// Issue 021: this is the canonical path used by every wrapper provider
+    /// (notably [`crate::jacs_remote::RemoteJacsProvider`]) so signed records
+    /// posted to `/api/v1/records` verify cleanly under the server's
+    /// `verify_jacs_json_with_public_key_pem` (which delegates to
+    /// `SimpleAgent::verify_with_key`, the inverse of `signing_procedure`).
+    ///
+    /// The user's JSON is passed through verbatim — `create_document_and_load`
+    /// adds the JACS metadata fields (`jacsId`, `jacsVersion`, `jacsVersionDate`,
+    /// `jacsLevel`, `jacsType` if absent), then signs via `signing_procedure`,
+    /// which builds the per-field canonical content via `build_signature_content`
+    /// and writes the full `jacsSignature` block (`agentID`, `agentVersion`,
+    /// `date`, `iat`, `jti`, `signature`, `signingAlgorithm`, `publicKeyHash`,
+    /// `fields[]`).
+    fn sign_envelope(&self, value: &Value) -> Result<String> {
+        let json_str = serde_json::to_string(value)
+            .map_err(|e| HaiError::Provider(format!("sign_envelope: serialize input json: {e}")))?;
+
+        let mut agent = self
+            .agent
+            .lock()
+            .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
+
+        let jacs_doc = agent
+            .create_document_and_load(&json_str, None, None)
+            .map_err(|e| HaiError::Provider(format!("JACS sign_envelope failed: {e}")))?;
+
+        serde_json::to_string(&jacs_doc.value).map_err(|e| {
+            HaiError::Provider(format!("sign_envelope: serialize signed doc: {e}"))
+        })
+    }
+
     fn verify_a2a_artifact(&self, wrapped_json: &str) -> Result<String> {
         let wrapped: Value = serde_json::from_str(wrapped_json)?;
         let agent = self

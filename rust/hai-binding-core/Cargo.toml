@@ -24,3 +24,7 @@ regex = "1"
 tempfile = "3"
 # Used to generate test PNG bytes for media-signing wrapper tests (Layer 8).
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Used to mock /api/v1/records for the doc-store wrapper tests (TASK_001).
+# Version pinned to match `rust/haiai/Cargo.toml` so cargo resolves a single
+# httpmock crate across the workspace.
+httpmock = "0.8"

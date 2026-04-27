@@ -1253,3 +1253,100 @@ class AsyncHaiClient:
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+    # ------------------------------------------------------------------
+    # JACS Document Store (async)
+    #
+    # 20 methods that delegate to RemoteJacsProvider via the async FFI
+    # adapter. Naming matches `fixtures/ffi_method_parity.json`.
+    # ------------------------------------------------------------------
+
+    async def store_document(self, signed_json: str) -> str:
+        """Store a pre-signed JACS document. Returns the record key."""
+        return await self._get_ffi().store_document(signed_json)
+
+    async def sign_and_store(self, data_json: str) -> dict[str, Any]:
+        """Sign + store a JSON document in one call."""
+        return await self._get_ffi().sign_and_store(data_json)
+
+    async def get_document(self, key: str) -> str:
+        """Fetch a document by key."""
+        return await self._get_ffi().get_document(key)
+
+    async def get_latest_document(self, doc_id: str) -> str:
+        """Fetch the latest version of a document by id."""
+        return await self._get_ffi().get_latest_document(doc_id)
+
+    async def get_document_versions(self, doc_id: str) -> list[str]:
+        """List all versions of a document."""
+        return await self._get_ffi().get_document_versions(doc_id)
+
+    async def list_documents(self, jacs_type: Optional[str] = None) -> list[str]:
+        """List document keys, optionally filtered by `jacsType`."""
+        return await self._get_ffi().list_documents(jacs_type)
+
+    async def remove_document(self, key: str) -> None:
+        """Tombstone a document."""
+        await self._get_ffi().remove_document(key)
+
+    async def update_document(
+        self, doc_id: str, signed_json: str
+    ) -> dict[str, Any]:
+        """Update a document, creating a new signed version."""
+        return await self._get_ffi().update_document(doc_id, signed_json)
+
+    async def search_documents(
+        self, query: str, limit: int = 25, offset: int = 0
+    ) -> dict[str, Any]:
+        """Search documents."""
+        return await self._get_ffi().search_documents(query, limit, offset)
+
+    async def query_by_type(
+        self, doc_type: str, limit: int = 25, offset: int = 0
+    ) -> list[str]:
+        """Query documents by `jacsType`."""
+        return await self._get_ffi().query_by_type(doc_type, limit, offset)
+
+    async def query_by_field(
+        self, field: str, value: str, limit: int = 25, offset: int = 0
+    ) -> list[str]:
+        """Query documents by an envelope field."""
+        return await self._get_ffi().query_by_field(field, value, limit, offset)
+
+    async def query_by_agent(
+        self, agent_id: str, limit: int = 25, offset: int = 0
+    ) -> list[str]:
+        """Query documents signed by a specific agent."""
+        return await self._get_ffi().query_by_agent(agent_id, limit, offset)
+
+    async def storage_capabilities(self) -> dict[str, Any]:
+        """Report storage backend capabilities."""
+        return await self._get_ffi().storage_capabilities()
+
+    async def save_memory(self, content: Optional[str] = None) -> str:
+        """Sign and store a `MEMORY.md` record."""
+        return await self._get_ffi().save_memory(content)
+
+    async def save_soul(self, content: Optional[str] = None) -> str:
+        """Sign and store a `SOUL.md` record."""
+        return await self._get_ffi().save_soul(content)
+
+    async def get_memory(self) -> Optional[str]:
+        """Fetch the latest MEMORY record's signed envelope JSON."""
+        return await self._get_ffi().get_memory()
+
+    async def get_soul(self) -> Optional[str]:
+        """Fetch the latest SOUL record's signed envelope JSON."""
+        return await self._get_ffi().get_soul()
+
+    async def store_text_file(self, path: str) -> str:
+        """Read a signed-text file and POST it to the records endpoint."""
+        return await self._get_ffi().store_text_file(path)
+
+    async def store_image_file(self, path: str) -> str:
+        """POST a signed image file."""
+        return await self._get_ffi().store_image_file(path)
+
+    async def get_record_bytes(self, key: str) -> bytes:
+        """Fetch raw record bytes (no decode)."""
+        return await self._get_ffi().get_record_bytes(key)

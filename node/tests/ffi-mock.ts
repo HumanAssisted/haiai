@@ -106,6 +106,29 @@ export function createMockFFI(overrides?: Partial<MockFFI>): FFIClientAdapter {
     signImage: defaultReject,
     verifyImage: defaultReject,
     extractMediaSignature: defaultReject,
+    // JACS Document Store (Issue 025) — 13 generic + 4 D5 + 3 D9 = 20 methods.
+    storeDocument: defaultReject,
+    signAndStore: defaultReject,
+    getDocument: defaultReject,
+    getLatestDocument: defaultReject,
+    getDocumentVersions: defaultReject,
+    listDocuments: defaultReject,
+    removeDocument: defaultReject,
+    updateDocument: defaultReject,
+    searchDocuments: defaultReject,
+    queryByType: defaultReject,
+    queryByField: defaultReject,
+    queryByAgent: defaultReject,
+    storageCapabilities: defaultReject,
+    // D5 — MEMORY / SOUL convenience wrappers
+    saveMemory: defaultReject,
+    saveSoul: defaultReject,
+    getMemory: defaultReject,
+    getSoul: defaultReject,
+    // D9 — typed-content helpers
+    storeTextFile: defaultReject,
+    storeImageFile: defaultReject,
+    getRecordBytes: defaultReject,
   };
 
   if (overrides) {

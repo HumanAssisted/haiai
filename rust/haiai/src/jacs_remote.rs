@@ -275,51 +275,32 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
     fn sign_document(&self, data: &Value) -> Result<String> {
         // Local-only — signing keys never leave the client.
         //
-        // Delegates through canonical_json + sign_string. For the `LocalJacsProvider` case
-        // the inner already has a richer sign_document; this path is correct for any base
-        // `JacsProvider` impl.
+        // Issue 021: delegate to the inner provider's `sign_envelope`, which is
+        // implemented by `LocalJacsProvider` via JACS's `signing_procedure` (the
+        // canonical signer). The previous implementation here pre-stuffed
+        // `jacsId`/`jacsVersion`/`jacsType`/`jacsVersionDate` and then signed
+        // `canonical_json + sign_string`, but that signature scheme is NOT what
+        // JACS verifies on the wire: `verify_jacs_json_with_public_key_pem`
+        // delegates to `SimpleAgent::verify_with_key`, which reconstructs the
+        // signed bytes via `build_signature_content` (per-field canonicalised,
+        // joined by single spaces, JACS_IGNORE_FIELDS skipped). Signing the
+        // whole canonical JSON does not match that scheme — every produced
+        // envelope fails server-side verification.
         //
-        // Issue 001: Before signing, ensure the envelope carries the JACS metadata fields
-        // the server's `extract_envelope_metadata` requires (`api/src/jacsdb/routes.rs:301-310`):
-        // `jacsId`, `jacsVersion`, `jacsType`, `jacsVersionDate`. Without these, every
-        // POST to `/api/v1/records` 400s with "envelope missing jacsId".
-        let mut envelope = data.clone();
-        if let Value::Object(map) = &mut envelope {
-            if !map.contains_key("jacsId") {
-                map.insert(
-                    "jacsId".to_string(),
-                    Value::String(uuid::Uuid::new_v4().to_string()),
-                );
-            }
-            if !map.contains_key("jacsVersion") {
-                map.insert(
-                    "jacsVersion".to_string(),
-                    Value::String(uuid::Uuid::new_v4().to_string()),
-                );
-            }
-            if !map.contains_key("jacsType") {
-                map.insert("jacsType".to_string(), Value::String("document".to_string()));
-            }
-            if !map.contains_key("jacsVersionDate") {
-                let now = OffsetDateTime::now_utc()
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .map_err(|e| HaiError::Provider(format!("rfc3339 format: {e}")))?;
-                map.insert("jacsVersionDate".to_string(), Value::String(now));
-            }
-        }
-        let canonical = self.inner.canonical_json(&envelope)?;
-        let signature = self.inner.sign_string(&canonical)?;
-        if let Value::Object(map) = &mut envelope {
-            map.insert(
-                "jacsSignature".to_string(),
-                json!({
-                    "agentID": self.inner.jacs_id(),
-                    "signature": signature,
-                    "algorithm": self.inner.algorithm(),
-                }),
-            );
-        }
-        Ok(serde_json::to_string(&envelope)?)
+        // `sign_envelope` is the single source of truth: `LocalJacsProvider`
+        // overrides it to call `agent.create_document_and_load`, which (a)
+        // injects `jacsId`/`jacsVersion`/`jacsVersionDate`/`jacsLevel`/
+        // `jacsType` (the server's `extract_envelope_metadata` requirements,
+        // Issue 001) and (b) signs via `signing_procedure`, producing the full
+        // `jacsSignature` block (`agentID`, `agentVersion`, `date`, `iat`,
+        // `jti`, `signature`, `signingAlgorithm`, `publicKeyHash`, `fields[]`)
+        // that the server can verify byte-for-byte.
+        //
+        // The user's JSON MUST NOT carry pre-existing `jacsId` / `jacsVersion`
+        // (the JACS schema rejects "New JACs documents should have no id or
+        // version"). `jacsType` is preserved when present so callers like
+        // `save_memory("memory")` keep their type tag.
+        self.inner.sign_envelope(data)
     }
 
     fn store_document(&self, signed_json: &str) -> Result<String> {
@@ -521,9 +502,15 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
                 _ => break,
             }
         }
+        // Issue 033: previously hardcoded to `0`, which broke any consumer
+        // building pagination UI on `total_count`. The server uses cursor
+        // pagination and does not return a global match count, so we report
+        // the count of hits we actually accumulated. Documented in
+        // `DocSearchResults::total_count` (types.rs).
+        let returned_count = all_hits.len();
         Ok(DocSearchResults {
             results: all_hits,
-            total_count: 0,
+            total_count: returned_count,
             method: "FullText".to_string(),
         })
     }
@@ -555,27 +542,23 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
     fn query_by_field(
         &self,
         field: &str,
-        value: &str,
-        limit: usize,
-        offset: usize,
+        _value: &str,
+        _limit: usize,
+        _offset: usize,
     ) -> Result<Vec<String>> {
-        let url = format!(
-            "{}{}?field={}&value={}&limit={}",
-            self.base_url,
-            RECORDS_PATH,
-            url_encode(field),
-            url_encode(value),
-            (limit + offset).min(100),
-        );
-        let resp = Self::block_on(self.get_json_async(&url))?;
-        let mut keys = extract_keys_from_list(&resp);
-        if offset < keys.len() {
-            keys.drain(..offset);
-        } else {
-            keys.clear();
-        }
-        keys.truncate(limit);
-        Ok(keys)
+        // Issue 035: server-side `field=`/`value=` JSONB filtering was removed
+        // in PRD §10 Non-Goal #19 (envelope JSON lives in S3, not Postgres),
+        // so the route at `api/src/jacsdb/routes.rs` hard-rejects these
+        // params with a 400. Previously this method built the URL anyway and
+        // every call burned a full network round-trip + DB hit before
+        // surfacing the same "unsupported" error wrapped in PG-internal
+        // terminology. Short-circuit before the network call so consumers
+        // see a clear, locally-generated message.
+        Err(HaiError::Provider(format!(
+            "query_by_field is not supported by RemoteJacsProvider in v1 (envelope JSON \
+             lives in S3, not Postgres — see PRD §10 Non-Goal #19). Use \
+             search_documents(query) for full-text search instead. Field requested: '{field}'"
+        )))
     }
 
     fn query_by_agent(
@@ -608,7 +591,12 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
         Ok(StorageCapabilities {
             fulltext: true,
             vector: false,
-            query_by_field: true,
+            // Issue 035: server-side JSONB field filtering is explicitly out
+            // of scope in PRD §10 Non-Goal #19 — `query_by_field` returns an
+            // error without a network round-trip. Reporting `false` here
+            // keeps the capability map honest so consumers branching on
+            // capabilities skip the call entirely.
+            query_by_field: false,
             query_by_type: true,
             pagination: true,
             tombstone: true,
@@ -1037,10 +1025,83 @@ mod tests {
         let caps = provider.storage_capabilities().expect("caps");
         assert!(caps.fulltext);
         assert!(!caps.vector);
-        assert!(caps.query_by_field);
+        // Issue 035: server explicitly does NOT support JSONB field filtering
+        // (PRD §10 Non-Goal #19) — capability map must reflect the impl.
+        assert!(!caps.query_by_field);
         assert!(caps.query_by_type);
         assert!(caps.pagination);
         assert!(caps.tombstone);
+    }
+
+    /// Issue 035: `query_by_field` MUST short-circuit before any network
+    /// activity. Previously the SDK built a URL with `?field=&value=`, fired
+    /// a GET that the server hard-rejected with a 400, and surfaced the
+    /// error wrapped in PG-internal terminology. The fix returns a clear
+    /// locally-generated error and skips the round-trip entirely.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn query_by_field_returns_unsupported_without_network_call() {
+        let server = MockServer::start_async().await;
+        let no_traffic = server
+            .mock_async(|when, then| {
+                // Match anything — we want to see zero calls.
+                when.method(HMethod::GET);
+                then.status(500);
+            })
+            .await;
+
+        let provider = make_provider(server.base_url());
+        let err = provider
+            .query_by_field("foo", "bar", 10, 0)
+            .expect_err("must error before any network call");
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("not supported"),
+            "expected unsupported message, got: {msg}"
+        );
+        assert!(
+            msg.contains("foo"),
+            "error must echo the requested field for debuggability, got: {msg}"
+        );
+        // Pin: zero HTTP calls.
+        no_traffic.assert_calls_async(0).await;
+    }
+
+    /// Issue 033: `total_count` MUST equal the number of hits actually
+    /// returned, not 0. Pinning this so a future refactor that re-introduces
+    /// the hardcoded 0 is caught immediately. Server returns one hit; the
+    /// SDK should report `total_count == 1`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn search_documents_total_count_reflects_results_len() {
+        let server = MockServer::start_async().await;
+        let _mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("q", "needle");
+                then.status(200).json_body(json!({
+                    "items": [{
+                        "key": "id1:v1",
+                        "id": "id1",
+                        "version": "v1",
+                        "jacsType": "doc",
+                        "jacsVersionDate": "2026-01-01T00:00:00Z",
+                        "contentType": "application/json",
+                        "score": 0.9
+                    }],
+                    "next_cursor": null,
+                    "has_more": false,
+                    "total_count": 1
+                }));
+            })
+            .await;
+        let provider = make_provider(server.base_url());
+        let r = provider.search_documents("needle", 25, 0).expect("search");
+        assert_eq!(
+            r.total_count,
+            r.results.len(),
+            "Issue 033: total_count must mirror returned hits, not be hardcoded"
+        );
+        assert_eq!(r.total_count, 1);
     }
 
     #[tokio::test(flavor = "multi_thread")]

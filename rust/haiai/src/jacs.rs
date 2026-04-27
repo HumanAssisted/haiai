@@ -204,6 +204,36 @@ pub trait JacsProvider: Send + Sync {
     /// Return canonical JSON text for `value` in the same way JACS signs.
     fn canonical_json(&self, value: &Value) -> Result<String>;
 
+    /// Sign `value` as a full JACS document envelope.
+    ///
+    /// The returned JSON string MUST be byte-equivalent to what JACS's
+    /// `signing_procedure` produces — i.e. it carries the `jacsId`,
+    /// `jacsVersion`, `jacsVersionDate`, `jacsOriginalVersion`, `jacsLevel`,
+    /// `jacsType`, `jacsSignature` (with `agentID`, `agentVersion`, `date`,
+    /// `iat`, `jti`, `signature`, `signingAlgorithm`, `publicKeyHash`,
+    /// `fields[]`), and `jacsHash` fields, and the signature MUST verify under
+    /// JACS's [`SimpleAgent::verify_with_key`].
+    ///
+    /// The default implementation returns an error: providers without a real
+    /// JACS agent (test stubs like [`StaticJacsProvider`]) cannot produce a
+    /// JACS-verifiable envelope. [`LocalJacsProvider`] overrides this to
+    /// delegate to JACS's `signing_procedure` so wrappers like
+    /// [`crate::jacs_remote::RemoteJacsProvider`] get correct envelopes
+    /// without re-implementing the signing scheme.
+    ///
+    /// Issue 021: previous `RemoteJacsProvider::sign_document` shimmed
+    /// `canonical_json` + `sign_string`, which produces signatures that do
+    /// NOT verify under JACS's per-field `build_signature_content`. This
+    /// trait method is the single source of truth for JACS envelope signing.
+    fn sign_envelope(&self, value: &Value) -> Result<String> {
+        let _ = value;
+        Err(HaiError::Provider(
+            "sign_envelope not supported by this provider; use LocalJacsProvider \
+             or any provider that wraps a real JACS SimpleAgent"
+                .to_string(),
+        ))
+    }
+
     /// Return a signed payload accepted by `/api/v1/agents/jobs/{job_id}/response`.
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload>;
 
@@ -909,6 +939,51 @@ impl JacsProvider for StaticJacsProvider {
 
     fn canonical_json(&self, value: &Value) -> Result<String> {
         Ok(canonicalize_json_rfc8785(value))
+    }
+
+    /// Test-only synthetic envelope. Mirrors the JACS envelope shape closely
+    /// enough that downstream HTTP tests can assert on the metadata fields
+    /// (`jacsId`, `jacsVersion`, `jacsType`, `jacsVersionDate`,
+    /// `jacsSignature.agentID`, etc.) without standing up a real JACS agent.
+    /// The signature is NOT cryptographically valid under any real verifier —
+    /// production code MUST use [`LocalJacsProvider`] (or another provider that
+    /// wraps a real `SimpleAgent`).
+    ///
+    /// Issue 021: real verifiability is enforced by an integration round-trip
+    /// (`tests/jacs_remote_signing_round_trip.rs`) using `LocalJacsProvider`,
+    /// not by this stub.
+    fn sign_envelope(&self, value: &Value) -> Result<String> {
+        let now = OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|e| HaiError::Provider(format!("failed to format timestamp: {e}")))?;
+        let mut envelope = value.clone();
+        if let Value::Object(map) = &mut envelope {
+            map.entry("jacsId".to_string())
+                .or_insert_with(|| Value::String(Uuid::new_v4().to_string()));
+            map.entry("jacsVersion".to_string())
+                .or_insert_with(|| Value::String(Uuid::new_v4().to_string()));
+            map.entry("jacsVersionDate".to_string())
+                .or_insert_with(|| Value::String(now.clone()));
+            map.entry("jacsType".to_string())
+                .or_insert_with(|| Value::String("document".to_string()));
+            let canonical = canonicalize_json_rfc8785(&Value::Object(map.clone()));
+            let signature = self.sign_string(&canonical)?;
+            map.insert(
+                "jacsSignature".to_string(),
+                serde_json::json!({
+                    "agentID": self.jacs_id,
+                    "agentVersion": "test-stub",
+                    "date": now,
+                    "signature": signature,
+                    "signingAlgorithm": self.algorithm,
+                    "publicKeyHash": "test-stub-hash",
+                    "fields": [],
+                }),
+            );
+        }
+        serde_json::to_string(&envelope).map_err(|e| {
+            HaiError::Provider(format!("StaticJacsProvider::sign_envelope serialise: {e}"))
+        })
     }
 
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
