@@ -88,7 +88,6 @@ Pure sync functions (no NAPI call, no suffix needed):
 | `untrustAgent(id)` | Remove from trust store |
 | `isTrusted(id)` | Check if agent is trusted |
 | `getTrustedAgent(id)` | Get trusted agent's JSON |
-| `generateVerifyLink(doc, baseUrl?)` | Generate verification URL |
 
 ---
 
@@ -97,7 +96,7 @@ Pure sync functions (no NAPI call, no suffix needed):
 Create a persistent agent with keys on disk. If `./jacs.config.json` already exists, loads it. Otherwise creates a new agent, saving keys and config to disk. If `JACS_PRIVATE_KEY_PASSWORD` is unset, Node quickstart auto-generates a secure password in-process (`JACS_SAVE_PASSWORD_FILE=true` persists it to `./jacs_keys/.jacs_password`). Call this once before `signMessage()` or `verify()`.
 
 **Parameters:**
-- `options` (object, required fields): `{ name: string, domain: string, description?: string, algorithm?: string, configPath?: string }`. Default algorithm: `"pq2025"`. Also: `"ring-Ed25519"`, `"RSA-PSS"`.
+- `options` (object, required fields): `{ name: string, domain: string, description?: string, algorithm?: string, configPath?: string }`. Default algorithm: `"pq2025"`. Supported choices for new agents: `"ring-Ed25519"`, `"pq2025"`. `RSA-PSS` is legacy verification-only.
 
 **Returns:** `Promise<AgentInfo>` (async) or `AgentInfo` (sync)
 
@@ -282,6 +281,103 @@ Verify a signed document **without** loading an agent. Use when you only need to
 ```javascript
 const result = jacs.verifyStandalone(signedJson, { keyResolution: 'local', keyDirectory: './keys' });
 console.log(result.valid, result.signerId);
+```
+
+---
+
+### signText(path) — v0.10.0
+
+Append a YAML-bodied JACS signature block to the end of a markdown or text file. The file content (everything before the first signature block) is preserved byte-for-byte; multi-signer files are unordered. Async-first since v0.7.0 — returns `Promise`.
+
+**Parameters:** `path` (string): file to sign in place
+
+**Returns:** `Promise<void>`
+
+**Throws:** `MarkerCollision` error if the file contains a column-zero `-----BEGIN JACS SIGNATURE-----` outside a valid block.
+
+```typescript
+await jacs.signText('README.md');
+```
+
+---
+
+### verifyText(path, options?) — v0.10.0
+
+Verify all signature blocks in a text file. Permissive by default — missing signatures are a typed status, not an error.
+
+**Parameters:**
+- `path` (string)
+- `options` (object, optional): `{ strict?: boolean, keyDir?: string }`. When `strict` is true, the Promise rejects with a `MissingSignature`-bearing error if the file is unsigned. `keyDir` is a directory of `<signer_id>.public.pem` files used in addition to the local trust store.
+
+**Returns:** `Promise<VerifyTextResult>` — `.status` is `'signed' | 'missing_signature' | 'malformed'`; `.signers` lists per-signer outcomes.
+
+```typescript
+const result = await jacs.verifyText('README.md');
+console.log(result.status);  // 'signed'
+
+// Strict — Promise rejects on missing signature
+try {
+  await jacs.verifyText('UNSIGNED.md', { strict: true });
+} catch (err) {
+  if (/MissingSignature/.test(err.message)) {
+    console.log('not signed');
+  } else {
+    throw err;
+  }
+}
+```
+
+See the [inline text signing guide](../guides/inline-text-signing.md) for the full feature set.
+
+---
+
+### signImage(path, out, options?) — v0.10.0
+
+Embed a JACS signature inside a PNG, JPEG, or WebP image. The signature lives in a metadata chunk (PNG iTXt / JPEG APP11 / WebP XMP).
+
+**Parameters:**
+- `path` (string): input image
+- `out` (string): output path
+- `options` (object, optional): `{ robust?: boolean, refuseOverwrite?: boolean }`. `robust` opts in to LSB fallback for PNG/JPEG (off by default; WebP deferred). `refuseOverwrite` rejects with `AlreadySigned` if the input already carries a signature.
+
+**Returns:** `Promise<void>`
+
+```typescript
+await jacs.signImage('photo.png', 'signed.png');
+```
+
+---
+
+### verifyImage(path, options?) — v0.10.0
+
+Verify the embedded signature on an image. Same permissive / strict model as `verifyText`.
+
+**Parameters:** as for `verifyText`.
+
+**Returns:** `Promise<VerifyImageResult>` — `.status` is `'valid' | 'invalid' | 'missing_signature'`; `.signerId`, `.signedAt`, `.algorithm` populated when valid.
+
+```typescript
+const v = await jacs.verifyImage('signed.png');
+console.log(v.status);  // 'valid'
+```
+
+See the [media signing guide](../guides/media-signing.md) for the full feature set.
+
+---
+
+### extractMediaSignature(path, options?) — v0.10.0
+
+Extract the embedded signature payload **without verifying** it.
+
+**Parameters:**
+- `path` (string)
+- `options` (object, optional): `{ rawPayload?: boolean }` — when `true`, returns the base64url wire form instead of decoded JSON.
+
+**Returns:** `Promise<object>` (decoded JSON) or `Promise<string>` (base64url when `rawPayload: true`).
+
+```typescript
+const payload = await jacs.extractMediaSignature('signed.png');
+console.log(payload.signedAt);
 ```
 
 ---

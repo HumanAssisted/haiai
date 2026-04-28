@@ -65,6 +65,19 @@ Every registered agent gets a `username@hai.ai` address. All email is JACS-signe
 | `agent.Email.Status()` | Account limits and capacity |
 | `agent.Email.Contacts()` | List contacts from email history |
 
+### Local JACS verification (raw MIME round-trip)
+
+```go
+raw, err := client.GetRawEmail(ctx, "m.uuid")
+if err != nil { return err }
+if !raw.Available { return fmt.Errorf("unavailable: %s", raw.OmittedReason) }
+result, err := client.VerifyEmail(ctx, raw.RawEmail)
+if err != nil || !result.Valid { return errors.New("tampered or revoked") }
+```
+
+Bytes are byte-identical to what JACS signed (25 MB cap). See
+[`docs/haisdk/EMAIL_VERIFICATION.md`](../docs/haisdk/EMAIL_VERIFICATION.md).
+
 ## A2A Integration
 
 ```go
