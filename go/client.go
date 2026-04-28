@@ -1257,21 +1257,32 @@ func (c *Client) SignBenchmarkResult(result map[string]interface{}) (*SignedDocu
 	documentID := fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
 		uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16])
 
-	// Canonical JSON of the data for signing and hashing.
-	dataJSON, err := json.Marshal(result)
-	if err != nil {
-		return nil, wrapError(ErrSigningFailed, err, "failed to marshal benchmark result")
-	}
-
-	// SHA-256 hash of canonical data
-	hashBytes := sha256.Sum256(dataJSON)
-	hash := fmt.Sprintf("%x", hashBytes)
-
-	// Sign the canonical data payload via FFI
+	// Canonicalize via JACS (RFC 8785) — the verifier re-canonicalizes the same
+	// way, so signing the canonical bytes is what makes the signature round-trip.
+	// Previously this used stdlib `json.Marshal`, which is not canonical and
+	// produced signatures that mismatched any verifier doing canonicalization
+	// before hashing.
 	if c.ffi == nil {
 		return nil, newError(ErrSigningFailed, "FFI client is not initialized")
 	}
-	sigB64, signErr := c.ffi.SignMessage(string(dataJSON))
+	rawJSON, err := json.Marshal(result)
+	if err != nil {
+		return nil, wrapError(ErrSigningFailed, err, "failed to marshal benchmark result")
+	}
+	dataJSON, err := c.ffi.CanonicalJSON(string(rawJSON))
+	if err != nil {
+		return nil, wrapError(ErrSigningFailed, err, "failed to canonicalize benchmark result")
+	}
+
+	// metadata.hash = sha256 of the canonical JSON (per docs/.../email-signing.md
+	// and matching Python sign_response fallback). The JACS signature is the
+	// cryptographic binding; this hash is informational/auditing. JACS does not
+	// expose a public "hash a canonical string" function today — if it does in
+	// future, swap this for the FFI call. See feedback_no_jacs_reimplementation.
+	hashBytes := sha256.Sum256([]byte(dataJSON))
+	hash := fmt.Sprintf("%x", hashBytes)
+
+	sigB64, signErr := c.ffi.SignMessage(dataJSON)
 	if signErr != nil {
 		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign benchmark result via FFI")
 	}

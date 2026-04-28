@@ -57,22 +57,34 @@ export function clearServerKeysCache(): void {
 }
 
 /**
- * Produce canonical JSON per RFC 8785 (JCS).
+ * Produce canonical JSON per RFC 8785 (JCS) via the JACS binding.
  *
- * Delegates to JACS binding-core `canonicalizeJsonSync` when an agent is
- * provided and supports it.  Falls back to deterministic sorted-key
- * JSON.stringify when the agent does not expose the method or is absent.
+ * Delegates to JACS binding-core `canonicalizeJsonSync`. There is no
+ * fallback: sorted-key `JSON.stringify` is NOT byte-equivalent to RFC 8785
+ * (numeric formatting, Unicode escape rules, and float canonicalization
+ * all differ), so signatures produced over a fallback string would not
+ * verify against JACS-canonicalized input on the verifier side. If the
+ * provided agent lacks `canonicalizeJsonSync`, that's an environment
+ * problem — throw loudly rather than silently produce a near-canonical
+ * form.
  *
- * Sorted-key JSON is consistent with the JACS internal canonical form
- * used for signing and is safe as a standalone deterministic serialiser.
+ * @throws Error if no agent is provided or the agent does not expose
+ *   `canonicalizeJsonSync` (upgrade @hai.ai/jacs).
  */
 export function canonicalJson(obj: unknown, agent?: JacsAgent): string {
-  if (agent && 'canonicalizeJsonSync' in agent && typeof (agent as unknown as Record<string, unknown>).canonicalizeJsonSync === 'function') {
-    const jsonStr = sortedKeyJson(obj);
-    return (agent as unknown as Record<string, unknown> & { canonicalizeJsonSync: (s: string) => string }).canonicalizeJsonSync(jsonStr);
+  if (!agent) {
+    throw new Error(
+      'canonicalJson requires a loaded JACS agent (RFC 8785 canonicalization is delegated to JACS — no local fallback)',
+    );
   }
-
-  return sortedKeyJson(obj);
+  const a = agent as unknown as Record<string, unknown>;
+  if (typeof a.canonicalizeJsonSync !== 'function') {
+    throw new Error(
+      'Loaded JACS agent does not expose canonicalizeJsonSync — upgrade @hai.ai/jacs to a version that includes it',
+    );
+  }
+  const jsonStr = sortedKeyJson(obj);
+  return (a as { canonicalizeJsonSync: (s: string) => string }).canonicalizeJsonSync(jsonStr);
 }
 
 /** Sorted-key JSON serialization (deterministic). */

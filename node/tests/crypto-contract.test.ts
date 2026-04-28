@@ -38,7 +38,7 @@ describe('crypto_delegation_contract', () => {
   describe('canonicalization test vectors', () => {
     for (const vec of contract.canonicalization.test_vectors) {
       it(`canonicalizes ${JSON.stringify(vec.input)} correctly`, () => {
-        const result = canonicalJson(vec.input);
+        const result = canonicalJson(vec.input, TEST_AGENT);
         expect(result).toBe(vec.expected);
       });
     }

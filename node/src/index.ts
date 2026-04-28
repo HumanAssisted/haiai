@@ -9,10 +9,6 @@ export type { AgentOptions, SendOptions } from './agent.js';
 export { buildRfc5322Email } from './mime.js';
 export type { MimeSendEmailOptions, MimeEmailAttachment } from './mime.js';
 
-// Content hash computation (cross-SDK conformance)
-export { computeContentHash } from './hash.js';
-export type { ContentHashAttachment } from './hash.js';
-
 // Signing (all crypto delegated to JACS core)
 export {
   unwrapSignedEvent,

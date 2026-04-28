@@ -13,20 +13,6 @@ import (
 
 // conformanceFixture mirrors the JSON structure of fixtures/email_conformance.json.
 type conformanceFixture struct {
-	ContentHashGolden struct {
-		Vectors []struct {
-			Name         string `json:"name"`
-			Subject      string `json:"subject"`
-			Body         string `json:"body"`
-			Attachments  []struct {
-				Filename    string `json:"filename"`
-				ContentType string `json:"content_type"`
-				DataUTF8    string `json:"data_utf8"`
-			} `json:"attachments"`
-			ExpectedHash string `json:"expected_hash"`
-		} `json:"vectors"`
-	} `json:"content_hash_golden"`
-
 	VerificationResultV2Schema struct {
 		RequiredFields   map[string]string `json:"required_fields"`
 		FieldStatusValues []string          `json:"field_status_values"`
@@ -126,75 +112,6 @@ func TestConformanceMockVerifyResponseDeserialization(t *testing.T) {
 	}
 	if len(result.BenchmarksCompleted) != 1 || result.BenchmarksCompleted[0] != "free_chaotic" {
 		t.Fatalf("expected benchmarks_completed=['free_chaotic'], got %v", result.BenchmarksCompleted)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Content hash golden vector conformance (TASK_013)
-// ---------------------------------------------------------------------------
-
-func TestContentHashGoldenVectors(t *testing.T) {
-	f := loadConformanceFixture(t)
-	for _, v := range f.ContentHashGolden.Vectors {
-		atts := make([]ContentHashAttachment, 0, len(v.Attachments))
-		for _, a := range v.Attachments {
-			atts = append(atts, ContentHashAttachment{
-				Filename:    a.Filename,
-				ContentType: a.ContentType,
-				Data:        []byte(a.DataUTF8),
-			})
-		}
-		result := ComputeContentHash(v.Subject, v.Body, atts)
-		if result != v.ExpectedHash {
-			t.Fatalf("Content hash mismatch for vector %q: expected %s, got %s",
-				v.Name, v.ExpectedHash, result)
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
-// MIME round-trip conformance (TASK_014)
-// ---------------------------------------------------------------------------
-
-func TestMimeRoundTripContentHash(t *testing.T) {
-	f := loadConformanceFixture(t)
-
-	type roundTripInput struct {
-		Subject     string `json:"subject"`
-		Body        string `json:"body"`
-		Attachments []struct {
-			Filename    string `json:"filename"`
-			ContentType string `json:"content_type"`
-			DataUTF8    string `json:"data_utf8"`
-		} `json:"attachments"`
-	}
-	type roundTrip struct {
-		Input               roundTripInput `json:"input"`
-		ExpectedContentHash string         `json:"expected_content_hash"`
-	}
-
-	// Re-read the fixture to get mime_round_trip
-	data, _ := os.ReadFile(filepath.Join("..", "fixtures", "email_conformance.json"))
-	var raw map[string]json.RawMessage
-	_ = json.Unmarshal(data, &raw)
-	var rt roundTrip
-	if err := json.Unmarshal(raw["mime_round_trip"], &rt); err != nil {
-		t.Fatalf("unmarshal mime_round_trip: %v", err)
-	}
-	_ = f // keep linter happy
-
-	atts := make([]ContentHashAttachment, 0, len(rt.Input.Attachments))
-	for _, a := range rt.Input.Attachments {
-		atts = append(atts, ContentHashAttachment{
-			Filename:    a.Filename,
-			ContentType: a.ContentType,
-			Data:        []byte(a.DataUTF8),
-		})
-	}
-	result := ComputeContentHash(rt.Input.Subject, rt.Input.Body, atts)
-	if result != rt.ExpectedContentHash {
-		t.Fatalf("MIME round-trip content hash mismatch: expected %s, got %s",
-			rt.ExpectedContentHash, result)
 	}
 }
 

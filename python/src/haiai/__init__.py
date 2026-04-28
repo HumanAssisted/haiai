@@ -94,7 +94,6 @@ from haiai.errors import (
     SSEError,
     WebSocketError,
 )
-from haiai.hash import compute_content_hash
 from haiai.models import (
     AgentConfig,
     AgentVerificationResult,
@@ -178,8 +177,6 @@ __all__ = [
     "VerifyImageResult",
     "VerifyTextResult",
     "VerifyTextSignature",
-    # Hash functions
-    "compute_content_hash",
     # Constants
     "DEFAULT_BASE_URL",
     "MAX_VERIFY_URL_LEN",

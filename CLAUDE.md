@@ -38,7 +38,7 @@ scripts/ci/              # CI enforcement (crypto policy denylist)
 
 ## Rules
 
-1. **No local crypto.** All signing/verification/key ops delegate to `jacs`. CI enforces via `scripts/ci/check_no_local_crypto.sh`.
+1. **No local crypto, no JACS reimplementation.** All signing, verification, hashing, canonicalization, and key ops delegate to `jacs`. If JACS already has the function (even `pub(crate)`), promote it upstream and delegate — do NOT vendor or re-implement, even "just for this case." Tests are also expected to call existing JACS public functions rather than reproduce JACS algorithms inline. CI enforces via `scripts/ci/check_no_local_crypto.sh` (denylist on `sha2::`, `ed25519`, `aes-gcm`, etc. outside narrow allowlist).
 2. **Cross-language parity.** Behavior changes must apply to all 4 SDKs. FFI guarantees parity by construction for HTTP operations. Shared fixtures in `fixtures/` drive contract tests.
 3. **All 10 packages share one version.** Bump all together: `rust/haiai/Cargo.toml`, `rust/haiai-cli/Cargo.toml`, `rust/hai-mcp/Cargo.toml`, `rust/hai-binding-core/Cargo.toml`, `rust/haiinpm/Cargo.toml`, `rust/haiipy/Cargo.toml`, `rust/haiigo/Cargo.toml`, `python/pyproject.toml`, `node/package.json`, `.claude-plugin/plugin.json`.
 4. **Releases are tag-triggered.** `rust/v*` -> crates.io, `python/v*` -> PyPI, `node/v*` -> npm. Use `make release-*`.

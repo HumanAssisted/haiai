@@ -33,14 +33,18 @@ logger = logging.getLogger("haiai.signing")
 
 
 def canonicalize_json(obj: dict) -> str:
-    """Produce canonical JSON per RFC 8785 (JCS).
+    """Produce canonical JSON per RFC 8785 (JCS) via the loaded JACS agent.
 
-    Delegates to JACS binding-core ``canonicalize_json`` when the loaded
-    agent exposes it.  Falls back to deterministic sorted-key JSON when
-    the JACS agent is loaded but does not expose the method (this is the
-    same serialisation JACS uses internally for signing in this SDK).
+    Delegates to JACS binding-core ``canonicalize_json``. There is no fallback:
+    sorted-key ``json.dumps`` is NOT byte-equivalent to RFC 8785 (numeric
+    formatting, Unicode escape rules, and float canonicalization all differ),
+    so signatures produced over a fallback string would not verify against
+    JACS-canonicalized input on the verifier side. If the loaded JACS agent
+    lacks the ``canonicalize_json`` method, that's an environment problem —
+    raise loudly rather than silently produce a near-canonical form.
 
-    Raises :class:`~haiai.errors.HaiError` if no JACS agent is loaded at all.
+    Raises :class:`~haiai.errors.HaiError` if no JACS agent is loaded, or if
+    the loaded agent does not expose ``canonicalize_json``.
     """
     from haiai.config import is_loaded, get_agent
     from haiai.errors import HaiError
@@ -53,15 +57,15 @@ def canonicalize_json(obj: dict) -> str:
         )
 
     agent = get_agent()
+    if not hasattr(agent, "canonicalize_json"):
+        raise HaiError(
+            "Loaded JACS agent does not expose canonicalize_json — upgrade JACS",
+            code="JACS_TOO_OLD",
+            action="Upgrade @hai.ai/jacs / jacs Python binding to a version that exposes canonicalize_json",
+        )
+
     json_str = json.dumps(obj, sort_keys=True, separators=(",", ":"))
-
-    if hasattr(agent, "canonicalize_json"):
-        return agent.canonicalize_json(json_str)
-
-    # Agent loaded but lacks canonicalize_json binding (e.g. older JACS).
-    # Sorted-key compact JSON is the canonical form used by the SDK for
-    # signing payloads -- this is consistent with what JACS validates.
-    return json_str
+    return agent.canonicalize_json(json_str)
 
 
 # ---------------------------------------------------------------------------

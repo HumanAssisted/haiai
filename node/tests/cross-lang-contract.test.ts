@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HaiClient } from '../src/client.js';
 import { canonicalJson } from '../src/signing.js';
+import { TEST_AGENT } from './setup.js';
 
 interface CrossLangFixture {
   auth_header: {
@@ -34,7 +35,7 @@ describe('cross-language wrapper contract (node)', () => {
   it('matches the shared canonical JSON cases', () => {
     const fixture = loadFixture();
     for (const testCase of fixture.canonical_json_cases) {
-      expect(canonicalJson(testCase.input), testCase.name).toBe(testCase.expected);
+      expect(canonicalJson(testCase.input, TEST_AGENT), testCase.name).toBe(testCase.expected);
     }
   });
 

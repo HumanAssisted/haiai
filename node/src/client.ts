@@ -1923,10 +1923,12 @@ export class HaiClient {
         return result;
       }
 
-      // Remove signature, canonicalize, verify via JACS
+      // Remove signature, canonicalize, verify via JACS.
+      // canonicalJson hard-errors without an agent (RFC 8785 delegation only —
+      // no local sortedKeyJson fallback), so we pass `this.agent` explicitly.
       const verifyDoc = JSON.parse(JSON.stringify(doc)) as Record<string, unknown>;
       delete (verifyDoc.jacsSignature as Record<string, unknown>).signature;
-      const canonical = canonicalJson(verifyDoc);
+      const canonical = canonicalJson(verifyDoc, this.agent);
 
       result.signatureValid = this.agent.verifyStringSync(
         canonical,

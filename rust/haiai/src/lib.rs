@@ -70,12 +70,10 @@ pub use config::{
 };
 #[cfg(feature = "jacs-crate")]
 pub use email::{
-    compute_content_hash,
     // JACS email types re-exported for consumer convenience
     sign_email,
     verify_email,
     AttachmentEntry,
-    AttachmentInput,
     BodyPartEntry,
     ContentVerificationResult,
     EmailSignatureHeaders,

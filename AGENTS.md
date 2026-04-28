@@ -81,7 +81,7 @@ Full parity map: `docs/haisdk/PARITY_MAP.md` (60 exposed, 19 excluded, 79 total)
 
 ## Rules
 
-1. **No local crypto in haiai.** Delegate to `jacs`. CI enforces via `scripts/ci/check_no_local_crypto.sh`.
+1. **No local crypto, no JACS reimplementation in haiai.** Delegate every crypto, hashing, canonicalization, or key-handling primitive to `jacs`. If the JACS function exists but is `pub(crate)` or otherwise non-public, promote it upstream (or add a thin public wrapper) and delegate from haiai — do NOT vendor the algorithm into haiai "just for this case." This applies to source AND tests: import the JACS public function rather than recompute the algorithm inline. CI enforces via `scripts/ci/check_no_local_crypto.sh`.
 2. **Cross-language parity.** Changes must apply to all 4 SDKs. FFI guarantees HTTP parity by construction. Tests read shared fixtures from `fixtures/`.
 3. **All 10 packages share one version.** `make check-versions` to verify.
 4. **Releases are tag-triggered.** `rust/v*` -> crates.io, `python/v*` -> PyPI, `node/v*` -> npm. Use `make release-*`.
