@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.0 (2026-04-28)
+
+### Breaking
+
+- **Wire format for `Go SignBenchmarkResult`, `Go A2A artifact signing`, and `Rust RemoteJacsProvider::sign_file`** now uses RFC 8785 canonical JSON / canonical JACS file envelopes via JACS, replacing hand-rolled `json.Marshal` / `payload_b64` shapes. Records persisted by pre-0.4.0 clients carry `metadata.hash` and `jacsSignature.signature` over stdlib JSON / flat envelopes — they cannot be verified by 0.4.0+ clients. Re-sign or tombstone any persisted `benchmark_result` / `A2AWrappedArtifact` / `.jacs` file envelope from before this release. (Issue 003)
+- **Removed:** `compute_content_hash` and `AttachmentInput`. Affects Python `haiai.compute_content_hash`, Node `computeContentHash`, Rust `haiai::compute_content_hash` / `haiai::AttachmentInput`, Go `haiai.ComputeContentHash`. The wrapper duplicated JACS canonical hashing and drifted from JACS's CRLF/BOM handling. Migrate to JACS's canonical hashing helpers (`jacs::crypt::hash::hash_public_key` in Rust; the equivalent `hashString` / `hash_string` exposed by the JACS Python and Node bindings). The corresponding `fixtures/email_conformance.json` entries that referenced the helper have been trimmed. (Issue 004)
+- **Node `signResponse` and `unwrapSignedEvent` no longer fall back to the in-process `sortedKeyJson`** when the agent / canonicalizer is omitted. RFC 8785 canonicalization is delegated to JACS with no local fallback, matching Python's behaviour. `unwrapSignedEvent`'s `agent` parameter is now required; `signResponse`'s local-envelope path requires either a signer that exposes `signResponseSync` or an explicit `canonicalizer: JacsAgent`. (Task list #61.)
+
+### Fixed
+
+- **Python `canonicalize_json` against ephemeral JACS adapters.** When the loaded agent does not expose `canonicalize_json` (e.g. JACS's `_EphemeralAgentAdapter` wrapping `SimpleAgent`), `signing.canonicalize_json` now delegates to a stateless `jacs.JacsAgent()` instance — RFC 8785 canonicalization is keyless, so any JACS install can produce the canonical bytes. Eliminates the `JACS_TOO_OLD` regression that was failing 21 Python tests. (Issue 001)
+- **Typed errors from `/api/v1/records`.** Non-success responses now surface as the typed `HaiError::Api { status, message }` variant rather than the catch-all `HaiError::Provider`. Cross-language SDKs map this to `ErrorKind::AuthFailed` / `NotFound` / `RateLimited` / `ApiError`. If you previously relied on `IsAuthError(err)` / `HaiAuthError` / `AuthenticationError` to fire on every records-endpoint error, audit your branches: a 5xx will no longer hit the auth-error branch. (Prior Issue 008.)
+- **`query_by_type` / `query_by_agent` cursor walk.** Previously returned an empty array for any `offset >= 100` because the server's per-page cap is 100 and the SDK didn't walk further. Now walks forward via the server's cursor until `limit` records past `offset` are accumulated. If your code used "empty page" as a loop terminator, switch to "result count < limit" instead. (Prior Issue 009.)
+- **`RemoteJacsProvider::sign_file` delegation.** Now delegates to `inner.sign_file_envelope` so the file envelope is byte-identical to `LocalJacsProvider::sign_file` (canonical `(jacsType="file", jacsLevel, jacsFiles[...])` shape). The previous hand-rolled `payload_b64` / flat `sha256` envelope diverged from the JACS schema and cross-language verification. (Prior Issue 006.)
+- **`verify_dns_public_key` uses JACS canonical `hash_public_key`** rather than hand-rolled SHA-256 over PEM. Hash bytes are now byte-identical to JACS's reference. (Prior Issue 012.)
+- **Makefile `test-go`** now sets `CGO_LDFLAGS` / `DYLD_LIBRARY_PATH` / `LD_LIBRARY_PATH` and depends on `build-haiigo` so a fresh-clone `make test-go` actually runs. (Prior Issue 017.)
+
+### Notes
+
+- **Go `ctx` is not propagated through cgo** in the 20 doc-store methods on `*Client`. Method signatures take `_ctx context.Context` for forward-compatibility, but cancellation is not honoured at the FFI boundary — a `WithTimeout` will not abort the in-flight cgo call. The 19 pre-existing methods that go through the Go reqwest layer still honour ctx. Honest cancellation via a watchdog goroutine is tracked as a follow-up. (Prior Issue 015.)
+- **PRD / TASK / EMAIL_VERIFICATION recipe docs** for the 0.3.0 work were moved out of `docs/haisdk/` into `docs/archive/2026-04/` rather than deleted. `CLAUDE.md` now points consumers at the archived `EMAIL_VERIFICATION.md`.
+- **JACS pinned to `=0.10.0`** for now; bump in 0.4.x once 0.10.1+ is published.
+
 ## 0.3.0
 
 - **Remote JACS Document Store (`RemoteJacsProvider`)**: `JacsDocumentProvider` impl that talks to `hai-api` at `/api/v1/records/...` instead of touching the filesystem. Set `JACS_STORAGE=remote` (or `--storage remote` in CLI) and the same trait calls a developer makes against `LocalJacsProvider` (sign + store + fetch + version + list + search) work over HTTPS. Auth uses the existing `Authorization: JACS {jacsId}:{ts}:{sig}` header; signing keys never leave the client. Maps server 4xx to `HaiError::Provider(server_message)` and 5xx to `HaiError::Provider("server error: ...")`. See `~/personal/haisdk/rust/haiai/src/jacs_remote.rs`.
