@@ -1237,6 +1237,13 @@ func parseStringSliceResponse(jsonStr string) ([]string, error) {
 // The envelope wraps the inner value; for trait methods returning a JSON
 // document (e.g. `GetDocument` -> signed envelope), the `ok` payload is
 // itself a JSON-encoded string.
+//
+// Issue 014: every haiigo callsite that funnels through this parser uses
+// `result_string_to_json` (or `result_option_to_json` for the Optional
+// variant), both of which ALWAYS produce JSON-quoted strings. A non-string
+// payload here is therefore a wire-contract violation — fail loud so the
+// next regression at the FFI boundary is caught at the test site instead
+// of silently corrupting the caller's data.
 func parseStringResponse(jsonStr string) (string, error) {
 	raw, err := parseEnvelope(jsonStr)
 	if err != nil {
@@ -1247,16 +1254,17 @@ func parseStringResponse(jsonStr string) (string, error) {
 	}
 	var out string
 	if err := json.Unmarshal(raw, &out); err != nil {
-		// The payload may already be a raw JSON document (binding-core
-		// serializes some methods directly as JSON). Fall back to returning
-		// the raw bytes as a string in that case.
-		return string(raw), nil
+		return "", fmt.Errorf("FFI envelope `ok` was not a JSON string: %w", err)
 	}
 	return out, nil
 }
 
 // parseOptionalStringResponse parses an envelope's `ok` payload as
 // Option<String>. `null` -> empty string.
+//
+// Issue 014: same loud-fail rule as `parseStringResponse` — the only
+// callsites are `hai_get_memory` / `hai_get_soul`, both routed through
+// `result_option_to_json` which guarantees a JSON-quoted string or null.
 func parseOptionalStringResponse(jsonStr string) (string, error) {
 	raw, err := parseEnvelope(jsonStr)
 	if err != nil {
@@ -1267,7 +1275,7 @@ func parseOptionalStringResponse(jsonStr string) (string, error) {
 	}
 	var out string
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return string(raw), nil
+		return "", fmt.Errorf("FFI envelope `ok` was not a JSON string: %w", err)
 	}
 	return out, nil
 }

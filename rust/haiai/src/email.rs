@@ -21,6 +21,7 @@ pub use jacs::email::{
     ParsedAttachment, ParsedBodyPart, ParsedEmailParts, SignedHeaderEntry,
 };
 
+use jacs::crypt::hash::hash_public_key;
 use jacs::email::{get_jacs_attachment, verify_email_content, verify_email_document};
 
 /// Input for a single attachment in [`compute_content_hash`].
@@ -502,18 +503,23 @@ pub async fn fetch_public_key_from_registry(
 }
 
 /// Verify that a DNS TXT record at `_v1.agent.jacs.{domain}` contains
-/// a `jacs_public_key_hash=` value matching the SHA-256 hash of the
-/// public key PEM bytes.
+/// a `jacs_public_key_hash=` value matching JACS's canonical public-key
+/// hash of the supplied PEM.
+///
+/// The expected hash is produced by [`jacs::crypt::hash::hash_public_key`]
+/// — BOM-detected UTF-8, line-ending-normalized, lowercase hex SHA-256.
+/// This is the same value JACS itself publishes in `jacsSignature.publicKeyHash`,
+/// so any DNS TXT record produced by a JACS-signing agent will match here.
 ///
 /// Returns `Ok(true)` if verified, `Ok(false)` if the hash doesn't match,
 /// or `Err` if the DNS lookup fails.
 pub async fn verify_dns_public_key(domain: &str, public_key_pem: &str) -> Result<bool> {
-    // Compute expected hash: sha256(public_key_pem_bytes), base64 encoded
-    let expected_hash = {
-        let mut hasher = Sha256::new();
-        hasher.update(public_key_pem.as_bytes());
-        base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
-    };
+    // Compute expected hash via JACS's canonical helper. Per CLAUDE.md Rule 1
+    // (delegate all crypto to JACS) we MUST NOT recompute SHA-256 locally —
+    // the previous local implementation produced base64-of-raw-PEM, which
+    // never matched the hex-with-CRLF-normalization values published by JACS
+    // and silently rejected every legitimate agent (Issue 012).
+    let expected_hash = hash_public_key(public_key_pem);
 
     // Query DNS TXT record at _v1.agent.jacs.{domain}
     // Use DNS-over-HTTPS (Google's public resolver) since we don't have a

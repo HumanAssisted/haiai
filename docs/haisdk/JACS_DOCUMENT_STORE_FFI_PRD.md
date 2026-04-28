@@ -585,3 +585,68 @@ The four prior issues are genuinely fixed (verified line-by-line). The work is c
 ### What needs follow-up (non-blocking)
 
 - Issue 005 (Medium): Replace `r.Body.Read(body)` with `io.ReadAll(r.Body)` in `go/ffi_native_smoke_test.go:39-46`.
+
+---
+
+## Review Summary (deep-review pass 2 — 2026-04-27, focus: JACS-DRY-ness)
+
+User prompt for this pass: *"is haiai sdk using JACS in a very DRY way? should not reinvent anything."*
+
+### Verification performed
+
+Re-verified 7 task files against the actual code; ran:
+- `cargo test -p hai-binding-core --lib` → **93 passed** (binding-core)
+- `cargo test -p haiai --test contract_test` → **12 passed** (parity contract)
+- `cd python && pytest tests/` → **518 passed, 37 skipped** (env-gated)
+- `cd node && npm test` → **393 passed, 17 skipped**
+- `cd go && CGO_ENABLED=1 CGO_LDFLAGS=... DYLD_LIBRARY_PATH=... go test -race ./...` → **all green** (after manual env wiring)
+- `bash scripts/ci/check_no_local_crypto.sh` → clean
+- `make test-go` (no env wiring) → **FAILS** with `ld: library 'haiigo' not found` — Issue 010.
+
+### Scoring (this pass)
+
+| Dimension | Weight | Score | Notes |
+|---|---|---:|---|
+| Correctness | 40% | 4 | All 20 doc-store methods are correctly wired across 4 SDKs and verified by binding-core httpmock + Python / Node / Go mock-adapter tests. Two real bugs found this pass — `verify_dns_public_key` produces values that cannot match a JACS-signed agent's published hash (Issue 012, Critical), and `make test-go` cannot build out of the box (Issue 010, High). Neither is in the doc-store path itself, but both surfaced while validating PRD acceptance. |
+| Test Quality | 25% | 3 | binding-core httpmock coverage is strong. The Go-side `parseStringResponse` silently swallows wire-contract violations (Issue 014), masking exactly the class of regression that motivated this PRD. CI smoke-tests run against real bindings, but Go smoke depends on `JACS_SMOKE_AGENT_DIR` env (Issue 010 also blocks local devs). |
+| Security | 10% | 4 | No HTTP outside Rust. Crypto policy guard passes. URL-escaping correct. **However**: `email.rs::compute_content_hash` (Issue 011) and `verify_dns_public_key` (Issue 012) reimplement primitives that JACS already owns canonically — a class of "hidden local crypto" the denylist doesn't currently catch. Not specific to this PRD's scope, but the deep-review prompt asks for DRY-vs-JACS, and these are the answers. |
+| DRY / Quality | 15% | 3 | Doc-store wiring itself is tight (`build_doc_store` + 20 `_with` test seams, no copy-paste). The 22 cgo extern declarations + 2 macros + 3 helpers are well-scoped. **But the email.rs reimplementations (Issues 011, 012) are real DRY/JACS violations, and the broader Go `parseStringResponse` fallback (Issue 014) is structural.** |
+| Scope | 10% | 5 | Exactly the 20 fixture methods landed; nothing extra. |
+
+**Weighted total:** `0.4*4 + 0.25*3 + 0.1*4 + 0.15*3 + 0.1*5 = 1.6 + 0.75 + 0.4 + 0.45 + 0.5 = 3.7`
+
+### Recommendation: **Fix then ship**
+
+The 20 doc-store methods themselves are ship-quality (matches the previous pass's 4.75 score on that scope). The new findings are mostly outside the PRD's deliberate scope — **but Issues 010, 011, 012 should be triaged before the next release**:
+- Issue 010 (High) breaks `make test-go` for any developer who hasn't manually copied the cdylib — affects every CI lane and every contributor.
+- Issue 011 (High) reimplements JACS internal hashing for email content; will silently drift the next time JACS adjusts canonicalization.
+- Issue 012 (Critical) reimplements JACS public-key hashing with a different algorithm and output encoding — `verify_dns_public_key` cannot succeed against any real JACS-signed agent's published DNS record.
+
+### Issue counts (this pass)
+
+| Severity | Count | Issues |
+|---|---|---|
+| Critical | 1 | 012 (verify_dns_public_key hash mismatch) |
+| High | 2 | 010 (make test-go broken), 011 (compute_content_hash reimpl) |
+| Medium | 3 | 013 (empty path config), 014 (parseStringResponse silent), 015 (ctx ignored in Go) |
+| Low | 1 | 016 (Issue 005 status not closed) |
+
+### Answer to user's prompt
+
+**Is haiai SDK using JACS in a "very DRY way"?**
+
+For the doc-store path delivered by this PRD: **yes** — `RemoteJacsProvider`, `LocalJacsProvider`, and `binding-core::HaiClientWrapper::build_doc_store` all delegate cleanly to `jacs::*` for signing, verification, and canonicalization. The `JacsProvider` / `JacsDocumentProvider` trait contract is the single seam.
+
+For the broader haiai library: **mostly, with two notable exceptions in `email.rs`**:
+1. `compute_content_hash` reimplements JACS's `pub(crate) compute_attachment_hash` by hand using direct `sha2::Sha256` calls. JACS should expose the canonical version (`pub`); haiai should delegate.
+2. `verify_dns_public_key` reimplements public-key hashing with a different algorithm than `jacs::crypt::hash::hash_public_key` (no CRLF/BOM normalization, base64 vs hex output). The two cannot match for the same input — this is a real correctness bug, not just a DRY concern.
+
+The `scripts/ci/check_no_local_crypto.sh` denylist evidently does not flag `sha2::Sha256` calls outside of explicitly-allow-listed sites, which is how these two reimplementations slipped past the policy.
+
+### What's still solid (carries forward from pass 1)
+
+- Doc-store wire contract on all 4 SDKs.
+- methods.json count and summary alignment.
+- No HTTP outside Rust.
+- Smoke tests skip cleanly when native artifacts unavailable.
+- Public-client surface is idiomatic per language.

@@ -1655,133 +1655,185 @@ func parseRawEmailJSON(raw json.RawMessage) (*RawEmailResult, error) {
 // =============================================================================
 // JACS Document Store (20 methods)
 //
-// Thin delegations to the FFI client. ctx is reserved for future cancellation
-// (FFI does not yet propagate it). Naming follows the Go convention
-// (PascalCase) while keeping the trait semantics from RemoteJacsProvider.
+// Thin delegations to the FFI client.
+//
+// Issue 015: every method below takes `_ctx context.Context` as its first
+// parameter to mirror the Go-stdlib convention used elsewhere in the SDK,
+// but the value is currently NOT propagated through the cgo bridge. Calls
+// will run to completion (or libhaiigo's reqwest timeout) regardless of
+// the caller's `ctx.Done()` / deadline. The leading underscore on the
+// parameter name surfaces this in IDE tool-tips at the call site, and the
+// per-method godoc carries an explicit NOTE so callers are not misled by
+// the signature alone. Real cancellation requires plumbing a `ctx_id`
+// token through cgo + binding-core + RemoteJacsProvider — tracked as a
+// follow-up to Issue 015.
+//
+// Naming follows the Go convention (PascalCase) while keeping the trait
+// semantics from RemoteJacsProvider.
 // =============================================================================
 
 // StoreDocument stores a pre-signed JACS document and returns the record key
 // (`id:version`).
-func (c *Client) StoreDocument(ctx context.Context, signedJSON string) (string, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) StoreDocument(_ctx context.Context, signedJSON string) (string, error) {
 	return c.ffi.StoreDocument(signedJSON)
 }
 
 // SignAndStore signs a JSON document and stores it. Returns the SignedDocument
 // envelope as raw JSON for the caller to unmarshal.
-func (c *Client) SignAndStore(ctx context.Context, dataJSON string) (json.RawMessage, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SignAndStore(_ctx context.Context, dataJSON string) (json.RawMessage, error) {
 	return c.ffi.SignAndStore(dataJSON)
 }
 
 // GetDocument fetches a document by key. Returns the signed envelope JSON.
-func (c *Client) GetDocument(ctx context.Context, key string) (string, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) GetDocument(_ctx context.Context, key string) (string, error) {
 	return c.ffi.GetDocument(key)
 }
 
 // GetLatestDocument fetches the latest version of a document by id.
-func (c *Client) GetLatestDocument(ctx context.Context, docID string) (string, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) GetLatestDocument(_ctx context.Context, docID string) (string, error) {
 	return c.ffi.GetLatestDocument(docID)
 }
 
 // GetDocumentVersions returns all version keys for a document id.
-func (c *Client) GetDocumentVersions(ctx context.Context, docID string) ([]string, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) GetDocumentVersions(_ctx context.Context, docID string) ([]string, error) {
 	return c.ffi.GetDocumentVersions(docID)
 }
 
 // ListDocuments returns document keys, optionally filtered by `jacsType`.
 // Pass empty string to list all types.
-func (c *Client) ListDocuments(ctx context.Context, jacsType string) ([]string, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ListDocuments(_ctx context.Context, jacsType string) ([]string, error) {
 	return c.ffi.ListDocuments(jacsType)
 }
 
 // RemoveDocument tombstones (soft-deletes) a document by key.
-func (c *Client) RemoveDocument(ctx context.Context, key string) error {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) RemoveDocument(_ctx context.Context, key string) error {
 	return c.ffi.RemoveDocument(key)
 }
 
 // UpdateDocument updates a document, creating a new signed version.
-func (c *Client) UpdateDocument(ctx context.Context, docID, signedJSON string) (json.RawMessage, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) UpdateDocument(_ctx context.Context, docID, signedJSON string) (json.RawMessage, error) {
 	return c.ffi.UpdateDocument(docID, signedJSON)
 }
 
 // SearchDocuments performs fulltext / hybrid search.
-func (c *Client) SearchDocuments(ctx context.Context, query string, limit, offset int) (json.RawMessage, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SearchDocuments(_ctx context.Context, query string, limit, offset int) (json.RawMessage, error) {
 	return c.ffi.SearchDocuments(query, limit, offset)
 }
 
 // QueryByType returns document keys filtered by `jacsType`.
-func (c *Client) QueryByType(ctx context.Context, docType string, limit, offset int) ([]string, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) QueryByType(_ctx context.Context, docType string, limit, offset int) ([]string, error) {
 	return c.ffi.QueryByType(docType, limit, offset)
 }
 
 // QueryByField returns document keys filtered by an envelope field.
-func (c *Client) QueryByField(ctx context.Context, field, value string, limit, offset int) ([]string, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) QueryByField(_ctx context.Context, field, value string, limit, offset int) ([]string, error) {
 	return c.ffi.QueryByField(field, value, limit, offset)
 }
 
 // QueryByAgent returns document keys signed by a specific agent.
-func (c *Client) QueryByAgent(ctx context.Context, agentID string, limit, offset int) ([]string, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) QueryByAgent(_ctx context.Context, agentID string, limit, offset int) ([]string, error) {
 	return c.ffi.QueryByAgent(agentID, limit, offset)
 }
 
 // StorageCapabilities reports the storage backend's capabilities.
-func (c *Client) StorageCapabilities(ctx context.Context) (json.RawMessage, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) StorageCapabilities(_ctx context.Context) (json.RawMessage, error) {
 	return c.ffi.StorageCapabilities()
 }
 
 // SaveMemory signs and stores a `MEMORY.md` record. Pass empty string to read
 // MEMORY.md from CWD. Returns the record key.
-func (c *Client) SaveMemory(ctx context.Context, content string) (string, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SaveMemory(_ctx context.Context, content string) (string, error) {
 	return c.ffi.SaveMemory(content)
 }
 
 // SaveSoul signs and stores a `SOUL.md` record. Pass empty string to read
 // SOUL.md from CWD.
-func (c *Client) SaveSoul(ctx context.Context, content string) (string, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SaveSoul(_ctx context.Context, content string) (string, error) {
 	return c.ffi.SaveSoul(content)
 }
 
 // GetMemory returns the latest MEMORY record's signed envelope JSON. Returns
 // the empty string when no memory exists for the caller.
-func (c *Client) GetMemory(ctx context.Context) (string, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) GetMemory(_ctx context.Context) (string, error) {
 	return c.ffi.GetMemory()
 }
 
 // GetSoul returns the latest SOUL record's signed envelope JSON.
-func (c *Client) GetSoul(ctx context.Context) (string, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) GetSoul(_ctx context.Context) (string, error) {
 	return c.ffi.GetSoul()
 }
 
 // StoreTextFile reads a signed-text file and POSTs it to the records endpoint.
-func (c *Client) StoreTextFile(ctx context.Context, path string) (string, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) StoreTextFile(_ctx context.Context, path string) (string, error) {
 	return c.ffi.StoreTextFile(path)
 }
 
 // StoreImageFile detects a signed image's format and POSTs it.
-func (c *Client) StoreImageFile(ctx context.Context, path string) (string, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) StoreImageFile(_ctx context.Context, path string) (string, error) {
 	return c.ffi.StoreImageFile(path)
 }
 
 // GetRecordBytes fetches raw record bytes (no UTF-8 decode, no JSON parse).
-func (c *Client) GetRecordBytes(ctx context.Context, key string) ([]byte, error) {
-	_ = ctx
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) GetRecordBytes(_ctx context.Context, key string) ([]byte, error) {
 	return c.ffi.GetRecordBytes(key)
 }

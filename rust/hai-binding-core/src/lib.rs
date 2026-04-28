@@ -373,7 +373,17 @@ impl HaiClientWrapper {
         let config: Value = serde_json::from_str(config_json)
             .map_err(|e| HaiBindingError::new(ErrorKind::ConfigFailed, e.to_string()))?;
 
-        let jacs_config_path = config.get("jacs_config_path").and_then(|v| v.as_str());
+        // Issue 013: collapse `None` and `Some("")` into the same branch.
+        // An empty-string `jacs_config_path` is a natural placeholder when
+        // building configs from templates; treating it as "no path provided"
+        // routes the caller to `StaticJacsProvider` (the documented fallback)
+        // instead of crashing with `ConfigFailed: failed to load JACS config from`.
+        // Doc-store calls still return `ProviderError: jacs_config_path required`
+        // because `cached_config_path` ends up as `None`.
+        let jacs_config_path = config
+            .get("jacs_config_path")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
 
         let jacs_id = config
             .get("jacs_id")
@@ -2382,14 +2392,31 @@ mod tests {
 
     #[test]
     fn auto_config_with_empty_jacs_path_uses_static_provider() {
-        // Empty string for jacs_config_path should be treated as absent
+        // Issue 013: an empty-string `jacs_config_path` is a natural template
+        // placeholder. It must be treated as absent — i.e. the same as no key
+        // at all — so construction succeeds with the test-only
+        // StaticJacsProvider fallback. Doc-store calls then surface the
+        // "jacs_config_path required for document-store operations" message
+        // through the provider error path, exactly as they would for a
+        // missing key. This validates both ergonomics:
+        //   1. Empty config doesn't crash setup.
+        //   2. Doc-store calls correctly surface the missing-config error.
         let config = r#"{"jacs_config_path": "", "jacs_id": "empty-path-test"}"#;
-        // This should either succeed (treating empty as absent) or fail gracefully
-        let result = HaiClientWrapper::from_config_json_auto(config);
-        // Empty string is truthy in the JSON sense (Some("")), so it will try to load
-        // from empty path and fail with ConfigFailed
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind, ErrorKind::ConfigFailed);
+        let wrapper = HaiClientWrapper::from_config_json_auto(config)
+            .expect("empty jacs_config_path should fall back to StaticJacsProvider");
+
+        // The cached path must end up `None` so doc-store calls hit the
+        // "jacs_config_path required" branch in `build_doc_store`.
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let err = runtime
+            .block_on(wrapper.store_document(r#"{"id":"x","jacsType":"memory"}"#.to_string()))
+            .expect_err("doc-store calls must fail when no jacs_config_path is set");
+        assert_eq!(err.kind, ErrorKind::ProviderError, "got: {err:?}");
+        assert!(
+            err.message.contains("jacs_config_path required"),
+            "unexpected error message: {}",
+            err.message
+        );
     }
 
     #[test]
