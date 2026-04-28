@@ -4,12 +4,41 @@ use hai_mcp::{HaiMcpServer, HaiServerContext, LoadedSharedAgent};
 use haiai::{
     CreateAgentOptions, CreateEmailTemplateOptions, HaiClient, HaiClientOptions,
     JacsAgentLifecycle, JacsDocumentProvider, JacsProvider, ListEmailTemplatesOptions,
-    ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions, SearchOptions, SendEmailOptions,
-    UpdateEmailTemplateOptions,
+    ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions, RemoteJacsProvider,
+    RemoteJacsProviderOptions, SearchOptions, SendEmailOptions, UpdateEmailTemplateOptions,
 };
 use jacs_mcp::JacsMcpServer;
+use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use rmcp::{transport::stdio, ServiceExt};
 use serde_json::Value;
+
+mod media_cmds;
+
+/// Characters that must be percent-encoded in URL query values.
+/// Encodes everything except unreserved characters (RFC 3986 section 2.3).
+const QUERY_ENCODE_SET: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'&')
+    .add(b'+')
+    .add(b'=')
+    .add(b'/')
+    .add(b'?')
+    .add(b'@')
+    .add(b'[')
+    .add(b']');
+
+/// Characters that must be percent-encoded in URL path segments.
+const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'/')
+    .add(b'?')
+    .add(b'@')
+    .add(b'[')
+    .add(b']');
 
 #[derive(Parser)]
 #[command(name = "haiai", version, about = "HAIAI CLI")]
@@ -112,6 +141,10 @@ enum Commands {
         /// Labels/tags to apply (repeatable)
         #[arg(long)]
         labels: Vec<String>,
+
+        /// Emit machine-readable JSON instead of the default two-line summary
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
 
     /// List email messages
@@ -139,6 +172,10 @@ enum Commands {
         /// Filter by label/tag
         #[arg(long)]
         label: Option<String>,
+
+        /// Emit machine-readable JSON (array of EmailMessage) instead of the human table
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
 
     /// Search email messages
@@ -216,6 +253,21 @@ enum Commands {
     UnarchiveMessage {
         /// Message ID to unarchive
         message_id: String,
+    },
+
+    /// Fetch the raw RFC 5322 MIME bytes for a message (suitable for local JACS verification)
+    GetRawEmail {
+        /// Message ID whose raw bytes to retrieve
+        message_id: String,
+
+        /// Write output to FILE instead of stdout. When --base64 is set, the
+        /// base64 string is written to the file; otherwise raw decoded bytes.
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+
+        /// Print the base64-encoded MIME on one line instead of decoded bytes
+        #[arg(long)]
+        base64: bool,
     },
 
     /// List contacts derived from email history
@@ -319,6 +371,196 @@ enum Commands {
         #[command(subcommand)]
         action: KeychainAction,
     },
+
+    /// Deploy agent to a managed platform
+    Deploy {
+        #[command(subcommand)]
+        command: DeployCommands,
+    },
+
+    // =========================================================================
+    // Layer 8: Local Media Sign/Verify (JACS 0.10.0)
+    // =========================================================================
+    /// Sign a markdown / text file in place by appending a YAML signature block
+    SignText {
+        /// Path to the file to sign
+        file: String,
+
+        /// Skip writing a `<file>.bak` backup before modifying
+        #[arg(long)]
+        no_backup: bool,
+
+        /// Re-add a signature even if one with this signer is already valid
+        #[arg(long)]
+        allow_duplicate: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Verify all signature blocks in a text file
+    VerifyText {
+        /// Path to the signed file
+        file: String,
+
+        /// Optional directory of `<signer_id>.public.pem` files to consult
+        #[arg(long)]
+        key_dir: Option<String>,
+
+        /// Treat missing or malformed signature as exit-1 instead of exit-2
+        #[arg(long)]
+        strict: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Sign an image (PNG/JPEG/WebP) by embedding a JACS signature in metadata
+    SignImage {
+        /// Input image path
+        input: String,
+
+        /// Output path for the signed image
+        #[arg(long)]
+        out: String,
+
+        /// Also embed via LSB steganography (PNG/JPEG only — WebP is unsupported)
+        #[arg(long)]
+        robust: bool,
+
+        /// Reserved (png|jpeg|webp). Currently a no-op: jacs sign_image
+        /// magic-detects format from input bytes (JACS REVIEW_002 — dead
+        /// parameter pending upstream fix). Pass-through forward-compatible.
+        #[arg(long)]
+        format: Option<String>,
+
+        /// Refuse to overwrite an existing JACS signature in the input image
+        #[arg(long)]
+        refuse_overwrite: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Verify the JACS signature embedded in an image
+    VerifyImage {
+        /// Path to the signed image
+        file: String,
+
+        /// Optional directory of `<signer_id>.public.pem` files to consult
+        #[arg(long)]
+        key_dir: Option<String>,
+
+        /// Treat missing signature as exit-1 instead of exit-2
+        #[arg(long)]
+        strict: bool,
+
+        /// Scan the LSB channel if the metadata channel is absent
+        #[arg(long)]
+        robust: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Extract the JACS signature payload from a signed image without verifying
+    ExtractMediaSignature {
+        /// Path to the signed image
+        file: String,
+
+        /// Print the raw base64url-no-pad payload as embedded; default decodes
+        #[arg(long)]
+        raw_payload: bool,
+    },
+
+    // =========================================================================
+    // Issue 005: D5 / D9 record-store CLI verbs.
+    //
+    // Mirror the seven MCP tools registered in Issue 004. These exist so
+    // non-Rust callers (Python/Node/Go via shell) and LLMs invoking via CLI
+    // can reach the same functionality the MCP layer exposes.
+    // =========================================================================
+
+    /// Sign and store a MEMORY record on hai-api (D5)
+    Memory {
+        #[command(subcommand)]
+        command: MemoryCommands,
+    },
+
+    /// Sign and store a SOUL record on hai-api (D5)
+    Soul {
+        #[command(subcommand)]
+        command: SoulCommands,
+    },
+
+    /// Manage typed records (signed text/image/binary) on hai-api (D9)
+    Records {
+        #[command(subcommand)]
+        command: RecordsCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum MemoryCommands {
+    /// Sign + store MEMORY content. Defaults to reading MEMORY.md from CWD when neither --from nor --content is given.
+    Save {
+        /// Read content from a file
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Inline content (overrides --from)
+        #[arg(long)]
+        content: Option<String>,
+    },
+
+    /// Fetch the latest MEMORY record's signed envelope JSON
+    Get,
+}
+
+#[derive(Subcommand)]
+enum SoulCommands {
+    /// Sign + store SOUL content. Defaults to reading SOUL.md from CWD when neither --from nor --content is given.
+    Save {
+        /// Read content from a file
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Inline content (overrides --from)
+        #[arg(long)]
+        content: Option<String>,
+    },
+
+    /// Fetch the latest SOUL record's signed envelope JSON
+    Get,
+}
+
+#[derive(Subcommand)]
+enum RecordsCommands {
+    /// POST a JACS-signed markdown file as text/markdown; profile=jacs-text-v1
+    StoreText {
+        /// Path to the signed markdown file
+        path: String,
+    },
+
+    /// POST a JACS-signed image (PNG/JPEG/WebP) with the right Content-Type
+    StoreImage {
+        /// Path to the signed image file
+        path: String,
+    },
+
+    /// Fetch the raw record bytes from hai-api by key (id:version)
+    GetBytes {
+        /// Record key in `id:version` format
+        key: String,
+
+        /// Output file path
+        #[arg(long)]
+        out: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -416,6 +658,374 @@ enum KeychainAction {
     Status,
 }
 
+#[derive(Subcommand)]
+enum DeployCommands {
+    /// Deploy to Claude Managed Agents (Anthropic)
+    Anthropic {
+        /// Model tier: haiku, sonnet, opus
+        #[arg(long, default_value = "sonnet")]
+        model: String,
+        /// Anthropic API key (or set ANTHROPIC_API_KEY)
+        #[arg(long, env = "ANTHROPIC_API_KEY")]
+        api_key: Option<String>,
+        /// Agent name (default: from JACS config)
+        #[arg(long)]
+        name: Option<String>,
+        /// Print configs without deploying
+        #[arg(long)]
+        dry_run: bool,
+        /// Also create and start an initial session
+        #[arg(long)]
+        session: bool,
+        /// Reuse existing environment ID
+        #[arg(long)]
+        env_id: Option<String>,
+        /// Reuse existing agent ID
+        #[arg(long)]
+        agent_id: Option<String>,
+        /// Redeploy: re-upload changed identity files
+        #[arg(long)]
+        update: bool,
+        /// Published JACS Skill ID (added to agent's skills array)
+        #[arg(long)]
+        skill_id: Option<String>,
+    },
+    /// List sessions for a deployed Anthropic agent
+    ListSessions {
+        /// Anthropic agent ID (reads from .haiai-deploy.json if omitted)
+        #[arg(long)]
+        agent_id: Option<String>,
+
+        /// Anthropic API key (or set ANTHROPIC_API_KEY)
+        #[arg(long, env = "ANTHROPIC_API_KEY")]
+        api_key: Option<String>,
+
+        /// Maximum number of sessions to return
+        #[arg(long, default_value = "20")]
+        limit: u32,
+
+        /// Include archived sessions
+        #[arg(long)]
+        include_archived: bool,
+    },
+    /// List versions of a deployed Anthropic agent
+    ListVersions {
+        /// Anthropic agent ID (reads from .haiai-deploy.json if omitted)
+        #[arg(long)]
+        agent_id: Option<String>,
+
+        /// Anthropic API key (or set ANTHROPIC_API_KEY)
+        #[arg(long, env = "ANTHROPIC_API_KEY")]
+        api_key: Option<String>,
+
+        /// Maximum number of versions to return
+        #[arg(long, default_value = "20")]
+        limit: u32,
+    },
+    /// Send a single message to a deployed Anthropic session
+    Message {
+        /// Session ID to send the message to (required)
+        #[arg(long)]
+        session_id: String,
+
+        /// Message text to send
+        #[arg(long)]
+        text: String,
+
+        /// Anthropic API key (or set ANTHROPIC_API_KEY)
+        #[arg(long, env = "ANTHROPIC_API_KEY")]
+        api_key: Option<String>,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Deploy types
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DeployState {
+    env_id: String,
+    agent_id: String,
+    model: String,
+    file_ids: DeployFileIds,
+    deployed_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    updated_at: Option<String>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct DeployFileIds {
+    config: String,
+    public_key: String,
+    private_key: String,
+    password: String,
+}
+
+// ---------------------------------------------------------------------------
+// Deploy helpers
+// ---------------------------------------------------------------------------
+
+fn map_model_tier(tier: &str) -> anyhow::Result<&'static str> {
+    match tier {
+        "haiku" => Ok("claude-haiku-4-5"),
+        "sonnet" => Ok("claude-sonnet-4-6"),
+        "opus" => Ok("claude-opus-4-6"),
+        _ => anyhow::bail!("Unknown model tier '{}'. Use: haiku, sonnet, or opus", tier),
+    }
+}
+
+fn build_environment_config(agent_name: &str) -> serde_json::Value {
+    serde_json::json!({
+        "name": format!("haiai-{}-env", agent_name),
+        "config": {
+            "type": "cloud",
+            "packages": {
+                "apt": ["pkg-config", "libssl-dev", "ca-certificates"],
+                "cargo": ["haiai-cli"]
+            },
+            "networking": {
+                "type": "limited",
+                "allowed_hosts": ["https://api.hai.ai"],
+                "allow_package_managers": true,
+                "allow_mcp_servers": true
+            }
+        }
+    })
+}
+
+fn build_agent_config(
+    agent_name: &str,
+    model_id: &str,
+    skill_id: Option<&str>,
+) -> serde_json::Value {
+    let system_prompt = "You are an AI agent with a verified HAI.AI cryptographic identity. Before using haiai commands, run: ln -s /workspace/jacs.config.json ./jacs.config.json && ln -s /workspace/keys ./keys. Always pass --password-file /workspace/password.txt when running haiai commands. Your identity is already configured — do not run haiai init.";
+
+    let mut agent = serde_json::json!({
+        "name": agent_name,
+        "model": model_id,
+        "system": system_prompt,
+        "tools": [{"type": "agent_toolset_20260401"}]
+    });
+
+    if let Some(sid) = skill_id {
+        agent["skills"] = serde_json::json!([
+            {"type": "custom", "skill_id": sid, "version": "latest"}
+        ]);
+    }
+
+    agent
+}
+
+/// Build session config. Note: the API field is `"agent"` (not `"agent_id"`).
+fn build_session_config(
+    agent_id: &str,
+    env_id: &str,
+    file_ids: &DeployFileIds,
+) -> serde_json::Value {
+    serde_json::json!({
+        "agent": agent_id,
+        "environment_id": env_id,
+        "resources": [
+            {"type": "file", "file_id": file_ids.config, "mount_path": "/workspace/jacs.config.json"},
+            {"type": "file", "file_id": file_ids.public_key, "mount_path": "/workspace/keys/public.pem"},
+            {"type": "file", "file_id": file_ids.private_key, "mount_path": "/workspace/keys/private.pem.enc"},
+            {"type": "file", "file_id": file_ids.password, "mount_path": "/workspace/password.txt"}
+        ]
+    })
+}
+
+async fn upload_file_to_anthropic(
+    client: &reqwest::Client,
+    api_key: &str,
+    path: &std::path::Path,
+) -> anyhow::Result<String> {
+    let file_content = tokio::fs::read(path)
+        .await
+        .with_context(|| format!("failed to read file: {}", path.display()))?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("path has no file name: {}", path.display()))?
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("file name is not valid UTF-8: {}", path.display()))?
+        .to_string();
+
+    let form = reqwest::multipart::Form::new().part(
+        "file",
+        reqwest::multipart::Part::bytes(file_content).file_name(file_name),
+    );
+
+    let resp = client
+        .post("https://api.anthropic.com/v1/files")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("anthropic-beta", "files-api-2025-04-14")
+        .multipart(form)
+        .send()
+        .await
+        .context("Files API request failed")?;
+
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.context("failed to parse Files API response")?;
+    if !status.is_success() {
+        anyhow::bail!("Files API error ({}): {}", status, body);
+    }
+
+    body["id"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Files API response missing 'id' field"))
+}
+
+/// Post JSON to an Anthropic Managed Agents endpoint with the required beta header.
+async fn anthropic_managed_post(
+    client: &reqwest::Client,
+    api_key: &str,
+    url: &str,
+    body: &serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
+    let resp = client
+        .post(url)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("anthropic-beta", "managed-agents-2026-04-01")
+        .json(body)
+        .send()
+        .await
+        .with_context(|| format!("POST {} failed", url))?;
+
+    let status = resp.status();
+    let resp_body: serde_json::Value = resp
+        .json()
+        .await
+        .with_context(|| format!("failed to parse response from {}", url))?;
+    if !status.is_success() {
+        anyhow::bail!("API error ({}) from {}: {}", status, url, resp_body);
+    }
+    Ok(resp_body)
+}
+
+/// GET JSON from an Anthropic Managed Agents endpoint with the required beta header.
+async fn anthropic_managed_get(
+    client: &reqwest::Client,
+    api_key: &str,
+    url: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let resp = client
+        .get(url)
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("anthropic-beta", "managed-agents-2026-04-01")
+        .send()
+        .await
+        .with_context(|| format!("GET {} failed", url))?;
+
+    let status = resp.status();
+    let resp_body: serde_json::Value = resp
+        .json()
+        .await
+        .with_context(|| format!("failed to parse response from {}", url))?;
+    if !status.is_success() {
+        anyhow::bail!("API error ({}) from {}: {}", status, url, resp_body);
+    }
+    Ok(resp_body)
+}
+
+/// Discover identity files from the local JACS agent config directory.
+struct IdentityFiles {
+    config_path: std::path::PathBuf,
+    public_key_path: std::path::PathBuf,
+    private_key_path: std::path::PathBuf,
+}
+
+fn discover_identity_files() -> anyhow::Result<IdentityFiles> {
+    let config_path = std::path::PathBuf::from("jacs.config.json");
+    if !config_path.exists() {
+        anyhow::bail!(
+            "jacs.config.json not found in current directory. Run 'haiai init' first."
+        );
+    }
+
+    let config_content =
+        std::fs::read_to_string(&config_path).context("failed to read jacs.config.json")?;
+    let config: serde_json::Value =
+        serde_json::from_str(&config_content).context("invalid JSON in jacs.config.json")?;
+
+    let key_dir_str = config["key_directory"]
+        .as_str()
+        .unwrap_or("./jacs_keys");
+    let key_dir = std::path::PathBuf::from(key_dir_str);
+    if !key_dir.exists() {
+        anyhow::bail!(
+            "Key directory '{}' not found. Run 'haiai init' first.",
+            key_dir.display()
+        );
+    }
+
+    let mut public_key_path: Option<std::path::PathBuf> = None;
+    let mut private_key_path: Option<std::path::PathBuf> = None;
+
+    for entry in std::fs::read_dir(&key_dir)
+        .with_context(|| format!("failed to read key directory: {}", key_dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if name.ends_with(".pem.enc") {
+            private_key_path = Some(path);
+        } else if name.ends_with(".pem") {
+            public_key_path = Some(path);
+        }
+    }
+
+    let public_key_path =
+        public_key_path.ok_or_else(|| anyhow::anyhow!("no .pem file found in {}", key_dir.display()))?;
+    let private_key_path = private_key_path
+        .ok_or_else(|| anyhow::anyhow!("no .pem.enc file found in {}", key_dir.display()))?;
+
+    Ok(IdentityFiles {
+        config_path,
+        public_key_path,
+        private_key_path,
+    })
+}
+
+/// Resolve the agent name: explicit flag > JACS config name field.
+fn resolve_agent_name(explicit: Option<&str>) -> anyhow::Result<String> {
+    if let Some(name) = explicit {
+        return Ok(name.to_string());
+    }
+    let config_path = std::path::PathBuf::from("jacs.config.json");
+    let content =
+        std::fs::read_to_string(&config_path).context("failed to read jacs.config.json")?;
+    let config: serde_json::Value =
+        serde_json::from_str(&content).context("invalid JSON in jacs.config.json")?;
+    config["agent_name"]
+        .as_str()
+        .or_else(|| config["name"].as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Could not determine agent name. Pass --name or set agent_name in jacs.config.json."
+            )
+        })
+}
+
+/// Resolve the password for deploy file upload: --password-file > env var > error.
+/// Does NOT prompt interactively since deploy is non-interactive by nature.
+fn resolve_deploy_password(password_file: Option<&str>) -> anyhow::Result<String> {
+    if let Some(path) = password_file {
+        return read_password_file(path);
+    }
+    if let Ok(pass) = std::env::var("JACS_PRIVATE_KEY_PASSWORD") {
+        if !pass.is_empty() {
+            return Ok(pass);
+        }
+    }
+    anyhow::bail!(
+        "Password required for deploy. Set JACS_PRIVATE_KEY_PASSWORD or pass --password-file."
+    )
+}
+
 /// Resolve the effective `--storage` value, considering `--storage-env`.
 ///
 /// If `--storage-env VARNAME` was passed, read the label from that env var.
@@ -440,6 +1050,17 @@ fn resolve_storage_flag(
         return Ok(Some(label));
     }
     Ok(storage.map(|s| s.to_string()))
+}
+
+/// Read the saved deploy state from `.haiai-deploy.json` in the current directory.
+fn read_deploy_state() -> anyhow::Result<DeployState> {
+    let path = std::path::PathBuf::from(".haiai-deploy.json");
+    let raw = std::fs::read_to_string(&path).context(
+        ".haiai-deploy.json not found. Run 'haiai deploy anthropic' first or pass --agent-id.",
+    )?;
+    let state: DeployState =
+        serde_json::from_str(&raw).context("invalid .haiai-deploy.json")?;
+    Ok(state)
 }
 
 fn hai_url() -> String {
@@ -635,7 +1256,7 @@ async fn main() -> anyhow::Result<()> {
     // Commands that load an existing agent need the private key password. Prompt once if not set and not -q.
     if !matches!(
         cli.command,
-        Commands::Init { .. } | Commands::SelfKnowledge { .. }
+        Commands::Init { .. } | Commands::SelfKnowledge { .. } | Commands::Deploy { .. }
     ) {
         ensure_agent_password(cli.quiet, cli.password_file.as_deref())
             .context("failed to resolve private key password")?;
@@ -873,6 +1494,7 @@ async fn main() -> anyhow::Result<()> {
             cc,
             bcc,
             labels,
+            json,
         } => {
             let client = load_client_with_email().await?;
             let options = SendEmailOptions {
@@ -890,8 +1512,15 @@ async fn main() -> anyhow::Result<()> {
                 .send_signed_email(&options)
                 .await
                 .context("send email failed")?;
-            println!("  Message ID: {}", result.message_id);
-            println!("  Status:     {}", result.status);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&result).context("serialize send result")?
+                );
+            } else {
+                println!("  Message ID: {}", result.message_id);
+                println!("  Status:     {}", result.status);
+            }
         }
 
         Commands::ListMessages {
@@ -901,6 +1530,7 @@ async fn main() -> anyhow::Result<()> {
             is_read,
             folder,
             label,
+            json,
         } => {
             let client = load_client()?;
             let options = ListMessagesOptions {
@@ -916,7 +1546,14 @@ async fn main() -> anyhow::Result<()> {
                 .list_messages(&options)
                 .await
                 .context("list messages failed")?;
-            print_message_table(&messages);
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&messages).context("serialize list result")?
+                );
+            } else {
+                print_message_table(&messages);
+            }
         }
 
         Commands::SearchMessages {
@@ -992,6 +1629,48 @@ async fn main() -> anyhow::Result<()> {
                 .await
                 .context("unarchive failed")?;
             println!("  Unarchived: {}", message_id);
+        }
+
+        Commands::GetRawEmail {
+            message_id,
+            output,
+            base64,
+        } => {
+            use std::io::Write;
+            let client = load_client()?;
+            let resp = client
+                .get_raw_email(&message_id)
+                .await
+                .context("get-raw-email failed")?;
+
+            if !resp.available {
+                let reason = resp.omitted_reason.as_deref().unwrap_or("unknown");
+                eprintln!("raw email unavailable: {reason}");
+                std::process::exit(2);
+            }
+
+            let bytes = resp
+                .raw_email
+                .ok_or_else(|| anyhow::anyhow!("server reported available but returned no bytes"))?;
+
+            if base64 {
+                use base64::Engine;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                if let Some(path) = output {
+                    std::fs::write(&path, b64)
+                        .with_context(|| format!("write base64 to {}", path.display()))?;
+                } else {
+                    println!("{}", b64);
+                }
+            } else if let Some(path) = output {
+                std::fs::write(&path, &bytes)
+                    .with_context(|| format!("write raw bytes to {}", path.display()))?;
+            } else {
+                let mut stdout = std::io::stdout().lock();
+                stdout
+                    .write_all(&bytes)
+                    .context("write raw bytes to stdout")?;
+            }
         }
 
         Commands::ListContacts => {
@@ -1450,9 +2129,632 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+
+        // -----------------------------------------------------------------
+        // Deploy
+        // -----------------------------------------------------------------
+        Commands::Deploy { command } => {
+            match command {
+                DeployCommands::Anthropic {
+                    model,
+                    api_key,
+                    name,
+                    dry_run,
+                    session,
+                    env_id,
+                    agent_id,
+                    update,
+                    skill_id,
+                } => {
+                    let model_id = map_model_tier(&model)?;
+                    let agent_name = resolve_agent_name(name.as_deref())?;
+
+                    let api_key = api_key.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Anthropic API key required. Pass --api-key or set ANTHROPIC_API_KEY."
+                        )
+                    })?;
+
+                    let env_config = build_environment_config(&agent_name);
+                    let agent_config =
+                        build_agent_config(&agent_name, model_id, skill_id.as_deref());
+
+                    if dry_run {
+                        println!("--- Dry Run ---\n");
+                        println!("Model: {} ({})", model, model_id);
+                        println!("Agent: {}\n", agent_name);
+                        println!("Environment config:");
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&env_config).unwrap_or_default()
+                        );
+                        println!("\nAgent config:");
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&agent_config).unwrap_or_default()
+                        );
+                        let placeholder_ids = DeployFileIds {
+                            config: "<config-file-id>".into(),
+                            public_key: "<public-key-file-id>".into(),
+                            private_key: "<private-key-file-id>".into(),
+                            password: "<password-file-id>".into(),
+                        };
+                        let session_config =
+                            build_session_config("<agent-id>", "<env-id>", &placeholder_ids);
+                        println!("\nSession config:");
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&session_config).unwrap_or_default()
+                        );
+                        return Ok(());
+                    }
+
+                    let http_client = reqwest::Client::new();
+                    let deploy_state_path = std::path::PathBuf::from(".haiai-deploy.json");
+
+                    if update {
+                        // -------------------------------------------------------
+                        // Redeploy: re-upload identity files, update state
+                        // -------------------------------------------------------
+                        let mut state = read_deploy_state()?;
+
+                        let identity = discover_identity_files()?;
+                        let password = resolve_deploy_password(cli.password_file.as_deref())?;
+                        let password_tmp = std::env::temp_dir().join("haiai-deploy-pw.tmp");
+                        std::fs::write(&password_tmp, &password)
+                            .context("failed to write temporary password file")?;
+
+                        println!("Re-uploading identity files...");
+                        let old_ids = state.file_ids.clone();
+                        let new_config_id =
+                            upload_file_to_anthropic(&http_client, &api_key, &identity.config_path)
+                                .await?;
+                        let new_pub_id = upload_file_to_anthropic(
+                            &http_client,
+                            &api_key,
+                            &identity.public_key_path,
+                        )
+                        .await?;
+                        let new_priv_id = upload_file_to_anthropic(
+                            &http_client,
+                            &api_key,
+                            &identity.private_key_path,
+                        )
+                        .await?;
+                        let new_pw_id =
+                            upload_file_to_anthropic(&http_client, &api_key, &password_tmp).await?;
+
+                        let _ = std::fs::remove_file(&password_tmp);
+
+                        state.file_ids = DeployFileIds {
+                            config: new_config_id,
+                            public_key: new_pub_id,
+                            private_key: new_priv_id,
+                            password: new_pw_id,
+                        };
+                        state.updated_at = Some(chrono::Utc::now().to_rfc3339());
+
+                        let state_json = serde_json::to_string_pretty(&state)
+                            .context("failed to serialize deploy state")?;
+                        std::fs::write(&deploy_state_path, &state_json)
+                            .context("failed to write .haiai-deploy.json")?;
+
+                        println!("\nFiles updated:");
+                        println!(
+                            "  config:      {} -> {}",
+                            old_ids.config, state.file_ids.config
+                        );
+                        println!(
+                            "  public_key:  {} -> {}",
+                            old_ids.public_key, state.file_ids.public_key
+                        );
+                        println!(
+                            "  private_key: {} -> {}",
+                            old_ids.private_key, state.file_ids.private_key
+                        );
+                        println!(
+                            "  password:    {} -> {}",
+                            old_ids.password, state.file_ids.password
+                        );
+                        println!("\nExisting env_id:   {}", state.env_id);
+                        println!("Existing agent_id: {}", state.agent_id);
+
+                        if session {
+                            println!("\nCreating session...");
+                            let session_config = build_session_config(
+                                &state.agent_id,
+                                &state.env_id,
+                                &state.file_ids,
+                            );
+                            let session_resp = anthropic_managed_post(
+                                &http_client,
+                                &api_key,
+                                "https://api.anthropic.com/v1/sessions",
+                                &session_config,
+                            )
+                            .await?;
+                            let session_id = session_resp["id"].as_str().unwrap_or("<unknown>");
+                            println!("  Session ID: {}", session_id);
+
+                            let event_url = format!(
+                                "https://api.anthropic.com/v1/sessions/{}/events",
+                                session_id
+                            );
+                            let event_body = serde_json::json!({
+                                "type": "user.message",
+                                "content": [{"type": "text", "text": "Your HAI.AI identity is ready. Run `ln -s /workspace/jacs.config.json ./jacs.config.json && ln -s /workspace/keys ./keys` to set up symlinks, then use `haiai` CLI commands with `--password-file /workspace/password.txt`."}]
+                            });
+                            let _ = anthropic_managed_post(
+                                &http_client,
+                                &api_key,
+                                &event_url,
+                                &event_body,
+                            )
+                            .await?;
+                            println!("  Session started.");
+                        }
+                    } else {
+                        // -------------------------------------------------------
+                        // Initial deploy
+                        // -------------------------------------------------------
+                        let identity = discover_identity_files()?;
+                        let password = resolve_deploy_password(cli.password_file.as_deref())?;
+                        let password_tmp = std::env::temp_dir().join("haiai-deploy-pw.tmp");
+                        std::fs::write(&password_tmp, &password)
+                            .context("failed to write temporary password file")?;
+
+                        println!("Identity files uploaded:");
+                        let config_file_id = upload_file_to_anthropic(
+                            &http_client,
+                            &api_key,
+                            &identity.config_path,
+                        )
+                        .await?;
+                        println!("  Config:   {}", config_file_id);
+                        let pub_file_id = upload_file_to_anthropic(
+                            &http_client,
+                            &api_key,
+                            &identity.public_key_path,
+                        )
+                        .await?;
+                        println!("  PubKey:   {}", pub_file_id);
+                        let priv_file_id = upload_file_to_anthropic(
+                            &http_client,
+                            &api_key,
+                            &identity.private_key_path,
+                        )
+                        .await?;
+                        println!("  PrivKey:  {}", priv_file_id);
+                        let pw_file_id =
+                            upload_file_to_anthropic(&http_client, &api_key, &password_tmp).await?;
+                        println!("  Password: {}", pw_file_id);
+
+                        let _ = std::fs::remove_file(&password_tmp);
+
+                        let file_ids = DeployFileIds {
+                            config: config_file_id,
+                            public_key: pub_file_id,
+                            private_key: priv_file_id,
+                            password: pw_file_id,
+                        };
+
+                        // Create environment (or reuse)
+                        let resolved_env_id = if let Some(eid) = env_id {
+                            println!("\nReusing environment: {}", eid);
+                            eid
+                        } else {
+                            println!("\nCreating environment...");
+                            let env_resp = anthropic_managed_post(
+                                &http_client,
+                                &api_key,
+                                "https://api.anthropic.com/v1/environments",
+                                &env_config,
+                            )
+                            .await?;
+                            let eid = env_resp["id"]
+                                .as_str()
+                                .map(|s| s.to_string())
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "Environment response missing 'id': {}",
+                                        env_resp
+                                    )
+                                })?;
+                            println!("  Environment ID: {}", eid);
+                            eid
+                        };
+
+                        // Create agent (or reuse)
+                        let resolved_agent_id = if let Some(aid) = agent_id {
+                            println!("Reusing agent: {}", aid);
+                            aid
+                        } else {
+                            println!("Creating agent...");
+                            let agent_resp = anthropic_managed_post(
+                                &http_client,
+                                &api_key,
+                                "https://api.anthropic.com/v1/agents",
+                                &agent_config,
+                            )
+                            .await?;
+                            let aid = agent_resp["id"]
+                                .as_str()
+                                .map(|s| s.to_string())
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!("Agent response missing 'id': {}", agent_resp)
+                                })?;
+                            println!("  Agent ID: {}", aid);
+                            aid
+                        };
+
+                        // Save deploy state
+                        let state = DeployState {
+                            env_id: resolved_env_id.clone(),
+                            agent_id: resolved_agent_id.clone(),
+                            model: model_id.to_string(),
+                            file_ids: file_ids.clone(),
+                            deployed_at: chrono::Utc::now().to_rfc3339(),
+                            updated_at: None,
+                        };
+                        let state_json = serde_json::to_string_pretty(&state)
+                            .context("failed to serialize deploy state")?;
+                        std::fs::write(&deploy_state_path, &state_json)
+                            .context("failed to write .haiai-deploy.json")?;
+                        println!("\nDeploy state saved to .haiai-deploy.json");
+
+                        println!("\nEnvironment: {} (haiai-{}-env)", resolved_env_id, agent_name);
+                        println!("Agent:       {} ({})", resolved_agent_id, agent_name);
+                        println!("Model:       {}", model_id);
+                        println!(
+                            "\nTo start a session:\n  haiai deploy anthropic --session --env-id {} --agent-id {}",
+                            resolved_env_id, resolved_agent_id
+                        );
+                        println!("\nTo redeploy after updating agent or rotating keys:");
+                        println!("  haiai deploy anthropic --update");
+
+                        if session {
+                            println!("\nCreating session...");
+                            let session_config = build_session_config(
+                                &resolved_agent_id,
+                                &resolved_env_id,
+                                &file_ids,
+                            );
+                            let session_resp = anthropic_managed_post(
+                                &http_client,
+                                &api_key,
+                                "https://api.anthropic.com/v1/sessions",
+                                &session_config,
+                            )
+                            .await?;
+                            let session_id = session_resp["id"].as_str().unwrap_or("<unknown>");
+                            println!("  Session ID: {}", session_id);
+
+                            let event_url = format!(
+                                "https://api.anthropic.com/v1/sessions/{}/events",
+                                session_id
+                            );
+                            let event_body = serde_json::json!({
+                                "type": "user.message",
+                                "content": [{"type": "text", "text": "Your HAI.AI identity is ready. Run `ln -s /workspace/jacs.config.json ./jacs.config.json && ln -s /workspace/keys ./keys` to set up symlinks, then use `haiai` CLI commands with `--password-file /workspace/password.txt`."}]
+                            });
+                            let _ = anthropic_managed_post(
+                                &http_client,
+                                &api_key,
+                                &event_url,
+                                &event_body,
+                            )
+                            .await?;
+                            println!("  Session started.");
+                        }
+                    }
+                }
+                DeployCommands::ListSessions {
+                    agent_id,
+                    api_key,
+                    limit,
+                    include_archived,
+                } => {
+                    let api_key = api_key.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Anthropic API key required. Pass --api-key or set ANTHROPIC_API_KEY."
+                        )
+                    })?;
+
+                    let resolved_agent_id = match agent_id {
+                        Some(id) => id,
+                        None => read_deploy_state()?.agent_id,
+                    };
+
+                    let encoded_agent_id =
+                        utf8_percent_encode(&resolved_agent_id, QUERY_ENCODE_SET);
+                    let mut url = format!(
+                        "https://api.anthropic.com/v1/sessions?agent_id={}&limit={}",
+                        encoded_agent_id, limit
+                    );
+                    if include_archived {
+                        url.push_str("&include_archived=true");
+                    }
+
+                    let http_client = reqwest::Client::new();
+                    let resp = anthropic_managed_get(&http_client, &api_key, &url).await?;
+
+                    // Assumed response schema (Anthropic Managed Agents API):
+                    //   { "data": [{ "id", "status", "created_at", "updated_at",
+                    //     "usage": { "input_tokens", "output_tokens" } }] }
+                    // Ref: https://docs.anthropic.com/en/docs/agents
+                    let sessions = resp["data"].as_array();
+                    match sessions {
+                        Some(arr) if !arr.is_empty() => {
+                            println!(
+                                "{:<32} {:<14} {:<24} {:<24} {:<10} {:<10}",
+                                "ID", "STATUS", "CREATED", "UPDATED", "IN TOK", "OUT TOK"
+                            );
+                            println!("{}", "-".repeat(114));
+                            for s in arr {
+                                let id = s["id"].as_str().unwrap_or("-");
+                                let status = s["status"].as_str().unwrap_or("-");
+                                let created = s["created_at"].as_str().unwrap_or("-");
+                                let updated = s["updated_at"].as_str().unwrap_or("-");
+                                let in_tok = s["usage"]["input_tokens"]
+                                    .as_u64()
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "-".to_string());
+                                let out_tok = s["usage"]["output_tokens"]
+                                    .as_u64()
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_else(|| "-".to_string());
+                                println!(
+                                    "{:<32} {:<14} {:<24} {:<24} {:<10} {:<10}",
+                                    id, status, created, updated, in_tok, out_tok
+                                );
+                            }
+                        }
+                        _ => println!("No sessions found."),
+                    }
+                }
+                DeployCommands::ListVersions {
+                    agent_id,
+                    api_key,
+                    limit,
+                } => {
+                    let api_key = api_key.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Anthropic API key required. Pass --api-key or set ANTHROPIC_API_KEY."
+                        )
+                    })?;
+
+                    let resolved_agent_id = match agent_id {
+                        Some(id) => id,
+                        None => read_deploy_state()?.agent_id,
+                    };
+
+                    let encoded_agent_id =
+                        utf8_percent_encode(&resolved_agent_id, PATH_SEGMENT_ENCODE_SET);
+                    let url = format!(
+                        "https://api.anthropic.com/v1/agents/{}/versions?limit={}",
+                        encoded_agent_id, limit
+                    );
+
+                    let http_client = reqwest::Client::new();
+                    let resp = anthropic_managed_get(&http_client, &api_key, &url).await?;
+
+                    // Assumed response schema (Anthropic Managed Agents API):
+                    //   { "data": [{ "version", "name", "model": { "id" },
+                    //     "created_at", "updated_at" }] }
+                    // Ref: https://docs.anthropic.com/en/docs/agents
+                    let versions = resp["data"].as_array();
+                    match versions {
+                        Some(arr) if !arr.is_empty() => {
+                            println!(
+                                "{:<10} {:<30} {:<20} {:<24} {:<24}",
+                                "VERSION", "NAME", "MODEL", "CREATED", "UPDATED"
+                            );
+                            println!("{}", "-".repeat(108));
+                            for v in arr {
+                                let version = v["version"]
+                                    .as_u64()
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_else(|| "-".to_string());
+                                let name = v["name"].as_str().unwrap_or("-");
+                                let model = v["model"]["id"].as_str().unwrap_or("-");
+                                let created = v["created_at"].as_str().unwrap_or("-");
+                                let updated = v["updated_at"].as_str().unwrap_or("-");
+                                println!(
+                                    "{:<10} {:<30} {:<20} {:<24} {:<24}",
+                                    version, name, model, created, updated
+                                );
+                            }
+                        }
+                        _ => println!("No versions found."),
+                    }
+                }
+                DeployCommands::Message {
+                    session_id,
+                    text,
+                    api_key,
+                } => {
+                    let api_key = api_key.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Anthropic API key required. Pass --api-key or set ANTHROPIC_API_KEY."
+                        )
+                    })?;
+
+                    let encoded_session_id =
+                        utf8_percent_encode(&session_id, PATH_SEGMENT_ENCODE_SET);
+                    let url = format!(
+                        "https://api.anthropic.com/v1/sessions/{}/events",
+                        encoded_session_id
+                    );
+                    let body = serde_json::json!({
+                        "type": "user.message",
+                        "content": [{"type": "text", "text": text}]
+                    });
+
+                    let http_client = reqwest::Client::new();
+                    let resp =
+                        anthropic_managed_post(&http_client, &api_key, &url, &body).await?;
+
+                    // Print the event response
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&resp)
+                            .unwrap_or_else(|_| resp.to_string())
+                    );
+                }
+            }
+        }
+
+        // -----------------------------------------------------------------
+        // Layer 8: Local Media (sign-text/verify-text/sign-image/verify-image/extract)
+        // -----------------------------------------------------------------
+        Commands::SignText {
+            file,
+            no_backup,
+            allow_duplicate,
+            json,
+        } => media_cmds::handle_sign_text(&file, no_backup, allow_duplicate, json)?,
+        Commands::VerifyText {
+            file,
+            key_dir,
+            strict,
+            json,
+        } => {
+            let code =
+                media_cmds::handle_verify_text(&file, key_dir.as_deref(), strict, json)?;
+            std::process::exit(code);
+        }
+        Commands::SignImage {
+            input,
+            out,
+            robust,
+            format,
+            refuse_overwrite,
+            json,
+        } => media_cmds::handle_sign_image(
+            &input,
+            &out,
+            robust,
+            format.as_deref(),
+            refuse_overwrite,
+            json,
+        )?,
+        Commands::VerifyImage {
+            file,
+            key_dir,
+            strict,
+            robust,
+            json,
+        } => {
+            let code = media_cmds::handle_verify_image(
+                &file,
+                key_dir.as_deref(),
+                strict,
+                robust,
+                json,
+            )?;
+            std::process::exit(code);
+        }
+        Commands::ExtractMediaSignature { file, raw_payload } => {
+            media_cmds::handle_extract_media_signature(&file, raw_payload)?
+        }
+
+        // =====================================================================
+        // Issue 005: D5 / D9 record-store CLI handlers.
+        // =====================================================================
+        Commands::Memory { command } => match command {
+            MemoryCommands::Save { from, content } => {
+                let body = resolve_typed_body(content, from, "MEMORY.md")?;
+                let provider = build_remote_provider()?;
+                let key = JacsDocumentProvider::save_memory(&provider, Some(&body))
+                    .context("save_memory failed")?;
+                println!("MEMORY saved: {}", key);
+            }
+            MemoryCommands::Get => {
+                let provider = build_remote_provider()?;
+                match JacsDocumentProvider::get_memory(&provider).context("get_memory failed")? {
+                    Some(envelope) => println!("{}", envelope),
+                    None => {
+                        eprintln!("No MEMORY record found.");
+                        std::process::exit(2);
+                    }
+                }
+            }
+        },
+        Commands::Soul { command } => match command {
+            SoulCommands::Save { from, content } => {
+                let body = resolve_typed_body(content, from, "SOUL.md")?;
+                let provider = build_remote_provider()?;
+                let key = JacsDocumentProvider::save_soul(&provider, Some(&body))
+                    .context("save_soul failed")?;
+                println!("SOUL saved: {}", key);
+            }
+            SoulCommands::Get => {
+                let provider = build_remote_provider()?;
+                match JacsDocumentProvider::get_soul(&provider).context("get_soul failed")? {
+                    Some(envelope) => println!("{}", envelope),
+                    None => {
+                        eprintln!("No SOUL record found.");
+                        std::process::exit(2);
+                    }
+                }
+            }
+        },
+        Commands::Records { command } => match command {
+            RecordsCommands::StoreText { path } => {
+                let provider = build_remote_provider()?;
+                let key = JacsDocumentProvider::store_text_file(&provider, &path)
+                    .context("store_text_file failed")?;
+                println!("Record stored: {}", key);
+            }
+            RecordsCommands::StoreImage { path } => {
+                let provider = build_remote_provider()?;
+                let key = JacsDocumentProvider::store_image_file(&provider, &path)
+                    .context("store_image_file failed")?;
+                println!("Record stored: {}", key);
+            }
+            RecordsCommands::GetBytes { key, out } => {
+                let provider = build_remote_provider()?;
+                let bytes = JacsDocumentProvider::get_record_bytes(&provider, &key)
+                    .context("get_record_bytes failed")?;
+                std::fs::write(&out, &bytes)
+                    .with_context(|| format!("failed to write {}", out))?;
+                println!("Wrote {} bytes to {}", bytes.len(), out);
+            }
+        },
     }
 
     Ok(())
+}
+
+/// Issue 005: resolve memory/soul body content with explicit precedence:
+/// `--content` > `--from <file>` > default file (`MEMORY.md` / `SOUL.md`).
+fn resolve_typed_body(
+    content: Option<String>,
+    from: Option<String>,
+    default_filename: &str,
+) -> anyhow::Result<String> {
+    if let Some(s) = content {
+        return Ok(s);
+    }
+    let path = from.unwrap_or_else(|| default_filename.to_string());
+    std::fs::read_to_string(&path).with_context(|| format!("failed to read {}", path))
+}
+
+/// Issue 005: construct a `RemoteJacsProvider<LocalJacsProvider>` from the local
+/// agent's signing material plus the configured `HAI_URL`. Mirrors the MCP
+/// helper from Issue 004.
+fn build_remote_provider() -> anyhow::Result<RemoteJacsProvider<LocalJacsProvider>> {
+    let local = LocalJacsProvider::from_config_path(None, None)
+        .context("failed to load JACS agent from config")?;
+    let provider = RemoteJacsProvider::new(
+        local,
+        RemoteJacsProviderOptions {
+            base_url: hai_url(),
+            ..RemoteJacsProviderOptions::default()
+        },
+    )
+    .context("failed to construct RemoteJacsProvider")?;
+    Ok(provider)
 }
 
 #[cfg(test)]
@@ -1772,6 +3074,7 @@ mod tests {
                 cc,
                 bcc,
                 labels,
+                json,
             } => {
                 assert_eq!(to, "friend@hai.ai");
                 assert_eq!(subject, "Hello");
@@ -1779,6 +3082,7 @@ mod tests {
                 assert!(cc.is_empty());
                 assert!(bcc.is_empty());
                 assert!(labels.is_empty());
+                assert!(!json);
             }
             _ => panic!("expected SendEmail command"),
         }
@@ -1830,6 +3134,132 @@ mod tests {
         );
     }
 
+    // -------------------------------------------------------------------------
+    // TASK_004: Media-signing command parse tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn parse_sign_text_command() {
+        let cli = Cli::try_parse_from(["haiai", "sign-text", "README.md"]).expect("parse");
+        match cli.command {
+            Commands::SignText {
+                file,
+                no_backup,
+                allow_duplicate,
+                json,
+            } => {
+                assert_eq!(file, "README.md");
+                assert!(!no_backup);
+                assert!(!allow_duplicate);
+                assert!(!json);
+            }
+            _ => panic!("expected SignText"),
+        }
+    }
+
+    #[test]
+    fn parse_sign_image_requires_out() {
+        let result = Cli::try_parse_from(["haiai", "sign-image", "in.png"]);
+        assert!(result.is_err(), "sign-image without --out should fail");
+    }
+
+    #[test]
+    fn parse_sign_image_with_robust() {
+        let cli = Cli::try_parse_from([
+            "haiai",
+            "sign-image",
+            "in.png",
+            "--out",
+            "out.png",
+            "--robust",
+        ])
+        .expect("parse");
+        match cli.command {
+            Commands::SignImage {
+                input,
+                out,
+                robust,
+                format,
+                refuse_overwrite,
+                json,
+            } => {
+                assert_eq!(input, "in.png");
+                assert_eq!(out, "out.png");
+                assert!(robust);
+                assert!(format.is_none());
+                assert!(!refuse_overwrite);
+                assert!(!json);
+            }
+            _ => panic!("expected SignImage"),
+        }
+    }
+
+    #[test]
+    fn parse_verify_image_strict() {
+        let cli =
+            Cli::try_parse_from(["haiai", "verify-image", "x.png", "--strict"]).expect("parse");
+        match cli.command {
+            Commands::VerifyImage {
+                file,
+                strict,
+                key_dir,
+                robust,
+                json,
+            } => {
+                assert_eq!(file, "x.png");
+                assert!(strict);
+                assert!(key_dir.is_none());
+                assert!(!robust);
+                assert!(!json);
+            }
+            _ => panic!("expected VerifyImage"),
+        }
+    }
+
+    #[test]
+    fn cli_command_parity_includes_media_commands() {
+        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/cli_command_parity.json");
+        let raw = std::fs::read_to_string(&fixture_path).expect("read parity fixture");
+        let fixture: serde_json::Value =
+            serde_json::from_str(&raw).expect("parse parity fixture");
+        let names: Vec<&str> = fixture["commands"]
+            .as_array()
+            .expect("commands array")
+            .iter()
+            .filter_map(|c| c["name"].as_str())
+            .collect();
+        for required in &[
+            "sign-text",
+            "verify-text",
+            "sign-image",
+            "verify-image",
+            "extract-media-signature",
+        ] {
+            assert!(
+                names.contains(required),
+                "fixture missing media command: {required}"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_command_parity_total_count_is_36() {
+        // Issue 005: bumped from 33 to 36 with the three D5/D9 record-store
+        // command groups (memory, soul, records).
+        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/cli_command_parity.json");
+        let raw = std::fs::read_to_string(&fixture_path).expect("read parity fixture");
+        let fixture: serde_json::Value =
+            serde_json::from_str(&raw).expect("parse parity fixture");
+        let total = fixture["total_command_count"]
+            .as_u64()
+            .expect("total_command_count");
+        let count = fixture["commands"].as_array().expect("commands").len() as u64;
+        assert_eq!(total, 36, "total_command_count must be 36 after Issue 005");
+        assert_eq!(count, 36, "commands array length must be 36");
+    }
+
     #[test]
     fn parse_list_messages_defaults() {
         let cli = Cli::parse_from(["haiai", "list-messages"]);
@@ -1841,6 +3271,7 @@ mod tests {
                 is_read,
                 folder,
                 label,
+                json,
             } => {
                 assert_eq!(limit, 20);
                 assert_eq!(offset, 0);
@@ -1848,6 +3279,7 @@ mod tests {
                 assert!(is_read.is_none());
                 assert!(folder.is_none());
                 assert!(label.is_none());
+                assert!(!json);
             }
             _ => panic!("expected ListMessages command"),
         }
@@ -2121,6 +3553,82 @@ mod tests {
             }
             _ => panic!("expected UnarchiveMessage command"),
         }
+    }
+
+    #[test]
+    fn parse_get_raw_email_defaults() {
+        let cli = Cli::parse_from(["haiai", "get-raw-email", "msg-1"]);
+        match cli.command {
+            Commands::GetRawEmail { message_id, output, base64 } => {
+                assert_eq!(message_id, "msg-1");
+                assert!(output.is_none());
+                assert!(!base64);
+            }
+            _ => panic!("expected GetRawEmail command"),
+        }
+    }
+
+    #[test]
+    fn parse_get_raw_email_with_output() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "get-raw-email",
+            "msg-2",
+            "--output",
+            "/tmp/out.eml",
+        ]);
+        match cli.command {
+            Commands::GetRawEmail { message_id, output, base64 } => {
+                assert_eq!(message_id, "msg-2");
+                assert_eq!(output.unwrap().to_string_lossy(), "/tmp/out.eml");
+                assert!(!base64);
+            }
+            _ => panic!("expected GetRawEmail command"),
+        }
+    }
+
+    #[test]
+    fn parse_get_raw_email_base64_flag() {
+        let cli = Cli::parse_from(["haiai", "get-raw-email", "msg-3", "--base64"]);
+        match cli.command {
+            Commands::GetRawEmail { message_id, output, base64 } => {
+                assert_eq!(message_id, "msg-3");
+                assert!(output.is_none());
+                assert!(base64);
+            }
+            _ => panic!("expected GetRawEmail command"),
+        }
+    }
+
+    #[test]
+    fn parse_get_raw_email_base64_with_output() {
+        // Regression for issue 008: --base64 combined with --output writes the
+        // base64 string to the file (not the raw bytes). The old help text
+        // claimed --output was "ignored when --base64 is set" but the
+        // implementation always honored --output. This test locks down the
+        // updated contract: both flags together is a valid invocation.
+        let cli = Cli::parse_from([
+            "haiai",
+            "get-raw-email",
+            "msg-4",
+            "--base64",
+            "--output",
+            "/tmp/out.b64",
+        ]);
+        match cli.command {
+            Commands::GetRawEmail { message_id, output, base64 } => {
+                assert_eq!(message_id, "msg-4");
+                assert_eq!(output.unwrap().to_string_lossy(), "/tmp/out.b64");
+                assert!(base64);
+            }
+            _ => panic!("expected GetRawEmail command"),
+        }
+    }
+
+    #[test]
+    fn parse_get_raw_email_missing_arg_fails() {
+        let result = Cli::try_parse_from(["haiai", "get-raw-email"]);
+        assert!(result.is_err(), "get-raw-email without message_id should fail");
     }
 
     #[test]
@@ -2561,6 +4069,305 @@ mod tests {
             phantom_cli.is_empty(),
             "mcp_cli_parity.json references CLI commands that don't exist: {:?}",
             phantom_cli
+        );
+    }
+
+    #[test]
+    fn parse_deploy_anthropic_defaults() {
+        let cli = Cli::parse_from(["haiai", "deploy", "anthropic"]);
+        match cli.command {
+            Commands::Deploy {
+                command:
+                    DeployCommands::Anthropic {
+                        model,
+                        api_key: _,
+                        name,
+                        dry_run,
+                        session,
+                        env_id,
+                        agent_id,
+                        update,
+                        skill_id,
+                    },
+            } => {
+                assert_eq!(model, "sonnet");
+                assert!(name.is_none());
+                assert!(!dry_run);
+                assert!(!session);
+                assert!(env_id.is_none());
+                assert!(agent_id.is_none());
+                assert!(!update);
+                assert!(skill_id.is_none());
+            }
+            _ => panic!("expected Deploy Anthropic command"),
+        }
+    }
+
+    #[test]
+    fn parse_deploy_anthropic_all_flags() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "deploy",
+            "anthropic",
+            "--model",
+            "opus",
+            "--api-key",
+            "sk-test",
+            "--name",
+            "mybot",
+            "--dry-run",
+            "--session",
+            "--env-id",
+            "env_123",
+            "--agent-id",
+            "agent_456",
+            "--update",
+            "--skill-id",
+            "skill_789",
+        ]);
+        match cli.command {
+            Commands::Deploy {
+                command:
+                    DeployCommands::Anthropic {
+                        model,
+                        api_key,
+                        name,
+                        dry_run,
+                        session,
+                        env_id,
+                        agent_id,
+                        update,
+                        skill_id,
+                    },
+            } => {
+                assert_eq!(model, "opus");
+                assert_eq!(api_key.as_deref(), Some("sk-test"));
+                assert_eq!(name.as_deref(), Some("mybot"));
+                assert!(dry_run);
+                assert!(session);
+                assert_eq!(env_id.as_deref(), Some("env_123"));
+                assert_eq!(agent_id.as_deref(), Some("agent_456"));
+                assert!(update);
+                assert_eq!(skill_id.as_deref(), Some("skill_789"));
+            }
+            _ => panic!("expected Deploy Anthropic command"),
+        }
+    }
+
+    #[test]
+    fn parse_deploy_list_sessions_defaults() {
+        let cli = Cli::parse_from(["haiai", "deploy", "list-sessions"]);
+        match cli.command {
+            Commands::Deploy {
+                command:
+                    DeployCommands::ListSessions {
+                        agent_id,
+                        limit,
+                        include_archived,
+                        ..
+                    },
+            } => {
+                assert!(agent_id.is_none());
+                assert_eq!(limit, 20);
+                assert!(!include_archived);
+            }
+            _ => panic!("expected Deploy ListSessions command"),
+        }
+    }
+
+    #[test]
+    fn parse_deploy_list_sessions_with_args() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "deploy",
+            "list-sessions",
+            "--agent-id",
+            "agent_123",
+            "--limit",
+            "50",
+            "--include-archived",
+        ]);
+        match cli.command {
+            Commands::Deploy {
+                command:
+                    DeployCommands::ListSessions {
+                        agent_id,
+                        limit,
+                        include_archived,
+                        ..
+                    },
+            } => {
+                assert_eq!(agent_id.as_deref(), Some("agent_123"));
+                assert_eq!(limit, 50);
+                assert!(include_archived);
+            }
+            _ => panic!("expected Deploy ListSessions command"),
+        }
+    }
+
+    #[test]
+    fn parse_deploy_list_versions_defaults() {
+        let cli = Cli::parse_from(["haiai", "deploy", "list-versions"]);
+        match cli.command {
+            Commands::Deploy {
+                command:
+                    DeployCommands::ListVersions {
+                        agent_id, limit, ..
+                    },
+            } => {
+                assert!(agent_id.is_none());
+                assert_eq!(limit, 20);
+            }
+            _ => panic!("expected Deploy ListVersions command"),
+        }
+    }
+
+    #[test]
+    fn parse_deploy_list_versions_with_args() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "deploy",
+            "list-versions",
+            "--agent-id",
+            "agent_abc",
+            "--limit",
+            "10",
+        ]);
+        match cli.command {
+            Commands::Deploy {
+                command:
+                    DeployCommands::ListVersions {
+                        agent_id, limit, ..
+                    },
+            } => {
+                assert_eq!(agent_id.as_deref(), Some("agent_abc"));
+                assert_eq!(limit, 10);
+            }
+            _ => panic!("expected Deploy ListVersions command"),
+        }
+    }
+
+    #[test]
+    fn parse_deploy_message() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "deploy",
+            "message",
+            "--session-id",
+            "sess_123",
+            "--text",
+            "hello world",
+        ]);
+        match cli.command {
+            Commands::Deploy {
+                command:
+                    DeployCommands::Message {
+                        session_id, text, ..
+                    },
+            } => {
+                assert_eq!(session_id, "sess_123");
+                assert_eq!(text, "hello world");
+            }
+            _ => panic!("expected Deploy Message command"),
+        }
+    }
+
+    #[test]
+    fn parse_deploy_list_sessions_reads_api_key_env() {
+        // Verify that the ANTHROPIC_API_KEY env var is picked up by the
+        // #[arg(env = "ANTHROPIC_API_KEY")] annotation. Guards against
+        // accidental removal of the env attribute.
+        let key = "ANTHROPIC_API_KEY_TEST_GUARD";
+        std::env::set_var(key, "sk-test-env");
+        // Use a renamed env var via clap env override would be ideal, but
+        // since ANTHROPIC_API_KEY is hardcoded in the derive, we test by
+        // temporarily setting it. Note: this test may be affected by
+        // parallel test execution if another test also sets this var.
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-env-value");
+        let cli = Cli::parse_from(["haiai", "deploy", "list-sessions"]);
+        match cli.command {
+            Commands::Deploy {
+                command: DeployCommands::ListSessions { api_key, .. },
+            } => {
+                assert_eq!(api_key.as_deref(), Some("sk-test-env-value"));
+            }
+            _ => panic!("expected Deploy ListSessions command"),
+        }
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::remove_var(key);
+    }
+
+    #[test]
+    fn model_tier_mapping() {
+        assert_eq!(map_model_tier("haiku").unwrap(), "claude-haiku-4-5");
+        assert_eq!(map_model_tier("sonnet").unwrap(), "claude-sonnet-4-6");
+        assert_eq!(map_model_tier("opus").unwrap(), "claude-opus-4-6");
+        assert!(map_model_tier("gpt4").is_err());
+    }
+
+    #[test]
+    fn build_configs_are_valid_json() {
+        let env = build_environment_config("test-agent");
+        assert_eq!(env["name"], "haiai-test-agent-env");
+        assert_eq!(env["config"]["type"], "cloud");
+
+        let agent = build_agent_config("test-agent", "claude-sonnet-4-6", None);
+        assert_eq!(agent["name"], "test-agent");
+        assert_eq!(agent["model"], "claude-sonnet-4-6");
+        assert!(agent.get("skills").is_none());
+
+        let agent_with_skill =
+            build_agent_config("test-agent", "claude-sonnet-4-6", Some("skill_abc"));
+        assert!(agent_with_skill["skills"].is_array());
+
+        let ids = DeployFileIds {
+            config: "f1".into(),
+            public_key: "f2".into(),
+            private_key: "f3".into(),
+            password: "f4".into(),
+        };
+        let session = build_session_config("agent_1", "env_1", &ids);
+        assert_eq!(session["agent"], "agent_1");
+        assert_eq!(session["environment_id"], "env_1");
+        assert!(session["resources"].is_array());
+        assert_eq!(session["resources"].as_array().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn session_config_uses_agent_not_agent_id() {
+        let ids = DeployFileIds {
+            config: "f1".into(),
+            public_key: "f2".into(),
+            private_key: "f3".into(),
+            password: "f4".into(),
+        };
+        let session = build_session_config("agent_1", "env_1", &ids);
+        // Must use "agent", NOT "agent_id" per Managed Agents API
+        assert!(session.get("agent").is_some());
+        assert!(session.get("agent_id").is_none());
+    }
+
+    #[test]
+    fn agent_system_prompt_does_not_instruct_init() {
+        let agent = build_agent_config("test", "claude-sonnet-4-6", None);
+        let system = agent["system"].as_str().unwrap();
+        assert!(
+            system.contains("do not run haiai init"),
+            "system prompt must say not to run haiai init"
+        );
+        assert!(
+            system.contains("--password-file /workspace/password.txt"),
+            "system prompt must reference password-file"
+        );
+    }
+
+    #[test]
+    fn environment_config_has_cargo_haiai_cli() {
+        let env = build_environment_config("test");
+        let cargo = &env["config"]["packages"]["cargo"];
+        assert!(
+            cargo.as_array().unwrap().contains(&serde_json::json!("haiai-cli")),
+            "environment must install haiai-cli via cargo"
         );
     }
 }

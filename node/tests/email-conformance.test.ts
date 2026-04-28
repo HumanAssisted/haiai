@@ -93,56 +93,6 @@ describe('email conformance: mock verify response deserialization', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Content hash golden vector conformance (TASK_013)
-// ---------------------------------------------------------------------------
-
-describe('email conformance: content hash golden vectors', () => {
-  it('all golden vectors produce the expected content hash', async () => {
-    const { computeContentHash } = await import('../src/hash.js');
-    const fixture = loadConformanceFixture() as ConformanceFixture & {
-      content_hash_golden: {
-        vectors: Array<{
-          name: string;
-          subject: string;
-          body: string;
-          attachments: Array<{ filename: string; content_type: string; data_utf8: string }>;
-          expected_hash: string;
-        }>;
-      };
-    };
-
-    for (const vector of fixture.content_hash_golden.vectors) {
-      const result = computeContentHash(vector.subject, vector.body, vector.attachments);
-      expect(result).toBe(vector.expected_hash);
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// MIME round-trip conformance (TASK_014)
-// ---------------------------------------------------------------------------
-
-describe('email conformance: MIME round-trip content hash', () => {
-  it('produces expected content hash from round-trip input', async () => {
-    const { computeContentHash } = await import('../src/hash.js');
-    const fixture = loadConformanceFixture() as ConformanceFixture & {
-      mime_round_trip: {
-        input: {
-          subject: string;
-          body: string;
-          attachments: Array<{ filename: string; content_type: string; data_utf8: string }>;
-        };
-        expected_content_hash: string;
-      };
-    };
-
-    const { input, expected_content_hash: expectedHash } = fixture.mime_round_trip;
-    const result = computeContentHash(input.subject, input.body, input.attachments);
-    expect(result).toBe(expectedHash);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // FieldStatus enum conformance
 // ---------------------------------------------------------------------------
 

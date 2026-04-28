@@ -13,6 +13,165 @@ use crate::types::{
 };
 
 // =============================================================================
+// JACS 0.10.0 media types — re-exported for haiai library consumers.
+// =============================================================================
+//
+// Image side: SignImageOptions / SignedMedia / MediaVerifyStatus /
+// MediaVerificationResult / VerifyImageOptions / SignTextOptions / SignTextOutcome.
+//
+// Inline-text side: VerifyOptions (re-exported as VerifyTextOptions) /
+// VerifyTextResult / SignatureStatus / SignatureEntry.
+//
+// Note: SignImageOptions / VerifyImageOptions / SignTextOptions / VerifyOptions
+// derive only Debug+Clone(+Default) — they are NOT Serde-able. Binding-core
+// constructs them field-by-field from JSON via local parse_* helpers.
+// VerifyTextResult / SignatureEntry / SignatureStatus also lack Serde derives;
+// binding-core converts them to a JSON envelope for FFI transport.
+#[cfg(feature = "jacs-crate")]
+pub use jacs::simple::types::{
+    MediaVerificationResult, MediaVerifyStatus, SignImageOptions, SignTextOptions,
+    SignTextOutcome, SignedMedia, VerifyImageOptions,
+};
+#[cfg(feature = "jacs-crate")]
+pub use jacs::inline::{
+    SignatureEntry as TextSignatureEntry, SignatureStatus as TextSignatureStatus,
+    VerifyOptions as VerifyTextOptions, VerifyTextResult,
+};
+
+// =============================================================================
+// Issue 011: shared snake_case status-string helpers.
+//
+// These translate the JACS-side `MediaVerifyStatus` and `TextSignatureStatus`
+// enums to the canonical wire string used uniformly by binding-core (FFI
+// JSON envelopes), hai-mcp (MCP `status` field), and haiai-cli (human label
+// + JSON `status` field). Before, three identical match-arm copies lived in
+// each crate; the next variant added in JACS would have required three
+// edits in three files. Centralizing here makes the wire contract and CLI
+// label drift-impossible by construction.
+//
+// Strings are stable wire identifiers (not human messages). Do not
+// localize. New variants must be added by JACS first; the match here will
+// then fail to compile, surfacing the breakage at the closest review point.
+// =============================================================================
+
+/// Map a JACS [`MediaVerifyStatus`] to its canonical snake_case wire string.
+///
+/// This is the single source of truth for the status label across the
+/// binding-core JSON envelopes, the MCP `verify_image` envelope, and the
+/// haiai-cli human label. Centralized per Issue 011 to prevent drift when
+/// JACS adds a variant.
+#[cfg(feature = "jacs-crate")]
+pub fn media_verify_status_to_str(s: &MediaVerifyStatus) -> &'static str {
+    match s {
+        MediaVerifyStatus::Valid => "valid",
+        MediaVerifyStatus::InvalidSignature => "invalid_signature",
+        MediaVerifyStatus::HashMismatch => "hash_mismatch",
+        MediaVerifyStatus::MissingSignature => "missing_signature",
+        MediaVerifyStatus::KeyNotFound => "key_not_found",
+        MediaVerifyStatus::UnsupportedFormat => "unsupported_format",
+        MediaVerifyStatus::Malformed(_) => "malformed",
+    }
+}
+
+/// Map a JACS [`TextSignatureStatus`] to its canonical snake_case wire
+/// string. Single source of truth across binding-core JSON envelopes,
+/// the MCP `verify_text` envelope, and the haiai-cli human label
+/// (Issue 011).
+#[cfg(feature = "jacs-crate")]
+pub fn text_signature_status_to_str(s: &TextSignatureStatus) -> &'static str {
+    match s {
+        TextSignatureStatus::Valid => "valid",
+        TextSignatureStatus::InvalidSignature => "invalid_signature",
+        TextSignatureStatus::HashMismatch => "hash_mismatch",
+        TextSignatureStatus::KeyNotFound => "key_not_found",
+        TextSignatureStatus::UnsupportedAlgorithm => "unsupported_algorithm",
+        TextSignatureStatus::Malformed(_) => "malformed",
+    }
+}
+
+/// Translate the not-Serde-able [`VerifyTextResult`] into a JSON envelope
+/// with a flat snake_case `status` string.
+///
+/// Single conversion site (Issue 013): binding-core FFI envelopes, the MCP
+/// `verify_text` envelope, and the `haiai verify-text --json` CLI output all
+/// route through this helper, so the wire shape is identical across surfaces:
+///
+/// ```text
+/// { "status": "signed" | "missing_signature" | "malformed",
+///   "signatures": [...],
+///   "malformed_detail"?: string }
+/// ```
+///
+/// The `signatures[]` entries each carry their own per-signature `status`
+/// (produced via [`text_signature_status_to_str`]) — that is the right place
+/// for the valid-vs-invalid signal. The file-level `status` is `"signed"`
+/// whenever at least one signature was found, regardless of validity, to
+/// match the JACS reference CLI and the documented SDK contract.
+#[cfg(feature = "jacs-crate")]
+pub fn verify_text_result_to_json(result: &VerifyTextResult) -> Value {
+    match result {
+        VerifyTextResult::Signed { signatures } => {
+            let entries: Vec<Value> = signatures
+                .iter()
+                .map(|sig| {
+                    let mut entry = serde_json::json!({
+                        "signer_id": sig.signer_id,
+                        "algorithm": sig.algorithm,
+                        "timestamp": sig.timestamp,
+                        "status": text_signature_status_to_str(&sig.status),
+                    });
+                    if let TextSignatureStatus::Malformed(detail) = &sig.status {
+                        entry["malformed_detail"] = Value::String(detail.clone());
+                    }
+                    entry
+                })
+                .collect();
+            serde_json::json!({
+                "status": "signed",
+                "signatures": entries,
+            })
+        }
+        VerifyTextResult::MissingSignature => serde_json::json!({
+            "status": "missing_signature",
+            "signatures": [],
+        }),
+        VerifyTextResult::Malformed(detail) => serde_json::json!({
+            "status": "malformed",
+            "signatures": [],
+            "malformed_detail": detail,
+        }),
+    }
+}
+
+/// Translate the partly-Serde-able [`MediaVerificationResult`] into a JSON
+/// envelope with a flat snake_case `status` string.
+///
+/// JACS's [`MediaVerifyStatus`] uses `serde(rename_all = "snake_case")` which
+/// serializes the `Malformed(String)` variant as `{"malformed": detail}` — a
+/// tagged shape downstream language SDKs cannot consume uniformly (Issue 001).
+/// This helper flattens that variant so callers always see
+/// `status: "malformed"` plus a sibling `malformed_detail` field.
+///
+/// Single conversion site (Issue 013): binding-core FFI envelopes, the MCP
+/// `verify_image` envelope, and the `haiai verify-image --json` CLI output
+/// all route through this helper, so the wire shape is identical across
+/// surfaces.
+#[cfg(feature = "jacs-crate")]
+pub fn media_verify_result_to_json(result: &MediaVerificationResult) -> Value {
+    let mut envelope = serde_json::json!({
+        "status": media_verify_status_to_str(&result.status),
+        "signer_id": result.signer_id,
+        "algorithm": result.algorithm,
+        "format": result.format,
+        "embedding_channels": result.embedding_channels,
+    });
+    if let MediaVerifyStatus::Malformed(detail) = &result.status {
+        envelope["malformed_detail"] = Value::String(detail.clone());
+    }
+    envelope
+}
+
+// =============================================================================
 // Layer 0: Core Signing (JacsProvider)
 // =============================================================================
 
@@ -44,6 +203,60 @@ pub trait JacsProvider: Send + Sync {
 
     /// Return canonical JSON text for `value` in the same way JACS signs.
     fn canonical_json(&self, value: &Value) -> Result<String>;
+
+    /// Sign `value` as a full JACS document envelope.
+    ///
+    /// The returned JSON string MUST be byte-equivalent to what JACS's
+    /// `signing_procedure` produces — i.e. it carries the `jacsId`,
+    /// `jacsVersion`, `jacsVersionDate`, `jacsOriginalVersion`, `jacsLevel`,
+    /// `jacsType`, `jacsSignature` (with `agentID`, `agentVersion`, `date`,
+    /// `iat`, `jti`, `signature`, `signingAlgorithm`, `publicKeyHash`,
+    /// `fields[]`), and `jacsHash` fields, and the signature MUST verify under
+    /// JACS's [`SimpleAgent::verify_with_key`].
+    ///
+    /// The default implementation returns an error: providers without a real
+    /// JACS agent (test stubs like [`StaticJacsProvider`]) cannot produce a
+    /// JACS-verifiable envelope. [`LocalJacsProvider`] overrides this to
+    /// delegate to JACS's `signing_procedure` so wrappers like
+    /// [`crate::jacs_remote::RemoteJacsProvider`] get correct envelopes
+    /// without re-implementing the signing scheme.
+    ///
+    /// Issue 021: previous `RemoteJacsProvider::sign_document` shimmed
+    /// `canonical_json` + `sign_string`, which produces signatures that do
+    /// NOT verify under JACS's per-field `build_signature_content`. This
+    /// trait method is the single source of truth for JACS envelope signing.
+    fn sign_envelope(&self, value: &Value) -> Result<String> {
+        let _ = value;
+        Err(HaiError::Provider(
+            "sign_envelope not supported by this provider; use LocalJacsProvider \
+             or any provider that wraps a real JACS SimpleAgent"
+                .to_string(),
+        ))
+    }
+
+    /// Sign a file as a JACS file envelope (JACS attachment pipeline).
+    ///
+    /// The returned [`SignedDocument`]'s `json` MUST carry the JACS file shape
+    /// produced by `SimpleAgent::sign_file` — `jacsType="file"`, `jacsLevel`,
+    /// `mimetype`, `filename`, and a `jacsFiles[]` block containing either the
+    /// embedded payload or a hash-only reference, all driven by the JACS
+    /// attachment pipeline. Wrappers such as
+    /// [`crate::jacs_remote::RemoteJacsProvider`] delegate to this method so
+    /// `(path, embed)` produces an identical envelope regardless of which
+    /// provider the caller holds (Issue 006).
+    ///
+    /// The default implementation returns an error: providers without a real
+    /// JACS agent (test stubs like [`StaticJacsProvider`]) cannot produce a
+    /// JACS-verifiable file envelope. [`LocalJacsProvider`] overrides this to
+    /// delegate to JACS's `SimpleAgent::sign_file`.
+    fn sign_file_envelope(&self, path: &str, embed: bool) -> Result<SignedDocument> {
+        let _ = (path, embed);
+        Err(HaiError::Provider(
+            "sign_file_envelope not supported by this provider; use LocalJacsProvider \
+             or any provider that wraps a real JACS SimpleAgent"
+                .to_string(),
+        ))
+    }
 
     /// Return a signed payload accepted by `/api/v1/agents/jobs/{job_id}/response`.
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload>;
@@ -240,6 +453,17 @@ pub trait JacsDocumentProvider: JacsProvider {
     ) -> Result<Vec<String>>;
 
     /// Query documents by field value.
+    ///
+    /// **Backend-dependent.** `LocalJacsProvider` filters in-memory by the
+    /// requested field; `RemoteJacsProvider` (Issue 052) does NOT support
+    /// this method and returns
+    /// [`HaiError::BackendUnsupported`](crate::error::HaiError::BackendUnsupported)
+    /// — envelope JSON lives in S3 on the hai-api backend, not Postgres
+    /// (PRD §10 Non-Goal #19), so a server-side JSONB filter would require
+    /// fetching every candidate from S3. Cross-language consumers should
+    /// match on the typed error and fall back to `search_documents` for
+    /// full-text search, or call `query_by_type` / `query_by_agent` which
+    /// are supported across backends.
     fn query_by_field(
         &self,
         field: &str,
@@ -258,6 +482,77 @@ pub trait JacsDocumentProvider: JacsProvider {
 
     /// Report the capabilities of the configured storage backend.
     fn storage_capabilities(&self) -> Result<StorageCapabilities>;
+
+    // =========================================================================
+    // D5: MEMORY / SOUL convenience wrappers (Issue 003)
+    //
+    // These wrap the generic CRUD with a specific `jacsType` so the LLM caller
+    // and the CLI/MCP surfaces see them by name. Implementations that do not
+    // support typed records (e.g., `StaticJacsProvider`) inherit the default
+    // `Err("not supported")` shape — the Box<dyn JacsDocumentProvider> route
+    // works uniformly without a panic.
+    // =========================================================================
+
+    /// Sign and store a MEMORY record. If `content` is `None` the implementation
+    /// reads `MEMORY.md` from CWD. Returns the record key (`id:version`).
+    fn save_memory(&self, _content: Option<&str>) -> Result<String> {
+        Err(HaiError::Provider(
+            "save_memory: not implemented for this provider".to_string(),
+        ))
+    }
+
+    /// Sign and store a SOUL record. Mirror of `save_memory`.
+    fn save_soul(&self, _content: Option<&str>) -> Result<String> {
+        Err(HaiError::Provider(
+            "save_soul: not implemented for this provider".to_string(),
+        ))
+    }
+
+    /// Fetch the latest MEMORY record's signed envelope JSON. `Ok(None)` when
+    /// no memory record exists for the caller.
+    fn get_memory(&self) -> Result<Option<String>> {
+        Err(HaiError::Provider(
+            "get_memory: not implemented for this provider".to_string(),
+        ))
+    }
+
+    /// Fetch the latest SOUL record's signed envelope JSON. Mirror of `get_memory`.
+    fn get_soul(&self) -> Result<Option<String>> {
+        Err(HaiError::Provider(
+            "get_soul: not implemented for this provider".to_string(),
+        ))
+    }
+
+    // =========================================================================
+    // D9: typed-content helpers (Issue 003)
+    //
+    // Read a local file, set the right `Content-Type`, and POST it. Each method
+    // delegates to the generic record CRUD with format-specific handling.
+    // =========================================================================
+
+    /// Read a signed-text file (markdown w/ JACS signature block) and POST it
+    /// with `Content-Type: text/markdown; profile=jacs-text-v1`. Returns the key.
+    fn store_text_file(&self, _path: &str) -> Result<String> {
+        Err(HaiError::Provider(
+            "store_text_file: not implemented for this provider".to_string(),
+        ))
+    }
+
+    /// Detect a signed image's format from leading magic bytes and POST it with
+    /// `Content-Type: image/png|jpeg|webp`. Returns the key.
+    fn store_image_file(&self, _path: &str) -> Result<String> {
+        Err(HaiError::Provider(
+            "store_image_file: not implemented for this provider".to_string(),
+        ))
+    }
+
+    /// Fetch the raw record bytes — no UTF-8 decode, no JSON parse. Used by D9
+    /// callers reading binary content (signed images, signed-text envelopes).
+    fn get_record_bytes(&self, _key: &str) -> Result<Vec<u8>> {
+        Err(HaiError::Provider(
+            "get_record_bytes: not implemented for this provider".to_string(),
+        ))
+    }
 }
 
 // =============================================================================
@@ -329,6 +624,57 @@ pub trait JacsEmailProvider: JacsProvider {
 
     /// Parse an email into structured parts.
     fn extract_email_parts(&self, raw: &[u8]) -> Result<Value>;
+}
+
+// =============================================================================
+// Layer 8: Local Media (JacsMediaProvider) — JACS 0.10.0
+// =============================================================================
+//
+// Local-only inline-text + image sign/verify/extract. Operations do not touch
+// the HAI server: the trait is reachable from any provider that holds (or can
+// reload) a `jacs::simple::SimpleAgent`. PRD: docs/MEDIA_SIGNING_PRD.md §4.2.
+
+/// Extension trait for local image (PNG/JPEG/WebP) and inline-text sign/verify.
+///
+/// All operations are local — no HTTP, no server roundtrip. Identity follows
+/// the loaded JACS agent (same as `JacsEmailProvider::sign_email`).
+///
+/// `extract_media_signature` does not consult the agent; the implementation
+/// dispatches on `raw_payload` to either `extract_media_signature_raw` (raw
+/// base64url payload) or `extract_media_signature` (decoded JSON string) in
+/// JACS's `simple::advanced` module.
+#[cfg(feature = "jacs-crate")]
+pub trait JacsMediaProvider: JacsProvider {
+    /// Sign a markdown / text file in place by appending a YAML signature
+    /// block (`-----BEGIN JACS SIGNATURE-----`). Optional `.bak` backup.
+    fn sign_text_file(&self, path: &str, opts: SignTextOptions) -> Result<SignTextOutcome>;
+
+    /// Verify all signature blocks in a text file. File-level discriminators
+    /// (`MissingSignature`, `Malformed`) only escalate to `Err` under
+    /// `opts.strict`; per-block status entries always land inside the result.
+    fn verify_text_file(&self, path: &str, opts: VerifyTextOptions) -> Result<VerifyTextResult>;
+
+    /// Sign an image file by embedding a JACS signed-document JSON payload
+    /// in the format-appropriate metadata chunk (PNG iTXt / JPEG APP11 /
+    /// WebP XMP) and writing to `out_path`. With `opts.robust = true`, also
+    /// embeds via LSB steganography (PNG/JPEG only — WebP returns Unsupported).
+    fn sign_image(
+        &self,
+        in_path: &str,
+        out_path: &str,
+        opts: SignImageOptions,
+    ) -> Result<SignedMedia>;
+
+    /// Verify the JACS signature embedded in an image. Returns a status
+    /// discriminator (`Valid`, `HashMismatch`, `MissingSignature`, etc.) and
+    /// the signer info when available.
+    fn verify_image(&self, path: &str, opts: VerifyImageOptions) -> Result<MediaVerificationResult>;
+
+    /// Extract the JACS signature payload from a signed image without
+    /// verifying it. `raw_payload = false` returns the decoded JSON string;
+    /// `raw_payload = true` returns the base64url-no-pad wire payload as it
+    /// was embedded in the metadata chunk.
+    fn extract_media_signature(&self, path: &str, raw_payload: bool) -> Result<Option<String>>;
 }
 
 // =============================================================================
@@ -422,6 +768,94 @@ impl JacsProvider for Box<dyn JacsProvider> {
 
     fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
         (**self).update_agent(new_agent_data)
+    }
+}
+
+// Blanket impl so `HaiClient<Box<dyn JacsMediaProvider>>` works. The wrapper
+// holds a single trait object that satisfies both the base `JacsProvider`
+// supertrait and the media-layer methods. PRD §4.3.
+//
+// Two impls together: `JacsProvider for Box<dyn JacsMediaProvider>` (so the
+// supertrait bound is satisfied for trait objects of the more-specific trait)
+// plus `JacsMediaProvider for Box<dyn JacsMediaProvider>` (so the trait-method
+// dispatch goes through). The base `Box<dyn JacsProvider>` blanket above is
+// unaffected — it only matches trait objects of `JacsProvider` itself.
+#[cfg(feature = "jacs-crate")]
+impl JacsProvider for Box<dyn JacsMediaProvider> {
+    fn jacs_id(&self) -> &str {
+        (**self).jacs_id()
+    }
+
+    fn sign_string(&self, message: &str) -> Result<String> {
+        (**self).sign_string(message)
+    }
+
+    fn sign_bytes(&self, data: &[u8]) -> Result<Vec<u8>> {
+        (**self).sign_bytes(data)
+    }
+
+    fn key_id(&self) -> &str {
+        (**self).key_id()
+    }
+
+    fn algorithm(&self) -> &str {
+        (**self).algorithm()
+    }
+
+    fn canonical_json(&self, value: &Value) -> Result<String> {
+        (**self).canonical_json(value)
+    }
+
+    fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
+        (**self).sign_response(payload)
+    }
+
+    fn verify_a2a_artifact(&self, wrapped_json: &str) -> Result<String> {
+        (**self).verify_a2a_artifact(wrapped_json)
+    }
+
+    fn sign_email_locally(&self, raw_email: &[u8]) -> Result<Vec<u8>> {
+        (**self).sign_email_locally(raw_email)
+    }
+
+    fn rotate(&self) -> Result<RotationResult> {
+        (**self).rotate()
+    }
+
+    fn export_agent_json(&self) -> Result<String> {
+        (**self).export_agent_json()
+    }
+
+    fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
+        (**self).update_agent(new_agent_data)
+    }
+}
+
+#[cfg(feature = "jacs-crate")]
+impl JacsMediaProvider for Box<dyn JacsMediaProvider> {
+    fn sign_text_file(&self, path: &str, opts: SignTextOptions) -> Result<SignTextOutcome> {
+        (**self).sign_text_file(path, opts)
+    }
+
+    fn verify_text_file(&self, path: &str, opts: VerifyTextOptions) -> Result<VerifyTextResult> {
+        (**self).verify_text_file(path, opts)
+    }
+
+    fn sign_image(
+        &self,
+        in_path: &str,
+        out_path: &str,
+        opts: SignImageOptions,
+    ) -> Result<SignedMedia> {
+        (**self).sign_image(in_path, out_path, opts)
+    }
+
+    fn verify_image(&self, path: &str, opts: VerifyImageOptions) -> Result<MediaVerificationResult> {
+        (**self).verify_image(path, opts)
+    }
+
+    fn extract_media_signature(&self, path: &str, raw_payload: bool) -> Result<Option<String>> {
+        (**self).extract_media_signature(path, raw_payload)
     }
 }
 
@@ -542,6 +976,51 @@ impl JacsProvider for StaticJacsProvider {
         Ok(canonicalize_json_rfc8785(value))
     }
 
+    /// Test-only synthetic envelope. Mirrors the JACS envelope shape closely
+    /// enough that downstream HTTP tests can assert on the metadata fields
+    /// (`jacsId`, `jacsVersion`, `jacsType`, `jacsVersionDate`,
+    /// `jacsSignature.agentID`, etc.) without standing up a real JACS agent.
+    /// The signature is NOT cryptographically valid under any real verifier —
+    /// production code MUST use [`LocalJacsProvider`] (or another provider that
+    /// wraps a real `SimpleAgent`).
+    ///
+    /// Issue 021: real verifiability is enforced by an integration round-trip
+    /// (`tests/jacs_remote_signing_round_trip.rs`) using `LocalJacsProvider`,
+    /// not by this stub.
+    fn sign_envelope(&self, value: &Value) -> Result<String> {
+        let now = OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|e| HaiError::Provider(format!("failed to format timestamp: {e}")))?;
+        let mut envelope = value.clone();
+        if let Value::Object(map) = &mut envelope {
+            map.entry("jacsId".to_string())
+                .or_insert_with(|| Value::String(Uuid::new_v4().to_string()));
+            map.entry("jacsVersion".to_string())
+                .or_insert_with(|| Value::String(Uuid::new_v4().to_string()));
+            map.entry("jacsVersionDate".to_string())
+                .or_insert_with(|| Value::String(now.clone()));
+            map.entry("jacsType".to_string())
+                .or_insert_with(|| Value::String("document".to_string()));
+            let canonical = canonicalize_json_rfc8785(&Value::Object(map.clone()));
+            let signature = self.sign_string(&canonical)?;
+            map.insert(
+                "jacsSignature".to_string(),
+                serde_json::json!({
+                    "agentID": self.jacs_id,
+                    "agentVersion": "test-stub",
+                    "date": now,
+                    "signature": signature,
+                    "signingAlgorithm": self.algorithm,
+                    "publicKeyHash": "test-stub-hash",
+                    "fields": [],
+                }),
+            );
+        }
+        serde_json::to_string(&envelope).map_err(|e| {
+            HaiError::Provider(format!("StaticJacsProvider::sign_envelope serialise: {e}"))
+        })
+    }
+
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
         let canonical_payload = canonicalize_json_rfc8785(payload);
         let data = serde_json::from_str::<Value>(&canonical_payload)?;
@@ -570,6 +1049,118 @@ impl JacsProvider for StaticJacsProvider {
             signed_document: serde_json::to_string(&doc)?,
             agent_jacs_id: self.jacs_id.clone(),
         })
+    }
+}
+
+// =============================================================================
+// JacsMediaProvider fallback impls for the test-only providers.
+//
+// PRD §4.3 / TASK_003: hai-binding-core widens its trait object to
+// `Box<dyn JacsMediaProvider>`. Static and Noop providers cannot perform real
+// media signing (they have no SimpleAgent / no real key material), so each
+// method returns a clear `HaiError::Provider` describing the limitation.
+// Real signing requires `LocalJacsProvider` or `EmbeddedJacsProvider`.
+// =============================================================================
+
+#[cfg(feature = "jacs-crate")]
+fn media_op_test_only_error(provider: &str, op: &str) -> HaiError {
+    HaiError::Provider(format!(
+        "media operation '{op}' requires a real LocalJacsProvider — current provider is {provider} (test-only)"
+    ))
+}
+
+#[cfg(feature = "jacs-crate")]
+impl JacsMediaProvider for NoopJacsProvider {
+    fn sign_text_file(&self, _path: &str, _opts: SignTextOptions) -> Result<SignTextOutcome> {
+        Err(media_op_test_only_error("NoopJacsProvider", "sign_text_file"))
+    }
+
+    fn verify_text_file(
+        &self,
+        _path: &str,
+        _opts: VerifyTextOptions,
+    ) -> Result<VerifyTextResult> {
+        Err(media_op_test_only_error("NoopJacsProvider", "verify_text_file"))
+    }
+
+    fn sign_image(
+        &self,
+        _in_path: &str,
+        _out_path: &str,
+        _opts: SignImageOptions,
+    ) -> Result<SignedMedia> {
+        Err(media_op_test_only_error("NoopJacsProvider", "sign_image"))
+    }
+
+    fn verify_image(
+        &self,
+        _path: &str,
+        _opts: VerifyImageOptions,
+    ) -> Result<MediaVerificationResult> {
+        Err(media_op_test_only_error("NoopJacsProvider", "verify_image"))
+    }
+
+    fn extract_media_signature(
+        &self,
+        _path: &str,
+        _raw_payload: bool,
+    ) -> Result<Option<String>> {
+        Err(media_op_test_only_error(
+            "NoopJacsProvider",
+            "extract_media_signature",
+        ))
+    }
+}
+
+#[cfg(feature = "jacs-crate")]
+impl JacsMediaProvider for StaticJacsProvider {
+    fn sign_text_file(&self, _path: &str, _opts: SignTextOptions) -> Result<SignTextOutcome> {
+        Err(media_op_test_only_error(
+            "StaticJacsProvider",
+            "sign_text_file",
+        ))
+    }
+
+    fn verify_text_file(
+        &self,
+        _path: &str,
+        _opts: VerifyTextOptions,
+    ) -> Result<VerifyTextResult> {
+        Err(media_op_test_only_error(
+            "StaticJacsProvider",
+            "verify_text_file",
+        ))
+    }
+
+    fn sign_image(
+        &self,
+        _in_path: &str,
+        _out_path: &str,
+        _opts: SignImageOptions,
+    ) -> Result<SignedMedia> {
+        Err(media_op_test_only_error("StaticJacsProvider", "sign_image"))
+    }
+
+    fn verify_image(
+        &self,
+        _path: &str,
+        _opts: VerifyImageOptions,
+    ) -> Result<MediaVerificationResult> {
+        Err(media_op_test_only_error(
+            "StaticJacsProvider",
+            "verify_image",
+        ))
+    }
+
+    fn extract_media_signature(
+        &self,
+        _path: &str,
+        _raw_payload: bool,
+    ) -> Result<Option<String>> {
+        Err(media_op_test_only_error(
+            "StaticJacsProvider",
+            "extract_media_signature",
+        ))
     }
 }
 

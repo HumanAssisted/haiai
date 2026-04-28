@@ -12,8 +12,10 @@ use serde_json::Value;
 
 use crate::error::{HaiError, Result};
 use crate::jacs::{
-    JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider, JacsProvider,
-    JacsVerificationProvider,
+    JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider,
+    JacsMediaProvider, JacsProvider, JacsVerificationProvider, MediaVerificationResult,
+    SignImageOptions, SignTextOptions, SignTextOutcome, SignedMedia, VerifyImageOptions,
+    VerifyTextOptions, VerifyTextResult,
 };
 #[cfg(feature = "agreements")]
 use crate::jacs::JacsAgreementProvider;
@@ -400,6 +402,58 @@ impl JacsProvider for LocalJacsProvider {
         Ok(jacs::protocol::canonicalize_json(value))
     }
 
+    /// Sign a JACS document envelope by delegating to JACS's
+    /// `create_document_and_load` (which itself runs `signing_procedure`).
+    ///
+    /// Issue 021: this is the canonical path used by every wrapper provider
+    /// (notably [`crate::jacs_remote::RemoteJacsProvider`]) so signed records
+    /// posted to `/api/v1/records` verify cleanly under the server's
+    /// `verify_jacs_json_with_public_key_pem` (which delegates to
+    /// `SimpleAgent::verify_with_key`, the inverse of `signing_procedure`).
+    ///
+    /// The user's JSON is passed through verbatim — `create_document_and_load`
+    /// adds the JACS metadata fields (`jacsId`, `jacsVersion`, `jacsVersionDate`,
+    /// `jacsLevel`, `jacsType` if absent), then signs via `signing_procedure`,
+    /// which builds the per-field canonical content via `build_signature_content`
+    /// and writes the full `jacsSignature` block (`agentID`, `agentVersion`,
+    /// `date`, `iat`, `jti`, `signature`, `signingAlgorithm`, `publicKeyHash`,
+    /// `fields[]`).
+    fn sign_envelope(&self, value: &Value) -> Result<String> {
+        let json_str = serde_json::to_string(value)
+            .map_err(|e| HaiError::Provider(format!("sign_envelope: serialize input json: {e}")))?;
+
+        let mut agent = self
+            .agent
+            .lock()
+            .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
+
+        let jacs_doc = agent
+            .create_document_and_load(&json_str, None, None)
+            .map_err(|e| HaiError::Provider(format!("JACS sign_envelope failed: {e}")))?;
+
+        serde_json::to_string(&jacs_doc.value).map_err(|e| {
+            HaiError::Provider(format!("sign_envelope: serialize signed doc: {e}"))
+        })
+    }
+
+    /// Issue 006: produce a JACS file envelope via `SimpleAgent::sign_file`.
+    ///
+    /// Mirrors `JacsDocumentProvider::sign_file` on this same provider — the
+    /// document body is the canonical `(jacsType="file", jacsLevel,
+    /// jacsFiles[...])` shape produced by JACS's attachment pipeline.
+    /// `RemoteJacsProvider::sign_file` (Issue 006) delegates here so both
+    /// providers produce the same envelope for the same `(path, embed)` input.
+    fn sign_file_envelope(&self, path: &str, embed: bool) -> Result<SignedDocument> {
+        let simple = self.load_simple_agent()?;
+        let signed = simple.sign_file(path, embed).map_err(|e| {
+            HaiError::Provider(format!("sign_file_envelope failed for '{}': {e}", path))
+        })?;
+        Ok(SignedDocument {
+            key: signed.document_id.clone(),
+            json: signed.raw,
+        })
+    }
+
     fn verify_a2a_artifact(&self, wrapped_json: &str) -> Result<String> {
         let wrapped: Value = serde_json::from_str(wrapped_json)?;
         let agent = self
@@ -656,17 +710,11 @@ impl JacsDocumentProvider for LocalJacsProvider {
     }
 
     fn sign_file(&self, path: &str, embed: bool) -> Result<SignedDocument> {
-        // Delegate to SimpleAgent::sign_file() which properly handles the embed parameter.
-        // When embed=true, the file contents are embedded inline in the signed document.
-        // When embed=false, the file is referenced by hash only.
-        let simple = self.load_simple_agent()?;
-        let signed = simple.sign_file(path, embed).map_err(|e| {
-            HaiError::Provider(format!("sign_file failed for '{}': {e}", path))
-        })?;
-        Ok(SignedDocument {
-            key: signed.document_id.clone(),
-            json: signed.raw,
-        })
+        // Issue 006: route through the canonical `sign_file_envelope` on
+        // `JacsProvider` so `RemoteJacsProvider::sign_file` (which delegates to
+        // `self.inner.sign_file_envelope`) produces a byte-identical envelope
+        // for the same `(path, embed)` input.
+        JacsProvider::sign_file_envelope(self, path, embed)
     }
 
     fn get_document(&self, key: &str) -> Result<String> {
@@ -1203,6 +1251,62 @@ impl JacsAttestationProvider for LocalJacsProvider {
             .map_err(|e| HaiError::Provider(format!("verify_attestation failed: {e}")))?;
         serde_json::to_value(&result)
             .map_err(|e| HaiError::Provider(format!("serialize attestation result: {e}")))
+    }
+}
+
+// =============================================================================
+// JacsMediaProvider implementation (Layer 8) — JACS 0.10.0
+// =============================================================================
+//
+// Local-only sign/verify for inline text and PNG/JPEG/WebP images. Each method
+// reloads a `SimpleAgent` view via `load_simple_agent()` (cheap; config IO),
+// then delegates to the JACS free functions in `jacs::simple::advanced`.
+// PRD: docs/MEDIA_SIGNING_PRD.md §4.2 / §7 R2.
+
+impl JacsMediaProvider for LocalJacsProvider {
+    fn sign_text_file(&self, path: &str, opts: SignTextOptions) -> Result<SignTextOutcome> {
+        let simple = self.load_simple_agent()?;
+        jacs::simple::advanced::sign_text_file(&simple, path, opts)
+            .map_err(|e| HaiError::Provider(format!("sign_text_file failed: {e}")))
+    }
+
+    fn verify_text_file(&self, path: &str, opts: VerifyTextOptions) -> Result<VerifyTextResult> {
+        let simple = self.load_simple_agent()?;
+        jacs::simple::advanced::verify_text_file(&simple, path, opts)
+            .map_err(|e| HaiError::Provider(format!("verify_text_file failed: {e}")))
+    }
+
+    fn sign_image(
+        &self,
+        in_path: &str,
+        out_path: &str,
+        opts: SignImageOptions,
+    ) -> Result<SignedMedia> {
+        let simple = self.load_simple_agent()?;
+        jacs::simple::advanced::sign_image(&simple, in_path, out_path, opts)
+            .map_err(|e| HaiError::Provider(format!("sign_image failed: {e}")))
+    }
+
+    fn verify_image(
+        &self,
+        path: &str,
+        opts: VerifyImageOptions,
+    ) -> Result<MediaVerificationResult> {
+        let simple = self.load_simple_agent()?;
+        jacs::simple::advanced::verify_image(&simple, path, opts)
+            .map_err(|e| HaiError::Provider(format!("verify_image failed: {e}")))
+    }
+
+    fn extract_media_signature(&self, path: &str, raw_payload: bool) -> Result<Option<String>> {
+        // PRD §4.2 / TASK_001 Step 5: JACS exposes two free functions, not one
+        // with a flag. Neither takes the SimpleAgent — extraction does not need
+        // a signer. The provider is here for trait dispatch consistency.
+        let result = if raw_payload {
+            jacs::simple::advanced::extract_media_signature_raw(path)
+        } else {
+            jacs::simple::advanced::extract_media_signature(path)
+        };
+        result.map_err(|e| HaiError::Provider(format!("extract_media_signature failed: {e}")))
     }
 }
 

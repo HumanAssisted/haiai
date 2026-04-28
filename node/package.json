@@ -1,6 +1,6 @@
 {
   "name": "@haiai/haiai",
-  "version": "0.2.2",
+  "version": "0.4.0",
   "description": "Official Node.js SDK for the HAI agent benchmarking platform",
   "type": "module",
   "main": "./dist/cjs/index.js",
@@ -32,17 +32,17 @@
     "haiai": "./bin/haiai.cjs"
   },
   "dependencies": {
-    "@hai.ai/jacs": "0.9.14",
+    "@hai.ai/jacs": "file:../../JACS/jacsnpm",
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "haiinpm": "0.2.2",
+    "haiinpm": "0.4.0",
     "ws": "^8.16.0"
   },
   "optionalDependencies": {
-    "@haiai/cli-darwin-arm64": "0.2.2",
-    "@haiai/cli-darwin-x64": "0.2.2",
-    "@haiai/cli-linux-x64": "0.2.2",
-    "@haiai/cli-linux-arm64": "0.2.2",
-    "@haiai/cli-win32-x64": "0.2.2"
+    "@haiai/cli-darwin-arm64": "0.4.0",
+    "@haiai/cli-darwin-x64": "0.4.0",
+    "@haiai/cli-linux-arm64": "0.4.0",
+    "@haiai/cli-linux-x64": "0.4.0",
+    "@haiai/cli-win32-x64": "0.4.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

@@ -239,6 +239,9 @@ class MockFFIAdapter:
     def get_message(self, message_id: str) -> dict:
         return self._record("get_message", message_id)
 
+    def get_raw_email(self, message_id: str) -> dict:
+        return self._record("get_raw_email", message_id)
+
     def get_unread_count(self) -> int:
         result = self._record("get_unread_count")
         if isinstance(result, int):
@@ -342,6 +345,22 @@ class MockFFIAdapter:
     def verify_email_raw(self, raw_email_b64: str) -> dict:
         return self._record("verify_email_raw", raw_email_b64)
 
+    # Local Media (Layer 8 / TASK_007)
+    def sign_text(self, path: str, opts: dict) -> dict:
+        return self._record("sign_text", path, opts)
+
+    def verify_text(self, path: str, opts: dict) -> dict:
+        return self._record("verify_text", path, opts)
+
+    def sign_image(self, in_path: str, out_path: str, opts: dict) -> dict:
+        return self._record("sign_image", in_path, out_path, opts)
+
+    def verify_image(self, path: str, opts: dict) -> dict:
+        return self._record("verify_image", path, opts)
+
+    def extract_media_signature(self, path: str, opts: dict) -> dict:
+        return self._record("extract_media_signature", path, opts)
+
     # Email Templates
     def create_email_template(self, options: dict) -> dict:
         return self._record("create_email_template", options)
@@ -414,6 +433,84 @@ class MockFFIAdapter:
     def set_agent_email(self, email: str) -> None:
         self._record("set_agent_email", email)
 
+    # JACS Document Store (Issue 025)
+    def store_document(self, signed_json: str) -> str:
+        result = self._record("store_document", signed_json)
+        return result if isinstance(result, str) else ""
+
+    def sign_and_store(self, data_json: str) -> dict:
+        return self._record("sign_and_store", data_json)
+
+    def get_document(self, key: str) -> str:
+        result = self._record("get_document", key)
+        return result if isinstance(result, str) else ""
+
+    def get_latest_document(self, doc_id: str) -> str:
+        result = self._record("get_latest_document", doc_id)
+        return result if isinstance(result, str) else ""
+
+    def get_document_versions(self, doc_id: str) -> list[str]:
+        result = self._record("get_document_versions", doc_id)
+        return list(result) if isinstance(result, list) else []
+
+    def list_documents(self, jacs_type: str | None = None) -> list[str]:
+        result = self._record("list_documents", jacs_type)
+        return list(result) if isinstance(result, list) else []
+
+    def remove_document(self, key: str) -> None:
+        self._record("remove_document", key)
+
+    def update_document(self, doc_id: str, signed_json: str) -> dict:
+        return self._record("update_document", doc_id, signed_json)
+
+    def search_documents(self, query: str, limit: int, offset: int) -> dict:
+        return self._record("search_documents", query, limit, offset)
+
+    def query_by_type(self, doc_type: str, limit: int, offset: int) -> list[str]:
+        result = self._record("query_by_type", doc_type, limit, offset)
+        return list(result) if isinstance(result, list) else []
+
+    def query_by_field(
+        self, field: str, value: str, limit: int, offset: int
+    ) -> list[str]:
+        result = self._record("query_by_field", field, value, limit, offset)
+        return list(result) if isinstance(result, list) else []
+
+    def query_by_agent(self, agent_id: str, limit: int, offset: int) -> list[str]:
+        result = self._record("query_by_agent", agent_id, limit, offset)
+        return list(result) if isinstance(result, list) else []
+
+    def storage_capabilities(self) -> dict:
+        return self._record("storage_capabilities")
+
+    # D5 — MEMORY / SOUL convenience wrappers
+    def save_memory(self, content: str | None = None) -> str:
+        result = self._record("save_memory", content)
+        return result if isinstance(result, str) else ""
+
+    def save_soul(self, content: str | None = None) -> str:
+        result = self._record("save_soul", content)
+        return result if isinstance(result, str) else ""
+
+    def get_memory(self) -> Any:
+        return self._record("get_memory")
+
+    def get_soul(self) -> Any:
+        return self._record("get_soul")
+
+    # D9 — typed-content helpers
+    def store_text_file(self, path: str) -> str:
+        result = self._record("store_text_file", path)
+        return result if isinstance(result, str) else ""
+
+    def store_image_file(self, path: str) -> str:
+        result = self._record("store_image_file", path)
+        return result if isinstance(result, str) else ""
+
+    def get_record_bytes(self, key: str) -> bytes:
+        result = self._record("get_record_bytes", key)
+        return result if isinstance(result, bytes) else b""
+
 
 class MockAsyncFFIAdapter(MockFFIAdapter):
     """Async version of MockFFIAdapter for AsyncHaiClient tests."""
@@ -454,6 +551,9 @@ class MockAsyncFFIAdapter(MockFFIAdapter):
 
     async def get_message(self, message_id: str) -> dict:  # type: ignore[override]
         return self._record("get_message", message_id)
+
+    async def get_raw_email(self, message_id: str) -> dict:  # type: ignore[override]
+        return self._record("get_raw_email", message_id)
 
     async def get_unread_count(self) -> int:  # type: ignore[override]
         result = self._record("get_unread_count")
@@ -529,6 +629,22 @@ class MockAsyncFFIAdapter(MockFFIAdapter):
 
     async def verify_email_raw(self, raw_email_b64: str) -> dict:  # type: ignore[override]
         return self._record("verify_email_raw", raw_email_b64)
+
+    # Local Media (Layer 8 / TASK_007)
+    async def sign_text(self, path: str, opts: dict) -> dict:  # type: ignore[override]
+        return self._record("sign_text", path, opts)
+
+    async def verify_text(self, path: str, opts: dict) -> dict:  # type: ignore[override]
+        return self._record("verify_text", path, opts)
+
+    async def sign_image(self, in_path: str, out_path: str, opts: dict) -> dict:  # type: ignore[override]
+        return self._record("sign_image", in_path, out_path, opts)
+
+    async def verify_image(self, path: str, opts: dict) -> dict:  # type: ignore[override]
+        return self._record("verify_image", path, opts)
+
+    async def extract_media_signature(self, path: str, opts: dict) -> dict:  # type: ignore[override]
+        return self._record("extract_media_signature", path, opts)
 
     async def create_email_template(self, options: dict) -> dict:  # type: ignore[override]
         return self._record("create_email_template", options)

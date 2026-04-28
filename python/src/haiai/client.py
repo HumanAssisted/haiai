@@ -14,8 +14,8 @@ import os
 import time
 from pathlib import Path
 from typing import Any, Generator, Iterator, Optional, Union
-from urllib.parse import quote
 
+from haiai import _client_shared
 from haiai._ffi_adapter import FFIAdapter, map_ffi_error
 from haiai._sse import flatten_benchmark_job, parse_sse_lines
 from haiai.signing import canonicalize_json, create_agent_document
@@ -49,6 +49,7 @@ from haiai.models import (
     EmailStatus,
     EmailVerificationResultV2,
     EmailVolumeInfo,
+    ExtractMediaSignatureResult,
     FieldResult,
     FieldStatus,
     FreeChaoticResult,
@@ -59,10 +60,16 @@ from haiai.models import (
     HelloWorldResult,
     JobResponseResult,
     PublicKeyInfo,
+    RawEmailResult,
     RegistrationResult,
     RotationResult,
     SendEmailResult,
+    SignImageResult,
+    SignTextResult,
     TranscriptMessage,
+    VerifyImageResult,
+    VerifyTextResult,
+    VerifyTextSignature,
 )
 from haiai.signing import is_signed_event, sign_response, unwrap_signed_event
 
@@ -253,18 +260,12 @@ class HaiClient:
         Raises:
             ValueError: If base_url does not start with http:// or https://.
         """
-        if not base_url or not base_url.startswith(("http://", "https://")):
-            raise ValueError(
-                f"Invalid base URL: {base_url!r} — URL must start with http:// or https://"
-            )
-        base = base_url.rstrip("/")
-        path = "/" + path.lstrip("/")
-        return base + path
+        return _client_shared.make_url(base_url, path, validate_scheme=True)
 
     @staticmethod
     def _escape_path_segment(value: str) -> str:
         """Escape a user-controlled URL path segment."""
-        return quote(value, safe="")
+        return _client_shared.escape_path_segment(value)
 
     def _get_cached_key(self, cache_key: str) -> Optional[Any]:
         """Return a cached key if it exists and hasn't expired, else None."""
@@ -287,19 +288,14 @@ class HaiClient:
 
     def _get_jacs_id(self) -> str:
         """Return the loaded JACS ID, raising if not available."""
-        from haiai.config import get_config
-
-        cfg = get_config()
-        if cfg.jacs_id is None:
-            raise HaiAuthError("jacsId is required in config for JACS authentication")
-        return cfg.jacs_id
+        return _client_shared.get_jacs_id()
 
     def _get_hai_agent_id(self) -> str:
         """Return the HAI-assigned agent UUID for email URL paths.
 
         Falls back to the JACS ID if not set (e.g. before registration).
         """
-        return self._hai_agent_id or self._get_jacs_id()
+        return _client_shared.get_hai_agent_id(self._hai_agent_id)
 
     def _build_jacs_auth_header(self) -> str:
         """Build ``Authorization: JACS {jacsId}:{timestamp}:{signature}``.
@@ -308,41 +304,11 @@ class HaiClient:
         Otherwise constructs the header locally using JACS ``sign_string``.
         Both paths require a loaded JACS agent.
         """
-        from haiai.config import get_config, get_agent
-
-        cfg = get_config()
-        agent = get_agent()
-
-        if cfg.jacs_id is None:
-            raise HaiAuthError("jacsId is required for JACS authentication")
-
-        # Prefer JACS binding delegation
-        if hasattr(agent, "build_auth_header"):
-            return agent.build_auth_header()
-
-        # Local construction using JACS sign_string
-        if not hasattr(agent, "sign_string"):
-            raise HaiError(
-                "build_auth_header requires a JACS agent with sign_string support",
-                code="JACS_NOT_LOADED",
-                action="Run 'haiai init' or set JACS_CONFIG_PATH environment variable",
-            )
-
-        timestamp = int(time.time())
-        message = f"{cfg.jacs_id}:{timestamp}"
-        signature = agent.sign_string(message)
-        return f"JACS {cfg.jacs_id}:{timestamp}:{signature}"
+        return _client_shared.build_jacs_auth_header()
 
     def _build_auth_headers(self) -> dict[str, str]:
         """Return auth headers using JACS signature authentication."""
-        from haiai.config import is_loaded, get_config
-
-        if not (is_loaded() and get_config().jacs_id):
-            raise HaiAuthError(
-                "No JACS authentication available. "
-                "Call haiai.config.load() with a config containing jacsId."
-            )
-        return {"Authorization": self._build_jacs_auth_header()}
+        return _client_shared.build_auth_headers()
 
     @staticmethod
     def _build_jacs_auth_header_with_key(
@@ -357,40 +323,21 @@ class HaiClient:
         the OLD agent's key (chain of trust).
         Signing delegates to JACS binding-core.
         """
-        timestamp = int(time.time())
-        message = f"{jacs_id}:{version}:{timestamp}"
-        signature = agent.sign_string(message)
-        return f"JACS {jacs_id}:{version}:{timestamp}:{signature}"
+        return _client_shared.build_jacs_auth_header_with_key(
+            jacs_id, version, agent
+        )
 
     @staticmethod
     def _parse_transcript(
         raw_messages: list[dict[str, Any]],
     ) -> list[TranscriptMessage]:
         """Parse raw transcript messages from API response."""
-        return [
-            TranscriptMessage(
-                role=msg.get("role", "system"),
-                content=msg.get("content", ""),
-                timestamp=msg.get("timestamp", ""),
-                annotations=msg.get("annotations", []),
-            )
-            for msg in raw_messages
-        ]
+        return _client_shared.parse_transcript(raw_messages)
 
     @staticmethod
     def _parse_public_key_info(data: dict[str, Any], **defaults: Any) -> PublicKeyInfo:
         """Parse a PublicKeyInfo from an FFI response dict."""
-        return PublicKeyInfo(
-            jacs_id=data.get("jacs_id", defaults.get("jacs_id", "")),
-            version=data.get("version", defaults.get("version", "")),
-            public_key=data.get("public_key", ""),
-            public_key_raw_b64=data.get("public_key_raw_b64", ""),
-            algorithm=data.get("algorithm", ""),
-            public_key_hash=data.get("public_key_hash", ""),
-            status=data.get("status", ""),
-            dns_verified=data.get("dns_verified", False),
-            created_at=data.get("created_at", ""),
-        )
+        return _client_shared.parse_public_key_info(data, **defaults)
 
     @staticmethod
     def _parse_email_status(data: dict) -> EmailStatus:
@@ -1346,6 +1293,157 @@ class HaiClient:
         b64_result = ffi.sign_email_raw(b64_input)
         return base64.b64decode(b64_result)
 
+    # =========================================================================
+    # Layer 8: Local Media Sign/Verify (TASK_007)
+    # =========================================================================
+
+    def sign_text(
+        self,
+        path: str,
+        *,
+        no_backup: bool = False,
+        allow_duplicate: bool = False,
+    ) -> SignTextResult:
+        """Sign a text/markdown file in place by appending a YAML signature block.
+
+        Local-only — no HAI server roundtrip. The agent's identity comes from
+        the loaded JACS config (same as ``sign_email``).
+        """
+        ffi = self._get_ffi()
+        opts = {"backup": not no_backup, "allow_duplicate": allow_duplicate}
+        data = ffi.sign_text(path, opts)
+        return SignTextResult(
+            path=data["path"],
+            signers_added=int(data["signers_added"]),
+            backup_path=data.get("backup_path"),
+        )
+
+    def verify_text(
+        self,
+        path: str,
+        *,
+        key_dir: Optional[str] = None,
+        strict: bool = False,
+    ) -> VerifyTextResult:
+        """Verify all signature blocks in a text file. Local-only."""
+        ffi = self._get_ffi()
+        opts: dict[str, Any] = {"strict": strict}
+        if key_dir is not None:
+            opts["key_dir"] = key_dir
+        data = ffi.verify_text(path, opts)
+        sigs = [
+            VerifyTextSignature(
+                signer_id=s["signer_id"],
+                algorithm=s["algorithm"],
+                timestamp=s["timestamp"],
+                status=s["status"],
+            )
+            for s in data.get("signatures") or []
+        ]
+        return VerifyTextResult(
+            status=data["status"],
+            signatures=sigs,
+            malformed_detail=data.get("malformed_detail"),
+        )
+
+    def sign_image(
+        self,
+        in_path: str,
+        out_path: str,
+        *,
+        robust: bool = False,
+        format: Optional[str] = None,
+        refuse_overwrite: bool = False,
+        no_backup: bool = False,
+        unsafe_bak_mode: Optional[int] = None,
+    ) -> SignImageResult:
+        """Sign an image (PNG/JPEG/WebP) by embedding a JACS signature.
+
+        ``robust`` adds LSB steganography (PNG/JPEG only — WebP returns
+        ``Unsupported`` per the JACS PRD).
+
+        ``format`` is reserved for forward compatibility. The underlying jacs
+        ``sign_image`` magic-detects format from input bytes today and
+        ignores this hint (JACS REVIEW_002 — dead parameter pending upstream
+        fix). Passed through unchanged.
+
+        ``no_backup`` skips the ``<out_path>.bak`` write. Default ``False``
+        (i.e., backup IS taken when out_path overwrites an existing file).
+        Mirrors ``sign_text``'s ``no_backup`` toggle and Go's
+        ``SignImageOptions.NoBackup`` (Issue 003 / Issue 009 — cross-language
+        parity).
+
+        ``unsafe_bak_mode`` overrides the default 0o600 backup file
+        permissions. Set only when integrating with tooling that needs a
+        broader mode (default ``None`` => 0o600).
+        """
+        ffi = self._get_ffi()
+        opts: dict[str, Any] = {
+            "robust": robust,
+            "refuse_overwrite": refuse_overwrite,
+            "backup": not no_backup,
+        }
+        if format is not None:
+            opts["format_hint"] = format
+        if unsafe_bak_mode is not None:
+            opts["unsafe_bak_mode"] = unsafe_bak_mode
+        data = ffi.sign_image(in_path, out_path, opts)
+        return SignImageResult(
+            out_path=data["out_path"],
+            signer_id=data["signer_id"],
+            format=data["format"],
+            robust=bool(data.get("robust", False)),
+            backup_path=data.get("backup_path"),
+        )
+
+    def verify_image(
+        self,
+        path: str,
+        *,
+        key_dir: Optional[str] = None,
+        strict: bool = False,
+        robust: bool = False,
+    ) -> VerifyImageResult:
+        """Verify the JACS signature embedded in an image. Local-only.
+
+        The user-facing kwarg ``robust`` maps to the JACS-internal
+        ``scan_robust`` field via the binding-core parser. No leak.
+        """
+        ffi = self._get_ffi()
+        opts: dict[str, Any] = {"strict": strict, "robust": robust}
+        if key_dir is not None:
+            opts["key_dir"] = key_dir
+        data = ffi.verify_image(path, opts)
+        # binding-core flattens MediaVerifyStatus into a snake_case string
+        # via media_verify_result_to_json — `status` is always a plain string;
+        # the Malformed variant carries detail in `malformed_detail`.
+        return VerifyImageResult(
+            status=str(data.get("status", "")),
+            signer_id=data.get("signer_id"),
+            algorithm=data.get("algorithm"),
+            format=data.get("format"),
+            embedding_channels=data.get("embedding_channels"),
+            malformed_detail=data.get("malformed_detail"),
+        )
+
+    def extract_media_signature(
+        self,
+        path: str,
+        *,
+        raw_payload: bool = False,
+    ) -> ExtractMediaSignatureResult:
+        """Extract the JACS payload embedded in an image without verifying.
+
+        ``raw_payload=True`` returns the base64url-no-pad bytes verbatim;
+        the default returns the decoded JSON string.
+        """
+        ffi = self._get_ffi()
+        data = ffi.extract_media_signature(path, {"raw_payload": raw_payload})
+        return ExtractMediaSignatureResult(
+            present=bool(data.get("present", False)),
+            payload=data.get("payload"),
+        )
+
     def send_signed_email(
         self,
         hai_url: Optional[str] = None,
@@ -1501,6 +1599,24 @@ class HaiClient:
         ffi = self._get_ffi()
         m = ffi.get_message(message_id)
         return EmailMessage.from_dict(m)
+
+    def get_raw_email(
+        self, hai_url: Optional[str] = None, message_id: str = ""
+    ) -> RawEmailResult:
+        """Fetch the raw RFC 5322 bytes of a message for local JACS verification.
+
+        Returns :class:`RawEmailResult` with ``raw_email`` as ``bytes`` on the
+        happy path, or ``None`` when ``available`` is False (see
+        ``omitted_reason``). Pair with :meth:`verify_email` to verify offline.
+
+        Byte-fidelity (PRD R2): ``raw_email`` is byte-identical to what JACS
+        signed — no trimming, no line-ending normalization.
+        """
+        if not message_id:
+            raise ValueError("'message_id' is required")
+        ffi = self._get_ffi()
+        data = ffi.get_raw_email(message_id)
+        return RawEmailResult.from_dict(data)
 
     def delete_message(self, hai_url: Optional[str] = None, message_id: str = "") -> bool:
         """Delete an email message."""
@@ -1908,12 +2024,7 @@ class HaiClient:
                         # Connection closed
                         break
 
-                    event = HaiEvent(
-                        event_type=event_data.get("event_type", ""),
-                        data=event_data.get("data", {}),
-                        id=event_data.get("id"),
-                        raw=event_data.get("raw", ""),
-                    )
+                    event = _client_shared.make_ffi_event(event_data)
                     if event.id:
                         self._last_event_id = event.id
                     yield event
@@ -1957,12 +2068,7 @@ class HaiClient:
                     if event_data is None:
                         break
 
-                    event = HaiEvent(
-                        event_type=event_data.get("event_type", ""),
-                        data=event_data.get("data", {}),
-                        id=event_data.get("id"),
-                        raw=event_data.get("raw", ""),
-                    )
+                    event = _client_shared.make_ffi_event(event_data)
                     yield event
 
             except HaiAuthError:
@@ -2065,6 +2171,105 @@ class HaiClient:
     def is_connected(self) -> bool:
         """Return True if currently connected."""
         return self._connected
+
+    # ------------------------------------------------------------------
+    # JACS Document Store (sync)
+    #
+    # 20 methods that delegate to RemoteJacsProvider via the FFI adapter.
+    # Naming matches `fixtures/ffi_method_parity.json["jacs_document_store"]`.
+    # ------------------------------------------------------------------
+
+    def store_document(self, signed_json: str) -> str:
+        """Store a pre-signed JACS document. Returns the record key (`id:version`)."""
+        return self._get_ffi().store_document(signed_json)
+
+    def sign_and_store(self, data_json: str) -> dict[str, Any]:
+        """Sign + store a JSON document in one call. Returns the SignedDocument shape."""
+        return self._get_ffi().sign_and_store(data_json)
+
+    def get_document(self, key: str) -> str:
+        """Fetch a document by key (`id` or `id:version`). Returns the signed envelope JSON."""
+        return self._get_ffi().get_document(key)
+
+    def get_latest_document(self, doc_id: str) -> str:
+        """Fetch the latest version of a document by id."""
+        return self._get_ffi().get_latest_document(doc_id)
+
+    def get_document_versions(self, doc_id: str) -> list[str]:
+        """List all versions of a document. Returns a list of keys."""
+        return self._get_ffi().get_document_versions(doc_id)
+
+    def list_documents(self, jacs_type: Optional[str] = None) -> list[str]:
+        """List document keys, optionally filtered by `jacsType`."""
+        return self._get_ffi().list_documents(jacs_type)
+
+    def remove_document(self, key: str) -> None:
+        """Tombstone (soft-delete) a document by key."""
+        self._get_ffi().remove_document(key)
+
+    def update_document(self, doc_id: str, signed_json: str) -> dict[str, Any]:
+        """Update a document, creating a new signed version. Returns the SignedDocument shape."""
+        return self._get_ffi().update_document(doc_id, signed_json)
+
+    def search_documents(
+        self, query: str, limit: int = 25, offset: int = 0
+    ) -> dict[str, Any]:
+        """Search documents (fulltext / hybrid). Returns the DocSearchResults shape."""
+        return self._get_ffi().search_documents(query, limit, offset)
+
+    def query_by_type(
+        self, doc_type: str, limit: int = 25, offset: int = 0
+    ) -> list[str]:
+        """Query documents by `jacsType`. Returns a list of keys."""
+        return self._get_ffi().query_by_type(doc_type, limit, offset)
+
+    def query_by_field(
+        self, field: str, value: str, limit: int = 25, offset: int = 0
+    ) -> list[str]:
+        """Query documents by an envelope field. Returns a list of keys."""
+        return self._get_ffi().query_by_field(field, value, limit, offset)
+
+    def query_by_agent(
+        self, agent_id: str, limit: int = 25, offset: int = 0
+    ) -> list[str]:
+        """Query documents signed by a specific agent. Returns a list of keys."""
+        return self._get_ffi().query_by_agent(agent_id, limit, offset)
+
+    def storage_capabilities(self) -> dict[str, Any]:
+        """Report storage backend capabilities (fulltext, vector, etc.)."""
+        return self._get_ffi().storage_capabilities()
+
+    # D5 — MEMORY / SOUL
+
+    def save_memory(self, content: Optional[str] = None) -> str:
+        """Sign and store a `MEMORY.md` record. If `content` is None, reads from CWD."""
+        return self._get_ffi().save_memory(content)
+
+    def save_soul(self, content: Optional[str] = None) -> str:
+        """Sign and store a `SOUL.md` record. If `content` is None, reads from CWD."""
+        return self._get_ffi().save_soul(content)
+
+    def get_memory(self) -> Optional[str]:
+        """Fetch the latest MEMORY record's signed envelope JSON."""
+        return self._get_ffi().get_memory()
+
+    def get_soul(self) -> Optional[str]:
+        """Fetch the latest SOUL record's signed envelope JSON."""
+        return self._get_ffi().get_soul()
+
+    # D9 — typed-content helpers
+
+    def store_text_file(self, path: str) -> str:
+        """Read a signed-text file and POST it to the records endpoint."""
+        return self._get_ffi().store_text_file(path)
+
+    def store_image_file(self, path: str) -> str:
+        """Detect a signed image's format and POST it with the matching content type."""
+        return self._get_ffi().store_image_file(path)
+
+    def get_record_bytes(self, key: str) -> bytes:
+        """Fetch raw record bytes (no UTF-8 decode, no JSON parse)."""
+        return self._get_ffi().get_record_bytes(key)
 
 
 # ---------------------------------------------------------------------------
@@ -2527,6 +2732,7 @@ def register_new_agent(
     description: Optional[str] = None,
     quiet: bool = False,
     algorithm: str = "pq2025",
+    registration_key: Optional[str] = None,
 ) -> RegistrationResult:
     """Generate a keypair, self-sign, register with HAI, and save config.
 
@@ -2560,6 +2766,8 @@ def register_new_agent(
     }
     if domain:
         options["domain"] = domain
+    if registration_key:
+        options["registration_key"] = registration_key
 
     # Create a temporary FFI adapter with minimal config (just base_url)
     ffi_config = json.dumps({"base_url": hai_url})

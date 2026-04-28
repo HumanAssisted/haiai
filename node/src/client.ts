@@ -42,6 +42,18 @@ import type {
   VerifyAgentDocumentOnHaiOptions,
   EmailVerificationResultV2,
   FieldStatus,
+  RawEmailResult,
+  SignTextOptions,
+  SignTextResult,
+  VerifyTextOptions,
+  VerifyTextResult,
+  VerifyTextSignature,
+  SignImageOptions,
+  SignImageResult,
+  VerifyImageOptions,
+  VerifyImageResult,
+  ExtractMediaSignatureOptions,
+  ExtractMediaSignatureResult,
 } from './types.js';
 import {
   HaiError,
@@ -71,6 +83,14 @@ import { FFIClientAdapter } from './ffi-client.js';
 
 /** Default HAI API base URL. Override with the `url` option or `HAI_URL` env var. */
 export const DEFAULT_BASE_URL = 'https://beta.hai.ai';
+
+type OpaqueTransportState = {
+  close: (handle: number) => Promise<void>;
+  connect: () => Promise<number>;
+  nextEvent: (handle: number) => Promise<Record<string, unknown> | null>;
+  onConnect?: (handle: number) => void;
+  onClose?: () => void;
+};
 
 export class HaiClient {
   private config!: AgentConfig;
@@ -114,7 +134,13 @@ export class HaiClient {
   }
 
   private constructor(options?: HaiClientOptions) {
-    const rawUrl = options?.url ?? DEFAULT_BASE_URL;
+    // URL precedence mirrors the Python SDK (client.py:174):
+    //   options.url > HAI_URL > HAI_API_URL > DEFAULT_BASE_URL
+    const rawUrl =
+      options?.url
+      ?? process.env.HAI_URL
+      ?? process.env.HAI_API_URL
+      ?? DEFAULT_BASE_URL;
     if (!/^https?:\/\//i.test(rawUrl)) {
       throw new HaiError(
         `Invalid base URL: "${rawUrl}". URL must start with http:// or https://.`,
@@ -132,8 +158,12 @@ export class HaiClient {
    * Rust HaiClient constructor).
    */
   private buildFFIConfigJson(): string {
+    // Key names must match hai-binding-core's FfiHaiConfig schema:
+    // `base_url` (NOT `url`), `jacs_config_path`, plus agent metadata from
+    // the loaded config so the Rust side builds a Local provider instead of
+    // falling back to an ephemeral agent.
     const ffiConfig: Record<string, unknown> = {
-      url: this.baseUrl,
+      base_url: this.baseUrl,
       timeout_ms: this.timeout,
       max_retries: this.maxRetries,
     };
@@ -142,6 +172,15 @@ export class HaiClient {
     }
     if (this.config?.jacsId) {
       ffiConfig.jacs_id = this.config.jacsId;
+    }
+    if (this.config?.jacsAgentName) {
+      ffiConfig.agent_name = this.config.jacsAgentName;
+    }
+    if (this.config?.jacsAgentVersion) {
+      ffiConfig.agent_version = this.config.jacsAgentVersion;
+    }
+    if (this.config?.jacsKeyDir) {
+      ffiConfig.key_dir = this.config.jacsKeyDir;
     }
     return JSON.stringify(ffiConfig);
   }
@@ -807,7 +846,13 @@ export class HaiClient {
    * Generate a fresh JACS agent and register it with HAI.
    *
    * Convenience method that combines key generation, document building,
-   * signing, and registration in one call.
+   * signing, and registration in one call. Delegates to the Rust FFI
+   * `registerNewAgent` entry point which performs keygen, self-sign, and
+   * the HAI registration HTTP call in one atomic pass.
+   *
+   * For the FTUX bootstrap case (no pre-existing config / HaiClient),
+   * use the standalone {@link registerNewAgent} function exported from
+   * this module instead.
    *
    * @param agentName - Name for the new agent
    * @param options - Registration options
@@ -818,45 +863,20 @@ export class HaiClient {
     domain?: string;
     description?: string;
     quiet?: boolean;
+    registrationKey?: string;
+    algorithm?: string;
+    keyDir?: string;
+    dataDir?: string;
+    configPath?: string;
+    password?: string;
   }): Promise<RegistrationResult> {
-    // Delegate to FFI register with the full set of options
-    const registerOptions: Record<string, unknown> = {
-      agent_name: agentName,
-      owner_email: options.ownerEmail,
-      new_agent: true,
-    };
-    if (options.domain) registerOptions.domain = options.domain;
-    if (options.description) registerOptions.description = options.description;
-
-    const data = await this.ffi.register(registerOptions);
-
-    if (!options.quiet) {
-      const agentId = (data.agent_id as string) || (data.agentId as string) || '';
-      console.log(`\nAgent created and submitted for registration!`);
-      console.log(`  -> Your agent is registered with username from your reservation`);
-      console.log(`  -> Save your config and private key to a secure, access-controlled location`);
-
-      if (options.domain) {
-        console.log(`\n--- DNS Setup Instructions ---`);
-        console.log(`Add this TXT record to your domain '${options.domain}':`);
-        console.log(`  Name:  _jacs.${options.domain}`);
-        console.log(`  Type:  TXT`);
-        console.log(`  Value: sha256:<your_public_key_hash>`);
-        console.log(`DNS verification enables the pro tier.\n`);
-      } else {
-        console.log();
-      }
-    }
-
-    return {
-      success: true,
-      agentId: (data.agent_id as string) || (data.agentId as string) || '',
-      jacsId: (data.jacs_id as string) || (data.jacsId as string) || '',
-      haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
-      registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
-      registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
-      rawResponse: data,
-    };
+    const resolved = resolveRegisterNewAgentOptions(agentName, {
+      ...options,
+      baseUrl: this.baseUrl,
+    });
+    const data = await this.ffi.registerNewAgent(resolved);
+    printRegistrationGuidance(data, options);
+    return toRegistrationResult(data);
   }
 
   // ---------------------------------------------------------------------------
@@ -928,7 +948,19 @@ export class HaiClient {
   // SSE transport (via FFI opaque handles)
   // ---------------------------------------------------------------------------
 
-  private async *connectSse(
+  private normalizeOpaqueTransportEvent(
+    eventData: Record<string, unknown>,
+  ): HaiEvent {
+    return {
+      eventType: (eventData.event_type as string) || '',
+      data: eventData.data || {},
+      id: eventData.id as string | undefined,
+      raw: (eventData.raw as string) || '',
+    };
+  }
+
+  private async *connectOpaqueTransport(
+    state: OpaqueTransportState,
     onEvent?: (event: HaiEvent) => void,
   ): AsyncGenerator<HaiEvent> {
     let attempt = 0;
@@ -936,21 +968,16 @@ export class HaiClient {
     while (!this._shouldDisconnect) {
       let handle: number | null = null;
       try {
-        handle = await this.ffi.connectSse();
+        handle = await state.connect();
         this._connected = true;
         attempt = 0;
+        state.onConnect?.(handle);
 
         while (!this._shouldDisconnect) {
-          const eventData = await this.ffi.sseNextEvent(handle);
+          const eventData = await state.nextEvent(handle);
           if (eventData === null) break; // Connection closed
 
-          const event: HaiEvent = {
-            eventType: (eventData as Record<string, unknown>).event_type as string || '',
-            data: (eventData as Record<string, unknown>).data || {},
-            id: (eventData as Record<string, unknown>).id as string | undefined,
-            raw: (eventData as Record<string, unknown>).raw as string || '',
-          };
-
+          const event = this.normalizeOpaqueTransportEvent(eventData);
           if (event.id) this._lastEventId = event.id;
           if (onEvent) onEvent(event);
           yield event;
@@ -963,11 +990,22 @@ export class HaiClient {
         attempt++;
       } finally {
         this._connected = false;
+        state.onClose?.();
         if (handle !== null) {
-          try { await this.ffi.sseClose(handle); } catch { /* ignore */ }
+          try { await state.close(handle); } catch { /* ignore */ }
         }
       }
     }
+  }
+
+  private async *connectSse(
+    onEvent?: (event: HaiEvent) => void,
+  ): AsyncGenerator<HaiEvent> {
+    yield* this.connectOpaqueTransport({
+      close: (handle) => this.ffi.sseClose(handle),
+      connect: () => this.ffi.connectSse(),
+      nextEvent: (handle) => this.ffi.sseNextEvent(handle),
+    }, onEvent);
   }
 
   // ---------------------------------------------------------------------------
@@ -977,45 +1015,17 @@ export class HaiClient {
   private async *connectWs(
     onEvent?: (event: HaiEvent) => void,
   ): AsyncGenerator<HaiEvent> {
-    let attempt = 0;
-
-    while (!this._shouldDisconnect) {
-      let handle: number | null = null;
-      try {
-        handle = await this.ffi.connectWs();
-        this._connected = true;
+    yield* this.connectOpaqueTransport({
+      close: (handle) => this.ffi.wsClose(handle),
+      connect: () => this.ffi.connectWs(),
+      nextEvent: (handle) => this.ffi.wsNextEvent(handle),
+      onConnect: (handle) => {
         this._wsConnection = handle;
-        attempt = 0;
-
-        while (!this._shouldDisconnect) {
-          const eventData = await this.ffi.wsNextEvent(handle);
-          if (eventData === null) break; // Connection closed
-
-          const event: HaiEvent = {
-            eventType: (eventData as Record<string, unknown>).event_type as string || '',
-            data: (eventData as Record<string, unknown>).data || {},
-            id: (eventData as Record<string, unknown>).id as string | undefined,
-            raw: (eventData as Record<string, unknown>).raw as string || '',
-          };
-
-          if (event.id) this._lastEventId = event.id;
-          if (onEvent) onEvent(event);
-          yield event;
-        }
-      } catch (err) {
-        if (err instanceof HaiError && (err as HaiError & { statusCode?: number }).statusCode === 401) throw err;
-        if (attempt >= this.maxReconnectAttempts) throw err;
-        const delay = Math.min(1000 * Math.pow(2, attempt), 60000);
-        await new Promise(r => setTimeout(r, delay));
-        attempt++;
-      } finally {
-        this._connected = false;
+      },
+      onClose: () => {
         this._wsConnection = null;
-        if (handle !== null) {
-          try { await this.ffi.wsClose(handle); } catch { /* ignore */ }
-        }
-      }
-    }
+      },
+    }, onEvent);
   }
 
   // ---------------------------------------------------------------------------
@@ -1261,6 +1271,103 @@ export class HaiClient {
     };
   }
 
+  // ===========================================================================
+  // Layer 8: Local Media Sign/Verify (TASK_008)
+  // ===========================================================================
+
+  async signText(path: string, options?: SignTextOptions): Promise<SignTextResult> {
+    const opts: Record<string, unknown> = {
+      backup: !options?.noBackup,
+      allow_duplicate: options?.allowDuplicate ?? false,
+    };
+    const data = await this.ffi.signText(path, opts);
+    return {
+      path: data.path as string,
+      signersAdded: Number(data.signers_added ?? 0),
+      backupPath: (data.backup_path as string | null | undefined) ?? undefined,
+    };
+  }
+
+  async verifyText(path: string, options?: VerifyTextOptions): Promise<VerifyTextResult> {
+    const opts: Record<string, unknown> = {
+      strict: options?.strict ?? false,
+    };
+    if (options?.keyDir != null) opts.key_dir = options.keyDir;
+    const data = await this.ffi.verifyText(path, opts);
+    const sigs = ((data.signatures as Array<Record<string, unknown>>) ?? []).map(
+      (s): VerifyTextSignature => ({
+        signerId: s.signer_id as string,
+        algorithm: s.algorithm as string,
+        timestamp: s.timestamp as string,
+        status: s.status as string,
+      }),
+    );
+    return {
+      status: data.status as string,
+      signatures: sigs,
+      malformedDetail: (data.malformed_detail as string | null | undefined) ?? undefined,
+    };
+  }
+
+  async signImage(
+    inPath: string,
+    outPath: string,
+    options?: SignImageOptions,
+  ): Promise<SignImageResult> {
+    const opts: Record<string, unknown> = {
+      robust: options?.robust ?? false,
+      refuse_overwrite: options?.refuseOverwrite ?? false,
+      backup: !(options?.noBackup ?? false),
+    };
+    if (options?.format != null) opts.format_hint = options.format;
+    if (options?.unsafeBakMode != null) opts.unsafe_bak_mode = options.unsafeBakMode;
+    const data = await this.ffi.signImage(inPath, outPath, opts);
+    return {
+      outPath: data.out_path as string,
+      signerId: data.signer_id as string,
+      format: data.format as string,
+      robust: Boolean(data.robust ?? false),
+      backupPath: (data.backup_path as string | null | undefined) ?? undefined,
+    };
+  }
+
+  async verifyImage(
+    filePath: string,
+    options?: VerifyImageOptions,
+  ): Promise<VerifyImageResult> {
+    const opts: Record<string, unknown> = {
+      strict: options?.strict ?? false,
+      robust: options?.robust ?? false,
+    };
+    if (options?.keyDir != null) opts.key_dir = options.keyDir;
+    const data = await this.ffi.verifyImage(filePath, opts);
+    // binding-core flattens MediaVerifyStatus into a snake_case string via
+    // media_verify_result_to_json — `data.status` is always a plain string;
+    // the Malformed variant carries its detail in `malformed_detail`.
+    return {
+      status: String(data.status ?? ''),
+      signerId: (data.signer_id as string | null | undefined) ?? undefined,
+      algorithm: (data.algorithm as string | null | undefined) ?? undefined,
+      format: (data.format as string | null | undefined) ?? undefined,
+      embeddingChannels: (data.embedding_channels as string | null | undefined) ?? undefined,
+      malformedDetail: (data.malformed_detail as string | null | undefined) ?? undefined,
+    };
+  }
+
+  async extractMediaSignature(
+    filePath: string,
+    options?: ExtractMediaSignatureOptions,
+  ): Promise<ExtractMediaSignatureResult> {
+    const opts: Record<string, unknown> = {
+      raw_payload: options?.rawPayload ?? false,
+    };
+    const data = await this.ffi.extractMediaSignature(filePath, opts);
+    return {
+      present: Boolean(data.present ?? false),
+      payload: (data.payload as string | null | undefined) ?? undefined,
+    };
+  }
+
   /**
    * List email messages for this agent.
    *
@@ -1344,6 +1451,26 @@ export class HaiClient {
   async getMessage(messageId: string): Promise<EmailMessage> {
     const m = await this.ffi.getMessage(messageId);
     return this.parseEmailMessage(m);
+  }
+
+  /**
+   * Fetch the raw RFC 5322 MIME bytes for a message, suitable for local
+   * JACS verification via {@link verifyEmail}.
+   *
+   * Byte-fidelity (PRD R2): `rawEmail`, when present, is byte-identical to
+   * what JACS signed. Pair with `verifyEmail(rawEmail)` to verify offline.
+   *
+   * When `available` is `false`, `rawEmail` is `null` and `omittedReason`
+   * is one of `"not_stored"` (legacy row) or `"oversize"` (>25 MB cap).
+   *
+   * @param messageId - The message ID whose raw bytes to fetch.
+   */
+  async getRawEmail(messageId: string): Promise<RawEmailResult> {
+    if (!messageId) {
+      throw new HaiError("'messageId' is required");
+    }
+    const wire = await this.ffi.getRawEmail(messageId);
+    return parseRawEmailJson(wire);
   }
 
   /**
@@ -1796,10 +1923,12 @@ export class HaiClient {
         return result;
       }
 
-      // Remove signature, canonicalize, verify via JACS
+      // Remove signature, canonicalize, verify via JACS.
+      // canonicalJson hard-errors without an agent (RFC 8785 delegation only —
+      // no local sortedKeyJson fallback), so we pass `this.agent` explicitly.
       const verifyDoc = JSON.parse(JSON.stringify(doc)) as Record<string, unknown>;
       delete (verifyDoc.jacsSignature as Record<string, unknown>).signature;
-      const canonical = canonicalJson(verifyDoc);
+      const canonical = canonicalJson(verifyDoc, this.agent);
 
       result.signatureValid = this.agent.verifyStringSync(
         canonical,
@@ -1843,4 +1972,309 @@ export class HaiClient {
       createdAt: (data.created_at as string) || '',
     };
   }
+
+  // ---------------------------------------------------------------------------
+  // JACS Document Store (20 methods)
+  //
+  // Thin delegations to the FFI adapter, which routes through napi-rs to
+  // RemoteJacsProvider in Rust. Naming follows the fixture's
+  // `jacs_document_store` group (camelCase per Node convention).
+  // ---------------------------------------------------------------------------
+
+  /** Store a pre-signed JACS document. Returns the record key (`id:version`). */
+  async storeDocument(signedJson: string): Promise<string> {
+    return this.ffi.storeDocument(signedJson);
+  }
+
+  /** Sign + store a JSON document. Returns the SignedDocument shape. */
+  async signAndStore(dataJson: string): Promise<Record<string, unknown>> {
+    return this.ffi.signAndStore(dataJson);
+  }
+
+  /** Fetch a document by key (`id` or `id:version`). Returns the signed envelope JSON. */
+  async getDocument(key: string): Promise<string> {
+    return this.ffi.getDocument(key);
+  }
+
+  /** Fetch the latest version of a document by id. */
+  async getLatestDocument(docId: string): Promise<string> {
+    return this.ffi.getLatestDocument(docId);
+  }
+
+  /** List all versions of a document. */
+  async getDocumentVersions(docId: string): Promise<string[]> {
+    return this.ffi.getDocumentVersions(docId);
+  }
+
+  /** List document keys, optionally filtered by `jacsType`. */
+  async listDocuments(jacsType?: string | null): Promise<string[]> {
+    return this.ffi.listDocuments(jacsType ?? null);
+  }
+
+  /** Tombstone (soft-delete) a document. */
+  async removeDocument(key: string): Promise<void> {
+    await this.ffi.removeDocument(key);
+  }
+
+  /** Update a document, creating a new signed version. */
+  async updateDocument(
+    docId: string,
+    signedJson: string,
+  ): Promise<Record<string, unknown>> {
+    return this.ffi.updateDocument(docId, signedJson);
+  }
+
+  /** Search documents (fulltext / hybrid). */
+  async searchDocuments(
+    query: string,
+    limit = 25,
+    offset = 0,
+  ): Promise<Record<string, unknown>> {
+    return this.ffi.searchDocuments(query, limit, offset);
+  }
+
+  /** Query documents by `jacsType`. */
+  async queryByType(
+    docType: string,
+    limit = 25,
+    offset = 0,
+  ): Promise<string[]> {
+    return this.ffi.queryByType(docType, limit, offset);
+  }
+
+  /** Query documents by an envelope field. */
+  async queryByField(
+    field: string,
+    value: string,
+    limit = 25,
+    offset = 0,
+  ): Promise<string[]> {
+    return this.ffi.queryByField(field, value, limit, offset);
+  }
+
+  /** Query documents signed by a specific agent. */
+  async queryByAgent(
+    agentId: string,
+    limit = 25,
+    offset = 0,
+  ): Promise<string[]> {
+    return this.ffi.queryByAgent(agentId, limit, offset);
+  }
+
+  /** Report storage backend capabilities. */
+  async storageCapabilities(): Promise<Record<string, unknown>> {
+    return this.ffi.storageCapabilities();
+  }
+
+  /** Sign and store a `MEMORY.md` record. If `content` is null, reads from CWD. */
+  async saveMemory(content?: string | null): Promise<string> {
+    return this.ffi.saveMemory(content ?? null);
+  }
+
+  /** Sign and store a `SOUL.md` record. */
+  async saveSoul(content?: string | null): Promise<string> {
+    return this.ffi.saveSoul(content ?? null);
+  }
+
+  /** Fetch the latest MEMORY record's signed envelope JSON. */
+  async getMemory(): Promise<string | null> {
+    return this.ffi.getMemory();
+  }
+
+  /** Fetch the latest SOUL record's signed envelope JSON. */
+  async getSoul(): Promise<string | null> {
+    return this.ffi.getSoul();
+  }
+
+  /** Read a signed-text file and POST it to the records endpoint. */
+  async storeTextFile(path: string): Promise<string> {
+    return this.ffi.storeTextFile(path);
+  }
+
+  /** POST a signed image file. */
+  async storeImageFile(path: string): Promise<string> {
+    return this.ffi.storeImageFile(path);
+  }
+
+  /** Fetch raw record bytes (no UTF-8 decode, no JSON parse). */
+  async getRecordBytes(key: string): Promise<Uint8Array> {
+    return this.ffi.getRecordBytes(key);
+  }
+}
+
+// =============================================================================
+// Standalone registerNewAgent() -- FTUX bootstrap (no HaiClient needed)
+// =============================================================================
+
+/** Options shared between the class method and the standalone helper. */
+interface RegisterNewAgentCommonOptions {
+  ownerEmail: string;
+  domain?: string;
+  description?: string;
+  quiet?: boolean;
+  registrationKey?: string;
+  algorithm?: string;
+  keyDir?: string;
+  dataDir?: string;
+  configPath?: string;
+  password?: string;
+}
+
+/**
+ * Parse the raw-email FFI wire JSON into a language-native
+ * {@link RawEmailResult}, decoding base64 into a `Buffer`.
+ *
+ * Single decode site (PRD §4.5 DRY): this is the only place in the Node
+ * SDK that converts `raw_email_b64` → `Buffer`.
+ */
+function parseRawEmailJson(wire: Record<string, unknown>): RawEmailResult {
+  const b64 = wire.raw_email_b64;
+  let rawEmail: Buffer | null = null;
+  if (typeof b64 === 'string' && b64.length > 0) {
+    rawEmail = Buffer.from(b64, 'base64');
+  }
+  const sizeBytes = wire.size_bytes;
+  const omittedReason = wire.omitted_reason;
+  const rfcMessageId = wire.rfc_message_id;
+  return {
+    messageId: typeof wire.message_id === 'string' ? wire.message_id : '',
+    rfcMessageId: typeof rfcMessageId === 'string' ? rfcMessageId : null,
+    available: wire.available === true,
+    rawEmail,
+    sizeBytes: typeof sizeBytes === 'number' ? sizeBytes : null,
+    omittedReason: typeof omittedReason === 'string' ? omittedReason : null,
+  };
+}
+
+/**
+ * Build the snake_case FFI payload that the Rust `registerNewAgent`
+ * entry point expects. Keys mirror the Python SDK exactly:
+ *   agent_name, password, algorithm, owner_email, base_url,
+ *   key_directory, data_directory, config_path, description,
+ *   [domain], [registration_key]
+ */
+function resolveRegisterNewAgentOptions(
+  agentName: string,
+  opts: RegisterNewAgentCommonOptions & { baseUrl: string },
+): Record<string, unknown> {
+  if (!opts.ownerEmail) {
+    throw new HaiError(
+      'ownerEmail is required -- agents must be associated with a verified HAI user',
+    );
+  }
+
+  const nodePath = require('node:path') as typeof import('node:path');
+  const nodeOs = require('node:os') as typeof import('node:os');
+
+  const keyDir = opts.keyDir
+    ? nodePath.resolve(opts.keyDir.replace(/^~(?=$|\/)/, nodeOs.homedir()))
+    : nodePath.join(nodeOs.homedir(), '.jacs', 'keys');
+  const dataDir = opts.dataDir
+    ? nodePath.resolve(opts.dataDir.replace(/^~(?=$|\/)/, nodeOs.homedir()))
+    : nodePath.join(nodePath.dirname(keyDir), 'data');
+  const configPath = nodePath.resolve(opts.configPath ?? './jacs.config.json');
+
+  const password = opts.password ?? process.env.JACS_PRIVATE_KEY_PASSWORD;
+  if (!password) {
+    throw new HaiError(
+      'password is required: pass options.password or set JACS_PRIVATE_KEY_PASSWORD',
+    );
+  }
+
+  const payload: Record<string, unknown> = {
+    agent_name: agentName,
+    password,
+    algorithm: opts.algorithm ?? 'pq2025',
+    owner_email: opts.ownerEmail,
+    base_url: opts.baseUrl,
+    key_directory: keyDir,
+    data_directory: dataDir,
+    config_path: configPath,
+    description: opts.description ?? 'Agent registered via Node SDK',
+  };
+  if (opts.domain) payload.domain = opts.domain;
+  if (opts.registrationKey) payload.registration_key = opts.registrationKey;
+  return payload;
+}
+
+/** Convert the raw FFI response into a RegistrationResult. */
+function toRegistrationResult(data: Record<string, unknown>): RegistrationResult {
+  return {
+    success: true,
+    agentId: (data.agent_id as string) || (data.agentId as string) || '',
+    jacsId: (data.jacs_id as string) || (data.jacsId as string) || '',
+    haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
+    registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
+    registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
+    keyDirectory: (data.key_directory as string) || (data.keyDirectory as string) || '',
+    publicKeyPath: (data.public_key_path as string) || (data.publicKeyPath as string) || undefined,
+    dnsRecord: (data.dns_record as string) || (data.dnsRecord as string) || undefined,
+    rawResponse: data,
+  };
+}
+
+/** Print post-registration guidance to stdout (unless quiet). */
+function printRegistrationGuidance(
+  data: Record<string, unknown>,
+  opts: { quiet?: boolean; domain?: string; ownerEmail: string; configPath?: string },
+): void {
+  if (opts.quiet) return;
+  const keyDir = (data.key_directory as string) || (data.keyDirectory as string) || '';
+  const configPath = opts.configPath ?? './jacs.config.json';
+  console.log('\nAgent created and submitted for registration!');
+  console.log(`  -> Check your email (${opts.ownerEmail}) for a verification link`);
+  console.log('  -> Your agent is registered with username from your reservation');
+  console.log(`  -> Config saved to ${configPath}`);
+  if (keyDir) console.log(`  -> Keys saved to ${keyDir}`);
+  console.log('  -> Private key encrypted using JACS_PASSWORD_FILE/JACS_PRIVATE_KEY_PASSWORD');
+
+  if (opts.domain) {
+    const dnsRecord = (data.dns_record as string) || '';
+    console.log('\n--- DNS Setup Instructions ---');
+    console.log(`Add this TXT record to your domain '${opts.domain}':`);
+    console.log(`  Name:  _jacs.${opts.domain}`);
+    console.log('  Type:  TXT');
+    console.log(`  Value: ${dnsRecord || 'sha256:<your_public_key_hash>'}`);
+    console.log('DNS verification enables the pro tier.\n');
+  } else {
+    console.log();
+  }
+}
+
+/**
+ * Standalone agent-registration helper for the FTUX bootstrap case.
+ *
+ * Unlike {@link HaiClient.registerNewAgent}, this function does NOT
+ * require a pre-existing jacs.config.json -- it builds a minimal FFI
+ * adapter with only `base_url` and delegates the full keygen + sign +
+ * register flow to the Rust `registerNewAgent` FFI entry point.
+ *
+ * Mirrors the Python SDK's top-level `register_new_agent(...)`.
+ *
+ * @example
+ * ```typescript
+ * import { registerNewAgent } from '@haiai/haiai';
+ *
+ * const result = await registerNewAgent('my-agent', {
+ *   ownerEmail: 'dev@example.com',
+ *   haiUrl: 'https://beta.hai.ai',
+ *   password: 'hunter2',
+ * });
+ * console.log(result.agentId, result.jacsId);
+ * ```
+ */
+export async function registerNewAgent(
+  agentName: string,
+  options: RegisterNewAgentCommonOptions & { haiUrl?: string },
+): Promise<RegistrationResult> {
+  const baseUrl = options.haiUrl ?? DEFAULT_BASE_URL;
+  const payload = resolveRegisterNewAgentOptions(agentName, { ...options, baseUrl });
+
+  // Minimal FFI adapter config: just base_url. Mirrors Python client.py:2568.
+  const ffiConfig = JSON.stringify({ base_url: baseUrl });
+  const ffi = await FFIClientAdapter.create(ffiConfig);
+  const data = await ffi.registerNewAgent(payload);
+
+  printRegistrationGuidance(data, options);
+  return toRegistrationResult(data);
 }

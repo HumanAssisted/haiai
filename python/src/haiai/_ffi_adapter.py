@@ -212,6 +212,13 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
+    def get_raw_email(self, message_id: str) -> dict[str, Any]:
+        try:
+            raw = self._native.get_raw_email_sync(message_id)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
     def get_unread_count(self) -> int:
         try:
             raw = self._native.get_unread_count_sync()
@@ -308,6 +315,43 @@ class FFIAdapter:
     def verify_email_raw(self, raw_email_b64: str) -> dict[str, Any]:
         try:
             raw = self._native.verify_email_raw_sync(raw_email_b64)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # --- Local Media (Layer 8 / TASK_007) ---
+
+    def sign_text(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.sign_text_sync(path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def verify_text(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.verify_text_sync(path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def sign_image(self, in_path: str, out_path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.sign_image_sync(in_path, out_path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def verify_image(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.verify_image_sync(path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def extract_media_signature(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.extract_media_signature_sync(path, json.dumps(opts))
             return json.loads(raw)
         except RuntimeError as err:
             raise map_ffi_error(err) from err
@@ -498,6 +542,154 @@ class FFIAdapter:
         try:
             raw = self._native.export_agent_json_sync()
             return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # --- JACS Document Store (sync surface) ---
+    #
+    # All 20 methods round-trip through the haiipy native binding's `*_sync`
+    # shims onto `RemoteJacsProvider` (the Rust SDK's HTTP-backed JACS doc
+    # store). The 13 trait CRUD/query methods plus 4 D5 (save_memory /
+    # save_soul / get_memory / get_soul) and 3 D9 (store_text_file /
+    # store_image_file / get_record_bytes) helpers are all wired end-to-end.
+    # Errors from the native layer surface as RuntimeError("Kind: message")
+    # which `map_ffi_error` translates into the SDK's typed exceptions.
+
+    def store_document(self, signed_json: str) -> str:
+        try:
+            return self._native.store_document_sync(signed_json)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def sign_and_store(self, data_json: str) -> dict[str, Any]:
+        try:
+            raw = self._native.sign_and_store_sync(data_json)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def get_document(self, key: str) -> str:
+        try:
+            return self._native.get_document_sync(key)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def get_latest_document(self, doc_id: str) -> str:
+        try:
+            return self._native.get_latest_document_sync(doc_id)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def get_document_versions(self, doc_id: str) -> list[str]:
+        # Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
+        try:
+            raw = self._native.get_document_versions_sync(doc_id)
+            return list(json.loads(raw))
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def list_documents(self, jacs_type: Optional[str] = None) -> list[str]:
+        # Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
+        try:
+            raw = self._native.list_documents_sync(jacs_type)
+            return list(json.loads(raw))
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def remove_document(self, key: str) -> None:
+        try:
+            self._native.remove_document_sync(key)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def update_document(self, doc_id: str, signed_json: str) -> dict[str, Any]:
+        try:
+            raw = self._native.update_document_sync(doc_id, signed_json)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def search_documents(self, query: str, limit: int, offset: int) -> dict[str, Any]:
+        try:
+            raw = self._native.search_documents_sync(query, limit, offset)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def query_by_type(self, doc_type: str, limit: int, offset: int) -> list[str]:
+        # Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
+        try:
+            raw = self._native.query_by_type_sync(doc_type, limit, offset)
+            return list(json.loads(raw))
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def query_by_field(
+        self, field: str, value: str, limit: int, offset: int
+    ) -> list[str]:
+        # Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
+        try:
+            raw = self._native.query_by_field_sync(field, value, limit, offset)
+            return list(json.loads(raw))
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def query_by_agent(self, agent_id: str, limit: int, offset: int) -> list[str]:
+        # Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
+        try:
+            raw = self._native.query_by_agent_sync(agent_id, limit, offset)
+            return list(json.loads(raw))
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def storage_capabilities(self) -> dict[str, Any]:
+        try:
+            raw = self._native.storage_capabilities_sync()
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # D5 — MEMORY / SOUL convenience wrappers
+    def save_memory(self, content: Optional[str] = None) -> str:
+        try:
+            return self._native.save_memory_sync(content)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def save_soul(self, content: Optional[str] = None) -> str:
+        try:
+            return self._native.save_soul_sync(content)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def get_memory(self) -> Optional[str]:
+        try:
+            return self._native.get_memory_sync()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def get_soul(self) -> Optional[str]:
+        try:
+            return self._native.get_soul_sync()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # D9 — typed-content helpers
+    def store_text_file(self, path: str) -> str:
+        try:
+            return self._native.store_text_file_sync(path)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def store_image_file(self, path: str) -> str:
+        try:
+            return self._native.store_image_file_sync(path)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def get_record_bytes(self, key: str) -> bytes:
+        try:
+            return self._native.get_record_bytes_sync(key)
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
@@ -722,6 +914,13 @@ class AsyncFFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
+    async def get_raw_email(self, message_id: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.get_raw_email(message_id)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
     async def get_unread_count(self) -> int:
         try:
             raw = await self._native.get_unread_count()
@@ -818,6 +1017,43 @@ class AsyncFFIAdapter:
     async def verify_email_raw(self, raw_email_b64: str) -> dict[str, Any]:
         try:
             raw = await self._native.verify_email_raw(raw_email_b64)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # --- Local Media (Layer 8 / TASK_007) ---
+
+    async def sign_text(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.sign_text(path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def verify_text(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.verify_text(path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def sign_image(self, in_path: str, out_path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.sign_image(in_path, out_path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def verify_image(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.verify_image(path, json.dumps(opts))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def extract_media_signature(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.extract_media_signature(path, json.dumps(opts))
             return json.loads(raw)
         except RuntimeError as err:
             raise map_ffi_error(err) from err
@@ -1008,6 +1244,152 @@ class AsyncFFIAdapter:
         try:
             raw = await self._native.export_agent_json()
             return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # --- JACS Document Store (async surface — Issue 025) ---
+
+    async def store_document(self, signed_json: str) -> str:
+        try:
+            return await self._native.store_document(signed_json)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def sign_and_store(self, data_json: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.sign_and_store(data_json)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def get_document(self, key: str) -> str:
+        try:
+            return await self._native.get_document(key)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def get_latest_document(self, doc_id: str) -> str:
+        try:
+            return await self._native.get_latest_document(doc_id)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def get_document_versions(self, doc_id: str) -> list[str]:
+        # Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
+        try:
+            raw = await self._native.get_document_versions(doc_id)
+            return list(json.loads(raw))
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def list_documents(self, jacs_type: Optional[str] = None) -> list[str]:
+        # Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
+        try:
+            raw = await self._native.list_documents(jacs_type)
+            return list(json.loads(raw))
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def remove_document(self, key: str) -> None:
+        try:
+            await self._native.remove_document(key)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def update_document(self, doc_id: str, signed_json: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.update_document(doc_id, signed_json)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def search_documents(
+        self, query: str, limit: int, offset: int
+    ) -> dict[str, Any]:
+        try:
+            raw = await self._native.search_documents(query, limit, offset)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def query_by_type(
+        self, doc_type: str, limit: int, offset: int
+    ) -> list[str]:
+        # Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
+        try:
+            raw = await self._native.query_by_type(doc_type, limit, offset)
+            return list(json.loads(raw))
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def query_by_field(
+        self, field: str, value: str, limit: int, offset: int
+    ) -> list[str]:
+        # Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
+        try:
+            raw = await self._native.query_by_field(field, value, limit, offset)
+            return list(json.loads(raw))
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def query_by_agent(
+        self, agent_id: str, limit: int, offset: int
+    ) -> list[str]:
+        # Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
+        try:
+            raw = await self._native.query_by_agent(agent_id, limit, offset)
+            return list(json.loads(raw))
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def storage_capabilities(self) -> dict[str, Any]:
+        try:
+            raw = await self._native.storage_capabilities()
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # D5 — MEMORY / SOUL convenience wrappers
+    async def save_memory(self, content: Optional[str] = None) -> str:
+        try:
+            return await self._native.save_memory(content)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def save_soul(self, content: Optional[str] = None) -> str:
+        try:
+            return await self._native.save_soul(content)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def get_memory(self) -> Optional[str]:
+        try:
+            return await self._native.get_memory()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def get_soul(self) -> Optional[str]:
+        try:
+            return await self._native.get_soul()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # D9 — typed-content helpers
+    async def store_text_file(self, path: str) -> str:
+        try:
+            return await self._native.store_text_file(path)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def store_image_file(self, path: str) -> str:
+        try:
+            return await self._native.store_image_file(path)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def get_record_bytes(self, key: str) -> bytes:
+        try:
+            return await self._native.get_record_bytes(key)
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 

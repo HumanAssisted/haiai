@@ -1,8 +1,13 @@
 use haiai::{
-    generate_verify_link, generate_verify_link_hosted, CreateEmailTemplateOptions, HaiClient,
-    JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions, RegisterAgentOptions,
-    SearchOptions, SendEmailOptions, UpdateEmailTemplateOptions,
+    generate_verify_link, generate_verify_link_hosted, media_verify_status_to_str,
+    text_signature_status_to_str, CreateEmailTemplateOptions, HaiClient, JacsDocumentProvider,
+    JacsMediaProvider, JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions,
+    LocalJacsProvider, MediaVerifyStatus, RegisterAgentOptions, RemoteJacsProvider,
+    RemoteJacsProviderOptions, SearchOptions, SendEmailOptions, SignImageOptions, SignTextOptions,
+    TextSignatureStatus, UpdateEmailTemplateOptions, VerifyImageOptions, VerifyTextOptions,
+    VerifyTextResult,
 };
+use jacs_mcp::path_policy::{resolve_input_path, resolve_output_path};
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
 use rmcp::ErrorData as McpError;
 use serde_json::{json, Value};
@@ -50,6 +55,21 @@ pub fn has_tool(name: &str) -> bool {
             | "hai_get_email_template"
             | "hai_update_email_template"
             | "hai_delete_email_template"
+            | "hai_get_raw_email"
+            // Layer 8: Local Media (TASK_005)
+            | "hai_sign_text"
+            | "hai_verify_text"
+            | "hai_sign_image"
+            | "hai_verify_image"
+            | "hai_extract_media_signature"
+            // Issue 004: D5 / D9 record-store wrappers
+            | "hai_save_memory"
+            | "hai_get_memory"
+            | "hai_save_soul"
+            | "hai_get_soul"
+            | "hai_store_text_file"
+            | "hai_store_image_file"
+            | "hai_get_record_bytes"
     )
 }
 
@@ -94,6 +114,20 @@ pub async fn dispatch(
         "hai_get_email_template" => call_get_email_template(context, &args).await,
         "hai_update_email_template" => call_update_email_template(context, &args).await,
         "hai_delete_email_template" => call_delete_email_template(context, &args).await,
+        "hai_get_raw_email" => call_get_raw_email(context, &args).await,
+        "hai_sign_text" => call_sign_text(context, &args).await,
+        "hai_verify_text" => call_verify_text(context, &args).await,
+        "hai_sign_image" => call_sign_image(context, &args).await,
+        "hai_verify_image" => call_verify_image(context, &args).await,
+        "hai_extract_media_signature" => call_extract_media_signature(context, &args).await,
+        // Issue 004: D5 / D9 record-store wrappers
+        "hai_save_memory" => call_save_memory(context, &args).await,
+        "hai_get_memory" => call_get_memory(context, &args).await,
+        "hai_save_soul" => call_save_soul(context, &args).await,
+        "hai_get_soul" => call_get_soul(context, &args).await,
+        "hai_store_text_file" => call_store_text_file(context, &args).await,
+        "hai_store_image_file" => call_store_image_file(context, &args).await,
+        "hai_get_record_bytes" => call_get_record_bytes(context, &args).await,
         _ => Err(ToolError::InvalidParams(format!(
             "unknown HAI tool: {name}"
         ))),
@@ -480,6 +514,185 @@ fn definition_values() -> Vec<Value> {
                 "required": ["template_id"]
             }
         }),
+        json!({
+            "name": "hai_get_raw_email",
+            "description": "Fetch the raw RFC 5322 MIME bytes for a message, suitable for local JACS verification via verify_email. Returns base64-encoded raw MIME.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "message_id": { "type": "string", "description": "Message UUID" },
+                    "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["message_id"]
+            }
+        }),
+        // Layer 8: Local Media (TASK_005)
+        json!({
+            "name": "hai_sign_text",
+            "description": "Sign a text/markdown file in place by appending a JACS YAML signature block. Local-only — no HAI server roundtrip. Path must be relative.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Relative path to the file to sign" },
+                    "no_backup": { "type": "boolean", "description": "Skip writing <path>.bak before modifying" },
+                    "allow_duplicate": { "type": "boolean", "description": "Re-add a signature even if already valid for this signer" },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "hai_verify_text",
+            "description": "Verify all JACS signature blocks in a text file. Local-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Relative path to the signed file" },
+                    "key_dir": { "type": "string", "description": "Optional directory of <signer_id>.public.pem files" },
+                    "strict": { "type": "boolean", "description": "Treat missing/malformed as failure (default permissive)" },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "hai_sign_image",
+            "description": "Sign a PNG/JPEG/WebP image by embedding a JACS signature in metadata. Local-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "input_path": { "type": "string", "description": "Relative input image path" },
+                    "output_path": { "type": "string", "description": "Relative output path for the signed image" },
+                    "robust": { "type": "boolean", "description": "Also embed via LSB steganography (PNG/JPEG only — WebP unsupported)" },
+                    "format": { "type": "string", "description": "Reserved (png|jpeg|webp). Currently a no-op: the underlying jacs sign_image always magic-detects format from input bytes (JACS REVIEW_002 — dead parameter pending upstream fix). Passed through unchanged for forward compatibility." },
+                    "refuse_overwrite": { "type": "boolean", "description": "Refuse to overwrite an existing JACS signature in the input" },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
+                },
+                "required": ["input_path", "output_path"]
+            }
+        }),
+        json!({
+            "name": "hai_verify_image",
+            "description": "Verify the JACS signature embedded in an image. Local-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "file_path": { "type": "string", "description": "Relative path to the signed image" },
+                    "key_dir": { "type": "string", "description": "Optional directory of <signer_id>.public.pem files" },
+                    "strict": { "type": "boolean", "description": "Treat missing signature as failure (default permissive)" },
+                    "robust": { "type": "boolean", "description": "Scan the LSB channel if the metadata channel is absent" },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
+                },
+                "required": ["file_path"]
+            }
+        }),
+        json!({
+            "name": "hai_extract_media_signature",
+            "description": "Extract the JACS signature payload from a signed image without verifying. Local-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "file_path": { "type": "string", "description": "Relative path to the signed image" },
+                    "raw_payload": { "type": "boolean", "description": "Return the raw base64url-no-pad wire payload (default: decoded JSON string)" },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
+                },
+                "required": ["file_path"]
+            }
+        }),
+        // ===================================================================
+        // Issue 004: D5 MEMORY / SOUL convenience wrappers (4 tools).
+        //
+        // These are thin wrappers on top of the generic record CRUD that set
+        // jacsType="memory" or jacsType="soul". The server treats them as
+        // ordinary records; the convenience is purely SDK-side so LLMs see
+        // them as discoverable named tools (PRD §4.5).
+        // ===================================================================
+        json!({
+            "name": "hai_save_memory",
+            "description": "Sign and store a MEMORY record on hai-api. Reads MEMORY.md from CWD when no `content` is provided. Returns the record key (id:version). The hai-api URL is pinned at MCP startup via HAI_URL — runtime overrides are not supported.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": { "type": "string", "description": "Inline memory text. If omitted, MEMORY.md is read from the current working directory." },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_get_memory",
+            "description": "Fetch the latest MEMORY record's signed envelope. Returns null when no memory record exists for the caller.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "config_path": { "type": "string" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_save_soul",
+            "description": "Sign and store a SOUL record on hai-api. Reads SOUL.md from CWD when no `content` is provided. Returns the record key.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "content": { "type": "string" },
+                    "config_path": { "type": "string" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_get_soul",
+            "description": "Fetch the latest SOUL record's signed envelope. Returns null when no soul record exists for the caller.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "config_path": { "type": "string" }
+                }
+            }
+        }),
+        // ===================================================================
+        // Issue 004: D9 typed-content helpers (3 tools).
+        //
+        // Read a local file, set the right Content-Type, POST to hai-api.
+        // Pre-flight refusal happens for unsigned bytes; the server runs the
+        // real verifier on the upload.
+        // ===================================================================
+        json!({
+            "name": "hai_store_text_file",
+            "description": "Read a JACS-signed markdown file (with -----BEGIN JACS SIGNATURE----- block) and POST it as text/markdown; profile=jacs-text-v1. Returns the record key.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Relative path to the signed markdown file" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "hai_store_image_file",
+            "description": "Detect a signed image's format from leading magic bytes and POST it with image/png|jpeg|webp. The bytes must already carry a JACS chunk (sign with hai_sign_image first). Returns the record key.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Relative path to the signed image file" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["path"]
+            }
+        }),
+        json!({
+            "name": "hai_get_record_bytes",
+            "description": "Fetch the raw record bytes from hai-api by key (id:version). No UTF-8 decode, no JSON parse — used when reading binary content like signed images. Bytes are returned as base64.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string", "description": "Record key in `id:version` format" },
+                    "config_path": { "type": "string" }
+                },
+                "required": ["key"]
+            }
+        }),
     ]
 }
 
@@ -694,6 +907,417 @@ async fn call_get_message(context: &HaiServerContext, args: &Value) -> ToolResul
             result.from_address, result.to_address, result.subject
         ),
         json!({ "message": result }),
+    ))
+}
+
+async fn call_get_raw_email(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let message_id = required_string(args, "message_id")?;
+    let client = prepare_email_client(context, args).await?;
+    let result = client
+        .get_raw_email(message_id)
+        .await
+        .map_err(tool_message)?;
+
+    // Emit the wire JSON verbatim (base64 preserved) — mirrors
+    // sign_email_raw / verify_email_raw. MCP clients that know JACS
+    // decode raw_email_b64 themselves.
+    let wire = result.to_wire_json();
+    let summary = if result.available {
+        format!(
+            "raw email message_id={} size_bytes={}",
+            result.message_id,
+            result.size_bytes.unwrap_or(0)
+        )
+    } else {
+        format!(
+            "raw email unavailable message_id={} omitted_reason={}",
+            result.message_id,
+            result.omitted_reason.as_deref().unwrap_or("unknown"),
+        )
+    };
+    Ok(success_tool_result(summary, wire))
+}
+
+// =============================================================================
+// Layer 8: Local Media (TASK_005)
+// =============================================================================
+//
+// Each handler validates a relative path through `jacs_mcp::path_policy`
+// (Issue 014 — six-layer policy: structural / base-dir / canonicalisation /
+// symlink rejection / output-overwrite gate / backup-placement). Resolved
+// canonical PathBuf is forwarded to the EmbeddedJacsProvider. The handler
+// wraps the result into the haiai-MCP envelope shape: { success, ...result
+// fields, error?: "..." }. Mirrors call_send_email's envelope shape, NOT
+// JACS-MCP's.
+
+fn guard_input_path(label: &str, path: &str) -> Result<String, ToolError> {
+    resolve_input_path(path)
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| {
+            ToolError::Message(format!(
+                "PATH_POLICY_BLOCKED: {label} '{path}' rejected: {e}"
+            ))
+        })
+}
+
+fn guard_output_path(label: &str, path: &str) -> Result<String, ToolError> {
+    resolve_output_path(path)
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| {
+            ToolError::Message(format!(
+                "PATH_POLICY_BLOCKED: {label} '{path}' rejected: {e}"
+            ))
+        })
+}
+
+// Issue 011: status-string helpers were hoisted into `haiai::jacs` so the
+// wire labels are produced from one canonical source. These local helpers
+// were dropped; call `media_verify_status_to_str` /
+// `text_signature_status_to_str` directly.
+
+async fn call_sign_text(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let raw_path = required_string(args, "path")?;
+    // sign-text is in-place: the input file is also the output. Use the
+    // input resolver (resolve_input_path allows the existing file; the
+    // overwrite-policy gate is irrelevant for in-place rewrites).
+    let path = guard_input_path("path", raw_path)?;
+    let no_backup = optional_bool(args, "no_backup").unwrap_or(false);
+    let allow_duplicate = optional_bool(args, "allow_duplicate").unwrap_or(false);
+
+    let provider = context
+        .embedded_provider(optional_string(args, "config_path"))
+        .map_err(tool_message)?;
+    // Issue 010: use ..Default::default() so future JACS field additions
+    // (e.g., a new SignTextOptions field) don't break this call site.
+    let opts = SignTextOptions {
+        backup: !no_backup,
+        allow_duplicate,
+        ..SignTextOptions::default()
+    };
+    let outcome = provider.sign_text_file(&path, opts).map_err(tool_message)?;
+    Ok(success_tool_result(
+        format!(
+            "signed text {} (signers_added={})",
+            outcome.path, outcome.signers_added
+        ),
+        json!({
+            "success": true,
+            "path": outcome.path,
+            "signers_added": outcome.signers_added,
+            "backup_path": outcome.backup_path,
+        }),
+    ))
+}
+
+async fn call_verify_text(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let raw_path = required_string(args, "path")?;
+    let path = guard_input_path("path", raw_path)?;
+    let strict = optional_bool(args, "strict").unwrap_or(false);
+    let key_dir = optional_string(args, "key_dir").map(std::path::PathBuf::from);
+
+    let provider = context
+        .embedded_provider(optional_string(args, "config_path"))
+        .map_err(tool_message)?;
+    // Force permissive mode at the JACS layer so missing-signature is a
+    // structured outcome (`VerifyTextResult::MissingSignature`) rather than a
+    // strict-mode `Err`. The MCP envelope then derives `success` from `strict`
+    // here — keeping verify_text and verify_image symmetric (Issue 006).
+    let opts = VerifyTextOptions {
+        strict: false,
+        key_dir,
+    };
+    let result = provider.verify_text_file(&path, opts).map_err(tool_message)?;
+
+    let (status, sigs, malformed_detail) = match &result {
+        VerifyTextResult::Signed { signatures } => {
+            let entries: Vec<Value> = signatures
+                .iter()
+                .map(|sig| {
+                    json!({
+                        "signer_id": sig.signer_id,
+                        "algorithm": sig.algorithm,
+                        "timestamp": sig.timestamp,
+                        "status": text_signature_status_to_str(&sig.status),
+                    })
+                })
+                .collect();
+            ("signed", entries, None)
+        }
+        VerifyTextResult::MissingSignature => ("missing_signature", vec![], None),
+        VerifyTextResult::Malformed(d) => ("malformed", vec![], Some(d.clone())),
+    };
+
+    // Mirror call_verify_image's strict semantics: missing signature is a
+    // soft failure under permissive mode (default) and a hard failure under
+    // strict. Malformed and non-Valid signed entries are always failures.
+    let success = match &result {
+        VerifyTextResult::Signed { signatures } => signatures
+            .iter()
+            .all(|s| s.status == TextSignatureStatus::Valid),
+        VerifyTextResult::MissingSignature => !strict,
+        VerifyTextResult::Malformed(_) => false,
+    };
+
+    let mut envelope = json!({
+        "success": success,
+        "status": status,
+        "signatures": sigs,
+    });
+    if let Some(detail) = &malformed_detail {
+        envelope["malformed_detail"] = Value::String(detail.clone());
+    }
+    if !success {
+        envelope["error"] = Value::String(format!(
+            "verify_text reported {status}{}",
+            malformed_detail
+                .as_deref()
+                .map(|d| format!(": {d}"))
+                .unwrap_or_default()
+        ));
+    }
+    let summary = format!("verify text {} -> {}", path, status);
+    Ok(success_tool_result(summary, envelope))
+}
+
+async fn call_sign_image(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let raw_input = required_string(args, "input_path")?;
+    let raw_output = required_string(args, "output_path")?;
+    let resolved_input = guard_input_path("input_path", raw_input)?;
+    // Mirror JACS-MCP: the in-place sign case (input == output) reuses the
+    // input resolution; a distinct write target goes through the output
+    // policy (overwrite gate, layer 5).
+    let resolved_output = if raw_input == raw_output {
+        resolved_input.clone()
+    } else {
+        guard_output_path("output_path", raw_output)?
+    };
+    let robust = optional_bool(args, "robust").unwrap_or(false);
+    let refuse_overwrite = optional_bool(args, "refuse_overwrite").unwrap_or(false);
+    let format_hint = optional_string(args, "format").map(str::to_string);
+
+    let provider = context
+        .embedded_provider(optional_string(args, "config_path"))
+        .map_err(tool_message)?;
+    // Issue 010: use ..Default::default() so future JACS field additions
+    // (e.g., a new SignImageOptions field) don't break this call site.
+    let opts = SignImageOptions {
+        robust,
+        format_hint,
+        refuse_overwrite,
+        ..SignImageOptions::default()
+    };
+    let signed = provider
+        .sign_image(&resolved_input, &resolved_output, opts)
+        .map_err(tool_message)?;
+
+    Ok(success_tool_result(
+        format!(
+            "signed image {} -> {} (format={}, robust={})",
+            raw_input, signed.out_path, signed.format, signed.robust
+        ),
+        json!({
+            "success": true,
+            "out_path": signed.out_path,
+            "signer_id": signed.signer_id,
+            "format": signed.format,
+            "robust": signed.robust,
+            "backup_path": signed.backup_path,
+        }),
+    ))
+}
+
+async fn call_verify_image(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let raw_path = required_string(args, "file_path")?;
+    let file_path = guard_input_path("file_path", raw_path)?;
+    let strict = optional_bool(args, "strict").unwrap_or(false);
+    let robust = optional_bool(args, "robust").unwrap_or(false);
+    let key_dir = optional_string(args, "key_dir").map(std::path::PathBuf::from);
+
+    let provider = context
+        .embedded_provider(optional_string(args, "config_path"))
+        .map_err(tool_message)?;
+    // Always invoke JACS in permissive mode so a missing signature comes back
+    // as a structured `MediaVerifyStatus::MissingSignature` instead of an
+    // `Err(JacsError::MissingSignature)` that would otherwise propagate as an
+    // error envelope. The strict-vs-permissive decision (which sets the
+    // envelope's `success` boolean) is applied here at the MCP boundary.
+    let opts = VerifyImageOptions {
+        base: VerifyTextOptions {
+            strict: false,
+            key_dir,
+        },
+        scan_robust: robust,
+    };
+    let result = provider.verify_image(&file_path, opts).map_err(tool_message)?;
+
+    let status = media_verify_status_to_str(&result.status);
+    let success = match &result.status {
+        MediaVerifyStatus::Valid => true,
+        MediaVerifyStatus::MissingSignature => !strict,
+        _ => false,
+    };
+
+    let mut envelope = json!({
+        "success": success,
+        "status": status,
+        "signer_id": result.signer_id,
+        "algorithm": result.algorithm,
+        "format": result.format,
+        "embedding_channels": result.embedding_channels,
+    });
+    if !success {
+        envelope["error"] = Value::String(format!("verify_image: {status}"));
+    }
+    Ok(success_tool_result(
+        format!("verify image {file_path} -> {status}"),
+        envelope,
+    ))
+}
+
+async fn call_extract_media_signature(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let raw_path = required_string(args, "file_path")?;
+    let file_path = guard_input_path("file_path", raw_path)?;
+    let raw_payload = optional_bool(args, "raw_payload").unwrap_or(false);
+
+    let provider = context
+        .embedded_provider(optional_string(args, "config_path"))
+        .map_err(tool_message)?;
+    let payload = provider
+        .extract_media_signature(&file_path, raw_payload)
+        .map_err(tool_message)?;
+
+    // Mirror the CLI exit-2-on-absent-payload semantic: a missing signature
+    // is a soft failure that downstream MCP clients should distinguish from
+    // a successful extraction. Without this, `if (result.success) use(...)`
+    // would proceed against a `payload: null` and silently misbehave.
+    let success = payload.is_some();
+    let mut envelope = json!({
+        "success": success,
+        "present": payload.is_some(),
+        "payload": payload,
+    });
+    if !success {
+        envelope["error"] = Value::String(format!(
+            "no JACS signature found in {file_path}"
+        ));
+    }
+
+    Ok(success_tool_result(
+        format!(
+            "extract media signature {file_path} -> present={}",
+            payload.is_some()
+        ),
+        envelope,
+    ))
+}
+
+// =============================================================================
+// Issue 004: D5 / D9 record-store handlers.
+//
+// These build a `RemoteJacsProvider` wrapping the local agent's signing
+// material and dispatch to the new trait methods on `JacsDocumentProvider`
+// (Issue 003). Local-only operations (sign_text/sign_image) use
+// `EmbeddedJacsProvider` directly; the record-store operations need the
+// network so they construct a fresh `RemoteJacsProvider<LocalJacsProvider>`.
+// =============================================================================
+
+fn build_remote_provider(
+    context: &HaiServerContext,
+    args: &Value,
+) -> Result<RemoteJacsProvider<LocalJacsProvider>, ToolError> {
+    // Issue 004: hai-mcp pins the outgoing hai-api URL at startup (HAI_URL env).
+    // Runtime hai_url overrides are explicitly NOT supported (matches the email
+    // path's `prepare_email_client` policy and the existing
+    // `hai_tool_definitions_do_not_expose_create_agent_or_runtime_hai_url_override`
+    // contract test).
+    let local = context
+        .local_provider(optional_string(args, "config_path"))
+        .map_err(ToolError::Message)?;
+    let base_url = context
+        .resolve_base_url(None)
+        .map_err(ToolError::Message)?;
+    RemoteJacsProvider::new(
+        local,
+        RemoteJacsProviderOptions {
+            base_url,
+            ..RemoteJacsProviderOptions::default()
+        },
+    )
+    .map_err(tool_message)
+}
+
+async fn call_save_memory(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let provider = build_remote_provider(context, args)?;
+    let content = optional_string(args, "content");
+    let key = JacsDocumentProvider::save_memory(&provider, content).map_err(tool_message)?;
+    Ok(success_tool_result(
+        format!("save_memory key={key}"),
+        json!({ "key": key }),
+    ))
+}
+
+async fn call_get_memory(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let provider = build_remote_provider(context, args)?;
+    let envelope = JacsDocumentProvider::get_memory(&provider).map_err(tool_message)?;
+    let success = envelope.is_some();
+    Ok(success_tool_result(
+        format!("get_memory present={}", success),
+        json!({ "present": success, "envelope": envelope }),
+    ))
+}
+
+async fn call_save_soul(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let provider = build_remote_provider(context, args)?;
+    let content = optional_string(args, "content");
+    let key = JacsDocumentProvider::save_soul(&provider, content).map_err(tool_message)?;
+    Ok(success_tool_result(
+        format!("save_soul key={key}"),
+        json!({ "key": key }),
+    ))
+}
+
+async fn call_get_soul(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let provider = build_remote_provider(context, args)?;
+    let envelope = JacsDocumentProvider::get_soul(&provider).map_err(tool_message)?;
+    let success = envelope.is_some();
+    Ok(success_tool_result(
+        format!("get_soul present={}", success),
+        json!({ "present": success, "envelope": envelope }),
+    ))
+}
+
+async fn call_store_text_file(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let raw_path = required_string(args, "path")?;
+    let path = guard_input_path("path", raw_path)?;
+    let provider = build_remote_provider(context, args)?;
+    let key = JacsDocumentProvider::store_text_file(&provider, &path).map_err(tool_message)?;
+    Ok(success_tool_result(
+        format!("store_text_file path={path} key={key}"),
+        json!({ "path": path, "key": key }),
+    ))
+}
+
+async fn call_store_image_file(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let raw_path = required_string(args, "path")?;
+    let path = guard_input_path("path", raw_path)?;
+    let provider = build_remote_provider(context, args)?;
+    let key = JacsDocumentProvider::store_image_file(&provider, &path).map_err(tool_message)?;
+    Ok(success_tool_result(
+        format!("store_image_file path={path} key={key}"),
+        json!({ "path": path, "key": key }),
+    ))
+}
+
+async fn call_get_record_bytes(context: &HaiServerContext, args: &Value) -> ToolResult {
+    use base64::Engine;
+    let key = required_string(args, "key")?;
+    let provider = build_remote_provider(context, args)?;
+    let bytes =
+        JacsDocumentProvider::get_record_bytes(&provider, key).map_err(tool_message)?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(success_tool_result(
+        format!("get_record_bytes key={key} bytes_len={}", bytes.len()),
+        json!({ "key": key, "bytes_b64": b64, "bytes_len": bytes.len() }),
     ))
 }
 
@@ -1318,6 +1942,120 @@ mod tests {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // TASK_005: Layer 8 (media-signing) tool registration tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn has_tool_includes_media_tools() {
+        for name in &[
+            "hai_sign_text",
+            "hai_verify_text",
+            "hai_sign_image",
+            "hai_verify_image",
+            "hai_extract_media_signature",
+        ] {
+            assert!(has_tool(name), "has_tool should return true for {name}");
+        }
+    }
+
+    #[test]
+    fn definitions_includes_media_tools() {
+        let names: Vec<String> = definitions()
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        for required in &[
+            "hai_sign_text",
+            "hai_verify_text",
+            "hai_sign_image",
+            "hai_verify_image",
+            "hai_extract_media_signature",
+        ] {
+            assert!(
+                names.iter().any(|n| n == required),
+                "definitions() missing {required}; got {names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mcp_tool_contract_total_count_is_39() {
+        // Issue 004: count bumped from 32 to 39 with the seven D5/D9 record-store
+        // tools (hai_save_memory, hai_get_memory, hai_save_soul, hai_get_soul,
+        // hai_store_text_file, hai_store_image_file, hai_get_record_bytes).
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/mcp_tool_contract.json");
+        let raw = std::fs::read_to_string(&path).expect("read mcp_tool_contract.json");
+        let val: Value = serde_json::from_str(&raw).expect("parse fixture");
+        let total = val["total_tool_count"]
+            .as_u64()
+            .expect("total_tool_count");
+        let count = val["required_tools"].as_array().expect("required_tools").len() as u64;
+        assert_eq!(total, 39);
+        assert_eq!(count, 39);
+    }
+
+    /// Issue 015: the `format` hint is a JACS REVIEW_002 dead parameter
+    /// today — the schema description must NOT promise it forces output
+    /// format. This test fails loudly if a future edit reverts to the
+    /// misleading "Force a format" wording, forcing an explicit doc edit
+    /// once JACS lands the encoder selection upstream.
+    #[test]
+    fn sign_image_format_schema_description_does_not_lie() {
+        let def = definition_values()
+            .into_iter()
+            .find(|t| t["name"].as_str() == Some("hai_sign_image"))
+            .expect("hai_sign_image registered");
+        let format_desc = def["inputSchema"]["properties"]["format"]["description"]
+            .as_str()
+            .expect("format description");
+        let lower = format_desc.to_lowercase();
+        assert!(
+            lower.contains("reserved")
+                || lower.contains("ignored")
+                || lower.contains("no-op"),
+            "format description must acknowledge upstream JACS REVIEW_002 \
+             (dead parameter); got: {format_desc}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sign_image_rejects_path_traversal() {
+        let context = build_context();
+        let result = dispatch(
+            &context,
+            "hai_sign_image",
+            Some(
+                json!({
+                    "input_path": "../foo.png",
+                    "output_path": "x.png"
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch result");
+
+        // Issue 014: traversal returns an error tool result with PATH_POLICY_BLOCKED
+        // (the canonical six-layer label). Layer 2/3 (structural) catches `..`
+        // before layer 1 (base-dir confinement) needs to run.
+        let text = result
+            .content
+            .first()
+            .and_then(|c| match c.raw {
+                rmcp::model::RawContent::Text(ref t) => Some(t.text.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        assert!(
+            text.contains("PATH_POLICY_BLOCKED"),
+            "expected PATH_POLICY_BLOCKED in error message, got: {text}"
+        );
+    }
+
     #[test]
     fn email_agent_id_override_does_not_persist_in_cached_state() {
         let context = build_context();
@@ -1377,7 +2115,7 @@ mod tests {
             "base_url": "https://example.com"
         }))
         .await
-        .expect("verify link result");
+        .expect("verify_url");
 
         let url = result
             .structured_content
@@ -1391,6 +2129,507 @@ mod tests {
         assert_eq!(
             result.content[0].as_text().map(|text| text.text.as_str()),
             Some(format!("verify_url={url}").as_str())
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue 004 / 005 / 006: MCP integration tests for media tools
+    //
+    // These exercise the dispatch path end-to-end (parse args -> guard ->
+    // embedded provider -> JACS call -> envelope serialization) using the
+    // fixture agent under `fixtures/jacs-agent/` plus a tempdir + chdir so
+    // `require_relative_path_safe` is satisfied. The pattern mirrors the
+    // jacs-mcp integration tests at jacs-mcp/tests/integration.rs which use
+    // the same chdir-into-tempdir strategy.
+    // -------------------------------------------------------------------------
+
+    /// Build an MCP context backed by a real fixture-loaded EmbeddedJacsProvider
+    /// (no `EmbeddedJacsProvider::testing` stub). Returns the context plus the
+    /// owned tempdir guard so caller fs writes stay alive for the test scope.
+    /// Uses `serial_test`-style chdir caller responsibility — caller wraps the
+    /// test body in `chdir` while the context is alive.
+    fn build_media_context_with_fixture()
+        -> (HaiServerContext, tempfile::TempDir, std::path::PathBuf)
+    {
+        use crate::embedded_provider::LoadedSharedAgent;
+
+        let (temp_dir, config_path) =
+            crate::embedded_provider::tests::write_temp_fixture_config_pub();
+        let shared = LoadedSharedAgent::load_from_config_path(&config_path)
+            .expect("load shared agent from fixture");
+        let embedded = shared.embedded_provider().expect("embedded provider");
+        let context = HaiServerContext::from_process_env(
+            shared.config_path().to_string_lossy().into_owned(),
+            None,
+            embedded,
+        );
+        (context, temp_dir, config_path)
+    }
+
+    /// Pull the structured envelope JSON out of a `CallToolResult`.
+    fn structured_of(result: &rmcp::model::CallToolResult) -> &Value {
+        result
+            .structured_content
+            .as_ref()
+            .expect("media tool result must include structured_content")
+    }
+
+    /// Minimal in-memory PNG bytes (mirrors embedded_provider tests).
+    fn make_test_png(width: u32, height: u32) -> Vec<u8> {
+        use image::ImageEncoder;
+        let img = image::RgbaImage::from_pixel(width, height, image::Rgba([32, 64, 128, 255]));
+        let mut buf = Vec::new();
+        let encoder = image::codecs::png::PngEncoder::new(&mut buf);
+        encoder
+            .write_image(
+                img.as_raw(),
+                width,
+                height,
+                image::ExtendedColorType::Rgba8,
+            )
+            .expect("png encode");
+        buf
+    }
+
+    /// Process-wide mutex to serialize all tests that mutate cwd.
+    /// Cargo runs tests in parallel by default; chdir is per-process state,
+    /// so concurrent media tests would race. The guard owns the lock
+    /// for the duration of the test.
+    static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Run a closure with the process cwd set to `dir`, restoring on drop.
+    /// `require_relative_path_safe` is what mandates this — it rejects empty
+    /// path segments which means an absolute path starting with `/` always
+    /// fails. Tests therefore chdir into the tempdir and pass relative names.
+    struct CwdGuard {
+        prev: std::path::PathBuf,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+    impl CwdGuard {
+        fn enter(dir: &std::path::Path) -> Self {
+            let lock = CWD_LOCK
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let prev = std::env::current_dir().expect("cwd");
+            std::env::set_current_dir(dir).expect("chdir into tempdir");
+            CwdGuard {
+                prev,
+                _lock: lock,
+            }
+        }
+    }
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.prev);
+        }
+    }
+
+    #[tokio::test]
+    async fn mcp_sign_image_round_trip() {
+        let (context, temp_dir, _config_path) = build_media_context_with_fixture();
+        let _guard = CwdGuard::enter(temp_dir.path());
+
+        std::fs::write("in.png", make_test_png(32, 32)).expect("write input png");
+
+        let result = dispatch(
+            &context,
+            "hai_sign_image",
+            Some(
+                json!({
+                    "input_path": "in.png",
+                    "output_path": "out.png"
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch sign_image");
+        let env = structured_of(&result);
+        assert_eq!(env["success"].as_bool(), Some(true), "envelope: {env}");
+        assert_eq!(env["format"].as_str(), Some("png"));
+        let signer_id = env["signer_id"].as_str().expect("signer_id").to_string();
+        assert!(!signer_id.is_empty());
+
+        // Verify it back through hai_verify_image.
+        let verify = dispatch(
+            &context,
+            "hai_verify_image",
+            Some(
+                json!({ "file_path": "out.png" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch verify_image");
+        let venv = structured_of(&verify);
+        assert_eq!(venv["success"].as_bool(), Some(true));
+        assert_eq!(venv["status"].as_str(), Some("valid"));
+        assert_eq!(venv["signer_id"].as_str(), Some(signer_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn mcp_sign_text_round_trip() {
+        let (context, temp_dir, _config_path) = build_media_context_with_fixture();
+        let _guard = CwdGuard::enter(temp_dir.path());
+
+        std::fs::write("hello.md", b"# Hello\n").expect("write md");
+
+        let signed = dispatch(
+            &context,
+            "hai_sign_text",
+            Some(
+                json!({ "path": "hello.md" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch sign_text");
+        let env = structured_of(&signed);
+        assert_eq!(env["success"].as_bool(), Some(true));
+        assert_eq!(env["signers_added"].as_u64(), Some(1));
+
+        let verified = dispatch(
+            &context,
+            "hai_verify_text",
+            Some(
+                json!({ "path": "hello.md" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch verify_text");
+        let venv = structured_of(&verified);
+        assert_eq!(venv["success"].as_bool(), Some(true));
+        assert_eq!(venv["status"].as_str(), Some("signed"));
+        assert!(venv["signatures"].as_array().unwrap().len() >= 1);
+    }
+
+    #[tokio::test]
+    async fn mcp_extract_media_signature_returns_payload() {
+        let (context, temp_dir, _config_path) = build_media_context_with_fixture();
+        let _guard = CwdGuard::enter(temp_dir.path());
+
+        std::fs::write("in.png", make_test_png(32, 32)).expect("write input png");
+        // Sign first.
+        dispatch(
+            &context,
+            "hai_sign_image",
+            Some(
+                json!({
+                    "input_path": "in.png",
+                    "output_path": "out.png"
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        )
+        .await
+        .expect("sign for extract test");
+
+        // Extract decoded payload.
+        let result = dispatch(
+            &context,
+            "hai_extract_media_signature",
+            Some(
+                json!({ "file_path": "out.png" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch extract");
+        let env = structured_of(&result);
+        // Issue 005 fix: success follows present
+        assert_eq!(env["success"].as_bool(), Some(true));
+        assert_eq!(env["present"].as_bool(), Some(true));
+        let payload = env["payload"].as_str().expect("payload string");
+        let parsed: Value = serde_json::from_str(payload).expect("decoded payload is JSON");
+        assert!(parsed.is_object());
+    }
+
+    #[tokio::test]
+    async fn mcp_extract_media_signature_unsigned_returns_success_false() {
+        // Issue 005: an unsigned PNG must produce success: false (mirrors
+        // the CLI exit-code 2 for "no signature found"). Without this,
+        // `if (env.success) use(env.payload)` proceeds against payload: null.
+        let (context, temp_dir, _config_path) = build_media_context_with_fixture();
+        let _guard = CwdGuard::enter(temp_dir.path());
+
+        std::fs::write("unsigned.png", make_test_png(32, 32)).expect("write unsigned");
+
+        let result = dispatch(
+            &context,
+            "hai_extract_media_signature",
+            Some(
+                json!({ "file_path": "unsigned.png" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch extract");
+        let env = structured_of(&result);
+        assert_eq!(env["success"].as_bool(), Some(false), "envelope: {env}");
+        assert_eq!(env["present"].as_bool(), Some(false));
+        assert!(env["error"].as_str().unwrap().contains("unsigned.png"));
+    }
+
+    #[tokio::test]
+    async fn mcp_verify_image_missing_signature_returns_status_field() {
+        // PRD §3.1 + Issue 004: permissive missing-signature returns
+        // success: true, status: "missing_signature".
+        let (context, temp_dir, _config_path) = build_media_context_with_fixture();
+        let _guard = CwdGuard::enter(temp_dir.path());
+
+        std::fs::write("unsigned.png", make_test_png(32, 32)).expect("write unsigned");
+
+        let result = dispatch(
+            &context,
+            "hai_verify_image",
+            Some(
+                json!({ "file_path": "unsigned.png" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch verify_image permissive");
+        let env = structured_of(&result);
+        assert_eq!(
+            env["status"].as_str(),
+            Some("missing_signature"),
+            "envelope: {env}"
+        );
+        assert_eq!(env["success"].as_bool(), Some(true));
+    }
+
+    #[tokio::test]
+    async fn mcp_verify_image_strict_missing_signature_returns_failure() {
+        let (context, temp_dir, _config_path) = build_media_context_with_fixture();
+        let _guard = CwdGuard::enter(temp_dir.path());
+
+        std::fs::write("unsigned.png", make_test_png(32, 32)).expect("write unsigned");
+
+        let result = dispatch(
+            &context,
+            "hai_verify_image",
+            Some(
+                json!({ "file_path": "unsigned.png", "strict": true })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch verify_image strict");
+        let env = structured_of(&result);
+        assert_eq!(env["success"].as_bool(), Some(false));
+        assert_eq!(env["status"].as_str(), Some("missing_signature"));
+        assert!(env["error"].as_str().unwrap().contains("missing_signature"));
+    }
+
+    #[tokio::test]
+    async fn mcp_verify_text_permissive_missing_returns_success_true() {
+        // Issue 006: was previously asymmetric with verify_image. Now both
+        // honor `!strict` for missing signatures.
+        let (context, temp_dir, _config_path) = build_media_context_with_fixture();
+        let _guard = CwdGuard::enter(temp_dir.path());
+
+        std::fs::write("unsigned.md", b"# untouched\n").expect("write");
+
+        let result = dispatch(
+            &context,
+            "hai_verify_text",
+            Some(
+                json!({ "path": "unsigned.md" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch verify_text permissive");
+        let env = structured_of(&result);
+        assert_eq!(env["status"].as_str(), Some("missing_signature"));
+        assert_eq!(
+            env["success"].as_bool(),
+            Some(true),
+            "permissive missing-text should succeed; envelope: {env}"
+        );
+        assert!(env.get("error").is_none() || env["error"].is_null());
+    }
+
+    #[tokio::test]
+    async fn mcp_verify_text_strict_missing_returns_success_false() {
+        let (context, temp_dir, _config_path) = build_media_context_with_fixture();
+        let _guard = CwdGuard::enter(temp_dir.path());
+
+        std::fs::write("unsigned.md", b"# untouched\n").expect("write");
+
+        let result = dispatch(
+            &context,
+            "hai_verify_text",
+            Some(
+                json!({ "path": "unsigned.md", "strict": true })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch verify_text strict");
+        let env = structured_of(&result);
+        assert_eq!(env["status"].as_str(), Some("missing_signature"));
+        assert_eq!(env["success"].as_bool(), Some(false));
+        assert!(env["error"].as_str().unwrap().contains("missing_signature"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Issue 014: six-layer path policy parity with JACS-MCP.
+    //
+    // These mirror `JACS/jacs-mcp/src/path_policy.rs:206-300` and pin the new
+    // canonical behavior so a regression — e.g., a future edit reverting to
+    // `require_relative_path_safe` only — would fail loudly. The CWD_LOCK +
+    // CwdGuard pattern already serializes these against other media tests
+    // (CWD is process-global). The env-var transitions inside the lock window
+    // run in a known order and never escape the test scope.
+    // -------------------------------------------------------------------------
+
+    /// Scoped env-var override that restores the previous value on drop.
+    /// Must be created INSIDE the CwdGuard scope so the CWD_LOCK serializes
+    /// env mutations against parallel test threads.
+    struct EnvVarGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+    impl EnvVarGuard {
+        // `set` is provided for symmetry with `unset`; current tests only
+        // need to ensure JACS_MCP_* vars are absent before dispatch, but a
+        // future overwrite-allowed test will use `set("JACS_MCP_OVERWRITE_OK", "1")`.
+        #[allow(dead_code)]
+        fn set(key: &'static str, value: &str) -> Self {
+            let prev = std::env::var(key).ok();
+            // SAFETY: callers create EnvVarGuard inside a CwdGuard window,
+            // which holds the process-wide CWD_LOCK and serializes env-var
+            // mutations against other media tests.
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            EnvVarGuard { key, prev }
+        }
+        fn unset(key: &'static str) -> Self {
+            let prev = std::env::var(key).ok();
+            unsafe {
+                std::env::remove_var(key);
+            }
+            EnvVarGuard { key, prev }
+        }
+    }
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match self.prev.take() {
+                    Some(v) => std::env::set_var(self.key, v),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn extract_media_signature_rejects_symlink_to_outside_basedir() {
+        use std::os::unix::fs::symlink;
+
+        let (context, temp_dir, _config_path) = build_media_context_with_fixture();
+        let outside = tempfile::tempdir().expect("outside tempdir");
+        let target = outside.path().join("secret.png");
+        std::fs::write(&target, make_test_png(8, 8)).expect("write outside target");
+        let link = temp_dir.path().join("link.png");
+        symlink(&target, &link).expect("symlink");
+
+        // Enter the base tempdir so path_policy uses it as base_dir
+        // (JACS_MCP_BASE_DIR is unset → falls back to CWD).
+        let _guard = CwdGuard::enter(temp_dir.path());
+        let _follow = EnvVarGuard::unset("JACS_MCP_FOLLOW_SYMLINKS");
+
+        let result = dispatch(
+            &context,
+            "hai_extract_media_signature",
+            Some(
+                json!({ "file_path": "link.png" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch extract");
+
+        let text = result
+            .content
+            .first()
+            .and_then(|c| match c.raw {
+                rmcp::model::RawContent::Text(ref t) => Some(t.text.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        assert!(
+            text.contains("PATH_POLICY_BLOCKED"),
+            "symlink to outside base dir must be rejected, got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sign_image_rejects_existing_output_without_overwrite_ok() {
+        let (context, temp_dir, _config_path) = build_media_context_with_fixture();
+        std::fs::write(temp_dir.path().join("in.png"), make_test_png(16, 16))
+            .expect("write input");
+        std::fs::write(temp_dir.path().join("existing.png"), b"existing bytes")
+            .expect("write existing output target");
+
+        let _guard = CwdGuard::enter(temp_dir.path());
+        let _ok = EnvVarGuard::unset("JACS_MCP_OVERWRITE_OK");
+
+        let result = dispatch(
+            &context,
+            "hai_sign_image",
+            Some(
+                json!({
+                    "input_path": "in.png",
+                    "output_path": "existing.png"
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch sign_image");
+
+        let text = result
+            .content
+            .first()
+            .and_then(|c| match c.raw {
+                rmcp::model::RawContent::Text(ref t) => Some(t.text.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        assert!(
+            text.contains("PATH_POLICY_BLOCKED") && text.contains("already exists"),
+            "existing output without overwrite-ok must be rejected, got: {text}"
         );
     }
 }

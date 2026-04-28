@@ -1,5 +1,5 @@
 // Client
-export { HaiClient, DEFAULT_BASE_URL } from './client.js';
+export { HaiClient, DEFAULT_BASE_URL, registerNewAgent } from './client.js';
 
 // Agent (high-level wrapper with agent.email.* namespace)
 export { Agent, EmailNamespace } from './agent.js';
@@ -8,10 +8,6 @@ export type { AgentOptions, SendOptions } from './agent.js';
 // MIME construction
 export { buildRfc5322Email } from './mime.js';
 export type { MimeSendEmailOptions, MimeEmailAttachment } from './mime.js';
-
-// Content hash computation (cross-SDK conformance)
-export { computeContentHash } from './hash.js';
-export type { ContentHashAttachment } from './hash.js';
 
 // Signing (all crypto delegated to JACS core)
 export {
@@ -133,6 +129,7 @@ export type {
   SendEmailOptions,
   SendEmailResult,
   EmailMessage,
+  RawEmailResult,
   ListMessagesOptions,
   SearchOptions,
   EmailStatus,
@@ -163,4 +160,16 @@ export type {
   VerifyAgentDocumentOnHaiOptions,
   HaiErrorCode,
   ApiErrorResponse,
+  // Layer 8: Local Media (TASK_008)
+  SignTextOptions,
+  SignTextResult,
+  VerifyTextOptions,
+  VerifyTextSignature,
+  VerifyTextResult,
+  SignImageOptions,
+  SignImageResult,
+  VerifyImageOptions,
+  VerifyImageResult,
+  ExtractMediaSignatureOptions,
+  ExtractMediaSignatureResult,
 } from './types.js';

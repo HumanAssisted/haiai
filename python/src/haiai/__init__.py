@@ -94,7 +94,6 @@ from haiai.errors import (
     SSEError,
     WebSocketError,
 )
-from haiai.hash import compute_content_hash
 from haiai.models import (
     AgentConfig,
     AgentVerificationResult,
@@ -104,6 +103,7 @@ from haiai.models import (
     EmailMessage,
     EmailStatus,
     EmailVerificationResultV2,
+    ExtractMediaSignatureResult,
     FieldResult,
     FieldStatus,
     FreeChaoticResult,
@@ -115,10 +115,16 @@ from haiai.models import (
     JobResponseResult,
     KeyRegistryResponse,
     PublicKeyInfo,
+    RawEmailResult,
     RegistrationResult,
     RotationResult,
     SendEmailResult,
+    SignImageResult,
+    SignTextResult,
     TranscriptMessage,
+    VerifyImageResult,
+    VerifyTextResult,
+    VerifyTextSignature,
 )
 from haiai import a2a
 from haiai import integrations
@@ -149,6 +155,7 @@ __all__ = [
     "EmailMessage",
     "EmailStatus",
     "EmailVerificationResultV2",
+    "ExtractMediaSignatureResult",
     "FieldResult",
     "FieldStatus",
     "FreeChaoticResult",
@@ -160,12 +167,16 @@ __all__ = [
     "JobResponseResult",
     "KeyRegistryResponse",
     "PublicKeyInfo",
+    "RawEmailResult",
     "RegistrationResult",
     "RotationResult",
     "SendEmailResult",
+    "SignImageResult",
+    "SignTextResult",
     "TranscriptMessage",
-    # Hash functions
-    "compute_content_hash",
+    "VerifyImageResult",
+    "VerifyTextResult",
+    "VerifyTextSignature",
     # Constants
     "DEFAULT_BASE_URL",
     "MAX_VERIFY_URL_LEN",

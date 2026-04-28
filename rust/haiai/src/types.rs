@@ -745,7 +745,23 @@ pub struct SignedDocument {
 pub struct DocSearchResults {
     /// The matched documents, ordered by relevance.
     pub results: Vec<DocSearchHit>,
-    /// Total number of matching documents (for pagination).
+    /// Number of hits returned in `results`.
+    ///
+    /// # Backend semantics (Issue 033)
+    ///
+    /// - **`LocalJacsProvider`** sets this to the number of hits returned for
+    ///   the current page. There is no global match count for local stores.
+    /// - **`RemoteJacsProvider`** sets this to the number of hits accumulated
+    ///   across the cursor walk (`results.len()`). The server uses cursor
+    ///   pagination (`next_cursor`) and does NOT return a global total.
+    ///
+    /// In both cases this is a LOWER BOUND on the matching set, not the global
+    /// match count. To detect "more results may exist", consumers should use
+    /// `next_cursor` on the underlying server response (cursor pagination is
+    /// the documented contract — see PRD §3.5).
+    ///
+    /// This field is preserved for backwards compatibility; future versions
+    /// may deprecate it in favour of `has_more: bool`.
     pub total_count: usize,
     /// Which search method the backend used.
     pub method: String,
@@ -966,6 +982,107 @@ pub struct ListEmailTemplatesResult {
     pub offset: i64,
 }
 
+/// Wire-format payload for `GET .../messages/{message_id}/raw`.
+///
+/// Internal to the client boundary. The public-facing type is
+/// [`RawEmailResponse`] with decoded `Vec<u8>` bytes.
+#[derive(Debug, Clone, Deserialize)]
+struct RawEmailWire {
+    #[serde(default)]
+    pub message_id: String,
+    #[serde(default)]
+    pub rfc_message_id: Option<String>,
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default)]
+    pub raw_email_b64: Option<String>,
+    #[serde(default)]
+    pub size_bytes: Option<usize>,
+    #[serde(default)]
+    pub omitted_reason: Option<String>,
+}
+
+/// Response from the raw email endpoint: the exact RFC 5322 bytes that
+/// JACS signed, suitable for local verification via `verify_email`.
+///
+/// Byte-fidelity is mandatory: `raw_email`, when present, is the exact
+/// bytes that crossed the wire from the sender through the server into
+/// the recipient mailbox — no normalization, no re-encoding.
+#[derive(Debug, Clone)]
+pub struct RawEmailResponse {
+    /// Internal DB id of the message (agent_email_messages.id).
+    pub message_id: String,
+    /// RFC 5322 Message-ID header value, if available.
+    pub rfc_message_id: Option<String>,
+    /// True when the server stored the raw bytes and they are returned here.
+    pub available: bool,
+    /// Exact raw MIME bytes, decoded from the base64 wire format.
+    /// `None` when `available` is false.
+    pub raw_email: Option<Vec<u8>>,
+    /// Size of `raw_email` in bytes (authoritative server-side count).
+    /// `None` when `available` is false.
+    pub size_bytes: Option<usize>,
+    /// Explains why `raw_email` is absent. One of:
+    /// - `"not_stored"`: legacy row predating the feature.
+    /// - `"oversize"`: MIME exceeded the 25 MB storage cap.
+    /// - `"reconstructed"`: inbound SMTP DATA hook could not deliver
+    ///   byte-identical wire bytes, so no bytes were persisted
+    ///   (Issue 012). Callers should fall back to IMAP/JMAP for
+    ///   bit-exact bytes.
+    /// - `None`: bytes are present (`available == true`).
+    pub omitted_reason: Option<String>,
+}
+
+impl TryFrom<RawEmailWire> for RawEmailResponse {
+    type Error = crate::error::HaiError;
+
+    fn try_from(wire: RawEmailWire) -> std::result::Result<Self, Self::Error> {
+        let raw_email = match wire.raw_email_b64 {
+            Some(b64) if !b64.is_empty() => {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(b64.as_bytes())
+                    .map_err(|e| crate::error::HaiError::Message(format!(
+                        "invalid base64 in raw_email_b64: {e}"
+                    )))?;
+                Some(bytes)
+            }
+            _ => None,
+        };
+        Ok(RawEmailResponse {
+            message_id: wire.message_id,
+            rfc_message_id: wire.rfc_message_id,
+            available: wire.available,
+            raw_email,
+            size_bytes: wire.size_bytes,
+            omitted_reason: wire.omitted_reason,
+        })
+    }
+}
+
+impl RawEmailResponse {
+    /// Parse a raw-email wire JSON value, decoding base64 at the boundary.
+    pub fn from_wire_json(value: serde_json::Value) -> crate::error::Result<Self> {
+        let wire: RawEmailWire = serde_json::from_value(value)?;
+        Self::try_from(wire)
+    }
+
+    /// Re-encode back to the JSON wire format (used by FFI boundary).
+    pub fn to_wire_json(&self) -> serde_json::Value {
+        let b64 = self
+            .raw_email
+            .as_ref()
+            .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes));
+        serde_json::json!({
+            "message_id": self.message_id,
+            "rfc_message_id": self.rfc_message_id,
+            "available": self.available,
+            "raw_email_b64": b64,
+            "size_bytes": self.size_bytes,
+            "omitted_reason": self.omitted_reason,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -982,5 +1099,83 @@ mod tests {
         let json = r#"{"success": true, "agent_id": "a1", "jacs_id": "j1"}"#;
         let result: RegistrationResult = serde_json::from_str(json).expect("deserialize");
         assert_eq!(result.email, None);
+    }
+
+    #[test]
+    fn raw_email_wire_deserializes_available_true() {
+        let input = b"raw MIME bytes \r\n with CRLF and \x00 NUL";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(input);
+        let json = serde_json::json!({
+            "message_id": "m-1",
+            "rfc_message_id": "<a@b>",
+            "available": true,
+            "raw_email_b64": b64,
+            "size_bytes": input.len(),
+            "omitted_reason": serde_json::Value::Null,
+        });
+        let resp = RawEmailResponse::from_wire_json(json).expect("parse");
+        assert_eq!(resp.message_id, "m-1");
+        assert_eq!(resp.rfc_message_id.as_deref(), Some("<a@b>"));
+        assert!(resp.available);
+        assert_eq!(resp.raw_email.as_deref(), Some(input.as_slice()));
+        assert_eq!(resp.size_bytes, Some(input.len()));
+        assert_eq!(resp.omitted_reason, None);
+    }
+
+    #[test]
+    fn raw_email_wire_deserializes_not_stored() {
+        let json = serde_json::json!({
+            "message_id": "m-2",
+            "available": false,
+            "raw_email_b64": serde_json::Value::Null,
+            "omitted_reason": "not_stored",
+        });
+        let resp = RawEmailResponse::from_wire_json(json).expect("parse");
+        assert!(!resp.available);
+        assert_eq!(resp.raw_email, None);
+        assert_eq!(resp.omitted_reason.as_deref(), Some("not_stored"));
+        assert_eq!(resp.size_bytes, None);
+    }
+
+    #[test]
+    fn raw_email_wire_deserializes_oversize() {
+        let json = serde_json::json!({
+            "message_id": "m-3",
+            "available": false,
+            "raw_email_b64": serde_json::Value::Null,
+            "omitted_reason": "oversize",
+        });
+        let resp = RawEmailResponse::from_wire_json(json).expect("parse");
+        assert!(!resp.available);
+        assert_eq!(resp.raw_email, None);
+        assert_eq!(resp.omitted_reason.as_deref(), Some("oversize"));
+    }
+
+    #[test]
+    fn raw_email_invalid_base64_returns_typed_error() {
+        let json = serde_json::json!({
+            "message_id": "m-4",
+            "available": true,
+            "raw_email_b64": "!!!not-base64!!!",
+        });
+        let err = RawEmailResponse::from_wire_json(json).expect_err("should fail");
+        let msg = format!("{err}");
+        assert!(msg.contains("base64"), "expected base64 error, got: {msg}");
+    }
+
+    #[test]
+    fn raw_email_to_wire_json_roundtrips_bytes() {
+        let bytes = b"binary: \r\n\x00\xff".to_vec();
+        let resp = RawEmailResponse {
+            message_id: "m-5".into(),
+            rfc_message_id: None,
+            available: true,
+            raw_email: Some(bytes.clone()),
+            size_bytes: Some(bytes.len()),
+            omitted_reason: None,
+        };
+        let wire = resp.to_wire_json();
+        let parsed = RawEmailResponse::from_wire_json(wire).expect("parse");
+        assert_eq!(parsed.raw_email, Some(bytes));
     }
 }

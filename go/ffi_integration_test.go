@@ -352,6 +352,10 @@ func (r *recordingFFIClient) GetMessage(messageID string) (json.RawMessage, erro
 	*r.calls = append(*r.calls, "GetMessage")
 	return r.inner.GetMessage(messageID)
 }
+func (r *recordingFFIClient) GetRawEmail(messageID string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "GetRawEmail")
+	return r.inner.GetRawEmail(messageID)
+}
 func (r *recordingFFIClient) GetUnreadCount() (json.RawMessage, error) {
 	*r.calls = append(*r.calls, "GetUnreadCount")
 	return r.inner.GetUnreadCount()
@@ -533,6 +537,29 @@ func (r *recordingFFIClient) DeleteEmailTemplate(templateID string) (json.RawMes
 	return r.inner.DeleteEmailTemplate(templateID)
 }
 
+// --- Local Media (Layer 8 / TASK_009) ---
+
+func (r *recordingFFIClient) SignText(path, optsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "SignText")
+	return r.inner.SignText(path, optsJSON)
+}
+func (r *recordingFFIClient) VerifyText(path, optsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "VerifyText")
+	return r.inner.VerifyText(path, optsJSON)
+}
+func (r *recordingFFIClient) SignImage(inPath, outPath, optsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "SignImage")
+	return r.inner.SignImage(inPath, outPath, optsJSON)
+}
+func (r *recordingFFIClient) VerifyImage(filePath, optsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "VerifyImage")
+	return r.inner.VerifyImage(filePath, optsJSON)
+}
+func (r *recordingFFIClient) ExtractMediaSignature(filePath, optsJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "ExtractMediaSignature")
+	return r.inner.ExtractMediaSignature(filePath, optsJSON)
+}
+
 // --- SSE Streaming ---
 
 func (r *recordingFFIClient) ConnectSSE() (uint64, error) {
@@ -561,6 +588,88 @@ func (r *recordingFFIClient) WSNextEvent(handleID uint64) (json.RawMessage, erro
 func (r *recordingFFIClient) WSClose(handleID uint64) {
 	*r.calls = append(*r.calls, "WSClose")
 	r.inner.WSClose(handleID)
+}
+
+// JACS Document Store methods (Issue 025) — recording wrappers.
+func (r *recordingFFIClient) StoreDocument(signedJSON string) (string, error) {
+	*r.calls = append(*r.calls, "StoreDocument")
+	return r.inner.StoreDocument(signedJSON)
+}
+func (r *recordingFFIClient) SignAndStore(dataJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "SignAndStore")
+	return r.inner.SignAndStore(dataJSON)
+}
+func (r *recordingFFIClient) GetDocument(key string) (string, error) {
+	*r.calls = append(*r.calls, "GetDocument")
+	return r.inner.GetDocument(key)
+}
+func (r *recordingFFIClient) GetLatestDocument(docID string) (string, error) {
+	*r.calls = append(*r.calls, "GetLatestDocument")
+	return r.inner.GetLatestDocument(docID)
+}
+func (r *recordingFFIClient) GetDocumentVersions(docID string) ([]string, error) {
+	*r.calls = append(*r.calls, "GetDocumentVersions")
+	return r.inner.GetDocumentVersions(docID)
+}
+func (r *recordingFFIClient) ListDocuments(jacsType string) ([]string, error) {
+	*r.calls = append(*r.calls, "ListDocuments")
+	return r.inner.ListDocuments(jacsType)
+}
+func (r *recordingFFIClient) RemoveDocument(key string) error {
+	*r.calls = append(*r.calls, "RemoveDocument")
+	return r.inner.RemoveDocument(key)
+}
+func (r *recordingFFIClient) UpdateDocument(docID, signedJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "UpdateDocument")
+	return r.inner.UpdateDocument(docID, signedJSON)
+}
+func (r *recordingFFIClient) SearchDocuments(query string, limit, offset int) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "SearchDocuments")
+	return r.inner.SearchDocuments(query, limit, offset)
+}
+func (r *recordingFFIClient) QueryByType(docType string, limit, offset int) ([]string, error) {
+	*r.calls = append(*r.calls, "QueryByType")
+	return r.inner.QueryByType(docType, limit, offset)
+}
+func (r *recordingFFIClient) QueryByField(field, value string, limit, offset int) ([]string, error) {
+	*r.calls = append(*r.calls, "QueryByField")
+	return r.inner.QueryByField(field, value, limit, offset)
+}
+func (r *recordingFFIClient) QueryByAgent(agentID string, limit, offset int) ([]string, error) {
+	*r.calls = append(*r.calls, "QueryByAgent")
+	return r.inner.QueryByAgent(agentID, limit, offset)
+}
+func (r *recordingFFIClient) StorageCapabilities() (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "StorageCapabilities")
+	return r.inner.StorageCapabilities()
+}
+func (r *recordingFFIClient) SaveMemory(content string) (string, error) {
+	*r.calls = append(*r.calls, "SaveMemory")
+	return r.inner.SaveMemory(content)
+}
+func (r *recordingFFIClient) SaveSoul(content string) (string, error) {
+	*r.calls = append(*r.calls, "SaveSoul")
+	return r.inner.SaveSoul(content)
+}
+func (r *recordingFFIClient) GetMemory() (string, error) {
+	*r.calls = append(*r.calls, "GetMemory")
+	return r.inner.GetMemory()
+}
+func (r *recordingFFIClient) GetSoul() (string, error) {
+	*r.calls = append(*r.calls, "GetSoul")
+	return r.inner.GetSoul()
+}
+func (r *recordingFFIClient) StoreTextFile(path string) (string, error) {
+	*r.calls = append(*r.calls, "StoreTextFile")
+	return r.inner.StoreTextFile(path)
+}
+func (r *recordingFFIClient) StoreImageFile(path string) (string, error) {
+	*r.calls = append(*r.calls, "StoreImageFile")
+	return r.inner.StoreImageFile(path)
+}
+func (r *recordingFFIClient) GetRecordBytes(key string) ([]byte, error) {
+	*r.calls = append(*r.calls, "GetRecordBytes")
+	return r.inner.GetRecordBytes(key)
 }
 
 // Compile-time check: recordingFFIClient satisfies FFIClient.

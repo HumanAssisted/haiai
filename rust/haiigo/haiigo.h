@@ -77,6 +77,7 @@ char *hai_list_messages(HaiClientHandle handle, const char *options_json);
 char *hai_update_labels(HaiClientHandle handle, const char *params_json);
 char *hai_get_email_status(HaiClientHandle handle);
 char *hai_get_message(HaiClientHandle handle, const char *message_id);
+char *hai_get_raw_email(HaiClientHandle handle, const char *message_id);
 char *hai_get_unread_count(HaiClientHandle handle);
 
 /* --------------------------------------------------------------------------

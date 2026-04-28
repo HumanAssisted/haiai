@@ -2,19 +2,18 @@ package haiai
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 )
 
 // SSEConnection represents an active SSE connection to HAI via FFI.
 type SSEConnection struct {
-	client   *Client
-	handleID uint64
-	events   chan AgentEvent
-	done     chan struct{}
-	cancel   context.CancelFunc
+	client    *Client
+	handleID  uint64
+	events    chan AgentEvent
+	done      chan struct{}
+	cancel    context.CancelFunc
+	lifecycle *streamLifecycle
 }
 
 // Events returns the channel that receives AgentEvent values from the server.
@@ -24,6 +23,10 @@ func (s *SSEConnection) Events() <-chan AgentEvent {
 
 // Close terminates the SSE connection.
 func (s *SSEConnection) Close() {
+	if s.lifecycle != nil {
+		s.lifecycle.close()
+		return
+	}
 	s.cancel()
 	s.client.ffi.SSEClose(s.handleID)
 	<-s.done
@@ -34,60 +37,27 @@ func (s *SSEConnection) Close() {
 // The returned SSEConnection provides an Events() channel that emits AgentEvent values.
 // Call Close() to terminate the connection.
 func (c *Client) ConnectSSE(ctx context.Context) (*SSEConnection, error) {
-	handleID, err := c.ffi.ConnectSSE()
+	lifecycle, err := openStreamLifecycle(
+		ctx,
+		c.ffi.ConnectSSE,
+		c.ffi.SSENextEvent,
+		c.ffi.SSEClose,
+		"SSE",
+	)
 	if err != nil {
-		return nil, mapFFIErr(err)
+		return nil, err
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
 	conn := &SSEConnection{
-		client:   c,
-		handleID: handleID,
-		events:   make(chan AgentEvent, 16),
-		done:     make(chan struct{}),
-		cancel:   cancel,
+		client:    c,
+		handleID:  lifecycle.handleID,
+		events:    lifecycle.events,
+		done:      lifecycle.done,
+		cancel:    lifecycle.cancel,
+		lifecycle: lifecycle,
 	}
-
-	go conn.readLoop(ctx)
 
 	return conn, nil
-}
-
-func (s *SSEConnection) readLoop(ctx context.Context) {
-	defer close(s.done)
-	defer close(s.events)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		raw, err := s.client.ffi.SSENextEvent(s.handleID)
-		if err != nil {
-			log.Printf("[haiai] SSE event error: %v", err)
-			return
-		}
-		if raw == nil {
-			// Connection closed by server
-			return
-		}
-
-		var event AgentEvent
-		if err := json.Unmarshal(raw, &event); err != nil {
-			log.Printf("[haiai] SSE unmarshal error: %v", err)
-			continue
-		}
-
-		select {
-		case s.events <- event:
-		case <-ctx.Done():
-			return
-		default:
-			log.Printf("[haiai] WARNING: SSE event dropped (channel full, buffer=%d): type=%s", cap(s.events), event.Type)
-		}
-	}
 }
 
 // ConnectSSEWithHandler connects via SSE and dispatches benchmark jobs to a handler.

@@ -360,6 +360,45 @@ class EmailMessage:
 
 
 @dataclass
+class RawEmailResult:
+    """Result of `get_raw_email` — raw RFC 5322 bytes for local JACS verification.
+
+    Byte-fidelity (PRD R2): `raw_email`, when present, is the exact bytes that
+    JACS signed. No trimming, no line-ending normalization, no UTF-8 lossy.
+
+    On `available: false`, `raw_email is None` and `omitted_reason` explains
+    why:
+      - "not_stored": legacy row predating the feature.
+      - "oversize": MIME exceeded the 25 MB storage cap.
+    """
+
+    message_id: str
+    available: bool
+    raw_email: Optional[bytes] = None
+    size_bytes: Optional[int] = None
+    omitted_reason: Optional[str] = None
+    rfc_message_id: Optional[str] = None
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> RawEmailResult:
+        """Parse the FFI wire JSON dict, base64-decoding bytes at the boundary."""
+        import base64 as _b64
+
+        b64 = data.get("raw_email_b64")
+        raw_bytes: Optional[bytes] = None
+        if b64:
+            raw_bytes = _b64.b64decode(b64)
+        return RawEmailResult(
+            message_id=data.get("message_id", ""),
+            available=bool(data.get("available", False)),
+            raw_email=raw_bytes,
+            size_bytes=data.get("size_bytes"),
+            omitted_reason=data.get("omitted_reason"),
+            rfc_message_id=data.get("rfc_message_id"),
+        )
+
+
+@dataclass
 class Contact:
     """A contact derived from email message history."""
 
@@ -543,3 +582,85 @@ class PublicKeyInfo:
     dns_verified: bool
     created_at: str
     public_key_raw_b64: str = ""
+
+
+# =============================================================================
+# Layer 8: Local Media (TASK_007 / JACS 0.10.0)
+# =============================================================================
+
+
+@dataclass
+class SignTextResult:
+    """Result of signing a text/markdown file."""
+
+    path: str
+    signers_added: int
+    backup_path: Optional[str] = None
+
+
+@dataclass
+class VerifyTextSignature:
+    """Per-block signature entry inside a `VerifyTextResult`.
+
+    ``status`` is one of ``"valid" | "invalid_signature" | "hash_mismatch" |
+    "key_not_found" | "unsupported_algorithm" | "malformed"``.
+    """
+
+    signer_id: str
+    algorithm: str
+    timestamp: str
+    status: str
+
+
+@dataclass
+class VerifyTextResult:
+    """Top-level result of verifying a signed text file.
+
+    ``status`` is one of ``"signed" | "missing_signature" | "malformed"``.
+    """
+
+    status: str
+    signatures: list[VerifyTextSignature] = field(default_factory=list)
+    malformed_detail: Optional[str] = None
+
+
+@dataclass
+class SignImageResult:
+    """Result of signing an image file (PNG/JPEG/WebP)."""
+
+    out_path: str
+    signer_id: str
+    format: str
+    robust: bool
+    backup_path: Optional[str] = None
+
+
+@dataclass
+class VerifyImageResult:
+    """Result of verifying a signed image.
+
+    ``status`` is one of ``"valid" | "invalid_signature" | "hash_mismatch" |
+    "missing_signature" | "key_not_found" | "unsupported_format" | "malformed"``.
+    ``malformed_detail`` carries the decoder error string when ``status ==
+    "malformed"``; ``None`` otherwise.
+    """
+
+    status: str
+    signer_id: Optional[str] = None
+    algorithm: Optional[str] = None
+    format: Optional[str] = None
+    embedding_channels: Optional[str] = None
+    malformed_detail: Optional[str] = None
+
+
+@dataclass
+class ExtractMediaSignatureResult:
+    """Result of extracting the JACS payload from a signed image.
+
+    ``payload`` is the decoded JSON string by default, or the base64url-no-pad
+    bytes when ``raw_payload=True`` was passed to ``extract_media_signature``.
+    """
+
+    present: bool
+    payload: Optional[str] = None
+

@@ -32,6 +32,12 @@ _agent: Any = None  # JacsAgent instance from JACS binding-core
 
 _REQUIRED_FIELDS = ("jacsAgentName", "jacsAgentVersion", "jacsKeyDir")
 
+# Canonical Rust-format JACS config fields (written by `haiai init` and JACS itself).
+# Detection: presence of `jacs_agent_id_and_version` + `jacs_key_directory` means
+# the config is in Rust-canonical format. The Python SDK previously only
+# understood the Python-wrapper (camelCase) form and produced a false-green.
+_CANONICAL_FIELDS = ("jacs_agent_id_and_version", "jacs_key_directory")
+
 
 def _trim_trailing_newlines(value: str) -> str:
     return value.rstrip("\r\n")
@@ -222,6 +228,96 @@ def _create_jacs_config(
     return str(jacs_config_path)
 
 
+def _parse_agent_id_and_version(value: str) -> tuple[str, str]:
+    """Split `"{agent_id}:{version}"` into its two UUID components.
+
+    Rust canonical configs store the agent identity as a single concatenated
+    field. The agent_id is stable across versions; the version changes on
+    each re-sign / rotation.
+    """
+    if ":" not in value:
+        raise ValueError(
+            f"Invalid jacs_agent_id_and_version (expected 'id:version'): {value!r}"
+        )
+    agent_id, version = value.split(":", 1)
+    if not agent_id or not version:
+        raise ValueError(
+            f"jacs_agent_id_and_version has empty component: {value!r}"
+        )
+    return agent_id, version
+
+
+def _resolve_absolute_dir(value: str, config_dir: Path) -> Path:
+    """Resolve a config-declared directory to an absolute path."""
+    p = Path(value)
+    if not p.is_absolute():
+        p = config_dir / p
+    return p
+
+
+def _read_agent_name_from_doc(data_dir: Path, id_and_version: str) -> str:
+    """Read `name` from the signed agent document on disk.
+
+    JACS stores the agent document at `{data_dir}/agent/{id:version}.json`.
+    The `name` isn't in the config file — it's a field of the signed
+    document. We only need it for `AgentConfig.name` (logging / display);
+    the FFI loads the real data from the config path we pass.
+    """
+    doc_path = data_dir / "agent" / f"{id_and_version}.json"
+    if not doc_path.is_file():
+        raise FileNotFoundError(
+            f"Agent document not found at {doc_path}. Either the config's "
+            f"jacs_data_directory is wrong or the agent hasn't been registered."
+        )
+    with open(doc_path, encoding="utf-8") as f:
+        doc = json.load(f)
+    name = doc.get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError(
+            f"Agent document at {doc_path} has no `name` field"
+        )
+    return name
+
+
+def _load_canonical(raw: dict, path: Path) -> tuple[AgentConfig, str]:
+    """Parse a Rust-canonical JACS config (snake_case). Returns (AgentConfig, config_path)."""
+    agent_id, version = _parse_agent_id_and_version(raw["jacs_agent_id_and_version"])
+    key_dir = _resolve_absolute_dir(raw["jacs_key_directory"], path.parent)
+    data_dir = _resolve_absolute_dir(
+        raw.get("jacs_data_directory", "data"), path.parent
+    )
+    name = _read_agent_name_from_doc(data_dir, raw["jacs_agent_id_and_version"])
+
+    cfg = AgentConfig(
+        name=name,
+        version=version,
+        key_dir=str(key_dir),
+        jacs_id=agent_id,
+    )
+    # The canonical config is already in the format SimpleAgent.load() expects,
+    # so we pass the path straight through — no shadow config needed.
+    return cfg, str(path)
+
+
+def _load_legacy(raw: dict, path: Path) -> tuple[AgentConfig, str]:
+    """Parse a legacy Python-wrapper config (camelCase). Returns (AgentConfig, shadow_config_path)."""
+    key_dir = _resolve_absolute_dir(raw["jacsKeyDir"], path.parent)
+    cfg = AgentConfig(
+        name=raw["jacsAgentName"],
+        version=raw["jacsAgentVersion"],
+        key_dir=str(key_dir),
+        jacs_id=raw.get("jacsId"),
+    )
+    jacs_config_path = _create_jacs_config(
+        name=raw["jacsAgentName"],
+        version=raw["jacsAgentVersion"],
+        key_dir=str(key_dir),
+        jacs_id=raw.get("jacsId"),
+        config_dir=path.parent,
+    )
+    return cfg, jacs_config_path
+
+
 def load(config_path: str | None = None) -> None:
     """Load JACS config and initialize a JacsAgent via binding-core.
 
@@ -248,41 +344,34 @@ def load(config_path: str | None = None) -> None:
     with open(path, encoding="utf-8") as f:
         raw = json.load(f)
 
-    missing = [k for k in _REQUIRED_FIELDS if k not in raw]
-    if missing:
+    # Detect which config format this is. The Rust CLI (`haiai init`) and the
+    # JACS library itself write canonical snake_case configs. Earlier Python
+    # SDK usage wrote a camelCase wrapper. Accept either.
+    is_canonical = all(k in raw for k in _CANONICAL_FIELDS)
+    has_legacy = all(k in raw for k in _REQUIRED_FIELDS)
+
+    if is_canonical:
+        _config, jacs_config_path = _load_canonical(raw, path)
+    elif has_legacy:
+        _config, jacs_config_path = _load_legacy(raw, path)
+    else:
+        missing_canonical = [k for k in _CANONICAL_FIELDS if k not in raw]
+        missing_legacy = [k for k in _REQUIRED_FIELDS if k not in raw]
         raise ValueError(
-            f"JACS config missing required fields: {', '.join(missing)}"
+            "JACS config has neither canonical nor legacy fields. "
+            f"Canonical missing: {', '.join(missing_canonical)}; "
+            f"Legacy missing: {', '.join(missing_legacy)}"
         )
-
-    key_dir = Path(raw["jacsKeyDir"])
-    if not key_dir.is_absolute():
-        key_dir = path.parent / key_dir
-
-    _config = AgentConfig(
-        name=raw["jacsAgentName"],
-        version=raw["jacsAgentVersion"],
-        key_dir=str(key_dir),
-        jacs_id=raw.get("jacsId"),
-    )
 
     # Validate password is configured (fail early)
     load_private_key_password()
 
     # Load agent from binding-core using SimpleAgent (handles key loading).
-    # Pass the original config path directly — JACS resolves relative paths
-    # (jacs_data_directory, jacs_key_directory) relative to the config file.
     try:
         from jacs import SimpleAgent as _SimpleAgent
     except ImportError:
         from jacs.jacs import SimpleAgent as _SimpleAgent  # type: ignore[no-redef]
 
-    jacs_config_path = _create_jacs_config(
-        name=raw["jacsAgentName"],
-        version=raw["jacsAgentVersion"],
-        key_dir=str(key_dir),
-        jacs_id=raw.get("jacsId"),
-        config_dir=path.parent,
-    )
     native_agent = _SimpleAgent.load(jacs_config_path)
 
     # Wrap in adapter for JacsAgent API compatibility

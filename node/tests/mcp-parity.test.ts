@@ -72,6 +72,22 @@ const MCP_TOOL_TO_FFI_METHODS: Record<string, string[]> = {
   hai_get_email_template: ['getEmailTemplate'],
   hai_update_email_template: ['updateEmailTemplate'],
   hai_delete_email_template: ['deleteEmailTemplate'],
+  hai_get_raw_email: ['getRawEmail'],
+  // Layer 8: local media (sign/verify/extract for inline text + images).
+  hai_sign_text: ['signText'],
+  hai_verify_text: ['verifyText'],
+  hai_sign_image: ['signImage'],
+  hai_verify_image: ['verifyImage'],
+  hai_extract_media_signature: ['extractMediaSignature'],
+  // Layer 9: jacs_document_store (save/get memory + soul, text/image files,
+  // record bytes). Mirrors python/tests/test_mcp_parity.py and Go.
+  hai_save_memory: ['saveMemory'],
+  hai_save_soul: ['saveSoul'],
+  hai_get_memory: ['getMemory'],
+  hai_get_soul: ['getSoul'],
+  hai_store_text_file: ['storeTextFile'],
+  hai_store_image_file: ['storeImageFile'],
+  hai_get_record_bytes: ['getRecordBytes'],
 };
 
 // ---------------------------------------------------------------------------

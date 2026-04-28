@@ -99,12 +99,13 @@ describe('shared init contract (node)', () => {
         registered_at: '2026-01-01T00:00:00Z',
       };
     });
-    client._setFFIAdapter(createMockFFI({ register: registerMock }));
+    client._setFFIAdapter(createMockFFI({ registerNewAgent: registerMock }));
 
     await client.registerNewAgent('bootstrap-agent', {
       ownerEmail: 'owner@hai.ai',
       domain: 'agent.example',
       description: 'Node shared init contract',
+      password: 'keygen-password',
       quiet: true,
     });
   });

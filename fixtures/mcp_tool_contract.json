@@ -1,7 +1,7 @@
 {
   "description": "Canonical MCP tool parity contract. The Rust MCP server (hai-mcp) must expose exactly these tools with matching names, properties, and required fields. Other SDKs validate against this fixture to ensure cross-language parity.",
-  "version": "2.0.0",
-  "total_tool_count": 26,
+  "version": "2.1.0",
+  "total_tool_count": 39,
   "required_tools": [
     {
       "name": "hai_hello",
@@ -306,6 +306,140 @@
       },
       "required": [
         "template_id"
+      ]
+    },
+    {
+      "name": "hai_get_raw_email",
+      "properties": {
+        "message_id": "string",
+        "agent_id": "string",
+        "config_path": "string"
+      },
+      "required": [
+        "message_id"
+      ]
+    },
+    {
+      "name": "hai_sign_text",
+      "properties": {
+        "path": "string",
+        "no_backup": "boolean",
+        "allow_duplicate": "boolean",
+        "config_path": "string"
+      },
+      "required": [
+        "path"
+      ]
+    },
+    {
+      "name": "hai_verify_text",
+      "properties": {
+        "path": "string",
+        "key_dir": "string",
+        "strict": "boolean",
+        "config_path": "string"
+      },
+      "required": [
+        "path"
+      ]
+    },
+    {
+      "name": "hai_sign_image",
+      "properties": {
+        "input_path": "string",
+        "output_path": "string",
+        "robust": "boolean",
+        "format": "string",
+        "refuse_overwrite": "boolean",
+        "config_path": "string"
+      },
+      "required": [
+        "input_path",
+        "output_path"
+      ]
+    },
+    {
+      "name": "hai_verify_image",
+      "properties": {
+        "file_path": "string",
+        "key_dir": "string",
+        "strict": "boolean",
+        "robust": "boolean",
+        "config_path": "string"
+      },
+      "required": [
+        "file_path"
+      ]
+    },
+    {
+      "name": "hai_extract_media_signature",
+      "properties": {
+        "file_path": "string",
+        "raw_payload": "boolean",
+        "config_path": "string"
+      },
+      "required": [
+        "file_path"
+      ]
+    },
+    {
+      "name": "hai_save_memory",
+      "properties": {
+        "content": "string",
+        "config_path": "string"
+      },
+      "required": []
+    },
+    {
+      "name": "hai_get_memory",
+      "properties": {
+        "config_path": "string"
+      },
+      "required": []
+    },
+    {
+      "name": "hai_save_soul",
+      "properties": {
+        "content": "string",
+        "config_path": "string"
+      },
+      "required": []
+    },
+    {
+      "name": "hai_get_soul",
+      "properties": {
+        "config_path": "string"
+      },
+      "required": []
+    },
+    {
+      "name": "hai_store_text_file",
+      "properties": {
+        "path": "string",
+        "config_path": "string"
+      },
+      "required": [
+        "path"
+      ]
+    },
+    {
+      "name": "hai_store_image_file",
+      "properties": {
+        "path": "string",
+        "config_path": "string"
+      },
+      "required": [
+        "path"
+      ]
+    },
+    {
+      "name": "hai_get_record_bytes",
+      "properties": {
+        "key": "string",
+        "config_path": "string"
+      },
+      "required": [
+        "key"
       ]
     }
   ]

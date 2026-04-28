@@ -13,10 +13,12 @@ import (
 type mockWSFFIClient struct {
 	*mockFFIClient
 
-	mu       sync.Mutex
-	events   []json.RawMessage
-	eventIdx int
-	closed   bool
+	mu         sync.Mutex
+	events     []json.RawMessage
+	eventIdx   int
+	closed     bool
+	closeCalls int
+	nextErr    error
 }
 
 func (m *mockWSFFIClient) ConnectWS() (uint64, error) {
@@ -30,6 +32,9 @@ func (m *mockWSFFIClient) WSNextEvent(handleID uint64) (json.RawMessage, error) 
 	if m.closed {
 		return nil, nil
 	}
+	if m.nextErr != nil {
+		return nil, m.nextErr
+	}
 	if m.eventIdx >= len(m.events) {
 		return nil, nil
 	}
@@ -42,6 +47,7 @@ func (m *mockWSFFIClient) WSClose(handleID uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.closed = true
+	m.closeCalls++
 }
 
 func newMockWSClient(t *testing.T, events []AgentEvent) (*Client, *mockWSFFIClient) {
@@ -81,7 +87,7 @@ func TestWSConnection(t *testing.T) {
 		{Type: "disconnect", Reason: "test done"},
 	}
 
-	cl, _ := newMockWSClient(t, events)
+	cl, mock := newMockWSClient(t, events)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -90,7 +96,6 @@ func TestWSConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConnectWS: %v", err)
 	}
-	defer conn.Close()
 
 	var received []AgentEvent
 	for event := range conn.Events() {
@@ -99,6 +104,7 @@ func TestWSConnection(t *testing.T) {
 			break
 		}
 	}
+	conn.Close()
 
 	if len(received) < 3 {
 		t.Fatalf("expected at least 3 events, got %d", len(received))
@@ -111,6 +117,12 @@ func TestWSConnection(t *testing.T) {
 	}
 	if received[1].JobID != "ws-job-1" {
 		t.Errorf("expected job_id 'ws-job-1', got '%s'", received[1].JobID)
+	}
+	if !mock.closed {
+		t.Error("expected WS handle to be closed after stream completion")
+	}
+	if mock.closeCalls != 1 {
+		t.Errorf("expected WS handle to close once, got %d", mock.closeCalls)
 	}
 }
 
@@ -175,5 +187,32 @@ func TestWSSendJobResponseReturnsError(t *testing.T) {
 	err := ws.SendJobResponse("job-1", ModerationResponse{Message: "test"})
 	if err == nil {
 		t.Fatal("expected error from SendJobResponse via FFI")
+	}
+}
+
+func TestWSConnectionClosesHandleOnReadError(t *testing.T) {
+	mock := &mockWSFFIClient{
+		mockFFIClient: newMockFFIClient("http://localhost", "test-jacs-id", "JACS test:123:sig"),
+		nextErr:       fmt.Errorf("stream failed"),
+	}
+	cl := &Client{ffi: mock}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	conn, err := cl.ConnectWS(ctx)
+	if err != nil {
+		t.Fatalf("ConnectWS: %v", err)
+	}
+
+	for range conn.Events() {
+		t.Fatal("expected no events when WSNextEvent returns an error")
+	}
+
+	if !mock.closed {
+		t.Fatal("expected WS handle to close after read error")
+	}
+	if mock.closeCalls != 1 {
+		t.Fatalf("expected WS handle to close once, got %d", mock.closeCalls)
 	}
 }

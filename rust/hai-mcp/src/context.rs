@@ -118,7 +118,10 @@ impl HaiServerContext {
         .map_err(|e| e.to_string())
     }
 
-    fn resolve_base_url(&self, base_url_override: Option<&str>) -> Result<String, String> {
+    /// Issue 004: exposed for the D5/D9 record-store tools, which build a
+    /// `RemoteJacsProvider` directly (not via `client_with_provider`) and need
+    /// the same startup-pinned base URL as the email path.
+    pub fn resolve_base_url(&self, base_url_override: Option<&str>) -> Result<String, String> {
         let configured = normalize_base_url(&self.base_url);
         match base_url_override {
             None => Ok(configured),

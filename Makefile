@@ -1,5 +1,6 @@
 .PHONY: test test-python test-node test-go test-rust \
-        build-python-ffi build-node-ffi \
+        smoke smoke-python smoke-node smoke-go \
+        build-python-ffi build-node-ffi build-haiigo \
         versions check-versions check-jacs-versions \
         bump-version bump-jacs-version \
         generate-knowledge check-knowledge \
@@ -42,11 +43,44 @@ test-python: build-python-ffi
 test-node:
 	cd node && npm ci && npm test
 
-test-go:
-	cd go && CGO_ENABLED=1 go test -race ./...
+test-go: build-haiigo
+	cd go && CGO_ENABLED=1 \
+	    CGO_LDFLAGS="-L$(CURDIR)/rust/target/release" \
+	    DYLD_LIBRARY_PATH="$(CURDIR)/rust/target/release" \
+	    LD_LIBRARY_PATH="$(CURDIR)/rust/target/release" \
+	    go test -race ./...
 
 test-rust:
 	cd rust && cargo test --workspace
+
+# ============================================================================
+# SMOKE — real-FFI smoke tests (skip cleanly when native artifacts missing)
+# ============================================================================
+#
+# Each smoke test loads the real native binding (haiipy / haiinpm / libhaiigo)
+# and round-trips `save_memory("smoke")` against a real local HTTP listener.
+# This is the one test category that catches FFI-method-shape regressions
+# (i.e. surface declared but not implemented in the native layer).
+#
+# Smoke tests are SKIPPED when the native binding isn't built — they don't
+# fail. To run them, build the native artifacts first:
+#   make build-python-ffi build-node-ffi
+#   cargo build -p haiigo --release   # produces rust/target/release/libhaiigo.dylib
+
+smoke: smoke-python smoke-node smoke-go
+
+smoke-python:
+	cd python && pytest -m native_smoke -v
+
+smoke-node:
+	cd node && npm test -- --run ffi-native-smoke
+
+smoke-go:
+	cd go && CGO_ENABLED=1 \
+	    CGO_LDFLAGS="-L$(CURDIR)/rust/target/release" \
+	    DYLD_LIBRARY_PATH="$(CURDIR)/rust/target/release" \
+	    LD_LIBRARY_PATH="$(CURDIR)/rust/target/release" \
+	    go test -tags cgo_smoke -run NativeSmoke -v ./...
 
 # ============================================================================
 # BUILD (local FFI wheel builds for development)
@@ -57,6 +91,9 @@ build-python-ffi:
 
 build-node-ffi:
 	cd rust/haiinpm && npm install && npm run build
+
+build-haiigo:
+	cd rust && cargo build -p haiigo --release
 
 # ============================================================================
 # KNOWLEDGE (self-knowledge document embedding)

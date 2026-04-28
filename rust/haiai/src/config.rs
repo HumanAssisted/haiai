@@ -118,15 +118,16 @@ fn resolve_config_path(path: Option<&Path>) -> PathBuf {
 
 /// Validate a routed backend label for DocumentService-backed operations.
 ///
-/// Accepts: `fs`, `rusqlite`, `sqlite` (alias for `rusqlite`).
+/// Accepts: `fs`, `rusqlite`, `sqlite` (alias for `rusqlite`), `remote`.
 /// Returns the canonical label on success, or an error with valid options on failure.
 pub fn resolve_storage_backend_label(label: &str) -> Result<String> {
     match label {
         "fs" => Ok("fs".to_string()),
         "rusqlite" | "sqlite" => Ok("rusqlite".to_string()),
+        "remote" => Ok("remote".to_string()),
         other => Err(HaiError::ConfigInvalid {
             message: format!(
-                "Unsupported storage backend '{}'. Valid routed labels: fs, rusqlite, sqlite",
+                "Unsupported storage backend '{}'. Valid routed labels: fs, rusqlite, sqlite, remote",
                 other
             ),
         }),
@@ -244,8 +245,13 @@ fn get_string(data: &Value, keys: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::Mutex;
 
     use super::*;
+
+    /// Shared serialisation guard for tests that mutate `JACS_STORAGE` env var.
+    /// Without this, parallel test threads race and produce non-deterministic failures.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn resolves_relative_paths_from_config_location() {
@@ -330,6 +336,51 @@ mod tests {
     }
 
     #[test]
+    fn resolve_storage_backend_label_accepts_remote() {
+        assert_eq!(
+            resolve_storage_backend_label("remote").expect("ok"),
+            "remote"
+        );
+    }
+
+    #[test]
+    fn resolve_storage_backend_label_error_lists_remote() {
+        let err = resolve_storage_backend_label("bogus").expect_err("must error");
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("remote"),
+            "error must list remote in valid options: {msg}"
+        );
+    }
+
+    #[test]
+    fn resolve_storage_backend_env_var_remote() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let saved = env::var("JACS_STORAGE").ok();
+        env::set_var("JACS_STORAGE", "remote");
+        let r = resolve_storage_backend(None, Some(Path::new("/nonexistent/path.json")))
+            .expect("ok");
+        if let Some(v) = saved {
+            env::set_var("JACS_STORAGE", v);
+        } else {
+            env::remove_var("JACS_STORAGE");
+        }
+        assert_eq!(r, "remote");
+    }
+
+    #[test]
+    fn resolve_storage_backend_explicit_param_remote() {
+        let r = resolve_storage_backend(Some("remote"), None).expect("ok");
+        assert_eq!(r, "remote");
+    }
+
+    #[test]
+    fn redacted_display_includes_remote() {
+        let summary = redacted_display(Some("remote"), None);
+        assert_eq!(summary.backend, "remote");
+    }
+
+    #[test]
     fn redacted_display_explicit_flag() {
         let summary = redacted_display(Some("rusqlite"), None);
         assert_eq!(summary.backend, "rusqlite");
@@ -342,9 +393,7 @@ mod tests {
 
     #[test]
     fn redacted_display_default_fallback() {
-        // When nothing is configured, should return fs/default.
-        // Note: this test may pick up JACS_STORAGE from the environment.
-        // We temporarily clear it for a clean test.
+        let _guard = ENV_LOCK.lock().expect("env lock");
         let orig = env::var("JACS_STORAGE").ok();
         env::remove_var("JACS_STORAGE");
 
@@ -359,6 +408,7 @@ mod tests {
 
     #[test]
     fn redacted_display_from_config_file() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         let config_path = temp.path().join("jacs.config.json");
         fs::write(

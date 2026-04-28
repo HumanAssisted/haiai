@@ -48,12 +48,13 @@ describe('security behaviors (node)', () => {
         registered_at: '2026-01-01T00:00:00Z',
       };
     });
-    client._setFFIAdapter(createMockFFI({ register: registerMock }));
+    client._setFFIAdapter(createMockFFI({ registerNewAgent: registerMock }));
 
     const result = await client.registerNewAgent('security-agent', {
       ownerEmail: 'owner@hai.ai',
       domain: 'agent.example',
       description: 'Security bootstrap',
+      password: 'keygen-password',
       quiet: true,
     });
 

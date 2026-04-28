@@ -6,7 +6,6 @@
 //! or cryptography (those live in JACS).
 
 use base64::Engine;
-use sha2::{Digest, Sha256};
 
 use crate::error::{HaiError, Result};
 use crate::types::KeyRegistryResponse;
@@ -21,55 +20,8 @@ pub use jacs::email::{
     ParsedAttachment, ParsedBodyPart, ParsedEmailParts, SignedHeaderEntry,
 };
 
+use jacs::crypt::hash::hash_public_key;
 use jacs::email::{get_jacs_attachment, verify_email_content, verify_email_document};
-
-/// Input for a single attachment in [`compute_content_hash`].
-pub struct AttachmentInput {
-    pub filename: String,
-    pub content_type: String,
-    pub data: Vec<u8>,
-}
-
-/// Compute a deterministic content hash for email content.
-///
-/// This produces a hash that all SDKs must agree on for the same inputs.
-/// The algorithm uses JACS's `compute_attachment_hash` convention internally:
-///
-/// 1. Compute per-attachment hash: `sha256(filename_utf8 + ":" + content_type_lower + ":" + raw_bytes)`
-/// 2. Sort attachment hashes lexicographically
-/// 3. Compute overall hash:
-///    - No attachments: `sha256(subject + "\n" + body)`
-///    - With attachments: `sha256(subject + "\n" + body + "\n" + sorted_hashes.join("\n"))`
-///
-/// Returns `"sha256:<hex>"` format.
-pub fn compute_content_hash(subject: &str, body: &str, attachments: &[AttachmentInput]) -> String {
-    // Compute per-attachment hashes using JACS convention
-    let mut att_hashes: Vec<String> = attachments
-        .iter()
-        .map(|att| {
-            let content_type_lower = att.content_type.to_lowercase();
-            let mut h = Sha256::new();
-            h.update(att.filename.as_bytes());
-            h.update(b":");
-            h.update(content_type_lower.as_bytes());
-            h.update(b":");
-            h.update(&att.data);
-            format!("sha256:{:x}", h.finalize())
-        })
-        .collect();
-    att_hashes.sort();
-
-    // Compute overall content hash
-    let mut h = Sha256::new();
-    h.update(subject.as_bytes());
-    h.update(b"\n");
-    h.update(body.as_bytes());
-    for ah in &att_hashes {
-        h.update(b"\n");
-        h.update(ah.as_bytes());
-    }
-    format!("sha256:{:x}", h.finalize())
-}
 
 fn convert_field_result(value: jacs::email::FieldResult) -> FieldResult {
     let json = serde_json::to_value(value).expect("FieldResult should serialize");
@@ -502,18 +454,23 @@ pub async fn fetch_public_key_from_registry(
 }
 
 /// Verify that a DNS TXT record at `_v1.agent.jacs.{domain}` contains
-/// a `jacs_public_key_hash=` value matching the SHA-256 hash of the
-/// public key PEM bytes.
+/// a `jacs_public_key_hash=` value matching JACS's canonical public-key
+/// hash of the supplied PEM.
+///
+/// The expected hash is produced by [`jacs::crypt::hash::hash_public_key`]
+/// — BOM-detected UTF-8, line-ending-normalized, lowercase hex SHA-256.
+/// This is the same value JACS itself publishes in `jacsSignature.publicKeyHash`,
+/// so any DNS TXT record produced by a JACS-signing agent will match here.
 ///
 /// Returns `Ok(true)` if verified, `Ok(false)` if the hash doesn't match,
 /// or `Err` if the DNS lookup fails.
 pub async fn verify_dns_public_key(domain: &str, public_key_pem: &str) -> Result<bool> {
-    // Compute expected hash: sha256(public_key_pem_bytes), base64 encoded
-    let expected_hash = {
-        let mut hasher = Sha256::new();
-        hasher.update(public_key_pem.as_bytes());
-        base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
-    };
+    // Compute expected hash via JACS's canonical helper. Per CLAUDE.md Rule 1
+    // (delegate all crypto to JACS) we MUST NOT recompute SHA-256 locally —
+    // the previous local implementation produced base64-of-raw-PEM, which
+    // never matched the hex-with-CRLF-normalization values published by JACS
+    // and silently rejected every legitimate agent (Issue 012).
+    let expected_hash = hash_public_key(public_key_pem);
 
     // Query DNS TXT record at _v1.agent.jacs.{domain}
     // Use DNS-over-HTTPS (Google's public resolver) since we don't have a

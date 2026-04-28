@@ -49,10 +49,18 @@ interface NativeHaiClient {
   sendSignedEmail(optionsJson: string): Promise<string>;
   signEmailRaw(rawEmailB64: string): Promise<string>;
   verifyEmailRaw(rawEmailB64: string): Promise<string>;
+
+  // Local Media (Layer 8 / TASK_008)
+  signText(path: string, optsJson: string): Promise<string>;
+  verifyText(path: string, optsJson: string): Promise<string>;
+  signImage(inPath: string, outPath: string, optsJson: string): Promise<string>;
+  verifyImage(filePath: string, optsJson: string): Promise<string>;
+  extractMediaSignature(filePath: string, optsJson: string): Promise<string>;
   listMessages(optionsJson: string): Promise<string>;
   updateLabels(paramsJson: string): Promise<string>;
   getEmailStatus(): Promise<string>;
   getMessage(messageId: string): Promise<string>;
+  getRawEmail(messageId: string): Promise<string>;
   getUnreadCount(): Promise<string>;
 
   // Email Actions
@@ -126,6 +134,32 @@ interface NativeHaiClient {
   connectWs(): Promise<number>;
   wsNextEvent(handle: number): Promise<string | null>;
   wsClose(handle: number): Promise<void>;
+
+  // JACS Document Store (Issue 025) — 13 generic + 4 D5 + 3 D9 = 20 methods.
+  storeDocument(signedJson: string): Promise<string>;
+  signAndStore(dataJson: string): Promise<string>;
+  getDocument(key: string): Promise<string>;
+  getLatestDocument(docId: string): Promise<string>;
+  getDocumentVersions(docId: string): Promise<string>;
+  listDocuments(jacsType?: string | null): Promise<string>;
+  removeDocument(key: string): Promise<void>;
+  updateDocument(docId: string, signedJson: string): Promise<string>;
+  searchDocuments(query: string, limit: number, offset: number): Promise<string>;
+  queryByType(docType: string, limit: number, offset: number): Promise<string>;
+  queryByField(field: string, value: string, limit: number, offset: number): Promise<string>;
+  queryByAgent(agentId: string, limit: number, offset: number): Promise<string>;
+  storageCapabilities(): Promise<string>;
+
+  // D5 — MEMORY / SOUL convenience wrappers
+  saveMemory(content?: string | null): Promise<string>;
+  saveSoul(content?: string | null): Promise<string>;
+  getMemory(): Promise<string | null>;
+  getSoul(): Promise<string | null>;
+
+  // D9 — typed-content helpers
+  storeTextFile(path: string): Promise<string>;
+  storeImageFile(path: string): Promise<string>;
+  getRecordBytes(key: string): Promise<Uint8Array>;
 }
 
 interface NativeHaiClientConstructor {
@@ -385,6 +419,62 @@ export class FFIClientAdapter {
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Local Media (Layer 8 / TASK_008)
+  // ---------------------------------------------------------------------
+
+  async signText(path: string, opts: Record<string, unknown>): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.signText(path, JSON.stringify(opts));
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async verifyText(path: string, opts: Record<string, unknown>): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.verifyText(path, JSON.stringify(opts));
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async signImage(
+    inPath: string,
+    outPath: string,
+    opts: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.signImage(inPath, outPath, JSON.stringify(opts));
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async verifyImage(filePath: string, opts: Record<string, unknown>): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.verifyImage(filePath, JSON.stringify(opts));
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async extractMediaSignature(
+    filePath: string,
+    opts: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.extractMediaSignature(filePath, JSON.stringify(opts));
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
   async listMessages(options: Record<string, unknown>): Promise<unknown[]> {
     try {
       const json = await this.native.listMessages(JSON.stringify(options));
@@ -415,6 +505,15 @@ export class FFIClientAdapter {
   async getMessage(messageId: string): Promise<Record<string, unknown>> {
     try {
       const json = await this.native.getMessage(messageId);
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async getRawEmail(messageId: string): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.getRawEmail(messageId);
       return JSON.parse(json) as Record<string, unknown>;
     } catch (err) {
       throw mapFFIError(err);
@@ -883,6 +982,206 @@ export class FFIClientAdapter {
   async wsClose(handle: number): Promise<void> {
     try {
       await this.native.wsClose(handle);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // JACS Document Store (Issue 025)
+  // ---------------------------------------------------------------------------
+
+  async storeDocument(signedJson: string): Promise<string> {
+    try {
+      return await this.native.storeDocument(signedJson);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async signAndStore(dataJson: string): Promise<Record<string, unknown>> {
+    try {
+      const raw = await this.native.signAndStore(dataJson);
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async getDocument(key: string): Promise<string> {
+    try {
+      return await this.native.getDocument(key);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async getLatestDocument(docId: string): Promise<string> {
+    try {
+      return await this.native.getLatestDocument(docId);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async getDocumentVersions(docId: string): Promise<string[]> {
+    // Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
+    try {
+      const raw = await this.native.getDocumentVersions(docId);
+      return JSON.parse(raw) as string[];
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async listDocuments(jacsType?: string | null): Promise<string[]> {
+    // Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
+    try {
+      const raw = await this.native.listDocuments(jacsType ?? null);
+      return JSON.parse(raw) as string[];
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async removeDocument(key: string): Promise<void> {
+    try {
+      await this.native.removeDocument(key);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async updateDocument(
+    docId: string,
+    signedJson: string,
+  ): Promise<Record<string, unknown>> {
+    try {
+      const raw = await this.native.updateDocument(docId, signedJson);
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async searchDocuments(
+    query: string,
+    limit: number,
+    offset: number,
+  ): Promise<Record<string, unknown>> {
+    try {
+      const raw = await this.native.searchDocuments(query, limit, offset);
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async queryByType(
+    docType: string,
+    limit: number,
+    offset: number,
+  ): Promise<string[]> {
+    // Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
+    try {
+      const raw = await this.native.queryByType(docType, limit, offset);
+      return JSON.parse(raw) as string[];
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async queryByField(
+    field: string,
+    value: string,
+    limit: number,
+    offset: number,
+  ): Promise<string[]> {
+    // Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
+    try {
+      const raw = await this.native.queryByField(field, value, limit, offset);
+      return JSON.parse(raw) as string[];
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async queryByAgent(
+    agentId: string,
+    limit: number,
+    offset: number,
+  ): Promise<string[]> {
+    // Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
+    try {
+      const raw = await this.native.queryByAgent(agentId, limit, offset);
+      return JSON.parse(raw) as string[];
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async storageCapabilities(): Promise<Record<string, unknown>> {
+    try {
+      const raw = await this.native.storageCapabilities();
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  // D5 — MEMORY / SOUL convenience wrappers
+  async saveMemory(content?: string | null): Promise<string> {
+    try {
+      return await this.native.saveMemory(content ?? null);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async saveSoul(content?: string | null): Promise<string> {
+    try {
+      return await this.native.saveSoul(content ?? null);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async getMemory(): Promise<string | null> {
+    try {
+      return await this.native.getMemory();
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async getSoul(): Promise<string | null> {
+    try {
+      return await this.native.getSoul();
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  // D9 — typed-content helpers
+  async storeTextFile(path: string): Promise<string> {
+    try {
+      return await this.native.storeTextFile(path);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async storeImageFile(path: string): Promise<string> {
+    try {
+      return await this.native.storeImageFile(path);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async getRecordBytes(key: string): Promise<Uint8Array> {
+    try {
+      return await this.native.getRecordBytes(key);
     } catch (err) {
       throw mapFFIError(err);
     }

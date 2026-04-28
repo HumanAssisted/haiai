@@ -36,7 +36,7 @@ class TestLoad:
         config = {"jacsAgentName": "test"}
         p = tmp_path / "bad.json"
         p.write_text(json.dumps(config))
-        with pytest.raises(ValueError, match="missing required fields"):
+        with pytest.raises(ValueError, match="neither canonical nor legacy fields"):
             load(str(p))
 
     def test_load_valid_config_with_jacs(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

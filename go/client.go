@@ -812,6 +812,137 @@ func (c *Client) VerifyEmail(ctx context.Context, rawEmail []byte) (*EmailVerifi
 	return &result, nil
 }
 
+// =============================================================================
+// Layer 8: Local Media Sign/Verify (TASK_009)
+// =============================================================================
+
+// SignText signs a text/markdown file in place by appending a JACS YAML
+// signature block. Local-only — no HAI server roundtrip.
+//
+// Backup defaults to true (the JACS-internal `backup` JSON key). To skip
+// the backup file, set `opts.NoBackup = true`. The wire JSON is shaped here
+// (NOT by `json.Marshal(opts)`) so the inverted convention does not leak
+// across the FFI boundary.
+func (c *Client) SignText(ctx context.Context, path string, opts SignTextOptions) (*SignTextResult, error) {
+	wire := struct {
+		Backup         bool `json:"backup"`
+		AllowDuplicate bool `json:"allow_duplicate"`
+	}{
+		Backup:         !opts.NoBackup,
+		AllowDuplicate: opts.AllowDuplicate,
+	}
+	optsJSON, err := json.Marshal(wire)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal sign_text options")
+	}
+	raw, err := c.ffi.SignText(path, string(optsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	var result SignTextResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode sign_text response")
+	}
+	return &result, nil
+}
+
+// VerifyText verifies all signature blocks in a text file. Local-only.
+func (c *Client) VerifyText(ctx context.Context, path string, opts VerifyTextOptions) (*VerifyTextResult, error) {
+	optsJSON, err := json.Marshal(opts)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal verify_text options")
+	}
+	raw, err := c.ffi.VerifyText(path, string(optsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	var result VerifyTextResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode verify_text response")
+	}
+	return &result, nil
+}
+
+// SignImage signs a PNG/JPEG/WebP image by embedding a JACS signature.
+//
+// Backup defaults to true (the safer default for image overwrite). Callers
+// who explicitly want no backup file written set `opts.NoBackup = true`.
+// The wire JSON is shaped here so the inverted-convention field does not
+// leak across the FFI boundary; previous behavior force-enabled backup
+// regardless of caller intent and is replaced with this honors-caller path.
+func (c *Client) SignImage(ctx context.Context, inPath, outPath string, opts SignImageOptions) (*SignImageResult, error) {
+	wire := struct {
+		Robust          bool    `json:"robust"`
+		FormatHint      string  `json:"format_hint,omitempty"`
+		RefuseOverwrite bool    `json:"refuse_overwrite"`
+		Backup          bool    `json:"backup"`
+		UnsafeBakMode   *uint32 `json:"unsafe_bak_mode,omitempty"`
+	}{
+		Robust:          opts.Robust,
+		FormatHint:      opts.FormatHint,
+		RefuseOverwrite: opts.RefuseOverwrite,
+		Backup:          !opts.NoBackup,
+		UnsafeBakMode:   opts.UnsafeBakMode,
+	}
+	optsJSON, err := json.Marshal(wire)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal sign_image options")
+	}
+	raw, err := c.ffi.SignImage(inPath, outPath, string(optsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	var result SignImageResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode sign_image response")
+	}
+	return &result, nil
+}
+
+// VerifyImage verifies the JACS signature embedded in an image. Local-only.
+//
+// binding-core flattens the JACS-internal MediaVerifyStatus into a flat snake_case
+// string via media_verify_result_to_json, so the Go decoder simply reads `status`
+// directly and never sees the tagged `{"malformed": detail}` shape.
+func (c *Client) VerifyImage(ctx context.Context, filePath string, opts VerifyImageOptions) (*VerifyImageResult, error) {
+	optsJSON, err := json.Marshal(opts)
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal verify_image options")
+	}
+	raw, err := c.ffi.VerifyImage(filePath, string(optsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	var result VerifyImageResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode verify_image response")
+	}
+	return &result, nil
+}
+
+// ExtractMediaSignature returns the JACS payload embedded in a signed image
+// without verifying. With `rawPayload=true` returns the base64url bytes
+// verbatim; otherwise decodes the JSON payload.
+func (c *Client) ExtractMediaSignature(
+	ctx context.Context,
+	filePath string,
+	rawPayload bool,
+) (*ExtractMediaSignatureResult, error) {
+	optsJSON, err := json.Marshal(map[string]bool{"raw_payload": rawPayload})
+	if err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal extract options")
+	}
+	raw, err := c.ffi.ExtractMediaSignature(filePath, string(optsJSON))
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	var result ExtractMediaSignatureResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode extract_media_signature response")
+	}
+	return &result, nil
+}
+
 // ListMessages retrieves messages from the agent's mailbox.
 func (c *Client) ListMessages(ctx context.Context, opts ListMessagesOptions) ([]EmailMessage, error) {
 	optsJSON, err := json.Marshal(opts)
@@ -868,6 +999,25 @@ func (c *Client) GetMessage(ctx context.Context, messageID string) (*EmailMessag
 		return nil, wrapError(ErrInvalidResponse, err, "failed to decode message response")
 	}
 	return &msg, nil
+}
+
+// GetRawEmail fetches the raw RFC 5322 MIME bytes for a message, suitable
+// for local JACS verification via VerifyEmail.
+//
+// Byte-fidelity (PRD R2): RawEmail, when present, is byte-identical to what
+// JACS signed. No trimming, no line-ending normalization, no UTF-8 lossy.
+//
+// When Available is false, RawEmail is nil and OmittedReason is either
+// "not_stored" (legacy row) or "oversize" (>25 MB cap).
+func (c *Client) GetRawEmail(ctx context.Context, messageID string) (*RawEmailResult, error) {
+	if messageID == "" {
+		return nil, wrapError(ErrInvalidResponse, nil, "messageID is required")
+	}
+	raw, err := c.ffi.GetRawEmail(messageID)
+	if err != nil {
+		return nil, mapFFIErr(err)
+	}
+	return parseRawEmailJSON(raw)
 }
 
 // DeleteMessage deletes an email message by ID.
@@ -1107,21 +1257,32 @@ func (c *Client) SignBenchmarkResult(result map[string]interface{}) (*SignedDocu
 	documentID := fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
 		uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16])
 
-	// Canonical JSON of the data for signing and hashing.
-	dataJSON, err := json.Marshal(result)
-	if err != nil {
-		return nil, wrapError(ErrSigningFailed, err, "failed to marshal benchmark result")
-	}
-
-	// SHA-256 hash of canonical data
-	hashBytes := sha256.Sum256(dataJSON)
-	hash := fmt.Sprintf("%x", hashBytes)
-
-	// Sign the canonical data payload via FFI
+	// Canonicalize via JACS (RFC 8785) — the verifier re-canonicalizes the same
+	// way, so signing the canonical bytes is what makes the signature round-trip.
+	// Previously this used stdlib `json.Marshal`, which is not canonical and
+	// produced signatures that mismatched any verifier doing canonicalization
+	// before hashing.
 	if c.ffi == nil {
 		return nil, newError(ErrSigningFailed, "FFI client is not initialized")
 	}
-	sigB64, signErr := c.ffi.SignMessage(string(dataJSON))
+	rawJSON, err := json.Marshal(result)
+	if err != nil {
+		return nil, wrapError(ErrSigningFailed, err, "failed to marshal benchmark result")
+	}
+	dataJSON, err := c.ffi.CanonicalJSON(string(rawJSON))
+	if err != nil {
+		return nil, wrapError(ErrSigningFailed, err, "failed to canonicalize benchmark result")
+	}
+
+	// metadata.hash = sha256 of the canonical JSON (per docs/.../email-signing.md
+	// and matching Python sign_response fallback). The JACS signature is the
+	// cryptographic binding; this hash is informational/auditing. JACS does not
+	// expose a public "hash a canonical string" function today — if it does in
+	// future, swap this for the FFI call. See feedback_no_jacs_reimplementation.
+	hashBytes := sha256.Sum256([]byte(dataJSON))
+	hash := fmt.Sprintf("%x", hashBytes)
+
+	sigB64, signErr := c.ffi.SignMessage(dataJSON)
 	if signErr != nil {
 		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign benchmark result via FFI")
 	}
@@ -1457,4 +1618,233 @@ func (c *Client) DeleteEmailTemplate(ctx context.Context, templateID string) err
 		return mapFFIErr(err)
 	}
 	return nil
+}
+
+// parseRawEmailJSON decodes the raw-email FFI wire JSON into a
+// language-native RawEmailResult, base64-decoding raw_email_b64.
+//
+// Single decode site (PRD §4.5 DRY): this is the only place in the Go SDK
+// that converts raw_email_b64 into []byte.
+func parseRawEmailJSON(raw json.RawMessage) (*RawEmailResult, error) {
+	var wire struct {
+		MessageID     string  `json:"message_id"`
+		RfcMessageID  *string `json:"rfc_message_id"`
+		Available     bool    `json:"available"`
+		RawEmailB64   *string `json:"raw_email_b64"`
+		SizeBytes     *int    `json:"size_bytes"`
+		OmittedReason *string `json:"omitted_reason"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode raw email response")
+	}
+	result := &RawEmailResult{
+		MessageID: wire.MessageID,
+		Available: wire.Available,
+	}
+	if wire.RfcMessageID != nil {
+		result.RfcMessageID = *wire.RfcMessageID
+		result.hasRfcMessageID = true
+	}
+	if wire.SizeBytes != nil {
+		result.SizeBytes = *wire.SizeBytes
+		result.hasSizeBytes = true
+	}
+	if wire.OmittedReason != nil {
+		result.OmittedReason = *wire.OmittedReason
+		result.hasOmittedReason = true
+	}
+	if wire.RawEmailB64 != nil && *wire.RawEmailB64 != "" {
+		bytes, err := base64.StdEncoding.DecodeString(*wire.RawEmailB64)
+		if err != nil {
+			return nil, wrapError(ErrInvalidResponse, err, "invalid base64 in raw_email_b64")
+		}
+		result.RawEmail = bytes
+	}
+	return result, nil
+}
+
+// =============================================================================
+// JACS Document Store (20 methods)
+//
+// Thin delegations to the FFI client.
+//
+// Issue 015: every method below takes `_ctx context.Context` as its first
+// parameter to mirror the Go-stdlib convention used elsewhere in the SDK,
+// but the value is currently NOT propagated through the cgo bridge. Calls
+// will run to completion (or libhaiigo's reqwest timeout) regardless of
+// the caller's `ctx.Done()` / deadline. The leading underscore on the
+// parameter name surfaces this in IDE tool-tips at the call site, and the
+// per-method godoc carries an explicit NOTE so callers are not misled by
+// the signature alone. Real cancellation requires plumbing a `ctx_id`
+// token through cgo + binding-core + RemoteJacsProvider — tracked as a
+// follow-up to Issue 015.
+//
+// Naming follows the Go convention (PascalCase) while keeping the trait
+// semantics from RemoteJacsProvider.
+// =============================================================================
+
+// StoreDocument stores a pre-signed JACS document and returns the record key
+// (`id:version`).
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) StoreDocument(_ctx context.Context, signedJSON string) (string, error) {
+	return c.ffi.StoreDocument(signedJSON)
+}
+
+// SignAndStore signs a JSON document and stores it. Returns the SignedDocument
+// envelope as raw JSON for the caller to unmarshal.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SignAndStore(_ctx context.Context, dataJSON string) (json.RawMessage, error) {
+	return c.ffi.SignAndStore(dataJSON)
+}
+
+// GetDocument fetches a document by key. Returns the signed envelope JSON.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) GetDocument(_ctx context.Context, key string) (string, error) {
+	return c.ffi.GetDocument(key)
+}
+
+// GetLatestDocument fetches the latest version of a document by id.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) GetLatestDocument(_ctx context.Context, docID string) (string, error) {
+	return c.ffi.GetLatestDocument(docID)
+}
+
+// GetDocumentVersions returns all version keys for a document id.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) GetDocumentVersions(_ctx context.Context, docID string) ([]string, error) {
+	return c.ffi.GetDocumentVersions(docID)
+}
+
+// ListDocuments returns document keys, optionally filtered by `jacsType`.
+// Pass empty string to list all types.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ListDocuments(_ctx context.Context, jacsType string) ([]string, error) {
+	return c.ffi.ListDocuments(jacsType)
+}
+
+// RemoveDocument tombstones (soft-deletes) a document by key.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) RemoveDocument(_ctx context.Context, key string) error {
+	return c.ffi.RemoveDocument(key)
+}
+
+// UpdateDocument updates a document, creating a new signed version.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) UpdateDocument(_ctx context.Context, docID, signedJSON string) (json.RawMessage, error) {
+	return c.ffi.UpdateDocument(docID, signedJSON)
+}
+
+// SearchDocuments performs fulltext / hybrid search.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SearchDocuments(_ctx context.Context, query string, limit, offset int) (json.RawMessage, error) {
+	return c.ffi.SearchDocuments(query, limit, offset)
+}
+
+// QueryByType returns document keys filtered by `jacsType`.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) QueryByType(_ctx context.Context, docType string, limit, offset int) ([]string, error) {
+	return c.ffi.QueryByType(docType, limit, offset)
+}
+
+// QueryByField returns document keys filtered by an envelope field.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) QueryByField(_ctx context.Context, field, value string, limit, offset int) ([]string, error) {
+	return c.ffi.QueryByField(field, value, limit, offset)
+}
+
+// QueryByAgent returns document keys signed by a specific agent.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) QueryByAgent(_ctx context.Context, agentID string, limit, offset int) ([]string, error) {
+	return c.ffi.QueryByAgent(agentID, limit, offset)
+}
+
+// StorageCapabilities reports the storage backend's capabilities.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) StorageCapabilities(_ctx context.Context) (json.RawMessage, error) {
+	return c.ffi.StorageCapabilities()
+}
+
+// SaveMemory signs and stores a `MEMORY.md` record. Pass empty string to read
+// MEMORY.md from CWD. Returns the record key.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SaveMemory(_ctx context.Context, content string) (string, error) {
+	return c.ffi.SaveMemory(content)
+}
+
+// SaveSoul signs and stores a `SOUL.md` record. Pass empty string to read
+// SOUL.md from CWD.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SaveSoul(_ctx context.Context, content string) (string, error) {
+	return c.ffi.SaveSoul(content)
+}
+
+// GetMemory returns the latest MEMORY record's signed envelope JSON. Returns
+// the empty string when no memory exists for the caller.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) GetMemory(_ctx context.Context) (string, error) {
+	return c.ffi.GetMemory()
+}
+
+// GetSoul returns the latest SOUL record's signed envelope JSON.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) GetSoul(_ctx context.Context) (string, error) {
+	return c.ffi.GetSoul()
+}
+
+// StoreTextFile reads a signed-text file and POSTs it to the records endpoint.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) StoreTextFile(_ctx context.Context, path string) (string, error) {
+	return c.ffi.StoreTextFile(path)
+}
+
+// StoreImageFile detects a signed image's format and POSTs it.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) StoreImageFile(_ctx context.Context, path string) (string, error) {
+	return c.ffi.StoreImageFile(path)
+}
+
+// GetRecordBytes fetches raw record bytes (no UTF-8 decode, no JSON parse).
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) GetRecordBytes(_ctx context.Context, key string) ([]byte, error) {
+	return c.ffi.GetRecordBytes(key)
 }

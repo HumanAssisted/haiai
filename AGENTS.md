@@ -61,9 +61,9 @@ scripts/ci/              # CI enforcement (crypto policy denylist)
   +---------+ +-------+ +--------+
 ```
 
-## Trait Architecture (JACS 0.9.4)
+## Trait Architecture (JACS 0.10.0)
 
-The Rust SDK exposes JACS capabilities through 8 layered extension traits defined in `rust/haiai/src/jacs.rs`, implemented in `rust/haiai/src/jacs_local.rs`:
+The Rust SDK exposes JACS capabilities through 9 layered extension traits defined in `rust/haiai/src/jacs.rs`, implemented in `rust/haiai/src/jacs_local.rs`:
 
 - **Layer 0** `JacsProvider` -- Core signing, identity, canonical JSON
 - **Layer 1** `JacsAgentLifecycle` -- Key rotation, migration, diagnostics, quickstart
@@ -73,14 +73,15 @@ The Rust SDK exposes JACS capabilities through 8 layered extension traits define
 - **Layer 5** `JacsEmailProvider` -- Email signing/verification, attachments
 - **Layer 6** `JacsAgreementProvider` -- Multi-party agreements (feature: `agreements`)
 - **Layer 7** `JacsAttestationProvider` -- Attestation claims (feature: `attestation`)
+- **Layer 8** `JacsMediaProvider` -- Local image (PNG/JPEG/WebP) and inline-text sign/verify/extract
 
 Storage backend selection: `rust/haiai/src/config.rs` (`resolve_storage_backend()`). Labels: `fs`, `rusqlite`, `sqlite` (alias).
 
-Full parity map: `docs/haisdk/PARITY_MAP.md` (53 exposed, 18 excluded, 71 total).
+Full parity map: `docs/haisdk/PARITY_MAP.md` (60 exposed, 19 excluded, 79 total).
 
 ## Rules
 
-1. **No local crypto in haiai.** Delegate to `jacs`. CI enforces via `scripts/ci/check_no_local_crypto.sh`.
+1. **No local crypto, no JACS reimplementation in haiai.** Delegate every crypto, hashing, canonicalization, or key-handling primitive to `jacs`. If the JACS function exists but is `pub(crate)` or otherwise non-public, promote it upstream (or add a thin public wrapper) and delegate from haiai — do NOT vendor the algorithm into haiai "just for this case." This applies to source AND tests: import the JACS public function rather than recompute the algorithm inline. CI enforces via `scripts/ci/check_no_local_crypto.sh`.
 2. **Cross-language parity.** Changes must apply to all 4 SDKs. FFI guarantees HTTP parity by construction. Tests read shared fixtures from `fixtures/`.
 3. **All 10 packages share one version.** `make check-versions` to verify.
 4. **Releases are tag-triggered.** `rust/v*` -> crates.io, `python/v*` -> PyPI, `node/v*` -> npm. Use `make release-*`.
@@ -95,9 +96,9 @@ Parity is enforced by JSON fixture contracts in `fixtures/`. Each fixture is the
 
 | Fixture | Surface | Tested in |
 |---------|---------|-----------|
-| `mcp_tool_contract.json` | MCP tools (28 tools) | `rust/hai-mcp/tests/integration.rs`, `python/tests/test_mcp_parity.py` |
-| `cli_command_parity.json` | CLI commands (29 commands) | `rust/haiai-cli/src/main.rs` (mod tests) |
-| `ffi_method_parity.json` | FFI binding methods (68 methods) | Language-specific FFI adapter tests |
+| `mcp_tool_contract.json` | MCP tools (27 tools) | `rust/hai-mcp/tests/integration.rs`, `python/tests/test_mcp_parity.py` |
+| `cli_command_parity.json` | CLI commands (28 commands) | `rust/haiai-cli/src/main.rs` (mod tests) |
+| `ffi_method_parity.json` | FFI binding methods (67 methods) | Language-specific FFI adapter tests |
 | `mcp_cli_parity.json` | MCP-to-CLI mapping | `rust/haiai-cli/src/main.rs` (mod tests) |
 | `contract_endpoints.json` | HTTP endpoint contracts | `rust/haiai/tests/contract_endpoints.rs`, Python/Node/Go contract tests |
 | `cross_lang_test.json` | Auth headers, canonical JSON | `rust/haiai/tests/cross_lang_contract.rs`, `python/tests/test_cross_lang_contract.py` |
@@ -124,6 +125,36 @@ Every real MCP tool and every real CLI command must appear in exactly one sectio
 7. **Run `make test`** -- parity tests will catch anything you missed.
 
 If you add a tool to MCP but not CLI (or vice versa), you must add it to the appropriate `*_only` section with a reason explaining why.
+
+## Raw Email Retrieval
+
+A recipient agent can fetch the exact raw RFC 5322 bytes of any message in
+its mailbox and feed them to local JACS verification, without contacting
+Stalwart. The server persists the exact bytes that JACS signed on every
+send path (PRD R2 byte-fidelity). Inbound messages from external agents
+currently require a server-side filter-worker write site still pending in
+`hai/api` (see `docs/RAW_EMAIL_RETRIEVAL_ISSUES/RAW_EMAIL_RETRIEVAL_ISSUE_004.md`);
+until that lands, inbound raw bytes return `available: false`.
+
+- HTTP: `GET /api/agents/{agent_id}/email/messages/{message_id}/raw`
+  → JSON `{ message_id, rfc_message_id, available, raw_email_b64,
+  size_bytes, omitted_reason }`.
+- Rust: `HaiClient::get_raw_email(message_id) -> RawEmailResponse`
+  (decodes base64 into `Vec<u8>` at the client boundary).
+- Python: `HaiClient.get_raw_email(hai_url=None, message_id="")`
+  (sync) and `AsyncHaiClient.get_raw_email(hai_url, message_id)` (async)
+  — returns `RawEmailResult.raw_email: bytes | None`.
+- Node: `HaiClient.getRawEmail(messageId): Promise<RawEmailResult>`
+  — returns `{ rawEmail: Buffer | null, ... }`.
+- Go: `Client.GetRawEmail(ctx, messageID) (*RawEmailResult, error)`
+  — returns `{ RawEmail []byte, ... }`.
+- MCP: `hai_get_raw_email`. CLI: `haiai get-raw-email <id> [--output F] [--base64]`.
+- moltyjacs: `jacs_hai_get_raw_email` delegates through `@haiai/haiai`.
+
+25 MB cap (matches existing attachment limit). Legacy rows predating the
+feature return `available: false` with `omitted_reason: "not_stored"`;
+oversize rows return `"oversize"`. Recipe + cross-language snippets live
+in `docs/haisdk/EMAIL_VERIFICATION.md`.
 
 ## Local JACS Development
 

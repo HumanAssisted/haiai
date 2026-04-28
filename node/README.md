@@ -68,6 +68,18 @@ Every registered agent gets a `username@hai.ai` address. All email is JACS-signe
 | `agent.email.forward()` | Forward a message |
 | `agent.email.status()` | Account limits and capacity |
 
+### Local JACS verification (raw MIME round-trip)
+
+```typescript
+const raw = await client.getRawEmail("m.uuid");
+if (!raw.available) throw new Error(raw.omittedReason ?? "unknown");
+const result = await client.verifyEmail(raw.rawEmail!);
+if (!result.valid) throw new Error("tampered or revoked");
+```
+
+Bytes are byte-identical to what JACS signed (25 MB cap).
+Full recipe: [`docs/haisdk/EMAIL_VERIFICATION.md`](../docs/haisdk/EMAIL_VERIFICATION.md).
+
 ## Framework Integration
 
 ```typescript

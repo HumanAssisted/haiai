@@ -25,24 +25,33 @@ describe('JACS agent signing', () => {
 
 describe('canonicalJson', () => {
   it('sorts keys deterministically', () => {
-    const result = canonicalJson({ z: 1, a: 2, m: 3 });
+    const result = canonicalJson({ z: 1, a: 2, m: 3 }, TEST_AGENT);
     expect(result).toBe('{"a":2,"m":3,"z":1}');
   });
 
   it('sorts nested keys', () => {
-    const result = canonicalJson({ b: { z: 1, a: 2 }, a: 1 });
+    const result = canonicalJson({ b: { z: 1, a: 2 }, a: 1 }, TEST_AGENT);
     expect(result).toBe('{"a":1,"b":{"a":2,"z":1}}');
   });
 
   it('handles arrays without reordering', () => {
-    const result = canonicalJson({ arr: [3, 1, 2] });
+    const result = canonicalJson({ arr: [3, 1, 2] }, TEST_AGENT);
     expect(result).toBe('{"arr":[3,1,2]}');
   });
 
   it('handles null and primitives', () => {
-    expect(canonicalJson(null)).toBe('null');
-    expect(canonicalJson(42)).toBe('42');
-    expect(canonicalJson('hello')).toBe('"hello"');
+    expect(canonicalJson(null, TEST_AGENT)).toBe('null');
+    expect(canonicalJson(42, TEST_AGENT)).toBe('42');
+    expect(canonicalJson('hello', TEST_AGENT)).toBe('"hello"');
+  });
+
+  it('throws when no JACS agent is provided', () => {
+    expect(() => canonicalJson({ a: 1 })).toThrow(/loaded JACS agent/);
+  });
+
+  it('throws when agent lacks canonicalizeJsonSync', () => {
+    const stubAgent = {} as unknown as JacsAgent;
+    expect(() => canonicalJson({ a: 1 }, stubAgent)).toThrow(/canonicalizeJsonSync/);
   });
 });
 
@@ -57,7 +66,7 @@ describe('signResponse', () => {
     const doc = JSON.parse(result.signed_document);
     expect(doc.version).toBe('1.0.0');
     expect(doc.document_type).toBe('job_response');
-    expect(doc.data).toEqual(JSON.parse(canonicalJson(payload)));
+    expect(doc.data).toEqual(JSON.parse(canonicalJson(payload, TEST_AGENT)));
     // JACS 0.9.4 signResponseSync uses agent's internal ID for issuer/agentID
     expect(doc.metadata.issuer).toBeTruthy();
     expect(doc.jacsSignature.agentID).toBe(doc.metadata.issuer);
@@ -76,7 +85,7 @@ describe('signResponse', () => {
 describe('unwrapSignedEvent', () => {
   it('passes through non-JACS events unchanged', () => {
     const event = { type: 'heartbeat', timestamp: 123 };
-    const result = unwrapSignedEvent(event, {});
+    const result = unwrapSignedEvent(event, {}, TEST_AGENT);
     expect(result).toEqual(event);
   });
 
@@ -86,8 +95,14 @@ describe('unwrapSignedEvent', () => {
       metadata: { issuer: 'agent-1', document_id: 'doc-1', created_at: 'now', hash: 'abc' },
       signature: { key_id: 'unknown-key', algorithm: 'Ed25519', signature: 'sig', signed_at: 'now' },
     };
-    const result = unwrapSignedEvent(doc, {});
+    const result = unwrapSignedEvent(doc, {}, TEST_AGENT);
     expect(result).toEqual({ message: 'inner' });
+  });
+
+  it('throws when no JACS agent is provided', () => {
+    const event = { type: 'heartbeat' };
+    // @ts-expect-error — verifying runtime guard for missing agent argument
+    expect(() => unwrapSignedEvent(event, {})).toThrow(/loaded JACS agent/);
   });
 
   it('verifies and unwraps with known key', () => {
@@ -98,6 +113,7 @@ describe('unwrapSignedEvent', () => {
     const agentID = doc.jacsSignature.agentID;
     const agent = {
       verifyStringSync: vi.fn(() => true),
+      canonicalizeJsonSync: (s: string) => s,
     } as unknown as JacsAgent;
 
     const unwrapped = unwrapSignedEvent(doc, { [agentID]: TEST_PUBLIC_KEY_PEM }, agent);
@@ -113,6 +129,7 @@ describe('unwrapSignedEvent', () => {
     doc.jacsSignature.signature = 'invalid-signature';
     const agent = {
       verifyStringSync: vi.fn(() => false),
+      canonicalizeJsonSync: (s: string) => s,
     } as unknown as JacsAgent;
 
     expect(() => {
@@ -127,6 +144,7 @@ describe('unwrapSignedEvent', () => {
     const agentID = doc.jacsSignature.agentID;
     const agent = {
       verifyStringSync: vi.fn(() => { throw new Error('invalid PEM format'); }),
+      canonicalizeJsonSync: (s: string) => s,
     } as unknown as JacsAgent;
 
     expect(() => {

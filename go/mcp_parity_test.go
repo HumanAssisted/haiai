@@ -90,6 +90,21 @@ var mcpToolToFFIMethods = map[string][]string{
 	"hai_get_email_template":     {"GetEmailTemplate"},
 	"hai_update_email_template":  {"UpdateEmailTemplate"},
 	"hai_delete_email_template":  {"DeleteEmailTemplate"},
+	"hai_get_raw_email":          {"GetRawEmail"},
+	// Layer 8: local media (sign/verify/extract for inline text + images).
+	"hai_sign_text":               {"SignText"},
+	"hai_verify_text":             {"VerifyText"},
+	"hai_sign_image":              {"SignImage"},
+	"hai_verify_image":            {"VerifyImage"},
+	"hai_extract_media_signature": {"ExtractMediaSignature"},
+	// JACS Document Store D5/D9 (Issue 025).
+	"hai_save_memory":      {"SaveMemory"},
+	"hai_save_soul":        {"SaveSoul"},
+	"hai_get_memory":       {"GetMemory"},
+	"hai_get_soul":         {"GetSoul"},
+	"hai_store_text_file":  {"StoreTextFile"},
+	"hai_store_image_file": {"StoreImageFile"},
+	"hai_get_record_bytes": {"GetRecordBytes"},
 }
 
 // ---------------------------------------------------------------------------

@@ -28,6 +28,7 @@ type FFIClient interface {
 	UpdateLabels(paramsJSON string) (json.RawMessage, error)
 	GetEmailStatus() (json.RawMessage, error)
 	GetMessage(messageID string) (json.RawMessage, error)
+	GetRawEmail(messageID string) (json.RawMessage, error)
 	GetUnreadCount() (json.RawMessage, error)
 
 	// Email Actions
@@ -83,6 +84,13 @@ type FFIClient interface {
 	SignEmailRaw(rawEmailB64 string) (json.RawMessage, error)
 	VerifyEmailRaw(rawEmailB64 string) (json.RawMessage, error)
 
+	// Local Media (Layer 8 / TASK_009)
+	SignText(path, optsJSON string) (json.RawMessage, error)
+	VerifyText(path, optsJSON string) (json.RawMessage, error)
+	SignImage(inPath, outPath, optsJSON string) (json.RawMessage, error)
+	VerifyImage(filePath, optsJSON string) (json.RawMessage, error)
+	ExtractMediaSignature(filePath, optsJSON string) (json.RawMessage, error)
+
 	// Attestations
 	CreateAttestation(paramsJSON string) (json.RawMessage, error)
 	ListAttestations(paramsJSON string) (json.RawMessage, error)
@@ -105,4 +113,37 @@ type FFIClient interface {
 	ConnectWS() (uint64, error)
 	WSNextEvent(handleID uint64) (json.RawMessage, error)
 	WSClose(handleID uint64)
+
+	// JACS Document Store — 13 generic + 4 D5 + 3 D9 = 20 methods.
+	//
+	// The five array-returning trait methods (`ListDocuments`,
+	// `GetDocumentVersions`, `QueryByType`, `QueryByField`, `QueryByAgent`)
+	// surface as `[]string` because `RemoteJacsProvider` returns
+	// `Vec<String>`. The existing mock-only test suite previously declared
+	// them as `(json.RawMessage, error)` with `{"items":[]}` staged values;
+	// that's a contract bug fixed alongside the cgo wiring (TASK_004).
+	StoreDocument(signedJSON string) (string, error)
+	SignAndStore(dataJSON string) (json.RawMessage, error)
+	GetDocument(key string) (string, error)
+	GetLatestDocument(docID string) (string, error)
+	GetDocumentVersions(docID string) ([]string, error)
+	ListDocuments(jacsType string) ([]string, error)
+	RemoveDocument(key string) error
+	UpdateDocument(docID, signedJSON string) (json.RawMessage, error)
+	SearchDocuments(query string, limit, offset int) (json.RawMessage, error)
+	QueryByType(docType string, limit, offset int) ([]string, error)
+	QueryByField(field, value string, limit, offset int) ([]string, error)
+	QueryByAgent(agentID string, limit, offset int) ([]string, error)
+	StorageCapabilities() (json.RawMessage, error)
+
+	// D5 — MEMORY / SOUL convenience wrappers
+	SaveMemory(content string) (string, error)
+	SaveSoul(content string) (string, error)
+	GetMemory() (string, error)
+	GetSoul() (string, error)
+
+	// D9 — typed-content helpers
+	StoreTextFile(path string) (string, error)
+	StoreImageFile(path string) (string, error)
+	GetRecordBytes(key string) ([]byte, error)
 }

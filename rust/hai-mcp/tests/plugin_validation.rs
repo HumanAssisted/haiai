@@ -90,25 +90,32 @@ fn mcp_json_is_valid_and_points_to_haiai_binary() {
     let raw = fs::read_to_string(&path).expect("read .mcp.json");
     let value: Value = serde_json::from_str(&raw).expect("parse .mcp.json as valid JSON");
 
+    let haiai = value
+        .get("mcpServers")
+        .and_then(|s| s.get("haiai"))
+        .expect(".mcp.json must have mcpServers.haiai entry");
+
     assert_eq!(
-        value
-            .get("haiai")
-            .and_then(|h| h.get("command"))
-            .and_then(Value::as_str),
-        Some("haiai"),
-        ".mcp.json haiai.command must be 'haiai'"
+        haiai.get("type").and_then(Value::as_str),
+        Some("stdio"),
+        ".mcp.json mcpServers.haiai.type must be 'stdio'"
     );
 
-    let args = value
-        .get("haiai")
-        .and_then(|h| h.get("args"))
+    assert_eq!(
+        haiai.get("command").and_then(Value::as_str),
+        Some("haiai"),
+        ".mcp.json mcpServers.haiai.command must be 'haiai'"
+    );
+
+    let args = haiai
+        .get("args")
         .and_then(Value::as_array)
-        .expect(".mcp.json haiai.args must be an array");
+        .expect(".mcp.json mcpServers.haiai.args must be an array");
     let arg_strings: Vec<&str> = args.iter().filter_map(Value::as_str).collect();
     assert_eq!(
         arg_strings,
         vec!["mcp"],
-        ".mcp.json haiai.args must be [\"mcp\"]"
+        ".mcp.json mcpServers.haiai.args must be [\"mcp\"]"
     );
 }
 

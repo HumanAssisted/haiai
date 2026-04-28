@@ -296,3 +296,102 @@ jobs:
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
             sha256sums.txt
+
+  bump-homebrew:
+    needs: [verify-version, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download sha256sums from release
+        env:
+          VERSION: ${{ needs.verify-version.outputs.version }}
+        run: |
+          curl -fsSL -o sha256sums.txt \
+            "https://github.com/HumanAssisted/haiai/releases/download/rust/v${VERSION}/sha256sums.txt"
+          cat sha256sums.txt
+
+      - name: Parse per-platform sha256s
+        id: sha
+        env:
+          VERSION: ${{ needs.verify-version.outputs.version }}
+        run: |
+          pick() { grep "haiai-cli-${VERSION}-$1\\.tar\\.gz\$" sha256sums.txt | awk '{print $1}'; }
+          DARWIN_ARM=$(pick darwin-arm64)
+          DARWIN_X64=$(pick darwin-x64)
+          LINUX_ARM=$(pick linux-arm64)
+          LINUX_X64=$(pick linux-x64)
+          for name in DARWIN_ARM DARWIN_X64 LINUX_ARM LINUX_X64; do
+            val="$(eval echo \$$name)"
+            if [ -z "$val" ]; then
+              echo "::error::Missing sha256 for $name"
+              exit 1
+            fi
+            echo "$name=$val" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Regenerate Formula/haiai.rb
+        env:
+          VERSION:    ${{ needs.verify-version.outputs.version }}
+          DARWIN_ARM: ${{ steps.sha.outputs.DARWIN_ARM }}
+          DARWIN_X64: ${{ steps.sha.outputs.DARWIN_X64 }}
+          LINUX_ARM:  ${{ steps.sha.outputs.LINUX_ARM }}
+          LINUX_X64:  ${{ steps.sha.outputs.LINUX_X64 }}
+        run: |
+          mkdir -p Formula
+          cat > Formula/haiai.rb <<EOF
+          class Haiai < Formula
+            desc "CLI for HAI.AI agent identity, @hai.ai email, and MCP server"
+            homepage "https://hai.ai"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/HumanAssisted/haiai/releases/download/rust/v#{version}/haiai-cli-#{version}-darwin-arm64.tar.gz"
+                sha256 "${DARWIN_ARM}"
+              end
+              on_intel do
+                url "https://github.com/HumanAssisted/haiai/releases/download/rust/v#{version}/haiai-cli-#{version}-darwin-x64.tar.gz"
+                sha256 "${DARWIN_X64}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/HumanAssisted/haiai/releases/download/rust/v#{version}/haiai-cli-#{version}-linux-arm64.tar.gz"
+                sha256 "${LINUX_ARM}"
+              end
+              on_intel do
+                url "https://github.com/HumanAssisted/haiai/releases/download/rust/v#{version}/haiai-cli-#{version}-linux-x64.tar.gz"
+                sha256 "${LINUX_X64}"
+              end
+            end
+
+            def install
+              bin.install "haiai-cli" => "haiai"
+            end
+
+            test do
+              assert_match "haiai", shell_output("#{bin}/haiai --version")
+            end
+          end
+          EOF
+
+      - name: Commit and push Formula/haiai.rb
+        env:
+          VERSION: ${{ needs.verify-version.outputs.version }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/haiai.rb
+          if git diff --cached --quiet; then
+            echo "Formula already at v${VERSION} — nothing to push"
+            exit 0
+          fi
+          git commit -m "Bump Homebrew formula to ${VERSION}"
+          git push origin HEAD:main

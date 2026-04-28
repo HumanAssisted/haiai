@@ -2,18 +2,17 @@ package haiai
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log"
 )
 
 // WSConnection represents an active WebSocket connection to HAI via FFI.
 type WSConnection struct {
-	client   *Client
-	handleID uint64
-	events   chan AgentEvent
-	done     chan struct{}
-	cancel   context.CancelFunc
+	client    *Client
+	handleID  uint64
+	events    chan AgentEvent
+	done      chan struct{}
+	cancel    context.CancelFunc
+	lifecycle *streamLifecycle
 }
 
 // Events returns the channel that receives AgentEvent values from the server.
@@ -23,6 +22,10 @@ func (ws *WSConnection) Events() <-chan AgentEvent {
 
 // Close terminates the WebSocket connection.
 func (ws *WSConnection) Close() {
+	if ws.lifecycle != nil {
+		ws.lifecycle.close()
+		return
+	}
 	ws.cancel()
 	ws.client.ffi.WSClose(ws.handleID)
 	<-ws.done
@@ -41,60 +44,27 @@ func (ws *WSConnection) SendJobResponse(jobID string, response ModerationRespons
 //
 // Uses endpoint: GET /ws/agent/connect (upgraded to WebSocket).
 func (c *Client) ConnectWS(ctx context.Context) (*WSConnection, error) {
-	handleID, err := c.ffi.ConnectWS()
+	lifecycle, err := openStreamLifecycle(
+		ctx,
+		c.ffi.ConnectWS,
+		c.ffi.WSNextEvent,
+		c.ffi.WSClose,
+		"WS",
+	)
 	if err != nil {
-		return nil, mapFFIErr(err)
+		return nil, err
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
 	conn := &WSConnection{
-		client:   c,
-		handleID: handleID,
-		events:   make(chan AgentEvent, 16),
-		done:     make(chan struct{}),
-		cancel:   cancel,
+		client:    c,
+		handleID:  lifecycle.handleID,
+		events:    lifecycle.events,
+		done:      lifecycle.done,
+		cancel:    lifecycle.cancel,
+		lifecycle: lifecycle,
 	}
-
-	go conn.readLoop(ctx)
 
 	return conn, nil
-}
-
-func (ws *WSConnection) readLoop(ctx context.Context) {
-	defer close(ws.done)
-	defer close(ws.events)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		raw, err := ws.client.ffi.WSNextEvent(ws.handleID)
-		if err != nil {
-			log.Printf("[haiai] WS event error: %v", err)
-			return
-		}
-		if raw == nil {
-			// Connection closed by server
-			return
-		}
-
-		var event AgentEvent
-		if err := json.Unmarshal(raw, &event); err != nil {
-			log.Printf("[haiai] WS unmarshal error: %v", err)
-			continue
-		}
-
-		select {
-		case ws.events <- event:
-		case <-ctx.Done():
-			return
-		default:
-			log.Printf("[haiai] WARNING: WS event dropped (channel full, buffer=%d): type=%s", cap(ws.events), event.Type)
-		}
-	}
 }
 
 // ConnectWSWithHandler connects via WebSocket and dispatches benchmark jobs to a handler.

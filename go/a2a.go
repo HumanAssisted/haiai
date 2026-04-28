@@ -287,12 +287,12 @@ func (a *A2AIntegration) signArtifactViaFFI(
 		wrapped.JacsParentSignatures = parentSignatures
 	}
 
-	canonical, err := canonicalArtifactBytes(wrapped)
+	canonical, err := canonicalArtifactJSON(a.client.ffi, wrapped)
 	if err != nil {
 		return nil, wrapError(ErrSigningFailed, err, "failed to canonicalize artifact")
 	}
 
-	sigB64, signErr := a.client.ffi.SignMessage(string(canonical))
+	sigB64, signErr := a.client.ffi.SignMessage(canonical)
 	if signErr != nil {
 		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign artifact via FFI")
 	}
@@ -836,10 +836,18 @@ func mergeAgentJSONWithA2ACard(agentJSON string, card *A2AAgentCard) (string, er
 	return string(encoded), nil
 }
 
-func canonicalArtifactBytes(wrapped *A2AWrappedArtifact) ([]byte, error) {
+// canonicalArtifactJSON produces the canonical RFC 8785 (JCS) JSON form of the
+// wrapped artifact, with the JACS signature field stripped. Canonicalization
+// is delegated to the JACS FFI (no local algorithm) so the bytes round-trip
+// byte-for-byte with verifier-side canonicalization.
+func canonicalArtifactJSON(client FFIClient, wrapped *A2AWrappedArtifact) (string, error) {
 	clone := *wrapped
 	clone.JacsSignature = nil
-	return json.Marshal(clone)
+	raw, err := json.Marshal(clone)
+	if err != nil {
+		return "", err
+	}
+	return client.CanonicalJSON(string(raw))
 }
 
 func hasJACSExtension(card map[string]interface{}) bool {

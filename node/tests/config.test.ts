@@ -38,17 +38,14 @@ describe('config', () => {
       expect(config.jacsId).toBe('jacs-id-1');
     });
 
-    it('loads config with snake_case fields', async () => {
+    it('loads config with canonical snake_case fields', async () => {
       const configPath = path.join(tmpDir, 'jacs.config.json');
       await fs.writeFile(configPath, JSON.stringify({
-        agent_name: 'snake-bot',
-        agent_version: '1.0.0',
-        key_dir: './mykeys',
-        jacs_id: 'snake-id',
+        jacs_agent_id_and_version: 'snake-id:1.0.0',
+        jacs_key_directory: './mykeys',
       }));
 
       const config = await loadConfig(configPath);
-      expect(config.jacsAgentName).toBe('snake-bot');
       expect(config.jacsAgentVersion).toBe('1.0.0');
       expect(config.jacsKeyDir).toBe(path.resolve(tmpDir, 'mykeys'));
       expect(config.jacsId).toBe('snake-id');
@@ -59,7 +56,7 @@ describe('config', () => {
       await fs.writeFile(configPath, JSON.stringify({}));
 
       await expect(loadConfig(configPath)).rejects.toThrow(
-        'JACS config missing required fields',
+        /JACS config has neither canonical nor legacy fields/,
       );
     });
 

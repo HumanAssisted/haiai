@@ -31,6 +31,28 @@ type mockFFIClient struct {
 	verifyA2AArtifactFn func(wrappedJSON string) (json.RawMessage, error)
 	// rotateKeysFn overrides RotateKeys for unit tests. If nil, falls back to doPost.
 	rotateKeysFn func(optionsJSON string) (json.RawMessage, error)
+
+	// JACS Document Store overrides.
+	storeDocumentFn       func(signedJSON string) (string, error)
+	signAndStoreFn        func(dataJSON string) (json.RawMessage, error)
+	getDocumentFn         func(key string) (string, error)
+	getLatestDocumentFn   func(docID string) (string, error)
+	getDocumentVersionsFn func(docID string) ([]string, error)
+	listDocumentsFn       func(jacsType string) ([]string, error)
+	removeDocumentFn      func(key string) error
+	updateDocumentFn      func(docID, signedJSON string) (json.RawMessage, error)
+	searchDocumentsFn     func(query string, limit, offset int) (json.RawMessage, error)
+	queryByTypeFn         func(docType string, limit, offset int) ([]string, error)
+	queryByFieldFn        func(field, value string, limit, offset int) ([]string, error)
+	queryByAgentFn        func(agentID string, limit, offset int) ([]string, error)
+	storageCapabilitiesFn func() (json.RawMessage, error)
+	saveMemoryFn          func(content string) (string, error)
+	saveSoulFn            func(content string) (string, error)
+	getMemoryFn           func() (string, error)
+	getSoulFn             func() (string, error)
+	storeTextFileFn       func(path string) (string, error)
+	storeImageFileFn      func(path string) (string, error)
+	getRecordBytesFn      func(key string) ([]byte, error)
 }
 
 func newMockFFIClient(baseURL, jacsID, authHeader string) *mockFFIClient {
@@ -276,6 +298,11 @@ func (m *mockFFIClient) GetEmailStatus() (json.RawMessage, error) {
 
 func (m *mockFFIClient) GetMessage(messageID string) (json.RawMessage, error) {
 	path := fmt.Sprintf("/api/agents/%s/email/messages/%s", urlEncode(m.agentID), urlEncode(messageID))
+	return m.doGet(path)
+}
+
+func (m *mockFFIClient) GetRawEmail(messageID string) (json.RawMessage, error) {
+	path := fmt.Sprintf("/api/agents/%s/email/messages/%s/raw", urlEncode(m.agentID), urlEncode(messageID))
 	return m.doGet(path)
 }
 
@@ -599,6 +626,32 @@ func (m *mockFFIClient) DeleteEmailTemplate(templateID string) (json.RawMessage,
 	return m.doDelete(path)
 }
 
+// --- Local Media (Layer 8 / TASK_009) ---
+//
+// The mock is HTTP-based; media operations are local-only and not exercised
+// by HTTP-driven tests. Stub implementations let the interface compile and
+// surface a clear error if any test accidentally invokes them.
+
+func (m *mockFFIClient) SignText(path, optsJSON string) (json.RawMessage, error) {
+	return nil, fmt.Errorf("mock: SignText is local-only and not supported by mockFFIClient")
+}
+
+func (m *mockFFIClient) VerifyText(path, optsJSON string) (json.RawMessage, error) {
+	return nil, fmt.Errorf("mock: VerifyText is local-only and not supported by mockFFIClient")
+}
+
+func (m *mockFFIClient) SignImage(inPath, outPath, optsJSON string) (json.RawMessage, error) {
+	return nil, fmt.Errorf("mock: SignImage is local-only and not supported by mockFFIClient")
+}
+
+func (m *mockFFIClient) VerifyImage(filePath, optsJSON string) (json.RawMessage, error) {
+	return nil, fmt.Errorf("mock: VerifyImage is local-only and not supported by mockFFIClient")
+}
+
+func (m *mockFFIClient) ExtractMediaSignature(filePath, optsJSON string) (json.RawMessage, error) {
+	return nil, fmt.Errorf("mock: ExtractMediaSignature is local-only and not supported by mockFFIClient")
+}
+
 // --- SSE Streaming ---
 
 func (m *mockFFIClient) ConnectSSE() (uint64, error) {
@@ -622,6 +675,154 @@ func (m *mockFFIClient) WSNextEvent(handleID uint64) (json.RawMessage, error) {
 }
 
 func (m *mockFFIClient) WSClose(handleID uint64) {}
+
+// --- JACS Document Store (Issue 025) ---
+//
+// Each method has a corresponding `*Fn` callback so individual tests can stub
+// the wire shape without going through HTTP. By default the methods return a
+// "not configured" error so tests that don't stub them surface the gap loudly.
+
+func (m *mockFFIClient) StoreDocument(signedJSON string) (string, error) {
+	if m.storeDocumentFn != nil {
+		return m.storeDocumentFn(signedJSON)
+	}
+	return "", fmt.Errorf("mock: StoreDocument not stubbed")
+}
+
+func (m *mockFFIClient) SignAndStore(dataJSON string) (json.RawMessage, error) {
+	if m.signAndStoreFn != nil {
+		return m.signAndStoreFn(dataJSON)
+	}
+	return nil, fmt.Errorf("mock: SignAndStore not stubbed")
+}
+
+func (m *mockFFIClient) GetDocument(key string) (string, error) {
+	if m.getDocumentFn != nil {
+		return m.getDocumentFn(key)
+	}
+	return "", fmt.Errorf("mock: GetDocument not stubbed")
+}
+
+func (m *mockFFIClient) GetLatestDocument(docID string) (string, error) {
+	if m.getLatestDocumentFn != nil {
+		return m.getLatestDocumentFn(docID)
+	}
+	return "", fmt.Errorf("mock: GetLatestDocument not stubbed")
+}
+
+func (m *mockFFIClient) GetDocumentVersions(docID string) ([]string, error) {
+	if m.getDocumentVersionsFn != nil {
+		return m.getDocumentVersionsFn(docID)
+	}
+	return nil, fmt.Errorf("mock: GetDocumentVersions not stubbed")
+}
+
+func (m *mockFFIClient) ListDocuments(jacsType string) ([]string, error) {
+	if m.listDocumentsFn != nil {
+		return m.listDocumentsFn(jacsType)
+	}
+	return nil, fmt.Errorf("mock: ListDocuments not stubbed")
+}
+
+func (m *mockFFIClient) RemoveDocument(key string) error {
+	if m.removeDocumentFn != nil {
+		return m.removeDocumentFn(key)
+	}
+	return fmt.Errorf("mock: RemoveDocument not stubbed")
+}
+
+func (m *mockFFIClient) UpdateDocument(docID, signedJSON string) (json.RawMessage, error) {
+	if m.updateDocumentFn != nil {
+		return m.updateDocumentFn(docID, signedJSON)
+	}
+	return nil, fmt.Errorf("mock: UpdateDocument not stubbed")
+}
+
+func (m *mockFFIClient) SearchDocuments(query string, limit, offset int) (json.RawMessage, error) {
+	if m.searchDocumentsFn != nil {
+		return m.searchDocumentsFn(query, limit, offset)
+	}
+	return nil, fmt.Errorf("mock: SearchDocuments not stubbed")
+}
+
+func (m *mockFFIClient) QueryByType(docType string, limit, offset int) ([]string, error) {
+	if m.queryByTypeFn != nil {
+		return m.queryByTypeFn(docType, limit, offset)
+	}
+	return nil, fmt.Errorf("mock: QueryByType not stubbed")
+}
+
+func (m *mockFFIClient) QueryByField(field, value string, limit, offset int) ([]string, error) {
+	if m.queryByFieldFn != nil {
+		return m.queryByFieldFn(field, value, limit, offset)
+	}
+	return nil, fmt.Errorf("mock: QueryByField not stubbed")
+}
+
+func (m *mockFFIClient) QueryByAgent(agentID string, limit, offset int) ([]string, error) {
+	if m.queryByAgentFn != nil {
+		return m.queryByAgentFn(agentID, limit, offset)
+	}
+	return nil, fmt.Errorf("mock: QueryByAgent not stubbed")
+}
+
+func (m *mockFFIClient) StorageCapabilities() (json.RawMessage, error) {
+	if m.storageCapabilitiesFn != nil {
+		return m.storageCapabilitiesFn()
+	}
+	return nil, fmt.Errorf("mock: StorageCapabilities not stubbed")
+}
+
+// D5 — MEMORY / SOUL convenience wrappers
+func (m *mockFFIClient) SaveMemory(content string) (string, error) {
+	if m.saveMemoryFn != nil {
+		return m.saveMemoryFn(content)
+	}
+	return "", fmt.Errorf("mock: SaveMemory not stubbed")
+}
+
+func (m *mockFFIClient) SaveSoul(content string) (string, error) {
+	if m.saveSoulFn != nil {
+		return m.saveSoulFn(content)
+	}
+	return "", fmt.Errorf("mock: SaveSoul not stubbed")
+}
+
+func (m *mockFFIClient) GetMemory() (string, error) {
+	if m.getMemoryFn != nil {
+		return m.getMemoryFn()
+	}
+	return "", fmt.Errorf("mock: GetMemory not stubbed")
+}
+
+func (m *mockFFIClient) GetSoul() (string, error) {
+	if m.getSoulFn != nil {
+		return m.getSoulFn()
+	}
+	return "", fmt.Errorf("mock: GetSoul not stubbed")
+}
+
+// D9 — typed-content helpers
+func (m *mockFFIClient) StoreTextFile(path string) (string, error) {
+	if m.storeTextFileFn != nil {
+		return m.storeTextFileFn(path)
+	}
+	return "", fmt.Errorf("mock: StoreTextFile not stubbed")
+}
+
+func (m *mockFFIClient) StoreImageFile(path string) (string, error) {
+	if m.storeImageFileFn != nil {
+		return m.storeImageFileFn(path)
+	}
+	return "", fmt.Errorf("mock: StoreImageFile not stubbed")
+}
+
+func (m *mockFFIClient) GetRecordBytes(key string) ([]byte, error) {
+	if m.getRecordBytesFn != nil {
+		return m.getRecordBytesFn(key)
+	}
+	return nil, fmt.Errorf("mock: GetRecordBytes not stubbed")
+}
 
 // --- Helpers ---
 

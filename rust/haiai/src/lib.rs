@@ -44,6 +44,7 @@ pub mod error;
 pub mod jacs;
 #[cfg(feature = "jacs-crate")]
 pub mod jacs_local;
+pub mod jacs_remote;
 pub mod key_format;
 pub mod mime;
 pub mod self_knowledge;
@@ -69,12 +70,10 @@ pub use config::{
 };
 #[cfg(feature = "jacs-crate")]
 pub use email::{
-    compute_content_hash,
     // JACS email types re-exported for consumer convenience
     sign_email,
     verify_email,
     AttachmentEntry,
-    AttachmentInput,
     BodyPartEntry,
     ContentVerificationResult,
     EmailSignatureHeaders,
@@ -92,12 +91,20 @@ pub use jacs::{
     JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider, JacsProvider,
     JacsVerificationProvider, NoopJacsProvider, StaticJacsProvider,
 };
+#[cfg(feature = "jacs-crate")]
+pub use jacs::{
+    media_verify_result_to_json, media_verify_status_to_str, text_signature_status_to_str,
+    verify_text_result_to_json, JacsMediaProvider, MediaVerificationResult, MediaVerifyStatus,
+    SignImageOptions, SignTextOptions, SignTextOutcome, SignedMedia, TextSignatureEntry,
+    TextSignatureStatus, VerifyImageOptions, VerifyTextOptions, VerifyTextResult,
+};
 #[cfg(feature = "agreements")]
 pub use jacs::JacsAgreementProvider;
 #[cfg(feature = "attestation")]
 pub use jacs::JacsAttestationProvider;
 #[cfg(feature = "jacs-crate")]
 pub use jacs_local::LocalJacsProvider;
+pub use jacs_remote::{RemoteJacsProvider, RemoteJacsProviderOptions};
 pub use types::*;
 pub use verify::{
     generate_verify_link, generate_verify_link_hosted, MAX_VERIFY_DOCUMENT_BYTES,

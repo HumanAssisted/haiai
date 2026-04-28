@@ -221,3 +221,215 @@ class TestAsyncRotateKeysBehavior:
             config_path=None,
             algorithm="pq2025",
         )
+
+
+@pytest.mark.asyncio
+class TestAsyncHelloAndHealthParity:
+    """Verify the async client matches the sync client's FFI health/hello behavior."""
+
+    async def test_testconnection_calls_ffi_hello(
+        self, async_ffi_client: tuple[object, object]
+    ) -> None:
+        client, mock_ffi = async_ffi_client
+        mock_ffi.responses["hello"] = {"message": "ok"}
+
+        result = await client.testconnection("https://hai.ai")
+
+        assert result is True
+        assert mock_ffi.calls[0][0] == "hello"
+        assert mock_ffi.calls[0][1] == (False,)
+
+    async def test_hello_world_calls_ffi_and_verifies_signature(
+        self, async_ffi_client: tuple[object, object]
+    ) -> None:
+        client, mock_ffi = async_ffi_client
+        mock_ffi.responses["hello"] = {
+            "timestamp": "2026-01-01T00:00:00Z",
+            "client_ip": "127.0.0.1",
+            "hai_public_key_fingerprint": "fp",
+            "message": "ok",
+            "hello_id": "hello-1",
+            "hai_signed_ack": "sig",
+        }
+
+        with patch.object(client, "verify_hai_message", return_value=True) as verify:
+            result = await client.hello_world("https://hai.ai", include_test=True)
+
+        assert mock_ffi.calls[0][0] == "hello"
+        assert mock_ffi.calls[0][1] == (True,)
+        verify.assert_called_once()
+        assert result.message == "ok"
+        assert result.hai_signature_valid is True
+
+
+@pytest.mark.asyncio
+class TestAsyncTransportParity:
+    """Verify async streaming matches the sync client's retry and cleanup behavior."""
+
+    @pytest.mark.parametrize(
+        ("transport", "connect_method", "next_method", "close_method"),
+        [
+            ("sse", "connect_sse", "sse_next_event", "sse_close"),
+            ("ws", "connect_ws", "ws_next_event", "ws_close"),
+        ],
+    )
+    async def test_connect_updates_last_event_id_and_closes_handle(
+        self,
+        async_ffi_client: tuple[object, object],
+        transport: str,
+        connect_method: str,
+        next_method: str,
+        close_method: str,
+    ) -> None:
+        client, mock_ffi = async_ffi_client
+        mock_ffi.responses[connect_method] = 42
+        events = iter(
+            [
+                {
+                    "event_type": "connected",
+                    "data": {"agent_id": "agent-1"},
+                    "id": "evt-42",
+                    "raw": '{"agent_id":"agent-1"}',
+                },
+                None,
+            ]
+        )
+        mock_ffi.responses[next_method] = lambda handle: next(events)
+
+        stream = client.connect("https://hai.ai", transport=transport)
+        seen = [await anext(stream)]
+        await stream.aclose()
+
+        assert len(seen) == 1
+        assert seen[0].event_type == "connected"
+        assert seen[0].id == "evt-42"
+        assert client._last_event_id == "evt-42"
+        assert mock_ffi.calls[0][0] == connect_method
+        assert mock_ffi.calls[-1][0] == close_method
+        assert mock_ffi.calls[-1][1] == (42,)
+
+    @pytest.mark.parametrize(
+        ("transport", "connect_method", "next_method", "close_method"),
+        [
+            ("sse", "connect_sse", "sse_next_event", "sse_close"),
+            ("ws", "connect_ws", "ws_next_event", "ws_close"),
+        ],
+    )
+    async def test_connect_retries_until_a_transport_connects(
+        self,
+        async_ffi_client: tuple[object, object],
+        monkeypatch: pytest.MonkeyPatch,
+        transport: str,
+        connect_method: str,
+        next_method: str,
+        close_method: str,
+    ) -> None:
+        from haiai._retry import RETRY_MAX_ATTEMPTS  # noqa: F401
+
+        client, mock_ffi = async_ffi_client
+        attempts = {"count": 0}
+        sleep_delays: list[float] = []
+
+        def flaky_connect() -> int:
+            attempts["count"] += 1
+            if attempts["count"] < 3:
+                raise RuntimeError("temporary failure")
+            return 99
+
+        events = iter(
+            [
+                {"event_type": "connected", "data": {"ok": True}, "id": "evt-ok", "raw": "raw"},
+                None,
+            ]
+        )
+
+        async def fake_sleep(delay: float) -> None:
+            sleep_delays.append(delay)
+
+        monkeypatch.setattr("haiai.async_client.RETRY_MAX_ATTEMPTS", 5)
+        monkeypatch.setattr("haiai.async_client.backoff", lambda attempt: 0.5 + attempt)
+        monkeypatch.setattr("haiai.async_client.asyncio.sleep", fake_sleep)
+
+        mock_ffi.responses[connect_method] = flaky_connect
+        mock_ffi.responses[next_method] = lambda handle: next(events)
+
+        stream = client.connect("https://hai.ai", transport=transport)
+        seen = [await anext(stream)]
+        await stream.aclose()
+
+        assert len(seen) == 1
+        assert seen[0].id == "evt-ok"
+        assert attempts["count"] == 3
+        assert sleep_delays == [0.5, 1.5]
+        assert mock_ffi.calls[-1][0] == close_method
+        assert mock_ffi.calls[-1][1] == (99,)
+
+    @pytest.mark.parametrize(
+        ("transport", "connect_method"),
+        [
+            ("sse", "connect_sse"),
+            ("ws", "connect_ws"),
+        ],
+    )
+    async def test_connect_exhaustion_raises_connection_error(
+        self,
+        async_ffi_client: tuple[object, object],
+        monkeypatch: pytest.MonkeyPatch,
+        transport: str,
+        connect_method: str,
+    ) -> None:
+        from haiai.errors import HaiConnectionError
+
+        client, mock_ffi = async_ffi_client
+        attempts = {"count": 0}
+        sleep_delays: list[float] = []
+
+        def always_fail() -> int:
+            attempts["count"] += 1
+            raise RuntimeError("still down")
+
+        async def fake_sleep(delay: float) -> None:
+            sleep_delays.append(delay)
+
+        monkeypatch.setattr("haiai.async_client.RETRY_MAX_ATTEMPTS", 1)
+        monkeypatch.setattr("haiai.async_client.backoff", lambda attempt: float(attempt))
+        monkeypatch.setattr("haiai.async_client.asyncio.sleep", fake_sleep)
+
+        mock_ffi.responses[connect_method] = always_fail
+
+        with pytest.raises(HaiConnectionError):
+            async for _ in client.connect("https://hai.ai", transport=transport):
+                pass
+
+        assert attempts["count"] == 2
+        assert sleep_delays == [0.0]
+
+    @pytest.mark.parametrize(
+        ("transport", "connect_method", "next_method", "close_method"),
+        [
+            ("sse", "connect_sse", "sse_next_event", "sse_close"),
+            ("ws", "connect_ws", "ws_next_event", "ws_close"),
+        ],
+    )
+    async def test_connect_reraises_auth_errors_and_still_closes_handle(
+        self,
+        async_ffi_client: tuple[object, object],
+        transport: str,
+        connect_method: str,
+        next_method: str,
+        close_method: str,
+    ) -> None:
+        from haiai.errors import HaiAuthError
+
+        client, mock_ffi = async_ffi_client
+        mock_ffi.responses[connect_method] = 11
+        mock_ffi.responses[next_method] = lambda handle: (_ for _ in ()).throw(
+            HaiAuthError("auth failed", status_code=401)
+        )
+
+        with pytest.raises(HaiAuthError):
+            async for _ in client.connect("https://hai.ai", transport=transport):
+                pass
+
+        assert mock_ffi.calls[-1][0] == close_method
+        assert mock_ffi.calls[-1][1] == (11,)

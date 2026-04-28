@@ -16,7 +16,7 @@ const { existsSync } = require("fs");
 const path = require("path");
 
 // Must match the version in package.json.
-const SDK_VERSION = "0.2.2";
+const SDK_VERSION = "0.4.0";
 const SDK_MAJOR_MINOR = SDK_VERSION.split(".").slice(0, 2).join(".");
 
 const PLATFORMS = {
