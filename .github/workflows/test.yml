@@ -426,19 +426,9 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-      localstack:
-        image: localstack/localstack:stable
-        env:
-          SERVICES: s3
-          DEBUG: "0"
-          AWS_DEFAULT_REGION: us-east-1
-        ports:
-          - 4566:4566
-        options: >-
-          --health-cmd "curl -sf http://localhost:4566/_localstack/health || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
+      # MinIO replaces LocalStack as the S3 endpoint for the JACS
+      # Document Store. Started as a docker step below (services don't
+      # support CMD args, and minio needs `server /data`).
 
     steps:
       - name: Checkout haisdk
@@ -481,19 +471,23 @@ jobs:
             psql -h localhost -U hai -d hai_test -v ON_ERROR_STOP=1 -f "$file"
           done
 
-      - name: Provision LocalStack S3 bucket
+      - name: Start MinIO + provision JACS bucket
         env:
-          AWS_ACCESS_KEY_ID: test
-          AWS_SECRET_ACCESS_KEY: test
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
           AWS_DEFAULT_REGION: us-east-1
         run: |
-          for i in 1 2 3 4 5 6 7 8 9 10; do
-            if curl -sf http://localhost:4566/_localstack/health | grep -q '"s3"'; then
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+          for i in $(seq 1 30); do
+            if curl -fs http://localhost:9000/minio/health/ready >/dev/null 2>&1; then
               break
             fi
-            sleep 2
+            sleep 1
           done
-          aws --endpoint-url=http://localhost:4566 s3 mb s3://hai-jacsdb-test || true
+          aws --endpoint-url=http://localhost:9000 s3 mb s3://hai-jacsdb-test || true
 
       - name: Build api (release for fast CI startup)
         run: |
@@ -510,14 +504,14 @@ jobs:
           token="ci-token-$(uuidgen 2>/dev/null || openssl rand -hex 16)"
           echo "HAI_DEBUG_REGISTRATION_TOKEN=${token}" >> "$GITHUB_ENV"
 
-      - name: Spawn api against the CI postgres + LocalStack
+      - name: Spawn api against the CI postgres + MinIO
         env:
           DATABASE_URL: postgres://hai:hai_test_password@localhost:5432/hai_test
           HAI_RUN_DB_TESTS: "1"
           HAI_JACSDB_BUCKET: hai-jacsdb-test
-          AWS_ENDPOINT_URL: http://localhost:4566
-          AWS_ACCESS_KEY_ID: test
-          AWS_SECRET_ACCESS_KEY: test
+          AWS_ENDPOINT_URL: http://localhost:9000
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
           AWS_REGION: us-east-1
           AWS_DEFAULT_REGION: us-east-1
           AWS_ALLOW_HTTP: "true"

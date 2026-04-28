@@ -1,6 +1,6 @@
 .PHONY: test test-python test-node test-go test-rust \
         smoke smoke-python smoke-node smoke-go \
-        build-python-ffi build-node-ffi \
+        build-python-ffi build-node-ffi build-haiigo \
         versions check-versions check-jacs-versions \
         bump-version bump-jacs-version \
         generate-knowledge check-knowledge \
@@ -43,8 +43,12 @@ test-python: build-python-ffi
 test-node:
 	cd node && npm ci && npm test
 
-test-go:
-	cd go && CGO_ENABLED=1 go test -race ./...
+test-go: build-haiigo
+	cd go && CGO_ENABLED=1 \
+	    CGO_LDFLAGS="-L$(CURDIR)/rust/target/release" \
+	    DYLD_LIBRARY_PATH="$(CURDIR)/rust/target/release" \
+	    LD_LIBRARY_PATH="$(CURDIR)/rust/target/release" \
+	    go test -race ./...
 
 test-rust:
 	cd rust && cargo test --workspace
@@ -87,6 +91,9 @@ build-python-ffi:
 
 build-node-ffi:
 	cd rust/haiinpm && npm install && npm run build
+
+build-haiigo:
+	cd rust && cargo build -p haiigo --release
 
 # ============================================================================
 # KNOWLEDGE (self-knowledge document embedding)

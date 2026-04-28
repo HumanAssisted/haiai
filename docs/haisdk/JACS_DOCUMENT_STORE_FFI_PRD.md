@@ -650,3 +650,82 @@ The `scripts/ci/check_no_local_crypto.sh` denylist evidently does not flag `sha2
 - No HTTP outside Rust.
 - Smoke tests skip cleanly when native artifacts unavailable.
 - Public-client surface is idiomatic per language.
+
+---
+
+## Review Summary (deep-review pass 3 — 2026-04-27, post-fix verification)
+
+Re-verified the implementation against the PRD + 7 task files + the 16 prior issues. Validated each previously-marked-Fixed issue still holds in the current source. Two outstanding items remain — both housekeeping/devex carry-overs.
+
+### Verification of prior fixes
+
+- **Issues 001–009, 012–016** — All confirmed Fixed in source with their `## Status: Fixed` markers in place.
+- **Issue 010** — Filed but not Fixed. `Makefile:46-47` `test-go` target still has bare `cd go && CGO_ENABLED=1 go test -race ./...` with no LDFLAGS / library paths and no `build-haiigo` dependency. Missing `## Status: Fixed` marker. Filed as Issue 017 (re-flag for the fix).
+- **Issue 011** — Code is Fixed (compute_content_hash deleted across all 4 SDKs via Task #58); only the Status marker is missing on the issue file. Filed as Issue 018 (housekeeping).
+
+### Verification of the 20 fixture-named methods
+
+| Surface | Path | Count |
+|---|---|---|
+| binding-core wrapper | `rust/hai-binding-core/src/lib.rs:1412–1764` | 20 + 20 `_with` test seams |
+| haiipy (PyO3) | `rust/haiipy/src/lib.rs:1439–1857` | 40 entries (20 async + 20 `_sync`) |
+| haiinpm (napi-rs) | `rust/haiinpm/src/lib.rs:653–798` | 20 |
+| haiigo (cgo cdylib) | `rust/haiigo/src/lib.rs:1064–1495` | 20 + `hai_free_bytes` |
+| haiigo C extern decls | `go/ffi/ffi.go:156–180` | 22 (20 + bytes pair) |
+| Go `*ffi.Client` | `go/ffi/ffi.go:1285–1528` | 20 |
+| Go `*Client` (public) | `go/client.go:1691–1848` | 20 PascalCase |
+| Python `HaiClient` | `python/src/haiai/client.py:2182–2270` | 20 sync |
+| Python `AsyncHaiClient` | `python/src/haiai/async_client.py:1264–1350` | 20 async |
+| Node `HaiClient` | `node/src/client.ts:1985–2101` | 20 camelCase |
+| `methods.json` | `rust/hai-binding-core/methods.json` | 20 entries with `"group": "jacs_document_store"` |
+
+All 20 names are fixture-aligned. `methods.json::summary.async_methods = 75`, `total_public_methods = 101`, `binding_core_scope = "75 async + 6 streaming + 2 callback + 11 sync + 2 mutating = 96 methods"` — matches the documented bump from earlier reviews.
+
+### Test results (full matrix)
+
+| Suite | Result |
+|---|---|
+| `cargo test -p hai-binding-core --lib` | 93 passed (10 doc-store: 9 method-category + 1 missing-config) |
+| `cargo test -p haiigo --lib` | 17 passed (5 helper tests for `result_to_json` + `result_string_to_json`) |
+| `cargo test -p haiai --test contract_test` | 12 passed (incl. `ffi_method_parity_total_count_is_92`) |
+| `bash scripts/ci/check_no_local_crypto.sh` | clean |
+| `git diff main` greps for new HTTP imports in SDK source | empty |
+
+### Scoring
+
+| Dimension | Weight | Score | Notes |
+|---|---|---:|---|
+| Correctness | 40% | 5 | All 20 doc-store methods are wired through binding-core / haiipy (40 entries) / haiinpm (20) / haiigo (22 incl. helpers) and surfaced on Python `HaiClient` / `AsyncHaiClient`, Node `HaiClient`, Go `*Client` with idiomatic naming. Issue 001's cgo envelope bug is fixed and regression-tested via `result_string_to_json` + `parseStringResponse` pair. binding-core httpmock coverage exercises every method category. PRD §2 Goal — "same wire behavior across Python / Node / Go" — verifiable in code. |
+| Test Quality | 25% | 4 | binding-core has 10 unit tests using `#[tokio::test(flavor = "multi_thread")]`. haiigo has 17 helper tests including `serde_json::from_str` round-trip on the envelope. Public clients exercised via mock adapters. CI smoke-tests job runs against real native bindings end-to-end. Minor: Go `parseStringResponse` correctly fails-loud now (Issue 014) but `parseOptionalStringResponse` collapses `null` and `Some("")` to the same Go return value `("", nil)` — semantic, not a bug today since binding-core always returns full JSON envelopes for `Some`. |
+| Security | 10% | 5 | No HTTP imports in SDK source (verified via `git diff main`). `check_no_local_crypto.sh` clean. URL-escaping handled by `RemoteJacsProvider` (Issue 007 fixed). Auth headers preserved. JACS hashing delegates to `jacs::crypt::hash::hash_public_key` (Issue 012 fixed). `compute_content_hash` deleted (Issue 011 code-fixed). |
+| DRY / Quality | 15% | 5 | `build_doc_store` + 20 `*_with` test seams cleanly avoid 20× boilerplate. `result_string_to_json`, `result_option_to_json`, and the two new typed-numeric macros (`ffi_method_str_with_two_usize!`, `ffi_method_str2_with_two_usize!`) are well-scoped. methods.json updated atomically with the wrapper. |
+| Scope | 10% | 5 | Exactly the 20 fixture methods. CLI / MCP unchanged. fixture `total_method_count: 92` preserved. PRD §9 Non-Goals respected. |
+
+**Weighted total:** `0.4*5 + 0.25*4 + 0.1*5 + 0.15*5 + 0.1*5 = 2.0 + 1.0 + 0.5 + 0.75 + 0.5 = 4.75`
+
+### Recommendation: **Ship**
+
+The 20 doc-store methods themselves are ship-quality (carries forward the prior 4.75 score on that scope). The two outstanding items (Issues 017, 018) are housekeeping — neither blocks ship:
+
+- Issue 017 (High): `make test-go` Makefile fix is local-devex only; CI lane wraps the LDFLAGS itself. Should be applied as a follow-up to clean up fresh-clone onboarding.
+- Issue 018 (Low): Stale issue marker on Issue 011; the underlying code is genuinely fixed.
+
+### Issue counts (this pass)
+
+| Severity | Count | Issues |
+|---|---|---|
+| Critical | 0 | — |
+| High | 1 | 017 (`make test-go` LDFLAGS) |
+| Medium | 0 | — |
+| Low | 1 | 018 (Issue 011 status marker) |
+
+### What's solid (carries forward)
+
+- All 20 doc-store methods reach `RemoteJacsProvider` HTTP path through every binding.
+- cgo envelope construction routes plain-string returns through `result_string_to_json` and JSON-encoded returns through `result_to_json`. Test coverage on the helper is explicit (5 tests).
+- Smoke tests skip cleanly when native artifacts are missing AND run end-to-end against real bindings + a real HTTP listener in CI's `smoke-tests` job.
+- Adapter type fixes (`list_documents` / `get_document_versions` / `query_by_*` returning `list[str]` / `string[]` / `[]string`) are present across Python, Node, Go.
+- Crypto policy guard passes; PRD §3.8 / Rule 5 honored.
+- `query_by_field` short-circuits with typed `BackendUnsupported` (Issue 052) — surfaces via `ErrorKind::ProviderError` cleanly cross-language.
+- `verify_dns_public_key` delegates to JACS canonical hashing (Issue 012 fixed).
+- No `compute_content_hash` reimplementation in any SDK (Issue 011 code-fixed; only marker missing).
