@@ -251,3 +251,438 @@ jobs:
         run: |
           cd rust
           cargo test --workspace
+
+  # ----------------------------------------------------------------------------
+  # smoke-tests — real-FFI smoke tests across Python / Node / Go.
+  #
+  # Issue 003 fix. This is the one defensive layer that catches the regression
+  # class the parent PRD was written to prevent: FFI surfaces declared but not
+  # actually wired through to the native binding. Each smoke test loads the
+  # real haiipy / haiinpm / libhaiigo binding and round-trips
+  # save_memory("smoke") against a local HTTP listener.
+  #
+  # Pre-bakes a JACS agent via `haiai init --register false` and points the
+  # three smoke tests at the resulting jacs.config.json (Python and Node use
+  # `JACS_SMOKE_AGENT_DIR` indirectly via their bootstrap helpers; Go reads
+  # the env var directly).
+  # ----------------------------------------------------------------------------
+  smoke-tests:
+    runs-on: ubuntu-latest
+    needs: [test-python, test-node, test-go, test-rust]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Clone JACS (for workspace patch + jacsgo build)
+        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+
+      # Build all native FFI artifacts up front.
+      - name: Build haiigo cdylib (libhaiigo)
+        run: |
+          cd rust
+          cargo build --release -p haiigo
+        timeout-minutes: 15
+      - name: Build haiai CLI (used to bootstrap the smoke JACS agent)
+        run: |
+          cd rust
+          cargo build --release -p haiai-cli
+        timeout-minutes: 15
+      - name: Build jacsgo shared library
+        run: |
+          cd "${{ github.workspace }}/../JACS/jacsgo"
+          make build-rust
+
+      # Bootstrap a JACS smoke agent. `register=false` skips the HAI API
+      # registration step so this runs offline; we only need the keypair +
+      # jacs.config.json so the doc-store FFI path can sign POST bodies.
+      # `--quiet` skips the interactive password prompt; the password is
+      # supplied via JACS_PRIVATE_KEY_PASSWORD.
+      - name: Bootstrap JACS smoke agent
+        env:
+          JACS_PRIVATE_KEY_PASSWORD: smoke-password
+        run: |
+          mkdir -p smoke-agent
+          ./rust/target/release/haiai init \
+            --quiet \
+            --name smoke-agent \
+            --register false \
+            --data-dir "$(pwd)/smoke-agent/data" \
+            --key-dir "$(pwd)/smoke-agent/keys" \
+            --config-path "$(pwd)/smoke-agent/jacs.config.json"
+          echo "JACS_SMOKE_AGENT_DIR=$(pwd)/smoke-agent" >> "$GITHUB_ENV"
+
+      # Python smoke
+      - name: Build haiipy (maturin develop)
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install maturin pytest pytest-asyncio pytest-timeout respx httpx
+          cd rust/haiipy && maturin develop --release
+        timeout-minutes: 15
+      - name: Install Python SDK dev deps
+        run: |
+          source .venv/bin/activate
+          cd python && pip install -e ".[dev,mcp]"
+      - name: Run Python smoke test
+        env:
+          # Must match the password used during `haiai init` above so the
+          # JACS Agent can decrypt the private key. Set both env vars:
+          # `JACS_PRIVATE_KEY_PASSWORD` is what JACS reads natively, and
+          # `_HAISDK_SMOKE_PASSWORD` is a private channel the smoke test
+          # uses to recover the original CI value when the test conftest's
+          # autouse `password_env` fixture overrides
+          # `JACS_PRIVATE_KEY_PASSWORD` for other tests.
+          JACS_PRIVATE_KEY_PASSWORD: smoke-password
+          _HAISDK_SMOKE_PASSWORD: smoke-password
+        run: |
+          source .venv/bin/activate
+          make smoke-python
+
+      # Node smoke
+      - name: Build haiinpm
+        run: |
+          cd rust/haiinpm
+          npm install @napi-rs/cli
+          npx napi build --release
+        timeout-minutes: 15
+      - name: Install Node SDK deps
+        run: |
+          cd node
+          npm run deps:prod
+          npm pkg set "dependencies.haiinpm=file:../rust/haiinpm"
+          npm install
+      - name: Run Node smoke test
+        env:
+          JACS_PRIVATE_KEY_PASSWORD: smoke-password
+        run: make smoke-node
+
+      # Go smoke
+      - name: Set go.mod replace directive for CI
+        run: |
+          cd go
+          sed -i '/^replace github.com\/HumanAssisted\/JACS\/jacsgo/d' go.mod
+          echo 'replace github.com/HumanAssisted/JACS/jacsgo => ${{ github.workspace }}/../JACS/jacsgo' >> go.mod
+      - name: Run Go smoke test
+        env:
+          CGO_ENABLED: "1"
+          CGO_LDFLAGS: "-L${{ github.workspace }}/../JACS/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
+          CGO_CFLAGS: "-I${{ github.workspace }}/../JACS/jacsgo"
+          LD_LIBRARY_PATH: "${{ github.workspace }}/../JACS/jacsgo/build:${{ github.workspace }}/rust/target/release"
+          JACS_PRIVATE_KEY_PASSWORD: smoke-password
+        run: make smoke-go
+
+  # ----------------------------------------------------------------------------
+  # cross-repo-jacsdb-e2e — JACS Document Store SDK ↔ server CI gate
+  #   (closes JACS_DOCUMENT_STORE_PRD Issue 060).
+  #
+  # The 12 `#[ignore]`-gated tests in `rust/haiai/tests/jacs_remote_integration.rs`
+  # are the canonical proof of PRD §2 Goals 1, 2, 4, 5 — each of which says
+  # "a developer/agent can ... over HTTPS / against the live server / round-
+  # trip." Those tests have always been runnable locally (via
+  # `scripts/hosted-stack-up.sh`) but never green-on-CI. A motivated
+  # contributor could break the SDK ↔ server contract on either side and
+  # the regression test signal stayed silent.
+  #
+  # This job:
+  #   1. Checks out haisdk + JACS + hai (the api repo) via sibling paths.
+  #   2. Boots postgres + LocalStack S3 + the api itself via docker compose.
+  #   3. Builds the haiai CLI and uses it to register a fresh JACS test
+  #      agent against the running api (option B from Issue 060: real
+  #      registration path, no test-only divergence).
+  #   4. Runs the `--ignored` integration suite and asserts a non-vacuous
+  #      pass (>= 1s elapsed; matches Issue 062's structural-pass guard).
+  #
+  # If this job is red, NONE of PRD §2 Goals 1 / 2 / 4 / 5 can be claimed
+  # met — the api lane and the SDK unit lane don't exercise the contract
+  # boundary at the same time.
+  # ----------------------------------------------------------------------------
+  cross-repo-jacsdb-e2e:
+    runs-on: ubuntu-latest
+    needs: [test-rust]
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hai
+          POSTGRES_PASSWORD: hai_test_password
+          POSTGRES_DB: hai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      localstack:
+        image: localstack/localstack:latest
+        env:
+          SERVICES: s3
+          DEBUG: "0"
+          AWS_DEFAULT_REGION: us-east-1
+        ports:
+          - 4566:4566
+        options: >-
+          --health-cmd "curl -sf http://localhost:4566/_localstack/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout haisdk
+        uses: actions/checkout@v4
+        with:
+          path: haisdk
+
+      - name: Checkout JACS (workspace path-deps)
+        uses: actions/checkout@v4
+        with:
+          repository: HumanAssisted/JACS
+          path: JACS
+
+      - name: Checkout hai (api repo for the running server)
+        uses: actions/checkout@v4
+        with:
+          repository: HumanAssisted/hai
+          path: hai
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config awscli
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo (haisdk + hai)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            haisdk/rust -> target
+            hai/api -> target
+
+      - name: Apply hai/api migrations
+        env:
+          PGPASSWORD: hai_test_password
+        run: |
+          cd hai/api/migrations
+          for file in $(ls -1 *.sql | sort); do
+            echo "Applying: $file"
+            psql -h localhost -U hai -d hai_test -v ON_ERROR_STOP=1 -f "$file"
+          done
+
+      - name: Provision LocalStack S3 bucket
+        env:
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -sf http://localhost:4566/_localstack/health | grep -q '"s3"'; then
+              break
+            fi
+            sleep 2
+          done
+          aws --endpoint-url=http://localhost:4566 s3 mb s3://hai-jacsdb-test || true
+
+      - name: Build api (release for fast CI startup)
+        run: |
+          cd hai/api
+          cargo build --release --bin hai-api
+        timeout-minutes: 25
+
+      - name: Generate HAI_DEBUG_REGISTRATION_TOKEN (Issue 068)
+        run: |
+          # Issue 068: the debug-registration endpoint requires a bearer token.
+          # We mint a fresh per-run token, stash it in GITHUB_ENV so subsequent
+          # steps (api spawn + curl seed) read the same value, and surface it
+          # to the api process via HAI_DEBUG_REGISTRATION_TOKEN.
+          token="ci-token-$(uuidgen 2>/dev/null || openssl rand -hex 16)"
+          echo "HAI_DEBUG_REGISTRATION_TOKEN=${token}" >> "$GITHUB_ENV"
+
+      - name: Spawn api against the CI postgres + LocalStack
+        env:
+          DATABASE_URL: postgres://hai:hai_test_password@localhost:5432/hai_test
+          HAI_RUN_DB_TESTS: "1"
+          HAI_JACSDB_BUCKET: hai-jacsdb-test
+          AWS_ENDPOINT_URL: http://localhost:4566
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_REGION: us-east-1
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_ALLOW_HTTP: "true"
+          PORT: "8080"
+          # Issue 064 / 066: enable the cross-repo CI debug-registration
+          # endpoint on this api process. The endpoint is gated at router-mount
+          # time on this env var AND at request time on the bearer token below.
+          # api/src/routes/_debug.rs::ensure_safe_for_environment refuses to
+          # start if ENV is production-shaped, so this can never accidentally
+          # land on a prod deploy via Helm/CI override.
+          HAI_DEBUG_REGISTRATION: "1"
+          HAI_DEBUG_REGISTRATION_TOKEN: ${{ env.HAI_DEBUG_REGISTRATION_TOKEN }}
+          ENV: "ci"
+        run: |
+          # Spawn the api in the background. We use `nohup` so the redirected
+          # logs survive the GH Actions step boundary. The next step polls
+          # /health until it answers.
+          nohup hai/api/target/release/hai-api > api.log 2>&1 &
+          echo $! > api.pid
+
+      - name: Wait for api /health
+        run: |
+          for i in $(seq 1 120); do
+            if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
+              echo "api ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::api did not become healthy after 120s"
+          tail -200 api.log
+          exit 1
+
+      - name: Build haiai CLI (used to register the test agent)
+        run: |
+          cd haisdk/rust
+          cargo build --release --bin haiai --features jacs-crate
+        timeout-minutes: 20
+
+      - name: Bootstrap a JACS test agent and seed via debug endpoint (Issues 064/066)
+        env:
+          JACS_PRIVATE_KEY_PASSWORD: cross-repo-e2e
+          HAI_URL: http://localhost:8080
+        run: |
+          # Issue 066 fix: produce a fresh agent locally with `--register
+          # false`, then POST it to the api's debug-registration endpoint
+          # (Issue 064) so the integration tests below find a registered
+          # signer key when they verify their POSTs to /api/v1/records.
+          # The previous "real registration path" approach (Issue 060) hit
+          # the production HaiClient::register flow which requires an SSO-
+          # bound dashboard hk_… token — unavailable in CI.
+          mkdir -p $HOME/.haiai
+          haisdk/rust/target/release/haiai init \
+            --quiet \
+            --name cross-repo-e2e-agent \
+            --register false \
+            --data-dir "$HOME/.haiai/data" \
+            --key-dir "$HOME/.haiai/keys" \
+            --config-path "$HOME/.haiai/jacs.config.json"
+          echo "JACS_CONFIG_PATH=$HOME/.haiai/jacs.config.json" >> "$GITHUB_ENV"
+          ls -la "$HOME/.haiai/"
+
+          # Pull the agent's jacs_id + version + key + JSON so we can call
+          # the debug-registration endpoint with the correct payload shape
+          # (per api/src/routes/_debug.rs::DebugRegisterRequest).
+          JACS_ID=$(jq -r '.jacs_id // .jacsId' "$HOME/.haiai/jacs.config.json")
+          JACS_VERSION=$(jq -r '.jacs_version // .jacsVersion // "1.0.0"' "$HOME/.haiai/jacs.config.json")
+          if [ -z "$JACS_ID" ] || [ "$JACS_ID" = "null" ]; then
+            echo "::error::haiai init did not write a jacs_id to $HOME/.haiai/jacs.config.json"
+            cat "$HOME/.haiai/jacs.config.json"
+            exit 1
+          fi
+          # Locate the agent JSON file emitted by haiai init.
+          AGENT_JSON_FILE=""
+          for candidate in \
+              "$HOME/.haiai/data/agents/${JACS_ID}.json" \
+              "$HOME/.haiai/data/${JACS_ID}.json" \
+              "$HOME/.haiai/data/agent.json"; do
+            if [ -s "$candidate" ]; then
+              AGENT_JSON_FILE="$candidate"
+              break
+            fi
+          done
+          if [ -z "$AGENT_JSON_FILE" ]; then
+            echo "::error::could not locate agent JSON under $HOME/.haiai/data/"
+            find "$HOME/.haiai" -type f | head -50
+            exit 1
+          fi
+          # Locate the public key PEM.
+          PUBLIC_KEY_FILE=$(find "$HOME/.haiai/keys" -maxdepth 2 -name '*.public.pem' -print | head -1)
+          if [ -z "$PUBLIC_KEY_FILE" ] || [ ! -s "$PUBLIC_KEY_FILE" ]; then
+            echo "::error::could not locate a public PEM under $HOME/.haiai/keys/"
+            find "$HOME/.haiai/keys" -type f
+            exit 1
+          fi
+          AGENT_JSON=$(cat "$AGENT_JSON_FILE")
+          PUBLIC_KEY_PEM=$(cat "$PUBLIC_KEY_FILE")
+
+          # POST to the debug-registration endpoint. HAI_DEBUG_REGISTRATION_TOKEN
+          # was minted in the prior step and is read from GITHUB_ENV. The api
+          # validates the token (Issue 068) before doing the agent insert.
+          BODY=$(jq -n \
+              --arg jacs_id "$JACS_ID" \
+              --arg jacs_version "$JACS_VERSION" \
+              --arg public_key_pem "$PUBLIC_KEY_PEM" \
+              --argjson agent_json "$AGENT_JSON" \
+              '{jacs_id: $jacs_id, jacs_version: $jacs_version, public_key_pem: $public_key_pem, agent_json: $agent_json}')
+          status=$(curl -sf -o /tmp/seed-out -w "%{http_code}" -X POST \
+              -H "Authorization: Bearer ${HAI_DEBUG_REGISTRATION_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data-raw "$BODY" \
+              "$HAI_URL/api/v1/_debug/register-test-agent" 2>&1 || echo "000")
+          if [ "$status" != "201" ]; then
+            echo "::error::Issue 066: debug-registration seed failed (status=$status)"
+            echo "Body returned:"
+            cat /tmp/seed-out 2>/dev/null || true
+            echo "api.log tail:"
+            tail -100 api.log
+            exit 1
+          fi
+          echo "Issue 066: debug-registration seed succeeded for jacs_id=$JACS_ID (201 Created)"
+
+      - name: Run cross-repo SDK integration tests (the ship gate)
+        env:
+          JACS_PRIVATE_KEY_PASSWORD: cross-repo-e2e
+          HAI_URL: http://localhost:8080
+          HAI_JACS_REMOTE_TEST_URL: http://localhost:8080
+        run: |
+          set -o pipefail
+          cd haisdk/rust
+          out=$(cargo test -p haiai --features jacs-crate \
+                 --test jacs_remote_integration -- --ignored --nocapture 2>&1)
+          echo "$out"
+
+          # Issue 062 mirror: assert non-vacuous execution. A 0.00s "12
+          # passed" line means the test bodies short-circuited (env unset,
+          # registration didn't write the config, etc).
+          elapsed=$(echo "$out" | grep -E "test result: ok\. " | sed -E 's/.*finished in ([0-9]+\.[0-9]+)s.*/\1/' | head -n1)
+          if [ -z "$elapsed" ]; then
+            echo "::error::Issue 060: cross-repo-jacsdb-e2e produced no parseable 'finished in' line; cannot verify execution."
+            exit 1
+          fi
+          if awk "BEGIN { exit !($elapsed < 1.0) }"; then
+            echo "::error::Issue 060: cross-repo-jacsdb-e2e finished in ${elapsed}s — too short to be a real round-trip. Inspect api.log + JACS_CONFIG_PATH state."
+            tail -200 ../../api.log || true
+            exit 1
+          fi
+
+          # The 12 SDK ↔ server tests must ALL pass. Any failed line in the
+          # output is a contract regression.
+          if echo "$out" | grep -qE "test result: FAILED|^test .* FAILED"; then
+            echo "::error::Issue 060: SDK ↔ server contract regression — see test output above."
+            exit 1
+          fi
+          echo "OK: cross-repo-jacsdb-e2e ran for ${elapsed}s and reported all-green."
+
+      - name: Tear down api
+        if: always()
+        run: |
+          if [ -f api.pid ]; then
+            kill "$(cat api.pid)" || true
+          fi
+          # Surface api logs on failure for debugability.
+          if [ "${{ job.status }}" != "success" ] && [ -f api.log ]; then
+            echo "::group::api.log (last 500 lines)"
+            tail -500 api.log
+            echo "::endgroup::"
+          fi

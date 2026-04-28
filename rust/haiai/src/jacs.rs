@@ -234,6 +234,30 @@ pub trait JacsProvider: Send + Sync {
         ))
     }
 
+    /// Sign a file as a JACS file envelope (JACS attachment pipeline).
+    ///
+    /// The returned [`SignedDocument`]'s `json` MUST carry the JACS file shape
+    /// produced by `SimpleAgent::sign_file` — `jacsType="file"`, `jacsLevel`,
+    /// `mimetype`, `filename`, and a `jacsFiles[]` block containing either the
+    /// embedded payload or a hash-only reference, all driven by the JACS
+    /// attachment pipeline. Wrappers such as
+    /// [`crate::jacs_remote::RemoteJacsProvider`] delegate to this method so
+    /// `(path, embed)` produces an identical envelope regardless of which
+    /// provider the caller holds (Issue 006).
+    ///
+    /// The default implementation returns an error: providers without a real
+    /// JACS agent (test stubs like [`StaticJacsProvider`]) cannot produce a
+    /// JACS-verifiable file envelope. [`LocalJacsProvider`] overrides this to
+    /// delegate to JACS's `SimpleAgent::sign_file`.
+    fn sign_file_envelope(&self, path: &str, embed: bool) -> Result<SignedDocument> {
+        let _ = (path, embed);
+        Err(HaiError::Provider(
+            "sign_file_envelope not supported by this provider; use LocalJacsProvider \
+             or any provider that wraps a real JACS SimpleAgent"
+                .to_string(),
+        ))
+    }
+
     /// Return a signed payload accepted by `/api/v1/agents/jobs/{job_id}/response`.
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload>;
 

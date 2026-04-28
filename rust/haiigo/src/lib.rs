@@ -32,13 +32,38 @@ static RT: std::sync::LazyLock<tokio::runtime::Runtime> = std::sync::LazyLock::n
 // Helpers
 // =============================================================================
 
-/// Convert a HaiBindingResult to a JSON error envelope string.
+/// Convert a HaiBindingResult to a JSON envelope string.
+///
+/// **Input contract:** `result.Ok(...)` MUST already be a pre-encoded JSON
+/// value (object, array, number, boolean, null, or quoted string). Use
+/// [`result_string_to_json`] for plain (un-quoted) string returns such as
+/// record keys (`id:version`) or arbitrary text/markdown bodies.
 ///
 /// Uses serde_json for error serialization to properly escape all control
 /// characters (newlines, tabs, etc.) per RFC 8259.
 fn result_to_json(result: Result<String, hai_binding_core::HaiBindingError>) -> String {
     match result {
         Ok(json) => format!(r#"{{"ok":{json}}}"#),
+        Err(e) => error_to_json(&e),
+    }
+}
+
+/// Convert a HaiBindingResult containing a *plain* (un-quoted) string into
+/// a JSON envelope. Quotes the inner string with `serde_json::to_string` so
+/// the resulting envelope is always valid JSON — e.g. `Ok("memory:v1")`
+/// becomes `{"ok":"memory:v1"}` and `Ok("# title\nbody")` becomes
+/// `{"ok":"# title\nbody"}` with the newline properly escaped.
+///
+/// Use this for binding-core methods whose `Ok(String)` is a raw record key
+/// or arbitrary text/markdown body (NOT a pre-encoded JSON value). See
+/// [`result_to_json`] for callers whose inner string is already JSON.
+fn result_string_to_json(result: Result<String, hai_binding_core::HaiBindingError>) -> String {
+    match result {
+        Ok(s) => {
+            let quoted =
+                serde_json::to_string(&s).unwrap_or_else(|_| format!("\"{}\"", s.replace('"', "\\\"")));
+            format!(r#"{{"ok":{quoted}}}"#)
+        }
         Err(e) => error_to_json(&e),
     }
 }
@@ -1053,7 +1078,8 @@ pub extern "C" fn hai_store_document(
             let r = client.store_document(arg).await;
             let _ = tx.send(r);
         });
-        to_c_string(result_to_json(rx.recv().unwrap()))
+        // Returns a raw `id:version` key — needs JSON quoting (Issue 001).
+        to_c_string(result_string_to_json(rx.recv().unwrap()))
     }));
     result.unwrap_or_else(|_| panic_json())
 }
@@ -1096,7 +1122,10 @@ pub extern "C" fn hai_get_document(handle: HaiClientHandle, key: *const c_char) 
             let r = client.get_document(arg).await;
             let _ = tx.send(r);
         });
-        to_c_string(result_to_json(rx.recv().unwrap()))
+        // Returns the record body UTF-8 decoded — could be JSON, markdown,
+        // or arbitrary text. Always JSON-quote so the envelope is valid
+        // (Issue 001).
+        to_c_string(result_string_to_json(rx.recv().unwrap()))
     }));
     result.unwrap_or_else(|_| panic_json())
 }
@@ -1119,7 +1148,9 @@ pub extern "C" fn hai_get_latest_document(
             let r = client.get_latest_document(arg).await;
             let _ = tx.send(r);
         });
-        to_c_string(result_to_json(rx.recv().unwrap()))
+        // Same content-type story as `hai_get_document` — always JSON-quote
+        // (Issue 001).
+        to_c_string(result_string_to_json(rx.recv().unwrap()))
     }));
     result.unwrap_or_else(|_| panic_json())
 }
@@ -1251,7 +1282,8 @@ pub extern "C" fn hai_storage_capabilities(handle: HaiClientHandle) -> *mut c_ch
 // ---- 4 D5 methods (memory / soul) ----
 
 /// `save_memory` takes `Option<String>` content. Empty cstring → `None`
-/// (binding-core then reads `MEMORY.md` from CWD).
+/// (binding-core then reads `MEMORY.md` from CWD). Returns a raw
+/// `id:version` key.
 #[no_mangle]
 pub extern "C" fn hai_save_memory(handle: HaiClientHandle, content: *const c_char) -> *mut c_char {
     if handle.is_null() {
@@ -1268,7 +1300,8 @@ pub extern "C" fn hai_save_memory(handle: HaiClientHandle, content: *const c_cha
             let r = client.save_memory(arg).await;
             let _ = tx.send(r);
         });
-        to_c_string(result_to_json(rx.recv().unwrap()))
+        // Returns a raw `id:version` key — needs JSON quoting (Issue 001).
+        to_c_string(result_string_to_json(rx.recv().unwrap()))
     }));
     result.unwrap_or_else(|_| panic_json())
 }
@@ -1289,7 +1322,8 @@ pub extern "C" fn hai_save_soul(handle: HaiClientHandle, content: *const c_char)
             let r = client.save_soul(arg).await;
             let _ = tx.send(r);
         });
-        to_c_string(result_to_json(rx.recv().unwrap()))
+        // Returns a raw `id:version` key — needs JSON quoting (Issue 001).
+        to_c_string(result_string_to_json(rx.recv().unwrap()))
     }));
     result.unwrap_or_else(|_| panic_json())
 }
@@ -1352,7 +1386,8 @@ pub extern "C" fn hai_store_text_file(handle: HaiClientHandle, path: *const c_ch
             let r = client.store_text_file(arg).await;
             let _ = tx.send(r);
         });
-        to_c_string(result_to_json(rx.recv().unwrap()))
+        // Returns a raw `id:version` key — needs JSON quoting (Issue 001).
+        to_c_string(result_string_to_json(rx.recv().unwrap()))
     }));
     result.unwrap_or_else(|_| panic_json())
 }
@@ -1375,7 +1410,8 @@ pub extern "C" fn hai_store_image_file(
             let r = client.store_image_file(arg).await;
             let _ = tx.send(r);
         });
-        to_c_string(result_to_json(rx.recv().unwrap()))
+        // Returns a raw `id:version` key — needs JSON quoting (Issue 001).
+        to_c_string(result_string_to_json(rx.recv().unwrap()))
     }));
     result.unwrap_or_else(|_| panic_json())
 }
@@ -1476,9 +1512,58 @@ mod tests {
 
     #[test]
     fn result_to_json_ok_wraps_in_ok_envelope() {
+        // Issue 004: validate the envelope as parseable JSON, not just string
+        // fragments. Documents the input contract for `result_to_json`.
         let json = result_to_json(Ok(r#"{"hello":"world"}"#.to_string()));
-        assert!(json.starts_with(r#"{"ok":"#));
-        assert!(json.contains(r#"{"hello":"world"}"#));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).expect("envelope must be valid JSON");
+        assert_eq!(parsed["ok"]["hello"].as_str(), Some("world"));
+    }
+
+    #[test]
+    fn result_to_json_requires_pre_encoded_json_input() {
+        // CONTRACT: `result_to_json` expects the inner string to be a
+        // pre-encoded JSON value (object, array, number, boolean, null, or
+        // already-quoted string). Plain strings (like `"memory:v1"`) MUST be
+        // pre-quoted by the caller via `serde_json::to_string` — or use
+        // `result_string_to_json` directly. See Issue 001 for the bug this
+        // contract prevents.
+        let envelope = result_to_json(Ok(r#""memory:v1""#.to_string()));
+        let parsed: serde_json::Value = serde_json::from_str(&envelope).unwrap();
+        assert_eq!(parsed["ok"].as_str(), Some("memory:v1"));
+    }
+
+    #[test]
+    fn result_string_to_json_quotes_plain_key() {
+        // Issue 001: this is the helper for raw `id:version` keys returned by
+        // `save_memory`, `save_soul`, `store_document`, `store_text_file`,
+        // `store_image_file`. Without quoting, the envelope `{"ok":memory:v1}`
+        // is invalid JSON and `json.Unmarshal` on the Go side fails.
+        let envelope = result_string_to_json(Ok("memory:v1".to_string()));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&envelope).expect("envelope must be valid JSON");
+        assert_eq!(parsed["ok"].as_str(), Some("memory:v1"));
+    }
+
+    #[test]
+    fn result_string_to_json_escapes_special_chars() {
+        // Issue 001: `get_document` / `get_latest_document` may return
+        // arbitrary text/markdown bodies — newlines, quotes, backslashes,
+        // tabs all must round-trip safely.
+        let body = "# title\nbody with \"quotes\" and \\ backslash\tand tab";
+        let envelope = result_string_to_json(Ok(body.to_string()));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&envelope).expect("envelope must be valid JSON");
+        assert_eq!(parsed["ok"].as_str(), Some(body));
+    }
+
+    #[test]
+    fn result_string_to_json_err_wraps_in_error_envelope() {
+        let err = HaiBindingError::new(ErrorKind::ProviderError, "out of disk");
+        let envelope = result_string_to_json(Err(err));
+        let parsed: serde_json::Value = serde_json::from_str(&envelope).unwrap();
+        assert!(parsed.get("error").is_some());
+        assert_eq!(parsed["error"]["kind"].as_str().unwrap(), "ProviderError");
     }
 
     #[test]

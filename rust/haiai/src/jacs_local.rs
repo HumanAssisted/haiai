@@ -436,6 +436,24 @@ impl JacsProvider for LocalJacsProvider {
         })
     }
 
+    /// Issue 006: produce a JACS file envelope via `SimpleAgent::sign_file`.
+    ///
+    /// Mirrors `JacsDocumentProvider::sign_file` on this same provider — the
+    /// document body is the canonical `(jacsType="file", jacsLevel,
+    /// jacsFiles[...])` shape produced by JACS's attachment pipeline.
+    /// `RemoteJacsProvider::sign_file` (Issue 006) delegates here so both
+    /// providers produce the same envelope for the same `(path, embed)` input.
+    fn sign_file_envelope(&self, path: &str, embed: bool) -> Result<SignedDocument> {
+        let simple = self.load_simple_agent()?;
+        let signed = simple.sign_file(path, embed).map_err(|e| {
+            HaiError::Provider(format!("sign_file_envelope failed for '{}': {e}", path))
+        })?;
+        Ok(SignedDocument {
+            key: signed.document_id.clone(),
+            json: signed.raw,
+        })
+    }
+
     fn verify_a2a_artifact(&self, wrapped_json: &str) -> Result<String> {
         let wrapped: Value = serde_json::from_str(wrapped_json)?;
         let agent = self
@@ -692,17 +710,11 @@ impl JacsDocumentProvider for LocalJacsProvider {
     }
 
     fn sign_file(&self, path: &str, embed: bool) -> Result<SignedDocument> {
-        // Delegate to SimpleAgent::sign_file() which properly handles the embed parameter.
-        // When embed=true, the file contents are embedded inline in the signed document.
-        // When embed=false, the file is referenced by hash only.
-        let simple = self.load_simple_agent()?;
-        let signed = simple.sign_file(path, embed).map_err(|e| {
-            HaiError::Provider(format!("sign_file failed for '{}': {e}", path))
-        })?;
-        Ok(SignedDocument {
-            key: signed.document_id.clone(),
-            json: signed.raw,
-        })
+        // Issue 006: route through the canonical `sign_file_envelope` on
+        // `JacsProvider` so `RemoteJacsProvider::sign_file` (which delegates to
+        // `self.inner.sign_file_envelope`) produces a byte-identical envelope
+        // for the same `(path, embed)` input.
+        JacsProvider::sign_file_envelope(self, path, embed)
     }
 
     fn get_document(&self, key: &str) -> Result<String> {

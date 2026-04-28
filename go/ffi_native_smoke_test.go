@@ -19,6 +19,7 @@ package haiai_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -37,12 +38,13 @@ func TestNativeSmokeSaveMemoryRoundTripsThroughLibhaiigo(t *testing.T) {
 	)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Drain the body so we can assert on it.
-		body := make([]byte, r.ContentLength)
-		if r.ContentLength > 0 {
-			if _, err := r.Body.Read(body); err != nil && err.Error() != "EOF" {
-				t.Logf("body read error: %v", err)
-			}
+		// Read the entire body so assertions are not flaky on partial reads.
+		// `io.ReadAll` accumulates until EOF, which is required because
+		// `r.Body.Read` is permitted to return fewer bytes than requested
+		// per the `io.Reader` contract.
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Logf("body read error: %v", err)
 		}
 		mu.Lock()
 		captured = append(captured, map[string]any{

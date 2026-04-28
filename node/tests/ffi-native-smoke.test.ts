@@ -36,7 +36,7 @@ try {
 const describeWhenAvailable = haiinpm ? describe : describe.skip;
 
 describeWhenAvailable('haiinpm native FFI smoke test', () => {
-  it('saveMemory round-trips through the real native binding', async () => {
+  it('saveMemory round-trips through the real native binding', async (ctx) => {
     if (!haiinpm) throw new Error(`haiinpm not loaded: ${String(loadError)}`);
 
     type CapturedRequest = {
@@ -85,31 +85,67 @@ describeWhenAvailable('haiinpm native FFI smoke test', () => {
 
     const workdir = mkdtempSync(join(tmpdir(), 'haisdk-smoke-'));
     try {
-      // Bootstrap a JACS agent. If the JACS Node bindings aren't present the
-      // suite skips cleanly via the catch block.
+      // Resolve the JACS agent config. Two paths:
+      // 1. Pre-baked agent dir via `JACS_SMOKE_AGENT_DIR` (preferred for CI —
+      //    Issue 003). CI bootstraps the agent once with `haiai init` and
+      //    shares it across all three smoke tests.
+      // 2. In-process bootstrap via `@hai.ai/jacs` (for local dev). Skips
+      //    cleanly via `ctx.skip()` when the JACS Node bindings aren't
+      //    installed (Issue 002 — a bare `return` would mark the test as
+      //    PASSED with zero assertions).
       let configPath: string | null = null;
-      try {
-        const jacs = dynamicRequire('@hai.ai/jacs') as {
-          JacsAgent: new () => { createAgentSync: (params: string) => string };
-        };
-        const agent = new jacs.JacsAgent();
-        const params = JSON.stringify({
-          name: 'smoke-agent',
-          password: 'smoke-password',
-          dataDirectory: workdir,
-          keyDirectory: workdir,
-          configPath: join(workdir, 'jacs.config.json'),
-        });
-        const resultJson = agent.createAgentSync(params);
-        const result = JSON.parse(resultJson) as { config_path?: string };
-        configPath = result.config_path ?? join(workdir, 'jacs.config.json');
-      } catch (err) {
-        // Skip rather than fail when JACS isn't installed in this environment.
-        // The smoke test is meant to be opt-in; the expensive part (agent
-        // creation) is not in scope when the toolchain is missing.
-        // eslint-disable-next-line no-console
-        console.warn(`smoke test skipped: cannot bootstrap JACS agent (${String(err)})`);
-        return;
+
+      const prebakedDir = process.env.JACS_SMOKE_AGENT_DIR;
+      if (prebakedDir) {
+        const prebaked = join(prebakedDir, 'jacs.config.json');
+        try {
+          // Statically check the file exists.
+          const fs = await import('node:fs');
+          if (fs.existsSync(prebaked)) {
+            configPath = prebaked;
+          } else {
+            // eslint-disable-next-line no-console
+            console.warn(
+              `smoke test skipped: JACS_SMOKE_AGENT_DIR=${prebakedDir} but jacs.config.json not found`,
+            );
+            ctx.skip();
+            return;
+          }
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn(`smoke test skipped: cannot read pre-baked agent (${String(err)})`);
+          ctx.skip();
+          return;
+        }
+      } else {
+        try {
+          const jacs = dynamicRequire('@hai.ai/jacs') as {
+            JacsAgent: new () => { createAgentSync: (params: string) => string };
+          };
+          const agent = new jacs.JacsAgent();
+          const params = JSON.stringify({
+            name: 'smoke-agent',
+            password: 'smoke-password',
+            dataDirectory: workdir,
+            keyDirectory: workdir,
+            configPath: join(workdir, 'jacs.config.json'),
+          });
+          const resultJson = agent.createAgentSync(params);
+          const result = JSON.parse(resultJson) as { config_path?: string };
+          configPath = result.config_path ?? join(workdir, 'jacs.config.json');
+        } catch (err) {
+          // Skip rather than fail when JACS isn't installed in this environment.
+          // The smoke test is meant to be opt-in; the expensive part (agent
+          // creation) is not in scope when the toolchain is missing.
+          //
+          // Use vitest's `ctx.skip()` so the test is reported as SKIPPED, not
+          // PASSED — a bare `return` here previously caused vitest to record a
+          // passing test with zero assertions (Issue 002).
+          // eslint-disable-next-line no-console
+          console.warn(`smoke test skipped: cannot bootstrap JACS agent (${String(err)})`);
+          ctx.skip();
+          return;
+        }
       }
 
       const ffiConfig = JSON.stringify({

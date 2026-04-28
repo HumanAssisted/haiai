@@ -81,12 +81,30 @@ class _RecordsHandler(BaseHTTPRequestHandler):
 
 
 def _bootstrap_jacs_agent(workdir: str) -> str:
-    """Create a JACS agent via the haiipy registration path (keygen only).
+    """Resolve a JACS agent config path for the smoke test.
 
-    Returns the absolute path to `jacs.config.json`. Skips the test when
-    the JACS toolchain isn't available (which happens when the bundled
-    JACS Python wheel is not on the path).
+    Two paths:
+    1. **Pre-baked agent (preferred for CI).** If `JACS_SMOKE_AGENT_DIR` is set
+       and contains a `jacs.config.json`, use it directly. CI bootstraps the
+       agent once via `haiai init --register false` and shares it across all
+       three smoke tests (Issue 003).
+    2. **In-process bootstrap (for local dev).** Fall back to creating an
+       agent via `haiai.config.create_agent`. Skips when the JACS toolchain
+       isn't available.
+
+    Returns the absolute path to `jacs.config.json`.
     """
+    # Path 1: pre-baked agent dir (CI).
+    agent_dir = os.environ.get("JACS_SMOKE_AGENT_DIR")
+    if agent_dir:
+        prebaked = os.path.join(agent_dir, "jacs.config.json")
+        if os.path.exists(prebaked):
+            return prebaked
+        pytest.skip(
+            f"JACS_SMOKE_AGENT_DIR={agent_dir} but jacs.config.json not found"
+        )
+
+    # Path 2: in-process bootstrap (local dev).
     try:
         from haiai.config import create_agent  # type: ignore[import-not-found]
     except Exception:  # pragma: no cover — environment-specific
@@ -116,8 +134,28 @@ def _bootstrap_jacs_agent(workdir: str) -> str:
     return config_path
 
 
-def test_save_memory_round_trips_through_native_binding() -> None:
-    """End-to-end smoke: haiipy.HaiClient.save_memory_sync hits a real socket."""
+def test_save_memory_round_trips_through_native_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end smoke: haiipy.HaiClient.save_memory_sync hits a real socket.
+
+    The smoke test must use the password the agent was actually created
+    with — which is either the value of `JACS_PRIVATE_KEY_PASSWORD` in the
+    parent process (CI: set by the smoke-tests workflow lane), OR the
+    default `"test-private-key-password"` set by `conftest::password_env`
+    when the agent was bootstrapped in-process for local dev. Read whatever
+    the parent environment had BEFORE conftest's autouse fixture clobbered
+    it, and re-export so the haiipy native binding's call into JACS picks it
+    up. CI sets `JACS_PRIVATE_KEY_PASSWORD=smoke-password` end-to-end so the
+    pre-baked agent's keys decrypt correctly.
+    """
+    pre_conftest_password = (
+        os.environ.get("_HAISDK_SMOKE_PASSWORD")
+        or os.environ.get("JACS_PRIVATE_KEY_PASSWORD")
+    )
+    if pre_conftest_password:
+        monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", pre_conftest_password)
+
     server = HTTPServer(("127.0.0.1", 0), _RecordsHandler)
     server.captured = []  # type: ignore[attr-defined]
     port = server.server_port
@@ -145,7 +183,14 @@ def test_save_memory_round_trips_through_native_binding() -> None:
             assert len(captured) == 1, f"expected 1 POST, saw {len(captured)}"
             req = captured[0]
             assert req["path"] == "/api/v1/records"
-            assert "application/json" in req["headers"].get("Content-Type", "")
+            # HTTP headers are case-insensitive; BaseHTTPRequestHandler
+            # normalizes to lowercase. Look up in a case-insensitive way.
+            ct = ""
+            for hk, hv in req["headers"].items():
+                if hk.lower() == "content-type":
+                    ct = hv
+                    break
+            assert "application/json" in ct, f"expected application/json in {ct!r}"
             assert b'"jacsType":"memory"' in req["body"]
     finally:
         server.shutdown()

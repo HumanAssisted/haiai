@@ -3409,8 +3409,14 @@ mod tests {
         assert!(parsed.get("total_count").is_some());
     }
 
+    /// Issue 008: 400 from records endpoint round-trips through the typed
+    /// `From<HaiError>` mapping as `ErrorKind::ApiError`, not flat
+    /// `ProviderError`. Status code is preserved on `HaiError::Api`, so
+    /// cross-language consumers see the proper typed kind (`AuthFailed`
+    /// for 401/403, `NotFound` for 404, `RateLimited` for 429, `ApiError`
+    /// for other 4xx/5xx).
     #[tokio::test(flavor = "multi_thread")]
-    async fn binding_core_query_by_agent_surfaces_provider_error() {
+    async fn binding_core_query_by_agent_surfaces_api_error_with_owner_scoped_reason() {
         let server = MockServer::start_async().await;
         let _mock = server
             .mock_async(|when, then| {
@@ -3425,8 +3431,13 @@ mod tests {
 
         let store = make_doc_store_provider(server.base_url());
         let err = HaiClientWrapper::query_by_agent_with(&store, "other-agent".to_string(), 10, 0)
-            .expect_err("must surface provider error");
-        assert_eq!(err.kind, ErrorKind::ProviderError);
+            .expect_err("must surface api error");
+        assert_eq!(
+            err.kind,
+            ErrorKind::ApiError,
+            "Issue 008: 400 → ApiError typed kind, got: {:?}",
+            err.kind
+        );
         assert!(
             err.message.contains("owner-scoped"),
             "expected owner-scoped surface: {}",
@@ -3488,8 +3499,14 @@ mod tests {
         mock.assert_async().await;
     }
 
+    /// Issue 008: 500 from records endpoint surfaces as `ErrorKind::ApiError`,
+    /// not flat `ProviderError`. The records endpoint now emits
+    /// `HaiError::Api { status, message }` so that 401/403 → `AuthFailed`,
+    /// 404 → `NotFound`, 429 → `RateLimited`, and other 4xx/5xx → `ApiError`
+    /// — matching the cross-language contract that the rest of the SDK
+    /// honors.
     #[tokio::test(flavor = "multi_thread")]
-    async fn binding_core_doc_store_method_propagates_provider_error() {
+    async fn binding_core_doc_store_method_propagates_api_error_for_5xx() {
         let server = MockServer::start_async().await;
         let _mock = server
             .mock_async(|when, then| {
@@ -3501,7 +3518,12 @@ mod tests {
         let store = make_doc_store_provider(server.base_url());
         let err = HaiClientWrapper::store_document_with(&store, "{}".to_string())
             .expect_err("must error on 500");
-        assert_eq!(err.kind, ErrorKind::ProviderError);
+        assert_eq!(
+            err.kind,
+            ErrorKind::ApiError,
+            "Issue 008: 5xx → ApiError typed kind, got: {:?}",
+            err.kind,
+        );
         assert!(
             err.message.contains("server error"),
             "expected server-error prefix: {}",

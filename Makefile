@@ -75,6 +75,7 @@ smoke-go:
 	cd go && CGO_ENABLED=1 \
 	    CGO_LDFLAGS="-L$(CURDIR)/rust/target/release" \
 	    DYLD_LIBRARY_PATH="$(CURDIR)/rust/target/release" \
+	    LD_LIBRARY_PATH="$(CURDIR)/rust/target/release" \
 	    go test -tags cgo_smoke -run NativeSmoke -v ./...
 
 # ============================================================================

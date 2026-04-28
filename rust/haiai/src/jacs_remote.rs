@@ -20,6 +20,7 @@ fn url_encode(s: &str) -> String {
 use serde_json::{Value, json};
 use time::OffsetDateTime;
 
+use crate::client::encode_path_segment;
 use crate::error::{HaiError, Result};
 use crate::jacs::{JacsDocumentProvider, JacsProvider};
 use crate::types::{DocSearchHit, DocSearchResults, SignedDocument, StorageCapabilities};
@@ -149,9 +150,19 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
     /// GET raw bytes from a record path (D9).
     pub async fn get_record_bytes_async(&self, key: &str) -> Result<Vec<u8>> {
         let (id, ver) = Self::split_key(key);
+        // Issue 007: percent-encode `id` and `version` per CLAUDE.md path-segment
+        // rule. UUID-shaped IDs in the happy path don't carry reserved bytes,
+        // but defense-in-depth + project-rule consistency demand we encode here
+        // — matching every other interpolated path segment in the SDK
+        // (`client.rs` uses `encode_path_segment` at 40+ call sites).
         let path = match ver {
-            Some(v) => format!("{}/{}/v/{}", RECORDS_PATH, id, v),
-            None => format!("{}/{}", RECORDS_PATH, id),
+            Some(v) => format!(
+                "{}/{}/v/{}",
+                RECORDS_PATH,
+                encode_path_segment(id),
+                encode_path_segment(v),
+            ),
+            None => format!("{}/{}", RECORDS_PATH, encode_path_segment(id)),
         };
         let auth = self.build_auth_header()?;
         let resp = self
@@ -226,15 +237,29 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
 }
 
 fn map_status_error(status: StatusCode, body: &str) -> HaiError {
-    if status.is_server_error() {
-        HaiError::Provider(format!("server error: {} {}", status.as_u16(), body))
+    // Issue 008: emit `HaiError::Api { status, message }` so the binding-core
+    // mapping (`From<HaiError>` in `hai-binding-core`) can route status codes
+    // through the typed `ErrorKind` enum (`AuthFailed` for 401/403,
+    // `NotFound` for 404, `RateLimited` for 429, `ApiError` for other 4xx/5xx)
+    // and the Python/Node/Go SDKs surface the right typed error class.
+    // Previously this mapped everything to `HaiError::Provider`, which the
+    // binding-core flattens to `ProviderError` — and the per-language
+    // adapters then map `ProviderError` to `HaiAuthError` /
+    // `AuthenticationError` / `IsAuthError(true)` regardless of the real
+    // status. So a 404 on `GET /api/v1/records/<missing>` surfaced as an
+    // auth error in every SDK.
+    let message = if status.is_server_error() {
+        format!("server error: {}", body)
     } else {
         // Try to extract a server-shaped { "error": "..." } message.
-        let server_reason = serde_json::from_str::<Value>(body)
+        serde_json::from_str::<Value>(body)
             .ok()
             .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(|s| s.to_string()))
-            .unwrap_or_else(|| body.to_string());
-        HaiError::Provider(format!("{}: {}", status.as_u16(), server_reason))
+            .unwrap_or_else(|| body.to_string())
+    };
+    HaiError::Api {
+        status: status.as_u16(),
+        message,
     }
 }
 
@@ -321,33 +346,16 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
     }
 
     fn sign_file(&self, path: &str, embed: bool) -> Result<SignedDocument> {
-        // Signs LOCALLY only — does NOT auto-store. Mirrors `LocalJacsProvider::sign_file`
-        // semantics. Caller passes `signed.json` to `store_document` if persistence is wanted.
-        let bytes = std::fs::read(path)
-            .map_err(|e| HaiError::Provider(format!("read {}: {}", path, e)))?;
-        let mut payload = json!({
-            "jacsType": "file",
-            "filename": std::path::Path::new(path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(path),
-        });
-        if embed {
-            payload["payload_b64"] = Value::String(
-                base64::engine::general_purpose::STANDARD.encode(&bytes),
-            );
-        } else {
-            // hash-only reference
-            use sha2::Digest;
-            let mut h = sha2::Sha256::new();
-            h.update(&bytes);
-            payload["sha256"] = Value::String(format!("{:x}", h.finalize()));
-        }
-        let signed = self.sign_document(&payload)?;
-        Ok(SignedDocument {
-            key: format!("file:{}", path),
-            json: signed,
-        })
+        // Issue 006: signs LOCALLY only — does NOT auto-store. Delegates to
+        // the inner provider's `sign_file_envelope` so the JACS attachment
+        // pipeline (`SimpleAgent::sign_file`) produces the canonical
+        // `(jacsType="file", jacsLevel, jacsFiles[...])` shape. Previously
+        // this method hand-rolled a `payload_b64` / flat `sha256` envelope
+        // that diverged from `LocalJacsProvider::sign_file` and would not
+        // verify under the JACS schema. Same `(path, embed)` now produces a
+        // byte-identical envelope regardless of which provider the caller
+        // holds.
+        self.inner.sign_file_envelope(path, embed)
     }
 
     fn get_document(&self, key: &str) -> Result<String> {
@@ -365,9 +373,12 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
     }
 
     fn get_document_versions(&self, doc_id: &str) -> Result<Vec<String>> {
+        // Issue 007: percent-encode `doc_id` per CLAUDE.md path-segment rule.
         let url = format!(
             "{}{}/{}/versions?limit=100",
-            self.base_url, RECORDS_PATH, doc_id
+            self.base_url,
+            RECORDS_PATH,
+            encode_path_segment(doc_id),
         );
         let resp = Self::block_on(self.get_json_async(&url))?;
         let versions = resp
@@ -397,7 +408,13 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
 
     fn remove_document(&self, key: &str) -> Result<()> {
         let (id, _ver) = Self::split_key(key);
-        let url = format!("{}{}/{}", self.base_url, RECORDS_PATH, id);
+        // Issue 007: percent-encode `id` per CLAUDE.md path-segment rule.
+        let url = format!(
+            "{}{}/{}",
+            self.base_url,
+            RECORDS_PATH,
+            encode_path_segment(id),
+        );
         let auth = self.build_auth_header_blocking()?;
         let _resp = Self::block_on(async move {
             let r = self
@@ -521,22 +538,18 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<String>> {
-        let url = format!(
-            "{}{}?type={}&limit={}",
+        // Issue 009: walk forward via `next_cursor` rather than asking the
+        // server for `min(limit + offset, 100)` and discarding the head. The
+        // old approach silently returned an empty result for any
+        // `offset >= 100` because the server caps a single page at 100 items;
+        // page 2+ was unreachable.
+        let base_url = format!(
+            "{}{}?type={}",
             self.base_url,
             RECORDS_PATH,
             url_encode(doc_type),
-            (limit + offset).min(100),
         );
-        let resp = Self::block_on(self.get_json_async(&url))?;
-        let mut keys = extract_keys_from_list(&resp);
-        if offset < keys.len() {
-            keys.drain(..offset);
-        } else {
-            keys.clear();
-        }
-        keys.truncate(limit);
-        Ok(keys)
+        self.paginate_keys(&base_url, limit, offset)
     }
 
     fn query_by_field(
@@ -577,22 +590,16 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
     ) -> Result<Vec<String>> {
         // Server enforces D4 owner-only — `agent` param must equal caller or be omitted.
         // We surface the 400 directly so a developer mistake doesn't silently return [].
-        let url = format!(
-            "{}{}?agent={}&limit={}",
+        //
+        // Issue 009: walk forward via `next_cursor`. Same pagination class as
+        // `query_by_type`; both share the `paginate_keys` helper.
+        let base_url = format!(
+            "{}{}?agent={}",
             self.base_url,
             RECORDS_PATH,
             url_encode(agent_id),
-            (limit + offset).min(100),
         );
-        let resp = Self::block_on(self.get_json_async(&url))?;
-        let mut keys = extract_keys_from_list(&resp);
-        if offset < keys.len() {
-            keys.drain(..offset);
-        } else {
-            keys.clear();
-        }
-        keys.truncate(limit);
-        Ok(keys)
+        self.paginate_keys(&base_url, limit, offset)
     }
 
     fn storage_capabilities(&self) -> Result<StorageCapabilities> {
@@ -770,6 +777,71 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
             .await
             .map_err(|e| HaiError::Provider(format!("network error: {e}")))?;
         Self::parse_response(resp).await
+    }
+
+    /// Issue 009: walk the records list endpoint forward via `next_cursor`,
+    /// accumulating keys until either `limit` records are gathered or the
+    /// server runs out of pages.
+    ///
+    /// `base_url` is the URL with all filter params already set (`?type=`,
+    /// `?agent=`, etc.) but no `&cursor=` / `&limit=` — this helper appends
+    /// them. `offset` is honored by skipping that many records before
+    /// collection begins.
+    ///
+    /// This replaces the previous "fetch `min(limit + offset, 100)` records,
+    /// drain the head, truncate the tail" trick used by `query_by_type` and
+    /// `query_by_agent`. That trick capped requests at the server's 100-item
+    /// page max so any caller asking for `offset >= 100` got an empty
+    /// result, contradicting `storage_capabilities().pagination = true`.
+    /// Mirrors the cursor walk already in `search_documents` (Issue 018).
+    fn paginate_keys(&self, base_url: &str, limit: usize, offset: usize) -> Result<Vec<String>> {
+        let server_max = AUTO_PAGE_CAP;
+        let target_skip = offset;
+        let mut cursor: Option<String> = None;
+        let mut skipped: usize = 0;
+        let mut all_keys: Vec<String> = Vec::new();
+        loop {
+            // Server max page is 100; ask for `min(limit, 100)` per fetch and
+            // walk via cursor for anything larger. The lower bound of 1 keeps
+            // us moving forward even if the caller asks for `limit=0` (return
+            // empty after one round-trip).
+            let page_size = limit.clamp(1, 100);
+            let mut url = format!("{}&limit={}", base_url, page_size);
+            if let Some(c) = &cursor {
+                url.push_str(&format!("&cursor={}", url_encode(c)));
+            }
+            let resp = Self::block_on(self.get_json_async(&url))?;
+            let next_cursor = resp
+                .get("next_cursor")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let page_keys = extract_keys_from_list(&resp);
+            let page_len = page_keys.len();
+            if skipped < target_skip {
+                let to_skip = (target_skip - skipped).min(page_len);
+                skipped += to_skip;
+                all_keys.extend(page_keys.into_iter().skip(to_skip));
+            } else {
+                all_keys.extend(page_keys);
+            }
+            if all_keys.len() >= limit {
+                all_keys.truncate(limit);
+                break;
+            }
+            // Server returned an empty page — stop, even if the cursor would
+            // have us go further. Defends against pathological loops.
+            if page_len == 0 {
+                break;
+            }
+            // Stop if there are no more pages or we've walked the safety cap.
+            match next_cursor {
+                Some(c) if all_keys.len() < limit && skipped <= server_max => {
+                    cursor = Some(c);
+                }
+                _ => break,
+            }
+        }
+        Ok(all_keys)
     }
 }
 
@@ -1031,8 +1103,10 @@ mod tests {
         mock.assert_async().await;
     }
 
+    /// Issue 008: 400 from query_by_agent surfaces as `HaiError::Api {
+    /// status: 400, message }` — message preserves the server-provided reason.
     #[tokio::test(flavor = "multi_thread")]
-    async fn query_by_agent_other_returns_provider_error() {
+    async fn query_by_agent_other_returns_api_400_with_owner_scoped_reason() {
         let server = MockServer::start_async().await;
         let mock = server
             .mock_async(|when, then| {
@@ -1046,8 +1120,16 @@ mod tests {
         let err = provider
             .query_by_agent("other-agent", 10, 0)
             .expect_err("must surface 400");
-        let msg = format!("{}", err);
-        assert!(msg.contains("owner-scoped"), "expected owner-scoped surface: {msg}");
+        match &err {
+            HaiError::Api { status, message } => {
+                assert_eq!(*status, 400, "400 must round-trip, got: {err}");
+                assert!(
+                    message.contains("owner-scoped"),
+                    "must preserve server reason, got: {message}"
+                );
+            }
+            other => panic!("expected HaiError::Api status 400, got: {other:?}"),
+        }
         mock.assert_async().await;
     }
 
@@ -1140,8 +1222,13 @@ mod tests {
         assert_eq!(r.total_count, 1);
     }
 
+    /// Issue 008: 4xx response surfaces as `HaiError::Api { status, message }`
+    /// with the server-shaped `{ "error": "..." }` reason extracted into
+    /// `message`. Cross-language consumers see the typed `AuthFailed` /
+    /// `NotFound` / `RateLimited` / `ApiError` kind via binding-core's
+    /// `From<HaiError>` mapping.
     #[tokio::test(flavor = "multi_thread")]
-    async fn error_4xx_maps_to_haierror_provider_with_server_reason() {
+    async fn error_4xx_maps_to_haierror_api_with_server_reason() {
         let server = MockServer::start_async().await;
         server
             .mock_async(|when, then| {
@@ -1153,12 +1240,23 @@ mod tests {
             .await;
         let provider = make_provider(server.base_url());
         let err = provider.store_document("{}").expect_err("must error");
-        let s = format!("{}", err);
-        assert!(s.contains("forbidden"), "expected forbidden in error: {s}");
+        match &err {
+            HaiError::Api { status, message } => {
+                assert_eq!(*status, 403, "must preserve status code, got: {err}");
+                assert!(
+                    message.contains("forbidden"),
+                    "must extract server reason, got message: {message}"
+                );
+            }
+            other => panic!("expected HaiError::Api {{ status: 403, .. }}, got: {other:?}"),
+        }
     }
 
+    /// Issue 008: 5xx response surfaces as `HaiError::Api { status, message }`
+    /// with the body in `message`. Binding-core maps these to
+    /// `ErrorKind::ApiError`.
     #[tokio::test(flavor = "multi_thread")]
-    async fn error_5xx_maps_to_haierror_provider_with_server_error_prefix() {
+    async fn error_5xx_maps_to_haierror_api_with_server_error_prefix() {
         let server = MockServer::start_async().await;
         server
             .mock_async(|when, then| {
@@ -1168,8 +1266,125 @@ mod tests {
             .await;
         let provider = make_provider(server.base_url());
         let err = provider.store_document("{}").expect_err("must error");
-        let s = format!("{}", err);
-        assert!(s.contains("server error"), "expected server-error prefix: {s}");
+        match &err {
+            HaiError::Api { status, message } => {
+                assert_eq!(*status, 500, "must preserve status code, got: {err}");
+                assert!(
+                    message.contains("server error"),
+                    "5xx message must carry server-error prefix, got: {message}"
+                );
+                assert!(
+                    message.contains("internal whoopsie"),
+                    "5xx message must include the body, got: {message}"
+                );
+            }
+            other => panic!("expected HaiError::Api {{ status: 500, .. }}, got: {other:?}"),
+        }
+    }
+
+    /// Issue 008: 401 from POST /records → `HaiError::Api { status: 401, .. }`
+    /// → `ErrorKind::AuthFailed` in binding-core → `HaiAuthError` /
+    /// `AuthenticationError` / `IsAuthError(true)` in Python/Node/Go SDKs.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn error_401_maps_to_api_status_401_for_auth_failed_kind() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(HMethod::POST).path("/api/v1/records");
+                then.status(401).json_body(json!({
+                    "error": "invalid jacs signature"
+                }));
+            })
+            .await;
+        let provider = make_provider(server.base_url());
+        let err = provider.store_document("{}").expect_err("must error");
+        match &err {
+            HaiError::Api { status, .. } => {
+                assert_eq!(*status, 401, "401 must round-trip as HaiError::Api status, got: {err}");
+            }
+            other => panic!("expected HaiError::Api status 401, got: {other:?}"),
+        }
+    }
+
+    /// Issue 008: 404 from GET /records/<missing> → `HaiError::Api {
+    /// status: 404, .. }` → `ErrorKind::NotFound` in binding-core. Previously
+    /// this surfaced as a generic auth error in every SDK because
+    /// `HaiError::Provider` flattens to `ProviderError`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn error_404_maps_to_api_status_404_for_not_found_kind() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records/missing-id");
+                then.status(404).json_body(json!({
+                    "error": "record not found"
+                }));
+            })
+            .await;
+        let provider = make_provider(server.base_url());
+        let err = provider
+            .get_document("missing-id")
+            .expect_err("must error");
+        match &err {
+            HaiError::Api { status, message } => {
+                assert_eq!(*status, 404, "404 must round-trip as HaiError::Api, got: {err}");
+                assert!(
+                    message.contains("record not found"),
+                    "must extract server reason, got: {message}"
+                );
+            }
+            other => panic!("expected HaiError::Api status 404, got: {other:?}"),
+        }
+    }
+
+    /// Issue 008: 429 from GET /records → `HaiError::Api { status: 429, .. }`
+    /// → `ErrorKind::RateLimited` in binding-core → `IsRateLimited(true)` in
+    /// Go and the equivalent typed errors in Python/Node.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn error_429_maps_to_api_status_429_for_rate_limited_kind() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records/some-id");
+                then.status(429).json_body(json!({
+                    "error": "rate limit exceeded"
+                }));
+            })
+            .await;
+        let provider = make_provider(server.base_url());
+        let err = provider
+            .get_document("some-id")
+            .expect_err("must error");
+        match &err {
+            HaiError::Api { status, .. } => {
+                assert_eq!(*status, 429, "429 must round-trip as HaiError::Api, got: {err}");
+            }
+            other => panic!("expected HaiError::Api status 429, got: {other:?}"),
+        }
+    }
+
+    /// Issue 008: 503 from POST /records → `HaiError::Api { status: 503, .. }`
+    /// → `ErrorKind::ApiError` in binding-core. 5xx errors must NOT collapse
+    /// into auth/provider errors.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn error_503_maps_to_api_status_503_for_api_error_kind() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(HMethod::POST).path("/api/v1/records");
+                then.status(503).body("upstream unavailable");
+            })
+            .await;
+        let provider = make_provider(server.base_url());
+        let err = provider.store_document("{}").expect_err("must error");
+        match &err {
+            HaiError::Api { status, .. } => {
+                assert_eq!(*status, 503, "503 must round-trip as HaiError::Api, got: {err}");
+            }
+            other => panic!("expected HaiError::Api status 503, got: {other:?}"),
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1573,5 +1788,346 @@ mod tests {
             .expect("save_memory through dyn");
         assert_eq!(key, "mem1:v1");
         mock.assert_async().await;
+    }
+
+    /// Issue 009 regression: `query_by_type` MUST walk forward via
+    /// `next_cursor` so that any caller can request `offset >= 100`. The
+    /// previous implementation capped the request URL at `limit + offset`
+    /// truncated to 100, then drained the head — which silently returned []
+    /// for any `offset >= 100`. This test pages 3× through the server with
+    /// `limit=10, offset=15`: expect to skip the 15 leading records (page 1
+    /// + half of page 2) and return the next 10.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn query_by_type_walks_cursor_for_offset_above_page_boundary() {
+        let server = MockServer::start_async().await;
+        // Page 1: 10 items, cursor "p2".
+        let _page1 = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("type", "memory")
+                    .is_true(|req| !req.query_params().iter().any(|(k, _)| k == "cursor"));
+                then.status(200).json_body(json!({
+                    "items": (0..10)
+                        .map(|i| json!({
+                            "jacs_id": format!("id-p1-{}", i),
+                            "jacs_version": "v1"
+                        }))
+                        .collect::<Vec<_>>(),
+                    "next_cursor": "p2",
+                    "has_more": true
+                }));
+            })
+            .await;
+        // Page 2: 10 items, cursor "p3". `query_by_type` requests with cursor=p2.
+        let _page2 = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("type", "memory")
+                    .query_param("cursor", "p2");
+                then.status(200).json_body(json!({
+                    "items": (0..10)
+                        .map(|i| json!({
+                            "jacs_id": format!("id-p2-{}", i),
+                            "jacs_version": "v1"
+                        }))
+                        .collect::<Vec<_>>(),
+                    "next_cursor": "p3",
+                    "has_more": true
+                }));
+            })
+            .await;
+        // Page 3: 10 items, no further cursor.
+        let _page3 = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("type", "memory")
+                    .query_param("cursor", "p3");
+                then.status(200).json_body(json!({
+                    "items": (0..10)
+                        .map(|i| json!({
+                            "jacs_id": format!("id-p3-{}", i),
+                            "jacs_version": "v1"
+                        }))
+                        .collect::<Vec<_>>(),
+                    "next_cursor": null,
+                    "has_more": false
+                }));
+            })
+            .await;
+        let provider = make_provider(server.base_url());
+        let keys = provider
+            .query_by_type("memory", 10, 15)
+            .expect("query_by_type with offset > page");
+        assert_eq!(keys.len(), 10, "must return exactly limit (10) keys");
+        // Skipped: 10 from page 1 + 5 from page 2. Take next 5 from page 2 + 5 from page 3.
+        assert_eq!(
+            keys,
+            vec![
+                "id-p2-5:v1".to_string(),
+                "id-p2-6:v1".to_string(),
+                "id-p2-7:v1".to_string(),
+                "id-p2-8:v1".to_string(),
+                "id-p2-9:v1".to_string(),
+                "id-p3-0:v1".to_string(),
+                "id-p3-1:v1".to_string(),
+                "id-p3-2:v1".to_string(),
+                "id-p3-3:v1".to_string(),
+                "id-p3-4:v1".to_string(),
+            ],
+            "must skip the 15 leading records and return the next 10 in order"
+        );
+    }
+
+    /// Issue 009 regression: when the server runs out of pages mid-walk,
+    /// `query_by_type` returns whatever was collected (no error). Server
+    /// here returns 50 items total; caller asks for `limit=100, offset=0`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn query_by_type_short_returns_when_server_runs_out() {
+        let server = MockServer::start_async().await;
+        // Page 1: 50 items, no further cursor.
+        let _page1 = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("type", "memory");
+                then.status(200).json_body(json!({
+                    "items": (0..50)
+                        .map(|i| json!({
+                            "jacs_id": format!("id-{}", i),
+                            "jacs_version": "v1"
+                        }))
+                        .collect::<Vec<_>>(),
+                    "next_cursor": null,
+                    "has_more": false
+                }));
+            })
+            .await;
+        let provider = make_provider(server.base_url());
+        let keys = provider
+            .query_by_type("memory", 100, 0)
+            .expect("must return short result without error");
+        assert_eq!(keys.len(), 50, "server exhausted at 50 items");
+    }
+
+    /// Issue 009 regression: same fix for `query_by_agent`. Server returns
+    /// two pages of 10; caller asks for `offset=10, limit=5` → must return
+    /// the first 5 keys of page 2.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn query_by_agent_walks_cursor_for_offset_above_page_boundary() {
+        let server = MockServer::start_async().await;
+        let _page1 = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("agent", "agent-test")
+                    .is_true(|req| !req.query_params().iter().any(|(k, _)| k == "cursor"));
+                then.status(200).json_body(json!({
+                    "items": (0..10)
+                        .map(|i| json!({
+                            "jacs_id": format!("a1-{}", i),
+                            "jacs_version": "v1"
+                        }))
+                        .collect::<Vec<_>>(),
+                    "next_cursor": "agent-p2",
+                    "has_more": true
+                }));
+            })
+            .await;
+        let _page2 = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("agent", "agent-test")
+                    .query_param("cursor", "agent-p2");
+                then.status(200).json_body(json!({
+                    "items": (0..10)
+                        .map(|i| json!({
+                            "jacs_id": format!("a2-{}", i),
+                            "jacs_version": "v1"
+                        }))
+                        .collect::<Vec<_>>(),
+                    "next_cursor": null,
+                    "has_more": false
+                }));
+            })
+            .await;
+        let provider = make_provider(server.base_url());
+        let keys = provider
+            .query_by_agent("agent-test", 5, 10)
+            .expect("query_by_agent with offset across page boundary");
+        assert_eq!(
+            keys,
+            vec![
+                "a2-0:v1".to_string(),
+                "a2-1:v1".to_string(),
+                "a2-2:v1".to_string(),
+                "a2-3:v1".to_string(),
+                "a2-4:v1".to_string(),
+            ],
+            "must return first 5 records of page 2 after skipping page 1"
+        );
+    }
+
+    /// Issue 009 regression: `query_by_agent` returns short when the server
+    /// runs out of pages without raising.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn query_by_agent_short_returns_when_server_runs_out() {
+        let server = MockServer::start_async().await;
+        let _page1 = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("agent", "agent-test");
+                then.status(200).json_body(json!({
+                    "items": (0..3)
+                        .map(|i| json!({
+                            "jacs_id": format!("agent-{}", i),
+                            "jacs_version": "v1"
+                        }))
+                        .collect::<Vec<_>>(),
+                    "next_cursor": null,
+                    "has_more": false
+                }));
+            })
+            .await;
+        let provider = make_provider(server.base_url());
+        let keys = provider
+            .query_by_agent("agent-test", 100, 0)
+            .expect("must return short result without error");
+        assert_eq!(keys.len(), 3, "server exhausted at 3 items");
+    }
+
+    /// Issue 009 regression: when offset exceeds the total record count, the
+    /// helper returns an empty list — not a stale truncation of an earlier
+    /// page. Server returns 5 items, caller asks for `offset=10, limit=5`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn query_by_type_returns_empty_when_offset_exceeds_total() {
+        let server = MockServer::start_async().await;
+        let _page1 = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("type", "memory");
+                then.status(200).json_body(json!({
+                    "items": (0..5)
+                        .map(|i| json!({
+                            "jacs_id": format!("id-{}", i),
+                            "jacs_version": "v1"
+                        }))
+                        .collect::<Vec<_>>(),
+                    "next_cursor": null,
+                    "has_more": false
+                }));
+            })
+            .await;
+        let provider = make_provider(server.base_url());
+        let keys = provider
+            .query_by_type("memory", 5, 10)
+            .expect("offset > total must return [] without error");
+        assert!(keys.is_empty());
+    }
+
+    /// Issue 007 regression: record IDs and versions MUST be URL-escaped in
+    /// path segments per CLAUDE.md. With `id="weird/id"` and `v="v?1"`, the
+    /// raw `format!("{}/{}/v/{}", ...)` would route to a different endpoint
+    /// (or a 404), and a reserved byte like `?` would be parsed by the server
+    /// as the path/query boundary. With `encode_path_segment`, both segments
+    /// percent-encode and the request reaches the canonical record route.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn record_paths_url_escape_id_and_version() {
+        let server = MockServer::start_async().await;
+        // Mock matches the *encoded* path. If `encode_path_segment` is
+        // missing on the call site, this mock will not match and the
+        // assertion below will fail.
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records/weird%2Fid/v/v%3F1");
+                then.status(200).body(b"raw bytes" as &[u8]);
+            })
+            .await;
+        let provider = make_provider(server.base_url());
+        let bytes = provider
+            .get_record_bytes("weird/id:v?1")
+            .expect("must encode reserved bytes in id and version");
+        assert_eq!(bytes, b"raw bytes");
+        mock.assert_async().await;
+    }
+
+    /// Issue 007 regression: `get_document_versions` and `remove_document`
+    /// also URL-escape their `id` segment. Both routes target the same
+    /// `/api/v1/records/{id}` family.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn versions_and_remove_url_escape_id_segment() {
+        let server = MockServer::start_async().await;
+        let versions_mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records/weird%2Fid/versions");
+                then.status(200).json_body(json!({"versions": []}));
+            })
+            .await;
+        let remove_mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::DELETE)
+                    .path("/api/v1/records/weird%2Fid");
+                then.status(200).json_body(json!({"tombstoned": true}));
+            })
+            .await;
+        let provider = make_provider(server.base_url());
+        let v = provider
+            .get_document_versions("weird/id")
+            .expect("must encode id for versions");
+        assert!(v.is_empty());
+        provider
+            .remove_document("weird/id")
+            .expect("must encode id for delete");
+        versions_mock.assert_async().await;
+        remove_mock.assert_async().await;
+    }
+
+    /// Issue 006 regression: `RemoteJacsProvider::sign_file` MUST delegate to
+    /// `inner.sign_file_envelope` rather than hand-roll a `payload_b64` /
+    /// flat-`sha256` envelope. The previous implementation produced a
+    /// structurally different document for the same `(path, embed)` than
+    /// `LocalJacsProvider::sign_file` and would not verify under the JACS
+    /// schema. With delegation, calling against a `StaticJacsProvider`
+    /// (which has no real JACS agent) surfaces the default trait error
+    /// from `JacsProvider::sign_file_envelope` — the failure mode of the
+    /// hand-rolled implementation was "succeeds but produces a non-JACS
+    /// envelope", so seeing the default error here is positive proof
+    /// that the delegation took effect and no hand-rolled envelope is
+    /// produced.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sign_file_delegates_to_inner_sign_file_envelope() {
+        let server = MockServer::start_async().await;
+        let no_traffic = server
+            .mock_async(|when, then| {
+                when.method(HMethod::POST);
+                then.status(500);
+            })
+            .await;
+        let dir = tempfile::tempdir().expect("tmp");
+        let path = dir.path().join("payload.bin");
+        std::fs::write(&path, b"some bytes to sign").expect("write");
+        let provider = make_provider(server.base_url());
+        let err = provider
+            .sign_file(path.to_str().unwrap(), true)
+            .expect_err("StaticJacsProvider has no real JACS agent — must surface default error");
+        let s = format!("{}", err);
+        // The default trait error message from `JacsProvider::sign_file_envelope`
+        // mentions `LocalJacsProvider`. If `RemoteJacsProvider::sign_file` were
+        // still hand-rolling the envelope, this call would *succeed* (signing
+        // a flat `payload_b64` payload via `sign_document`).
+        assert!(
+            s.contains("sign_file_envelope not supported")
+                || s.contains("LocalJacsProvider"),
+            "expected default-error from sign_file_envelope, got: {s}"
+        );
+        // Pin: zero HTTP calls — `sign_file` must be local-only.
+        no_traffic.assert_calls_async(0).await;
     }
 }
