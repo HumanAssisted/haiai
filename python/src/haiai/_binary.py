@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 # Must match the version in pyproject.toml.
-_SDK_VERSION = "0.3.0"
+_SDK_VERSION = "0.4.0"
 
 # Maps (system, machine) to the binary name used in the wheel
 _PLATFORM_BINARY = {

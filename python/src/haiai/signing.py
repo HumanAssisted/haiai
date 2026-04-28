@@ -33,18 +33,24 @@ logger = logging.getLogger("haiai.signing")
 
 
 def canonicalize_json(obj: dict) -> str:
-    """Produce canonical JSON per RFC 8785 (JCS) via the loaded JACS agent.
+    """Produce canonical JSON per RFC 8785 (JCS) via JACS binding-core.
 
-    Delegates to JACS binding-core ``canonicalize_json``. There is no fallback:
-    sorted-key ``json.dumps`` is NOT byte-equivalent to RFC 8785 (numeric
-    formatting, Unicode escape rules, and float canonicalization all differ),
-    so signatures produced over a fallback string would not verify against
-    JACS-canonicalized input on the verifier side. If the loaded JACS agent
-    lacks the ``canonicalize_json`` method, that's an environment problem —
-    raise loudly rather than silently produce a near-canonical form.
+    Delegates to JACS binding-core ``canonicalize_json``. There is no local
+    fallback: sorted-key ``json.dumps`` is NOT byte-equivalent to RFC 8785
+    (numeric formatting, Unicode escape rules, and float canonicalization all
+    differ), so signatures produced over a fallback string would not verify
+    against JACS-canonicalized input on the verifier side.
+
+    Resolution order:
+      1. The currently loaded agent's ``canonicalize_json`` method (when
+         available, e.g. ``JacsAgent``).
+      2. A stateless ``jacs.JacsAgent()`` instance — RFC 8785 canonicalization
+         is keyless, so any JACS install can produce the canonical bytes even
+         when the loaded agent (e.g. ``SimpleAgent`` / ``EphemeralAgentAdapter``)
+         doesn't expose ``canonicalize_json`` directly.
 
     Raises :class:`~haiai.errors.HaiError` if no JACS agent is loaded, or if
-    the loaded agent does not expose ``canonicalize_json``.
+    JACS itself is not importable.
     """
     from haiai.config import is_loaded, get_agent
     from haiai.errors import HaiError
@@ -56,16 +62,33 @@ def canonicalize_json(obj: dict) -> str:
             action="Run 'haiai init' or set JACS_CONFIG_PATH environment variable",
         )
 
-    agent = get_agent()
-    if not hasattr(agent, "canonicalize_json"):
-        raise HaiError(
-            "Loaded JACS agent does not expose canonicalize_json — upgrade JACS",
-            code="JACS_TOO_OLD",
-            action="Upgrade @hai.ai/jacs / jacs Python binding to a version that exposes canonicalize_json",
-        )
-
     json_str = json.dumps(obj, sort_keys=True, separators=(",", ":"))
-    return agent.canonicalize_json(json_str)
+
+    agent = get_agent()
+    if hasattr(agent, "canonicalize_json"):
+        return agent.canonicalize_json(json_str)
+
+    # Fallback: stateless JACS canonicalization. RFC 8785 needs no keys, and
+    # JacsAgent() exposes canonicalize_json without requiring load(). This is
+    # a delegation, not a re-implementation — the bytes are still produced by
+    # jacs::protocol::canonicalize_json.
+    try:
+        from jacs import JacsAgent as _JacsAgent
+    except ImportError as exc:
+        raise HaiError(
+            "canonicalize_json requires the jacs Python binding",
+            code="JACS_NOT_LOADED",
+            action="Install JACS: pip install jacs",
+        ) from exc
+
+    try:
+        return _JacsAgent().canonicalize_json(json_str)
+    except Exception as exc:
+        raise HaiError(
+            f"JACS canonicalize_json failed: {exc}",
+            code="JACS_OP_FAILED",
+            action="Verify the JACS Python binding exposes JacsAgent().canonicalize_json",
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
