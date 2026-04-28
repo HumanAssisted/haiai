@@ -85,7 +85,7 @@ describe('signResponse', () => {
 describe('unwrapSignedEvent', () => {
   it('passes through non-JACS events unchanged', () => {
     const event = { type: 'heartbeat', timestamp: 123 };
-    const result = unwrapSignedEvent(event, {});
+    const result = unwrapSignedEvent(event, {}, TEST_AGENT);
     expect(result).toEqual(event);
   });
 
@@ -95,8 +95,14 @@ describe('unwrapSignedEvent', () => {
       metadata: { issuer: 'agent-1', document_id: 'doc-1', created_at: 'now', hash: 'abc' },
       signature: { key_id: 'unknown-key', algorithm: 'Ed25519', signature: 'sig', signed_at: 'now' },
     };
-    const result = unwrapSignedEvent(doc, {});
+    const result = unwrapSignedEvent(doc, {}, TEST_AGENT);
     expect(result).toEqual({ message: 'inner' });
+  });
+
+  it('throws when no JACS agent is provided', () => {
+    const event = { type: 'heartbeat' };
+    // @ts-expect-error — verifying runtime guard for missing agent argument
+    expect(() => unwrapSignedEvent(event, {})).toThrow(/loaded JACS agent/);
   });
 
   it('verifies and unwraps with known key', () => {
