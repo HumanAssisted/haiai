@@ -131,7 +131,7 @@ jobs:
         run: |
           cd "${{ github.workspace }}/../JACS/jacsnpm"
           npm install @napi-rs/cli
-          npx napi build --release
+          npx napi build --platform --release
         timeout-minutes: 10
       - name: Install dependencies
         run: |
