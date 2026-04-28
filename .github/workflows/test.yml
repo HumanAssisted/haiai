@@ -120,21 +120,24 @@ jobs:
           npm install @napi-rs/cli
           npx napi build --release
         timeout-minutes: 10
-      - name: Switch to production JACS dep (mirrors publish-node.yml)
-        # The committed package.json keeps `@hai.ai/jacs: file:../../JACS/jacsnpm`
-        # for local dev. CI swaps it to the published version via deps:prod
-        # (reads node/publish.deps.json), the same way publish-node.yml does.
-        run: cd node && npm run deps:prod
+      - name: Build JACS napi addon (jacs.linux-x64-gnu.node)
+        # @hai.ai/jacs@0.10.0 is published on npm but its platform-binary
+        # subpackages (@hai.ai/jacs-linux-x64-gnu, etc.) were not published
+        # alongside it. The committed package.json keeps the local-dev
+        # file:../../JACS/jacsnpm path; building the napi addon here makes
+        # the JACS loader's `existsSync(./jacs.linux-x64-gnu.node)` branch
+        # succeed without needing the missing registry subpackages. Once
+        # JACS publishes the platform binaries, restore `npm run deps:prod`.
+        run: |
+          cd "${{ github.workspace }}/../JACS/jacsnpm"
+          npm install @napi-rs/cli
+          npx napi build --release
+        timeout-minutes: 10
       - name: Install dependencies
         run: |
           cd node
           # haiinpm is not yet on npm registry; point at the local build.
           npm pkg set "dependencies.haiinpm=file:../rust/haiinpm"
-          # Refresh package-lock.json against the rewritten package.json
-          # (deps:prod swapped @hai.ai/jacs from a file: link to a published
-          # version, but the committed lock still points at the symlink).
-          # Mirrors publish-node.yml step at line 244.
-          npm install --package-lock-only
           npm install
       - name: Run tests
         run: |
