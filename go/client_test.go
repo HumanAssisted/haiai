@@ -344,3 +344,35 @@ func TestFetchRemoteKeyFromURLIsDeprecated(t *testing.T) {
 		t.Errorf("error should mention 'FetchRemoteKey' replacement, got: %v", err)
 	}
 }
+
+func TestSignBenchmarkResultDelegatesToFFISignResponse(t *testing.T) {
+	cl, _ := newTestClient(t, "https://example.invalid")
+	mock, ok := cl.ffi.(*mockFFIClient)
+	if !ok {
+		t.Fatal("expected mock FFI client")
+	}
+
+	var gotPayload string
+	mock.signResponseFn = func(payloadJSON string) (json.RawMessage, error) {
+		gotPayload = payloadJSON
+		return json.RawMessage(`{
+			"signed_document":"{\"version\":\"1.0.0\",\"document_type\":\"job_response\",\"data\":{\"score\":99},\"metadata\":{\"issuer\":\"test-agent-id\",\"document_id\":\"doc-1\",\"created_at\":\"2026-01-01T00:00:00Z\",\"hash\":\"from-rust\"},\"jacsSignature\":{\"agentID\":\"test-agent-id\",\"date\":\"2026-01-01T00:00:00Z\",\"signature\":\"sig-from-rust\"}}",
+			"agent_jacs_id":"test-agent-id"
+		}`), nil
+	}
+	mock.signMessageFn = func(message string) (string, error) {
+		t.Fatalf("SignBenchmarkResult must not call SignMessage directly; got %q", message)
+		return "", nil
+	}
+
+	doc, err := cl.SignBenchmarkResult(map[string]interface{}{"score": float64(99)})
+	if err != nil {
+		t.Fatalf("SignBenchmarkResult: %v", err)
+	}
+	if gotPayload == "" {
+		t.Fatal("expected FFI SignResponse to be called")
+	}
+	if doc.DocumentType != "job_response" || doc.JacsSignature.Signature != "sig-from-rust" {
+		t.Fatalf("unexpected signed document: %#v", doc)
+	}
+}

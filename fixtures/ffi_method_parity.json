@@ -90,6 +90,7 @@
     "jacs_delegation": [
       {"name": "build_auth_header", "args": [], "returns": "string"},
       {"name": "sign_message", "args": ["message:string"], "returns": "string"},
+      {"name": "sign_response", "args": ["payload_json:string"], "returns": "json"},
       {"name": "canonical_json", "args": ["value_json:string"], "returns": "string"},
       {"name": "verify_a2a_artifact", "args": ["wrapped_json:string"], "returns": "json"},
       {"name": "export_agent_json", "args": [], "returns": "json"}
@@ -137,5 +138,5 @@
     "ProviderError"
   ],
   "error_format": "{ErrorKind}: {message}",
-  "total_method_count": 92
+  "total_method_count": 93
 }

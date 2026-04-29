@@ -1234,6 +1234,24 @@ impl HaiClient {
             .map_err(to_py_err)
     }
 
+    fn sign_response<'py>(
+        &self,
+        py: Python<'py>,
+        payload_json: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.sign_response(&payload_json).await.map_err(to_py_err)
+        })
+    }
+
+    fn sign_response_sync(&self, py: Python, payload_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| RT.block_on(async { client.sign_response(&payload_json).await }))
+            .map_err(to_py_err)
+    }
+
     fn canonical_json<'py>(
         &self,
         py: Python<'py>,

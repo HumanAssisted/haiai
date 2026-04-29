@@ -525,6 +525,13 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
+    def sign_response(self, payload_json: str) -> dict[str, Any]:
+        try:
+            raw = self._native.sign_response_sync(payload_json)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
     def canonical_json(self, value_json: str) -> str:
         try:
             return self._native.canonical_json_sync(value_json)
@@ -1224,6 +1231,13 @@ class AsyncFFIAdapter:
     async def sign_message(self, message: str) -> str:
         try:
             return await self._native.sign_message(message)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def sign_response(self, payload_json: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.sign_response(payload_json)
+            return json.loads(raw)
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 

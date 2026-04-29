@@ -15,17 +15,17 @@
 // The PRD (DRY_FFI.md Decision 5) required evaluating purego as an alternative
 // to CGo. CGo was chosen for the following reasons:
 //
-// 1. **Memory management ergonomics.** Every FFI method returns a `char*` JSON
-//    string that must be freed. CGo provides `C.GoString()` + `defer C.free()`
-//    which is safe and idiomatic. purego requires manual `uintptr` return,
-//    unsafe pointer cast to read the string, and explicit free — more error-prone.
+//  1. **Memory management ergonomics.** Every FFI method returns a `char*` JSON
+//     string that must be freed. CGo provides `C.GoString()` + `defer C.free()`
+//     which is safe and idiomatic. purego requires manual `uintptr` return,
+//     unsafe pointer cast to read the string, and explicit free — more error-prone.
 //
-// 2. **Stability.** purego remains beta with open issues (e.g., #399, #407 as
-//    of March 2026). CGo is battle-tested and matches the existing JACS jacsgo
-//    pattern.
+//  2. **Stability.** purego remains beta with open issues (e.g., #399, #407 as
+//     of March 2026). CGo is battle-tested and matches the existing JACS jacsgo
+//     pattern.
 //
-// 3. **Build simplicity.** The haiigo Rust crate already builds as a cdylib for
-//    CGo. purego would need the same cdylib but adds runtime dlopen complexity.
+//  3. **Build simplicity.** The haiigo Rust crate already builds as a cdylib for
+//     CGo. purego would need the same cdylib but adds runtime dlopen complexity.
 //
 // purego may be reconsidered when it reaches v1.0 stable, particularly if
 // `CGO_ENABLED=0` builds become a requirement.
@@ -124,6 +124,7 @@ extern char* hai_enterprise_run(HaiClientHandle handle);
 
 // JACS Delegation
 extern char* hai_sign_message(HaiClientHandle handle, const char* message);
+extern char* hai_sign_response(HaiClientHandle handle, const char* payload_json);
 extern char* hai_canonical_json(HaiClientHandle handle, const char* value_json);
 extern char* hai_verify_a2a_artifact(HaiClientHandle handle, const char* wrapped_json);
 extern char* hai_build_auth_header(HaiClientHandle handle);
@@ -988,6 +989,17 @@ func (c *Client) SignMessage(message string) (string, error) {
 		return "", fmt.Errorf("failed to parse signature: %w", err)
 	}
 	return s, nil
+}
+
+func (c *Client) SignResponse(payloadJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(payloadJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_sign_response(c.handle, cs)))
 }
 
 func (c *Client) CanonicalJSON(valueJSON string) (string, error) {

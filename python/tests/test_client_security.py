@@ -9,6 +9,8 @@ import base64
 import json
 import os
 import stat
+import sys
+import types
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -158,6 +160,104 @@ def test_register_new_agent_defaults_to_secure_key_dir(
     opts = captured["options"]
     assert opts["domain"] == "agent.example"
     assert opts["description"] == "Agent description"
+
+
+def test_public_key_hash_delegates_to_jacs_base64_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    from haiai.client import _compute_public_key_hash
+
+    calls: list[str] = []
+    jacs_mod = types.ModuleType("jacs")
+    jacs_mod.__path__ = []  # type: ignore[attr-defined]
+
+    def fake_hash_public_key_base64(public_key_b64: str) -> str:
+        calls.append(public_key_b64)
+        return "canonical-jacs-hash"
+
+    jacs_mod.hash_public_key_base64 = fake_hash_public_key_base64  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "jacs", jacs_mod)
+
+    assert _compute_public_key_hash("PEM\r\n") == "canonical-jacs-hash"
+    assert calls == ["UEVNDQo="]
+
+
+def test_register_new_agent_prints_ffi_dns_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class MockAdapter(_make_mock_ffi_adapter(captured)):  # type: ignore[misc, valid-type]
+        def register_new_agent(self, options: dict[str, Any]) -> dict[str, Any]:
+            data = _fake_register_result(options)
+            data["dns_record"] = (
+                "v=hai.ai; jacs_agent_id=jacs-123; alg=SHA-256; "
+                "enc=base64; jacs_public_key_hash=from-rust"
+            )
+            return data
+
+    monkeypatch.setattr("haiai.client.FFIAdapter", MockAdapter)
+
+    try:
+        register_new_agent(
+            name="Agent",
+            owner_email="owner@hai.ai",
+            hai_url="https://hai.ai",
+            key_dir=str(tmp_path / "keys"),
+            config_path=str(tmp_path / "jacs.config.json"),
+            domain="example.com",
+            quiet=False,
+        )
+    finally:
+        from haiai.config import reset
+        reset()
+
+    out = capsys.readouterr().out
+    assert "Name:  _v1.agent.jacs.example.com" in out
+    assert "jacs_public_key_hash=from-rust" in out
+
+
+def test_register_new_agent_fallback_dns_record_matches_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fixture = json.loads(
+        (Path(__file__).resolve().parents[2] / "fixtures" / "dns_txt_record.json").read_text()
+    )
+    captured: dict[str, Any] = {}
+
+    class MockAdapter(_make_mock_ffi_adapter(captured)):  # type: ignore[misc, valid-type]
+        def register_new_agent(self, options: dict[str, Any]) -> dict[str, Any]:
+            data = _fake_register_result(options)
+            data["jacs_id"] = fixture["agent_json"]["jacsId"]
+            return data
+
+    jacs_mod = types.ModuleType("jacs")
+    jacs_mod.__path__ = []  # type: ignore[attr-defined]
+    jacs_mod.hash_public_key_base64 = (  # type: ignore[attr-defined]
+        lambda _public_key_b64: fixture["expected_public_key_hash"]
+    )
+    monkeypatch.setitem(sys.modules, "jacs", jacs_mod)
+    monkeypatch.setattr("haiai.client.FFIAdapter", MockAdapter)
+
+    try:
+        register_new_agent(
+            name="Agent",
+            owner_email="owner@hai.ai",
+            hai_url="https://hai.ai",
+            key_dir=str(tmp_path / "keys"),
+            config_path=str(tmp_path / "jacs.config.json"),
+            domain=fixture["domain"],
+            quiet=False,
+        )
+    finally:
+        from haiai.config import reset
+        reset()
+
+    out = capsys.readouterr().out
+    assert f"Name:  {fixture['owner'].rstrip('.')}" in out
+    assert f"Value: {fixture['txt_value']}" in out
 
 
 # ---------------------------------------------------------------------------

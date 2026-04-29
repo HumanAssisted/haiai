@@ -14,11 +14,11 @@ import (
 
 // parityFixture represents the shared FFI method parity contract.
 type parityFixture struct {
-	Description      string                              `json:"description"`
-	Methods          map[string][]parityFixtureMethod     `json:"methods"`
-	ErrorKinds       []string                             `json:"error_kinds"`
-	ErrorFormat      string                               `json:"error_format"`
-	TotalMethodCount int                                  `json:"total_method_count"`
+	Description      string                           `json:"description"`
+	Methods          map[string][]parityFixtureMethod `json:"methods"`
+	ErrorKinds       []string                         `json:"error_kinds"`
+	ErrorFormat      string                           `json:"error_format"`
+	TotalMethodCount int                              `json:"total_method_count"`
 }
 
 type parityFixtureMethod struct {
@@ -203,10 +203,10 @@ func TestMapFFIErrCoversAllFixtureKinds(t *testing.T) {
 			if haiErr.Kind != ErrConnection {
 				t.Errorf("Expected ErrConnection for kind %q, got %v", kind, haiErr.Kind)
 			}
-		// ProviderError, ConfigFailed, SerializationFailed, InvalidArgument, ApiError
-		// are mapped to ErrInvalidResponse by the default fallback in mapFFIErr.
-		// The ffi package's MapFFIError handles these more precisely, but mapFFIErr
-		// in the haiai package uses simpler string matching.
+			// ProviderError, ConfigFailed, SerializationFailed, InvalidArgument, ApiError
+			// are mapped to ErrInvalidResponse by the default fallback in mapFFIErr.
+			// The ffi package's MapFFIError handles these more precisely, but mapFFIErr
+			// in the haiai package uses simpler string matching.
 		}
 	}
 }
@@ -291,7 +291,7 @@ type recordingFFIClient struct {
 	inner FFIClient
 }
 
-func (r *recordingFFIClient) Close()                               { r.inner.Close() }
+func (r *recordingFFIClient) Close() { r.inner.Close() }
 func (r *recordingFFIClient) Hello(includeTest bool) (json.RawMessage, error) {
 	*r.calls = append(*r.calls, "Hello")
 	return r.inner.Hello(includeTest)
@@ -451,6 +451,10 @@ func (r *recordingFFIClient) BuildAuthHeader() (string, error) {
 func (r *recordingFFIClient) SignMessage(message string) (string, error) {
 	*r.calls = append(*r.calls, "SignMessage")
 	return r.inner.SignMessage(message)
+}
+func (r *recordingFFIClient) SignResponse(payloadJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "SignResponse")
+	return r.inner.SignResponse(payloadJSON)
 }
 func (r *recordingFFIClient) CanonicalJSON(valueJSON string) (string, error) {
 	*r.calls = append(*r.calls, "CanonicalJSON")

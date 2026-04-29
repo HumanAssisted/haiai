@@ -536,6 +536,14 @@ impl HaiClient {
     }
 
     #[napi]
+    pub async fn sign_response(&self, payload_json: String) -> Result<String> {
+        self.inner
+            .sign_response(&payload_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
     pub async fn canonical_json(&self, value_json: String) -> Result<String> {
         self.inner
             .canonical_json(&value_json)

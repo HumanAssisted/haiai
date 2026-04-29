@@ -16,7 +16,7 @@ func getStringField(doc map[string]interface{}, key string) string {
 
 // GetDnsRecord returns the DNS TXT record line for an agent document.
 // The agentJSON should be a serialized JACS agent document.
-// Format: _v1.agent.jacs.{domain}. TTL IN TXT "v=hai.ai; jacs_agent_id=...; alg=SHA-256; enc=base64; jac_public_key_hash=..."
+// Format: _v1.agent.jacs.{domain}. TTL IN TXT "v=hai.ai; jacs_agent_id=...; alg=SHA-256; enc=base64; jacs_public_key_hash=..."
 // If ttl is 0, defaults to 3600.
 func GetDnsRecord(agentJSON string, domain string, ttl uint32) (string, error) {
 	var doc map[string]interface{}
@@ -37,7 +37,7 @@ func GetDnsRecord(agentJSON string, domain string, ttl uint32) (string, error) {
 
 	d := strings.TrimSuffix(domain, ".")
 	owner := "_v1.agent.jacs." + d + "."
-	txt := "v=hai.ai; jacs_agent_id=" + jacsID + "; alg=SHA-256; enc=base64; jac_public_key_hash=" + publicKeyHash
+	txt := "v=hai.ai; jacs_agent_id=" + jacsID + "; alg=SHA-256; enc=base64; jacs_public_key_hash=" + publicKeyHash
 	if ttl == 0 {
 		ttl = 3600
 	}

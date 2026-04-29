@@ -60,8 +60,8 @@ fn result_to_json(result: Result<String, hai_binding_core::HaiBindingError>) -> 
 fn result_string_to_json(result: Result<String, hai_binding_core::HaiBindingError>) -> String {
     match result {
         Ok(s) => {
-            let quoted =
-                serde_json::to_string(&s).unwrap_or_else(|_| format!("\"{}\"", s.replace('"', "\\\"")));
+            let quoted = serde_json::to_string(&s)
+                .unwrap_or_else(|_| format!("\"{}\"", s.replace('"', "\\\"")));
             format!(r#"{{"ok":{quoted}}}"#)
         }
         Err(e) => error_to_json(&e),
@@ -770,6 +770,7 @@ pub extern "C" fn hai_enterprise_run(handle: HaiClientHandle) -> *mut c_char {
 // =============================================================================
 
 ffi_method_str!(hai_sign_message, sign_message);
+ffi_method_str!(hai_sign_response, sign_response);
 ffi_method_str!(hai_canonical_json, canonical_json);
 ffi_method_str!(hai_verify_a2a_artifact, verify_a2a_artifact);
 

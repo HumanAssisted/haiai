@@ -1,0 +1,17 @@
+{
+  "description": "Shared DNS TXT record contract for JACS public-key trust. Go generation and Rust/Python verification must agree on the owner name and jacs_public_key_hash field spelling.",
+  "domain": "example.com",
+  "ttl": 3600,
+  "agent_json": {
+    "jacsId": "agent-123",
+    "jacsSignature": {
+      "publicKeyHash": "hash-abc"
+    }
+  },
+  "owner": "_v1.agent.jacs.example.com.",
+  "txt_value": "v=hai.ai; jacs_agent_id=agent-123; alg=SHA-256; enc=base64; jacs_public_key_hash=hash-abc",
+  "bind_record": "_v1.agent.jacs.example.com. 3600 IN TXT \"v=hai.ai; jacs_agent_id=agent-123; alg=SHA-256; enc=base64; jacs_public_key_hash=hash-abc\"",
+  "public_key_hash_field": "jacs_public_key_hash",
+  "legacy_public_key_hash_field": "jac_public_key_hash",
+  "expected_public_key_hash": "hash-abc"
+}

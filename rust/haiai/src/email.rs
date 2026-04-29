@@ -220,8 +220,7 @@ pub async fn verify_email(raw_email: &[u8], hai_url: &str) -> EmailVerificationR
     };
 
     // Step 7: DNS verification (for pro and enterprise tiers)
-    let dns_verified = if reputation_tier == "pro" || reputation_tier == "enterprise"
-    {
+    let dns_verified = if reputation_tier == "pro" || reputation_tier == "enterprise" {
         let domain = extract_domain(&from_email);
         match verify_dns_public_key(&domain, &registry.public_key).await {
             Ok(verified) => {
@@ -479,22 +478,24 @@ pub async fn verify_dns_public_key(domain: &str, public_key_pem: &str) -> Result
     let txt_records = fetch_dns_txt_records(&txt_name).await?;
 
     for record in &txt_records {
-        // Look for jacs_public_key_hash= in the TXT record
-        for part in record.split(';') {
-            let part = part.trim();
-            if let Some(hash_value) = part.strip_prefix("jacs_public_key_hash=") {
-                let hash_value = hash_value.trim();
-                if hash_value == expected_hash {
-                    return Ok(true);
-                }
-                // Found the field but hash doesn't match
-                return Ok(false);
-            }
+        if let Some(matches) = dns_txt_record_matches_expected_hash(record, &expected_hash) {
+            return Ok(matches);
         }
     }
 
     // No jacs_public_key_hash field found in any TXT record
     Ok(false)
+}
+
+fn dns_txt_record_matches_expected_hash(record: &str, expected_hash: &str) -> Option<bool> {
+    for part in record.split(';') {
+        let part = part.trim();
+        if let Some(hash_value) = part.strip_prefix("jacs_public_key_hash=") {
+            return Some(hash_value.trim() == expected_hash);
+        }
+    }
+
+    None
 }
 
 /// Fetch DNS TXT records using DNS-over-HTTPS.
@@ -652,6 +653,30 @@ mod tests {
         assert!(r.field_results.is_empty());
         assert!(r.chain.is_empty());
         assert!(r.dns_verified.is_none());
+    }
+
+    #[test]
+    fn dns_txt_record_parser_matches_shared_fixture() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../fixtures/dns_txt_record.json"))
+                .expect("DNS fixture");
+        let txt_value = fixture["txt_value"].as_str().expect("txt_value");
+        let expected_hash = fixture["expected_public_key_hash"]
+            .as_str()
+            .expect("expected_public_key_hash");
+        let field_name = fixture["public_key_hash_field"]
+            .as_str()
+            .expect("public_key_hash_field");
+        let legacy_field_name = fixture["legacy_public_key_hash_field"]
+            .as_str()
+            .expect("legacy_public_key_hash_field");
+
+        assert_eq!(field_name, "jacs_public_key_hash");
+        assert!(!txt_value.contains(&format!("{legacy_field_name}=")));
+        assert_eq!(
+            dns_txt_record_matches_expected_hash(txt_value, expected_hash),
+            Some(true)
+        );
     }
 
     // -- Tests that use JACS email functions with SimpleAgent --

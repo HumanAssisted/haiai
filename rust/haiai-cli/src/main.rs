@@ -11,6 +11,7 @@ use jacs_mcp::JacsMcpServer;
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use rmcp::{transport::stdio, ServiceExt};
 use serde_json::Value;
+use std::io::Write as _;
 
 mod media_cmds;
 
@@ -874,6 +875,18 @@ async fn upload_file_to_anthropic(
         .as_str()
         .map(|s| s.to_string())
         .ok_or_else(|| anyhow::anyhow!("Files API response missing 'id' field"))
+}
+
+fn write_deploy_password_tempfile(password: &str) -> anyhow::Result<tempfile::NamedTempFile> {
+    let mut file = tempfile::Builder::new()
+        .prefix("haiai-deploy-pw-")
+        .tempfile()
+        .context("failed to create temporary password file")?;
+    file.write_all(password.as_bytes())
+        .context("failed to write temporary password file")?;
+    file.flush()
+        .context("failed to flush temporary password file")?;
+    Ok(file)
 }
 
 /// Post JSON to an Anthropic Managed Agents endpoint with the required beta header.
@@ -2200,9 +2213,7 @@ async fn main() -> anyhow::Result<()> {
 
                         let identity = discover_identity_files()?;
                         let password = resolve_deploy_password(cli.password_file.as_deref())?;
-                        let password_tmp = std::env::temp_dir().join("haiai-deploy-pw.tmp");
-                        std::fs::write(&password_tmp, &password)
-                            .context("failed to write temporary password file")?;
+                        let password_tmp = write_deploy_password_tempfile(&password)?;
 
                         println!("Re-uploading identity files...");
                         let old_ids = state.file_ids.clone();
@@ -2222,9 +2233,7 @@ async fn main() -> anyhow::Result<()> {
                         )
                         .await?;
                         let new_pw_id =
-                            upload_file_to_anthropic(&http_client, &api_key, &password_tmp).await?;
-
-                        let _ = std::fs::remove_file(&password_tmp);
+                            upload_file_to_anthropic(&http_client, &api_key, password_tmp.path()).await?;
 
                         state.file_ids = DeployFileIds {
                             config: new_config_id,
@@ -2299,9 +2308,7 @@ async fn main() -> anyhow::Result<()> {
                         // -------------------------------------------------------
                         let identity = discover_identity_files()?;
                         let password = resolve_deploy_password(cli.password_file.as_deref())?;
-                        let password_tmp = std::env::temp_dir().join("haiai-deploy-pw.tmp");
-                        std::fs::write(&password_tmp, &password)
-                            .context("failed to write temporary password file")?;
+                        let password_tmp = write_deploy_password_tempfile(&password)?;
 
                         println!("Identity files uploaded:");
                         let config_file_id = upload_file_to_anthropic(
@@ -2326,10 +2333,8 @@ async fn main() -> anyhow::Result<()> {
                         .await?;
                         println!("  PrivKey:  {}", priv_file_id);
                         let pw_file_id =
-                            upload_file_to_anthropic(&http_client, &api_key, &password_tmp).await?;
+                            upload_file_to_anthropic(&http_client, &api_key, password_tmp.path()).await?;
                         println!("  Password: {}", pw_file_id);
-
-                        let _ = std::fs::remove_file(&password_tmp);
 
                         let file_ids = DeployFileIds {
                             config: config_file_id,
@@ -4369,5 +4374,23 @@ mod tests {
             cargo.as_array().unwrap().contains(&serde_json::json!("haiai-cli")),
             "environment must install haiai-cli via cargo"
         );
+    }
+
+    #[test]
+    fn deploy_password_tempfile_is_unpredictable_and_private() {
+        let file = write_deploy_password_tempfile("secret").expect("temp password file");
+        let path = file.path();
+        assert_ne!(
+            path.file_name().and_then(|s| s.to_str()),
+            Some("haiai-deploy-pw.tmp")
+        );
+        assert_eq!(std::fs::read_to_string(path).expect("read temp password"), "secret");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(path).expect("metadata").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
     }
 }

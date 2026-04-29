@@ -65,6 +65,7 @@ type FFIClient interface {
 	// JACS Delegation
 	BuildAuthHeader() (string, error)
 	SignMessage(message string) (string, error)
+	SignResponse(payloadJSON string) (json.RawMessage, error)
 	CanonicalJSON(valueJSON string) (string, error)
 	VerifyA2AArtifact(wrappedJSON string) (json.RawMessage, error)
 	ExportAgentJSON() (json.RawMessage, error)
