@@ -218,6 +218,10 @@ impl<P: JacsProvider> HaiClient<P> {
         self.jacs.sign_string(message)
     }
 
+    pub fn sign_response_payload(&self, payload: &Value) -> Result<crate::types::SignedPayload> {
+        self.jacs.sign_response(payload)
+    }
+
     pub fn canonical_json(&self, value: &Value) -> Result<String> {
         self.jacs.canonical_json(value)
     }
@@ -1705,10 +1709,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
 
         let task = tokio::spawn(async move {
-            let mut buffer = String::new();
-            let mut event_type = String::new();
-            let mut event_id: Option<String> = None;
-            let mut data_lines: Vec<String> = Vec::new();
+            let mut parser = SseParser::default();
 
             loop {
                 tokio::select! {
@@ -1723,34 +1724,9 @@ impl<P: JacsProvider> HaiClient<P> {
                             break;
                         };
 
-                        buffer.push_str(&String::from_utf8_lossy(&chunk));
-                        while let Some(idx) = buffer.find('\n') {
-                            let mut line = buffer[..idx].to_string();
-                            buffer.drain(..=idx);
-                            if line.ends_with('\r') {
-                                line.pop();
-                            }
-
-                            if line.is_empty() {
-                                if !data_lines.is_empty() {
-                                    let raw = data_lines.join("\n");
-                                    let event = parse_sse_event_payload(&event_type, event_id.clone(), &raw);
-                                    if events_tx.send(event).await.is_err() {
-                                        return;
-                                    }
-                                }
-                                event_type.clear();
-                                event_id = None;
-                                data_lines.clear();
-                                continue;
-                            }
-
-                            if let Some(rest) = line.strip_prefix("event:") {
-                                event_type = rest.trim().to_string();
-                            } else if let Some(rest) = line.strip_prefix("id:") {
-                                event_id = Some(rest.trim().to_string());
-                            } else if let Some(rest) = line.strip_prefix("data:") {
-                                data_lines.push(rest.trim().to_string());
+                        for event in parser.push_chunk(&chunk) {
+                            if events_tx.send(event).await.is_err() {
+                                return;
                             }
                         }
                     }
@@ -2072,6 +2048,58 @@ fn parse_transcript(data: &Value) -> Vec<TranscriptMessage> {
         .unwrap_or_default()
 }
 
+#[derive(Default)]
+struct SseParser {
+    buffer: Vec<u8>,
+    event_type: String,
+    event_id: Option<String>,
+    data_lines: Vec<String>,
+}
+
+impl SseParser {
+    fn push_chunk(&mut self, chunk: &[u8]) -> Vec<HaiEvent> {
+        self.buffer.extend_from_slice(chunk);
+        let mut events = Vec::new();
+
+        while let Some(idx) = self.buffer.iter().position(|b| *b == b'\n') {
+            let mut line_bytes = self.buffer.drain(..=idx).collect::<Vec<_>>();
+            line_bytes.pop();
+            if line_bytes.ends_with(b"\r") {
+                line_bytes.pop();
+            }
+
+            let Ok(line) = String::from_utf8(line_bytes) else {
+                continue;
+            };
+
+            if line.is_empty() {
+                if !self.data_lines.is_empty() {
+                    let raw = self.data_lines.join("\n");
+                    events.push(parse_sse_event_payload(
+                        &self.event_type,
+                        self.event_id.clone(),
+                        &raw,
+                    ));
+                }
+                self.event_type.clear();
+                self.event_id = None;
+                self.data_lines.clear();
+                continue;
+            }
+
+            if let Some(rest) = line.strip_prefix("event:") {
+                self.event_type = rest.trim().to_string();
+            } else if let Some(rest) = line.strip_prefix("id:") {
+                self.event_id = Some(rest.trim().to_string());
+            } else if let Some(rest) = line.strip_prefix("data:") {
+                self.data_lines.push(rest.trim().to_string());
+            }
+        }
+
+        events
+    }
+}
+
 fn parse_sse_event_payload(event_type: &str, id: Option<String>, raw: &str) -> HaiEvent {
     let data =
         serde_json::from_str::<Value>(raw).unwrap_or_else(|_| Value::String(raw.to_string()));
@@ -2264,6 +2292,21 @@ mod tests {
         };
 
         assert!(att.effective_data().is_empty());
+    }
+
+    #[test]
+    fn sse_parser_preserves_utf8_split_across_chunks() {
+        let mut parser = SseParser::default();
+        assert!(parser
+            .push_chunk("event: benchmark_job\ndata: {\"message\":\"hi ".as_bytes())
+            .is_empty());
+        assert!(parser.push_chunk(&[0xF0, 0x9F]).is_empty());
+        assert!(parser.push_chunk(&[0x99, 0x82]).is_empty());
+        let events = parser.push_chunk(b"\"}\n\n");
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "benchmark_job");
+        assert_eq!(events[0].data["message"].as_str(), Some("hi 🙂"));
     }
 
     #[test]

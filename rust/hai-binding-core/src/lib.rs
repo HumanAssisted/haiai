@@ -493,6 +493,14 @@ impl HaiClientWrapper {
         Ok(client.sign_message(message)?)
     }
 
+    /// Sign a response payload as the canonical JACS response document.
+    pub async fn sign_response(&self, payload_json: &str) -> HaiBindingResult<String> {
+        let payload: Value = serde_json::from_str(payload_json)?;
+        let client = self.inner.read().await;
+        let signed = client.sign_response_payload(&payload)?;
+        Ok(serde_json::to_string(&signed)?)
+    }
+
     /// Get canonical JSON for a value.
     pub async fn canonical_json(&self, value_json: &str) -> HaiBindingResult<String> {
         let value: Value = serde_json::from_str(value_json)?;

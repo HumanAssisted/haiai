@@ -3,6 +3,7 @@ package haiai
 import (
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"testing"
@@ -33,6 +34,36 @@ func newTestClient(t *testing.T, serverURL string) (*Client, ed25519.PublicKey) 
 	mockFFI.signMessageFn = func(message string) (string, error) {
 		sig := ed25519.Sign(priv, []byte(message))
 		return base64.StdEncoding.EncodeToString(sig), nil
+	}
+	mockFFI.signResponseFn = func(payloadJSON string) (json.RawMessage, error) {
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+			return nil, err
+		}
+		doc := map[string]interface{}{
+			"version":       "1.0.0",
+			"document_type": "job_response",
+			"data":          payload,
+			"metadata": map[string]interface{}{
+				"issuer":      "test-agent-id",
+				"document_id": "doc-1",
+				"created_at":  "2026-01-01T00:00:00Z",
+				"hash":        "hash-from-ffi",
+			},
+			"jacsSignature": map[string]interface{}{
+				"agentID":   "test-agent-id",
+				"date":      "2026-01-01T00:00:00Z",
+				"signature": "sig-from-ffi",
+			},
+		}
+		docJSON, err := json.Marshal(doc)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]interface{}{
+			"signed_document": string(docJSON),
+			"agent_jacs_id":   "test-agent-id",
+		})
 	}
 
 	cl, err := NewClient(

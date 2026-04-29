@@ -7,7 +7,6 @@ SSE/WS streaming, key rotation, and local signing remain native Python.
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import logging
 import os
@@ -628,7 +627,6 @@ class HaiClient:
         """
         # rotate_keys stays native -- it involves file I/O, JACS agent creation,
         # and key archival that are inherently local operations.
-        import hashlib
         import shutil
         import tempfile
         import uuid
@@ -783,8 +781,8 @@ class HaiClient:
         pub_pem_str = ""
         if pub_path.is_file():
             pub_key_raw = pub_path.read_bytes()
-            new_public_key_hash = hashlib.sha256(pub_key_raw).hexdigest()
             pub_pem_str = _normalize_public_key_pem(pub_key_raw)
+            new_public_key_hash = _compute_public_key_hash(pub_pem_str)
         else:
             new_public_key_hash = ""
 
@@ -2800,25 +2798,30 @@ def register_new_agent(
         )
 
         if domain:
-            # Read public key PEM for DNS hash if available
-            pub_key_path = Path(data.get("public_key_path", ""))
-            if pub_key_path.is_file():
-                public_pem = pub_key_path.read_text(encoding="utf-8")
-                key_hash = _compute_public_key_hash(public_pem)
+            dns_record = data.get("dns_record", "")
+            if dns_record:
                 print(f"\n--- DNS Setup Instructions ---")
                 print(f"Add this TXT record to your domain '{domain}':")
-                print(f"  Name:  _jacs.{domain}")
+                print(f"  Name:  _v1.agent.jacs.{domain}")
                 print(f"  Type:  TXT")
-                print(f"  Value: {key_hash}")
+                print(f"  Value: {dns_record}")
                 print(f"DNS verification enables the pro tier.\n")
             else:
-                dns_record = data.get("dns_record", "")
-                if dns_record:
+                # Fallback for older Rust FFI responses that did not include
+                # dns_record. Hashing still delegates to JACS.
+                pub_key_path = Path(data.get("public_key_path", ""))
+                if pub_key_path.is_file():
+                    public_pem = pub_key_path.read_text(encoding="utf-8")
+                    key_hash = _compute_public_key_hash(public_pem)
                     print(f"\n--- DNS Setup Instructions ---")
                     print(f"Add this TXT record to your domain '{domain}':")
-                    print(f"  Name:  _jacs.{domain}")
+                    print(f"  Name:  _v1.agent.jacs.{domain}")
                     print(f"  Type:  TXT")
-                    print(f"  Value: {dns_record}")
+                    print(
+                        "  Value: "
+                        f"v=hai.ai; jacs_agent_id={jacs_id}; alg=SHA-256; "
+                        f"enc=base64; jacs_public_key_hash={key_hash}"
+                    )
                     print(f"DNS verification enables the pro tier.\n")
                 else:
                     print()
@@ -2829,10 +2832,20 @@ def register_new_agent(
 
 
 def _compute_public_key_hash(pem: str) -> str:
-    """Compute SHA-256 hash of a PEM public key, matching Rust API format."""
-    import hashlib
-    digest = hashlib.sha256(pem.encode("utf-8")).hexdigest()
-    return f"sha256:{digest}"
+    """Return JACS's canonical public-key hash for a PEM public key."""
+    try:
+        from jacs import hash_public_key_base64 as _hash_public_key_base64
+    except (ImportError, AttributeError) as exc:
+        from haiai.errors import HaiError
+
+        raise HaiError(
+            "_compute_public_key_hash requires JACS hash_public_key_base64",
+            code="JACS_NOT_LOADED",
+            action="Upgrade/install JACS so public-key hashing delegates to JACS",
+        ) from exc
+
+    pem_b64 = base64.b64encode(pem.encode("utf-8")).decode("ascii")
+    return _hash_public_key_base64(pem_b64)
 
 
 def _verify_dns(domain: str, public_key_pem: str) -> tuple[bool, str]:
@@ -2842,14 +2855,23 @@ def _verify_dns(domain: str, public_key_pem: str) -> tuple[bool, str]:
     except ImportError:
         return False, "dnspython not installed (pip install jacs[dns])"
 
-    expected_hash = _compute_public_key_hash(public_key_pem)
-    record_name = f"_jacs.{domain}"
+    try:
+        expected_hash = _compute_public_key_hash(public_key_pem)
+    except Exception as exc:
+        return False, str(exc)
+    record_name = f"_v1.agent.jacs.{domain}"
 
     try:
         answers = dns.resolver.resolve(record_name, "TXT")
         for rdata in answers:
             txt_value = rdata.to_text().strip('"')
-            if txt_value == expected_hash:
+            parts = [part.strip() for part in txt_value.split(";")]
+            values = [
+                part.removeprefix("jacs_public_key_hash=").strip()
+                for part in parts
+                if part.startswith("jacs_public_key_hash=")
+            ]
+            if expected_hash in values:
                 return True, f"DNS TXT record matches at {record_name}"
         return False, f"DNS TXT record found at {record_name} but no matching hash"
     except dns.resolver.NXDOMAIN:

@@ -25,6 +25,8 @@ type mockFFIClient struct {
 	buildAuthHeaderFn func() (string, error)
 	// signMessageFn signs a message. Tests can override this.
 	signMessageFn func(message string) (string, error)
+	// signResponseFn signs a response payload. Tests can override this.
+	signResponseFn func(payloadJSON string) (json.RawMessage, error)
 	// exportAgentJSONFn overrides ExportAgentJSON. Tests can override this.
 	exportAgentJSONFn func() (json.RawMessage, error)
 	// verifyA2AArtifactFn overrides VerifyA2AArtifact. Tests can override this.
@@ -468,6 +470,13 @@ func (m *mockFFIClient) SignMessage(message string) (string, error) {
 		return m.signMessageFn(message)
 	}
 	return "", fmt.Errorf("mock: SignMessage not implemented")
+}
+
+func (m *mockFFIClient) SignResponse(payloadJSON string) (json.RawMessage, error) {
+	if m.signResponseFn != nil {
+		return m.signResponseFn(payloadJSON)
+	}
+	return nil, fmt.Errorf("mock: SignResponse not implemented")
 }
 
 func (m *mockFFIClient) CanonicalJSON(valueJSON string) (string, error) {

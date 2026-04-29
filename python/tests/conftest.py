@@ -322,6 +322,9 @@ class MockFFIAdapter:
     def sign_message(self, message: str) -> str:
         return self._record("sign_message", message)
 
+    def sign_response(self, payload_json: str) -> dict:
+        return self._record("sign_response", payload_json)
+
     def canonical_json(self, value_json: str) -> str:
         return self._record("canonical_json", value_json)
 

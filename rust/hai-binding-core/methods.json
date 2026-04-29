@@ -941,6 +941,13 @@
       "returns": "string"
     },
     {
+      "name": "sign_response",
+      "category": "sync",
+      "group": "jacs_delegation",
+      "returns": "string (JSON)",
+      "notes": "Delegates to JacsProvider::sign_response for canonical response envelopes."
+    },
+    {
       "name": "canonical_json",
       "category": "sync",
       "group": "jacs_delegation",
@@ -1005,10 +1012,10 @@
     "async_methods": 75,
     "streaming_methods": 6,
     "callback_methods": 2,
-    "sync_methods": 11,
+    "sync_methods": 12,
     "mutating_methods": 2,
     "excluded_methods": 5,
-    "total_public_methods": 101,
-    "binding_core_scope": "75 async + 6 streaming + 2 callback + 11 sync + 2 mutating = 96 methods"
+    "total_public_methods": 102,
+    "binding_core_scope": "75 async + 6 streaming + 2 callback + 12 sync + 2 mutating = 97 methods"
   }
 }

@@ -16,7 +16,6 @@ package haiai
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -368,7 +367,6 @@ func (c *Client) RotateKeys(ctx context.Context, opts *RotateKeysOptions) (*Rota
 	return &result, nil
 }
 
-
 // Status checks the registration/verification status of this agent with HAI.
 // Calls GET /api/v1/agents/{jacs_id}/verify.
 func (c *Client) Status(ctx context.Context) (*StatusResult, error) {
@@ -542,33 +540,6 @@ func (c *Client) SubmitResponse(ctx context.Context, jobID string, response Mode
 		return nil, wrapError(ErrInvalidResponse, err, "failed to decode submit response result")
 	}
 	return &result, nil
-}
-
-// signResponse wraps a response payload in a JACS document envelope and signs it
-// via the FFI layer.
-func (c *Client) signResponse(response interface{}) (map[string]interface{}, error) {
-	if c.ffi == nil {
-		return nil, newError(ErrSigningFailed, "FFI client is not initialized")
-	}
-
-	payloadBytes, err := json.Marshal(response)
-	if err != nil {
-		return nil, wrapError(ErrSigningFailed, err, "failed to marshal response for signing")
-	}
-
-	sigB64, signErr := c.ffi.SignMessage(string(payloadBytes))
-	if signErr != nil {
-		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign response via FFI")
-	}
-
-	result := map[string]interface{}{
-		"response": response,
-		"jacsSignature": map[string]interface{}{
-			"signature": sigB64,
-			"agentID":   c.jacsID,
-		},
-	}
-	return result, nil
 }
 
 // GetAgentAttestation gets the agent's attestation from HAI.
@@ -1243,25 +1214,8 @@ func generateUUID() string {
 }
 
 // SignBenchmarkResult signs a benchmark result as a JACS document for
-// independent verification. The format matches the Python SDK's sign_response.
+// independent verification. Signing is delegated to the Rust/JACS FFI layer.
 func (c *Client) SignBenchmarkResult(result map[string]interface{}) (*SignedDocument, error) {
-	now := time.Now().UTC().Format(time.RFC3339)
-
-	// Generate UUIDv4
-	var uuid [16]byte
-	if _, err := rand.Read(uuid[:]); err != nil {
-		return nil, wrapError(ErrSigningFailed, err, "failed to generate UUID")
-	}
-	uuid[6] = (uuid[6] & 0x0f) | 0x40 // version 4
-	uuid[8] = (uuid[8] & 0x3f) | 0x80 // variant 2
-	documentID := fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16])
-
-	// Canonicalize via JACS (RFC 8785) — the verifier re-canonicalizes the same
-	// way, so signing the canonical bytes is what makes the signature round-trip.
-	// Previously this used stdlib `json.Marshal`, which is not canonical and
-	// produced signatures that mismatched any verifier doing canonicalization
-	// before hashing.
 	if c.ffi == nil {
 		return nil, newError(ErrSigningFailed, "FFI client is not initialized")
 	}
@@ -1269,42 +1223,27 @@ func (c *Client) SignBenchmarkResult(result map[string]interface{}) (*SignedDocu
 	if err != nil {
 		return nil, wrapError(ErrSigningFailed, err, "failed to marshal benchmark result")
 	}
-	dataJSON, err := c.ffi.CanonicalJSON(string(rawJSON))
+	rawSigned, err := c.ffi.SignResponse(string(rawJSON))
 	if err != nil {
-		return nil, wrapError(ErrSigningFailed, err, "failed to canonicalize benchmark result")
+		return nil, wrapError(ErrSigningFailed, err, "failed to sign benchmark result via FFI")
 	}
 
-	// metadata.hash = sha256 of the canonical JSON (per docs/.../email-signing.md
-	// and matching Python sign_response fallback). The JACS signature is the
-	// cryptographic binding; this hash is informational/auditing. JACS does not
-	// expose a public "hash a canonical string" function today — if it does in
-	// future, swap this for the FFI call. See feedback_no_jacs_reimplementation.
-	hashBytes := sha256.Sum256([]byte(dataJSON))
-	hash := fmt.Sprintf("%x", hashBytes)
-
-	sigB64, signErr := c.ffi.SignMessage(dataJSON)
-	if signErr != nil {
-		return nil, wrapError(ErrSigningFailed, signErr, "failed to sign benchmark result via FFI")
+	var signedPayload struct {
+		SignedDocument string `json:"signed_document"`
+		AgentJacsID    string `json:"agent_jacs_id"`
+	}
+	if err := json.Unmarshal(rawSigned, &signedPayload); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode signed benchmark payload")
+	}
+	if signedPayload.SignedDocument == "" {
+		return nil, newError(ErrInvalidResponse, "signed benchmark payload missing signed_document")
+	}
+	var doc SignedDocument
+	if err := json.Unmarshal([]byte(signedPayload.SignedDocument), &doc); err != nil {
+		return nil, wrapError(ErrInvalidResponse, err, "failed to decode signed benchmark document")
 	}
 
-	doc := &SignedDocument{
-		Version:      "1.0.0",
-		DocumentType: "benchmark_result",
-		Data:         result,
-		Metadata: SignedDocumentMetadata{
-			Issuer:     c.jacsID,
-			DocumentID: documentID,
-			CreatedAt:  now,
-			Hash:       hash,
-		},
-		JacsSignature: JacsSignatureBlock{
-			AgentID:   c.jacsID,
-			Date:      now,
-			Signature: sigB64,
-		},
-	}
-
-	return doc, nil
+	return &doc, nil
 }
 
 // FetchRemoteKey fetches a public key from HAI's key distribution service.

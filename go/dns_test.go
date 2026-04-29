@@ -2,6 +2,7 @@ package haiai
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -22,11 +23,47 @@ func TestGetDnsRecordBasic(t *testing.T) {
 	if !strings.Contains(record, "jacs_agent_id=agent-123") {
 		t.Errorf("expected agent ID in record, got '%s'", record)
 	}
-	if !strings.Contains(record, "jac_public_key_hash=hash-abc") {
+	if !strings.Contains(record, "jacs_public_key_hash=hash-abc") {
 		t.Errorf("expected public key hash in record, got '%s'", record)
 	}
 	if !strings.Contains(record, "v=hai.ai") {
 		t.Errorf("expected v=hai.ai in record, got '%s'", record)
+	}
+}
+
+func TestGetDnsRecordMatchesSharedFixture(t *testing.T) {
+	data, err := os.ReadFile("../fixtures/dns_txt_record.json")
+	if err != nil {
+		t.Fatalf("read DNS fixture: %v", err)
+	}
+	var fixture struct {
+		AgentJSON                map[string]interface{} `json:"agent_json"`
+		Domain                   string                 `json:"domain"`
+		TTL                      uint32                 `json:"ttl"`
+		BindRecord               string                 `json:"bind_record"`
+		PublicKeyHashField       string                 `json:"public_key_hash_field"`
+		LegacyPublicKeyHashField string                 `json:"legacy_public_key_hash_field"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatalf("decode DNS fixture: %v", err)
+	}
+	agentJSON, err := json.Marshal(fixture.AgentJSON)
+	if err != nil {
+		t.Fatalf("encode fixture agent JSON: %v", err)
+	}
+
+	record, err := GetDnsRecord(string(agentJSON), fixture.Domain, fixture.TTL)
+	if err != nil {
+		t.Fatalf("GetDnsRecord: %v", err)
+	}
+	if record != fixture.BindRecord {
+		t.Fatalf("DNS record drift:\n got: %s\nwant: %s", record, fixture.BindRecord)
+	}
+	if !strings.Contains(record, fixture.PublicKeyHashField+"=") {
+		t.Fatalf("record missing public key hash field %q: %s", fixture.PublicKeyHashField, record)
+	}
+	if strings.Contains(record, fixture.LegacyPublicKeyHashField+"=") {
+		t.Fatalf("record contains legacy public key hash field %q: %s", fixture.LegacyPublicKeyHashField, record)
 	}
 }
 

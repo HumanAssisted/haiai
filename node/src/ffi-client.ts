@@ -113,6 +113,7 @@ interface NativeHaiClient {
   // JACS Delegation
   buildAuthHeader(): Promise<string>;
   signMessage(message: string): Promise<string>;
+  signResponse(payloadJson: string): Promise<string>;
   canonicalJson(valueJson: string): Promise<string>;
   verifyA2aArtifact(wrappedJson: string): Promise<string>;
 
@@ -848,6 +849,15 @@ export class FFIClientAdapter {
   async signMessage(message: string): Promise<string> {
     try {
       return await this.native.signMessage(message);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async signResponse(payloadJson: string): Promise<Record<string, unknown>> {
+    try {
+      const json = await this.native.signResponse(payloadJson);
+      return JSON.parse(json) as Record<string, unknown>;
     } catch (err) {
       throw mapFFIError(err);
     }
