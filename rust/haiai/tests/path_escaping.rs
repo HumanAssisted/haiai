@@ -302,8 +302,7 @@ fn load_path_escaping_fixture() -> PathEscapingFixture {
         .join("../../fixtures/path_escaping_contract.json");
     let data = std::fs::read_to_string(&fixture_path)
         .unwrap_or_else(|e| panic!("Failed to read {:?}: {}", fixture_path, e));
-    serde_json::from_str(&data)
-        .unwrap_or_else(|e| panic!("Failed to parse fixture: {}", e))
+    serde_json::from_str(&data).unwrap_or_else(|e| panic!("Failed to parse fixture: {}", e))
 }
 
 #[test]

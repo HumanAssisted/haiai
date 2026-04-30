@@ -27,11 +27,11 @@
 //! Per `MEMORY.md::test_cleanup_required`, every test that creates records
 //! tombstones them in a teardown so principals don't accumulate across runs.
 
-use haiai::HaiError;
 use haiai::config::resolve_storage_backend_label;
 use haiai::jacs::{JacsDocumentProvider, JacsProvider};
 use haiai::jacs_local::LocalJacsProvider;
 use haiai::jacs_remote::{RemoteJacsProvider, RemoteJacsProviderOptions};
+use haiai::HaiError;
 
 const TEST_BASE_URL_ENV: &str = "HAI_JACS_REMOTE_TEST_URL";
 
@@ -113,7 +113,9 @@ fn list_documents_filters_by_type() {
         .sign_and_store(&serde_json::json!({"jacsType": "test-list-B", "i": 3}))
         .expect("store");
 
-    let a_keys = provider.list_documents(Some("test-list-A")).expect("list a");
+    let a_keys = provider
+        .list_documents(Some("test-list-A"))
+        .expect("list a");
     assert!(a_keys.iter().any(|k| k == &key1.key));
     assert!(a_keys.iter().any(|k| k == &key2.key));
     assert!(!a_keys.iter().any(|k| k == &key3.key));
@@ -148,7 +150,9 @@ fn query_by_agent_self_returns_own_docs() {
     let signed = provider
         .sign_and_store(&serde_json::json!({"jacsType": "self-query"}))
         .expect("store");
-    let keys = provider.query_by_agent(provider.jacs_id(), 10, 0).expect("qba");
+    let keys = provider
+        .query_by_agent(provider.jacs_id(), 10, 0)
+        .expect("qba");
     assert!(keys.iter().any(|k| k == &signed.key));
     let _ = provider.remove_document(&signed.key);
 }
@@ -162,7 +166,10 @@ fn query_by_agent_other_returns_provider_error_d4() {
         .query_by_agent("not-the-caller", 10, 0)
         .expect_err("must reject");
     let msg = format!("{err:?}");
-    assert!(msg.contains("owner-scoped") || msg.contains("400"), "got: {msg}");
+    assert!(
+        msg.contains("owner-scoped") || msg.contains("400"),
+        "got: {msg}"
+    );
 }
 
 #[test]
@@ -333,9 +340,7 @@ fn build_provider_emits_actionable_error_when_env_unset() {
     }
 
     let err = match result {
-        Ok(_) => panic!(
-            "build_provider must error when HAI_URL/HAI_JACS_REMOTE_TEST_URL unset"
-        ),
+        Ok(_) => panic!("build_provider must error when HAI_URL/HAI_JACS_REMOTE_TEST_URL unset"),
         Err(e) => e,
     };
     let msg = format!("{err:?}");

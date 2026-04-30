@@ -56,7 +56,10 @@ fn version_flag_exits_zero() {
     assert!(output.status.success(), "exit code: {}", output.status);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let expected_version = env!("CARGO_PKG_VERSION");
-    assert!(stdout.contains(expected_version), "expected {expected_version} in stdout: {stdout}");
+    assert!(
+        stdout.contains(expected_version),
+        "expected {expected_version} in stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -506,11 +509,17 @@ fn prepare_jacs_fixture() -> (tempfile::TempDir, PathBuf) {
     let tmp_data_dir = temp.path().join("data");
     copy_fixture_dir(&src_data_dir, &tmp_data_dir);
 
-    value["jacs_data_directory"] = serde_json::Value::String(tmp_data_dir.to_string_lossy().into_owned());
-    value["jacs_key_directory"] = serde_json::Value::String(tmp_key_dir.to_string_lossy().into_owned());
+    value["jacs_data_directory"] =
+        serde_json::Value::String(tmp_data_dir.to_string_lossy().into_owned());
+    value["jacs_key_directory"] =
+        serde_json::Value::String(tmp_key_dir.to_string_lossy().into_owned());
 
     let config_path = temp.path().join("jacs.config.json");
-    std::fs::write(&config_path, serde_json::to_vec_pretty(&value).expect("encode")).expect("write");
+    std::fs::write(
+        &config_path,
+        serde_json::to_vec_pretty(&value).expect("encode"),
+    )
+    .expect("write");
     (temp, config_path)
 }
 
@@ -581,8 +590,7 @@ fn self_knowledge_limit() {
         output.status.success(),
         "self-knowledge --limit 1 failed. stdout: {stdout}\nstderr: {stderr}"
     );
-    let parsed: Vec<serde_json::Value> =
-        serde_json::from_str(&stdout).expect("valid JSON");
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&stdout).expect("valid JSON");
     assert_eq!(parsed.len(), 1);
 }
 

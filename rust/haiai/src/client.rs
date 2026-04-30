@@ -15,15 +15,15 @@ use tungstenite::client::IntoClientRequest;
 use crate::error::{HaiError, Result};
 use crate::jacs::JacsProvider;
 use crate::types::{
-    AgentKeyHistory, AgentVerificationResult,
-    Contact, CreateEmailTemplateOptions, DeleteUsernameResult, DnsCertifiedResult,
-    DnsCertifiedRunOptions, DocumentVerificationResult, EmailMessage, EmailStatus,
-    EmailTemplate, FreeChaoticResult, HaiEvent, HelloResult, JobResponseResult,
-    ListEmailTemplatesOptions, ListEmailTemplatesResult, ListMessagesOptions,
+    AgentKeyHistory, AgentVerificationResult, Contact, CreateEmailTemplateOptions,
+    DeleteUsernameResult, DnsCertifiedResult, DnsCertifiedRunOptions, DocumentVerificationResult,
+    EmailMessage, EmailStatus, EmailTemplate, FreeChaoticResult, HaiEvent, HelloResult,
+    JobResponseResult, ListEmailTemplatesOptions, ListEmailTemplatesResult, ListMessagesOptions,
     ProRunOptions, ProRunResult, PublicKeyInfo, RawEmailResponse, RegisterAgentOptions,
     RegistrationResult, RotateKeysOptions, RotationResult, SearchOptions, SendEmailOptions,
     SendEmailResult, TranscriptMessage, TransportType, UpdateAgentResult,
-    UpdateEmailTemplateOptions, UpdateUsernameResult, VerifyAgentDocumentRequest, VerifyAgentResult,
+    UpdateEmailTemplateOptions, UpdateUsernameResult, VerifyAgentDocumentRequest,
+    VerifyAgentResult,
 };
 
 pub const DEFAULT_BASE_URL: &str = "https://beta.hai.ai";
@@ -144,9 +144,9 @@ impl<P: JacsProvider> HaiClient<P> {
             });
         }
 
-        let client_id = options.client_identifier.unwrap_or_else(|| {
-            format!("haiai-rust/{}", env!("CARGO_PKG_VERSION"))
-        });
+        let client_id = options
+            .client_identifier
+            .unwrap_or_else(|| format!("haiai-rust/{}", env!("CARGO_PKG_VERSION")));
         let mut default_headers = reqwest::header::HeaderMap::new();
         if let Ok(val) = reqwest::header::HeaderValue::from_str(&client_id) {
             default_headers.insert(HAI_CLIENT_HEADER, val);
@@ -290,7 +290,10 @@ impl<P: JacsProvider> HaiClient<P> {
             payload.insert("domain".to_string(), Value::String(domain.clone()));
         }
         if let Some(description) = &options.description {
-            payload.insert("description".to_string(), Value::String(description.clone()));
+            payload.insert(
+                "description".to_string(),
+                Value::String(description.clone()),
+            );
         }
         if let Some(registration_key) = &options.registration_key {
             payload.insert(
@@ -1017,7 +1020,8 @@ impl<P: JacsProvider> HaiClient<P> {
         body: &str,
         subject_override: Option<&str>,
     ) -> Result<SendEmailResult> {
-        self.reply_with_options(message_id, body, subject_override, None, &[]).await
+        self.reply_with_options(message_id, body, subject_override, None, &[])
+            .await
     }
 
     /// Reply with reply_type and optional recipients. Always JACS-signed.
@@ -1115,9 +1119,7 @@ impl<P: JacsProvider> HaiClient<P> {
         })?;
         let agent_id = self.hai_agent_id();
         let safe_agent_id = encode_path_segment(agent_id);
-        let url = self.url(&format!(
-            "/api/agents/{safe_agent_id}/email/contacts"
-        ));
+        let url = self.url(&format!("/api/agents/{safe_agent_id}/email/contacts"));
 
         let response = self
             .http
@@ -1141,9 +1143,7 @@ impl<P: JacsProvider> HaiClient<P> {
         options: &CreateEmailTemplateOptions,
     ) -> Result<EmailTemplate> {
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
-        let url = self.url(&format!(
-            "/api/agents/{safe_jacs_id}/email/templates"
-        ));
+        let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/templates"));
 
         let response = self
             .http
@@ -1163,9 +1163,7 @@ impl<P: JacsProvider> HaiClient<P> {
         options: &ListEmailTemplatesOptions,
     ) -> Result<ListEmailTemplatesResult> {
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
-        let url = self.url(&format!(
-            "/api/agents/{safe_jacs_id}/email/templates"
-        ));
+        let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/templates"));
 
         let mut request = self
             .http
@@ -1339,9 +1337,7 @@ impl<P: JacsProvider> HaiClient<P> {
         evidence: Option<&Value>,
     ) -> Result<Value> {
         let safe_agent_id = encode_path_segment(agent_id);
-        let url = self.url(&format!(
-            "/api/v1/agents/{safe_agent_id}/attestations"
-        ));
+        let url = self.url(&format!("/api/v1/agents/{safe_agent_id}/attestations"));
 
         let mut payload = json!({
             "subject": subject,
@@ -1371,15 +1367,16 @@ impl<P: JacsProvider> HaiClient<P> {
         offset: u32,
     ) -> Result<Value> {
         let safe_agent_id = encode_path_segment(agent_id);
-        let url = self.url(&format!(
-            "/api/v1/agents/{safe_agent_id}/attestations"
-        ));
+        let url = self.url(&format!("/api/v1/agents/{safe_agent_id}/attestations"));
 
         let response = self
             .http
             .get(url)
             .header("Authorization", self.build_auth_header()?)
-            .query(&[("limit", &limit.to_string()), ("offset", &offset.to_string())])
+            .query(&[
+                ("limit", &limit.to_string()),
+                ("offset", &offset.to_string()),
+            ])
             .send()
             .await?;
 
@@ -1387,11 +1384,7 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     /// Get a single attestation by document ID.
-    pub async fn get_attestation(
-        &self,
-        agent_id: &str,
-        doc_id: &str,
-    ) -> Result<Value> {
+    pub async fn get_attestation(&self, agent_id: &str, doc_id: &str) -> Result<Value> {
         let safe_agent_id = encode_path_segment(agent_id);
         let safe_doc_id = encode_path_segment(doc_id);
         let url = self.url(&format!(
@@ -1579,10 +1572,7 @@ impl<P: JacsProvider> HaiClient<P> {
         })
     }
 
-    pub async fn pro_run(
-        &self,
-        options: &ProRunOptions,
-    ) -> Result<ProRunResult> {
+    pub async fn pro_run(&self, options: &ProRunOptions) -> Result<ProRunResult> {
         let purchase_url = self.url("/api/benchmark/purchase");
         let purchase_response = self
             .http
@@ -1680,12 +1670,15 @@ impl<P: JacsProvider> HaiClient<P> {
 
     pub async fn enterprise_run(&self) -> Result<()> {
         Err(HaiError::Message(
-            "the enterprise tier is coming soon; contact support@hai.ai for early access".to_string(),
+            "the enterprise tier is coming soon; contact support@hai.ai for early access"
+                .to_string(),
         ))
     }
 
     /// Deprecated: Use `enterprise_run` instead. The tier was renamed from fully_certified to enterprise.
-    #[deprecated(note = "Use enterprise_run instead. The tier was renamed from fully_certified to enterprise.")]
+    #[deprecated(
+        note = "Use enterprise_run instead. The tier was renamed from fully_certified to enterprise."
+    )]
     pub async fn certified_run(&self) -> Result<()> {
         self.enterprise_run().await
     }
@@ -1831,11 +1824,7 @@ impl<P: JacsProvider> HaiClient<P> {
     /// with exponential backoff up to `max_reconnect_attempts` times (default 10).
     /// A "disconnect" event is treated as an intentional server-side shutdown
     /// and will NOT trigger reconnection.
-    pub async fn on_benchmark_job<F, Fut>(
-        &self,
-        transport: TransportType,
-        handler: F,
-    ) -> Result<()>
+    pub async fn on_benchmark_job<F, Fut>(&self, transport: TransportType, handler: F) -> Result<()>
     where
         F: FnMut(Value) -> Fut,
         Fut: Future<Output = Result<()>>,
@@ -1872,7 +1861,8 @@ impl<P: JacsProvider> HaiClient<P> {
                             if reconnect_count >= max_reconnect_attempts {
                                 return Err(e);
                             }
-                            let delay = Duration::from_millis(100 * (1u64 << reconnect_count.min(10)));
+                            let delay =
+                                Duration::from_millis(100 * (1u64 << reconnect_count.min(10)));
                             tokio::time::sleep(delay).await;
                             reconnect_count += 1;
                             continue;
@@ -1907,7 +1897,8 @@ impl<P: JacsProvider> HaiClient<P> {
                             if reconnect_count >= max_reconnect_attempts {
                                 return Err(e);
                             }
-                            let delay = Duration::from_millis(100 * (1u64 << reconnect_count.min(10)));
+                            let delay =
+                                Duration::from_millis(100 * (1u64 << reconnect_count.min(10)));
                             tokio::time::sleep(delay).await;
                             reconnect_count += 1;
                             continue;
@@ -1961,7 +1952,10 @@ impl<P: JacsProvider> HaiClient<P> {
     /// The closure must build and send a request, returning a `reqwest::Response`.
     /// On success or non-retryable error the response is returned immediately.
     /// Transport-level errors (e.g. DNS, connection refused) are NOT retried.
-    async fn request_with_retry<F, Fut>(&self, mut make_request: F) -> std::result::Result<Response, reqwest::Error>
+    async fn request_with_retry<F, Fut>(
+        &self,
+        mut make_request: F,
+    ) -> std::result::Result<Response, reqwest::Error>
     where
         F: FnMut() -> Fut,
         Fut: Future<Output = std::result::Result<Response, reqwest::Error>>,
@@ -2243,11 +2237,7 @@ impl<P: crate::jacs::JacsMediaProvider> HaiClient<P> {
     }
 
     /// Extract the JACS signature payload from a signed image without verifying it.
-    pub fn extract_media_signature(
-        &self,
-        path: &str,
-        raw_payload: bool,
-    ) -> Result<Option<String>> {
+    pub fn extract_media_signature(&self, path: &str, raw_payload: bool) -> Result<Option<String>> {
         self.jacs.extract_media_signature(path, raw_payload)
     }
 }
@@ -2410,7 +2400,10 @@ mod tests {
                 ..HaiClientOptions::default()
             },
         );
-        assert!(result.is_err(), "base_url without scheme should be rejected");
+        assert!(
+            result.is_err(),
+            "base_url without scheme should be rejected"
+        );
         let err = format!("{}", result.err().unwrap());
         assert!(
             err.contains("base_url") && err.contains("http"),
@@ -2517,8 +2510,7 @@ mod tests {
             .mock_async(|when, then| {
                 when.method(httpmock::Method::POST)
                     .path("/api/v1/agents/hello");
-                then.status(400)
-                    .json_body(json!({"error": "Bad Request"}));
+                then.status(400).json_body(json!({"error": "Bad Request"}));
             })
             .await;
 
@@ -2765,7 +2757,10 @@ mod tests {
             .join("contract_endpoints.json");
 
         if !fixture_path.exists() {
-            panic!("contract_endpoints.json fixture not found at {:?}", fixture_path);
+            panic!(
+                "contract_endpoints.json fixture not found at {:?}",
+                fixture_path
+            );
         }
 
         let data = std::fs::read_to_string(&fixture_path).expect("read fixture");
@@ -2773,7 +2768,10 @@ mod tests {
         let obj = fixture.as_object().expect("fixture should be object");
 
         // The reply endpoint must be present
-        assert!(obj.contains_key("reply"), "fixture must contain 'reply' endpoint");
+        assert!(
+            obj.contains_key("reply"),
+            "fixture must contain 'reply' endpoint"
+        );
         let reply = obj.get("reply").unwrap();
         assert_eq!(
             reply.get("method").and_then(|v| v.as_str()),

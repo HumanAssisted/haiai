@@ -902,7 +902,10 @@ pub struct CreateEmailTemplateOptions {
 
 /// Serialize `Option<Option<String>>` so that `Some(None)` becomes JSON `null`
 /// and `None` is skipped (via `skip_serializing_if`).
-fn serialize_double_option<S>(value: &Option<Option<String>>, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_double_option<S>(
+    value: &Option<Option<String>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -1041,9 +1044,11 @@ impl TryFrom<RawEmailWire> for RawEmailResponse {
             Some(b64) if !b64.is_empty() => {
                 let bytes = base64::engine::general_purpose::STANDARD
                     .decode(b64.as_bytes())
-                    .map_err(|e| crate::error::HaiError::Message(format!(
-                        "invalid base64 in raw_email_b64: {e}"
-                    )))?;
+                    .map_err(|e| {
+                        crate::error::HaiError::Message(format!(
+                            "invalid base64 in raw_email_b64: {e}"
+                        ))
+                    })?;
                 Some(bytes)
             }
             _ => None,

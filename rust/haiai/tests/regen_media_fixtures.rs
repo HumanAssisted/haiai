@@ -132,11 +132,7 @@ fn stage_fixture_agent() -> (tempfile::TempDir, PathBuf) {
 
     let temp = tempfile::tempdir().expect("tempdir");
 
-    let src_keys = source_dir.join(
-        value["jacs_key_directory"]
-            .as_str()
-            .unwrap_or("keys"),
-    );
+    let src_keys = source_dir.join(value["jacs_key_directory"].as_str().unwrap_or("keys"));
     let tmp_keys = temp.path().join("keys");
     fs::create_dir_all(&tmp_keys).expect("mkdir keys");
     for entry in fs::read_dir(&src_keys).expect("read keys") {
@@ -144,9 +140,7 @@ fn stage_fixture_agent() -> (tempfile::TempDir, PathBuf) {
         fs::copy(e.path(), tmp_keys.join(e.file_name())).expect("copy key");
     }
 
-    let src_data = source_dir.join(
-        value["jacs_data_directory"].as_str().unwrap_or("."),
-    );
+    let src_data = source_dir.join(value["jacs_data_directory"].as_str().unwrap_or("."));
     let tmp_data = temp.path().join("data");
     copy_fixture_dir(&src_data, &tmp_data);
 
@@ -170,12 +164,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", h.finalize())
 }
 
-fn sign_image_to(
-    provider: &LocalJacsProvider,
-    source_bytes: &[u8],
-    src_name: &str,
-    dest: &Path,
-) {
+fn sign_image_to(provider: &LocalJacsProvider, source_bytes: &[u8], src_name: &str, dest: &Path) {
     let temp = tempfile::tempdir().expect("sign tempdir");
     let in_path = temp.path().join(src_name);
     let out_path = temp.path().join(format!("signed_{src_name}"));
@@ -185,21 +174,13 @@ fn sign_image_to(
         ..SignImageOptions::default()
     };
     provider
-        .sign_image(
-            in_path.to_str().unwrap(),
-            out_path.to_str().unwrap(),
-            opts,
-        )
+        .sign_image(in_path.to_str().unwrap(), out_path.to_str().unwrap(), opts)
         .expect("sign_image");
     let signed = fs::read(&out_path).expect("read signed");
     fs::write(dest, &signed).expect("write dest");
 }
 
-fn sign_markdown_to(
-    provider: &LocalJacsProvider,
-    source_bytes: &[u8],
-    dest: &Path,
-) {
+fn sign_markdown_to(provider: &LocalJacsProvider, source_bytes: &[u8], dest: &Path) {
     let temp = tempfile::tempdir().expect("md tempdir");
     let staged = temp.path().join("signed.md");
     fs::write(&staged, source_bytes).expect("stage source md");
@@ -210,7 +191,10 @@ fn sign_markdown_to(
     let outcome = provider
         .sign_text_file(staged.to_str().unwrap(), opts)
         .expect("sign_text_file");
-    assert_eq!(outcome.signers_added, 1, "markdown signing must add a block");
+    assert_eq!(
+        outcome.signers_added, 1,
+        "markdown signing must add a block"
+    );
     fs::copy(&staged, dest).expect("write dest md");
 }
 

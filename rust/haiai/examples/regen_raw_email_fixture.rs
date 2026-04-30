@@ -37,8 +37,7 @@ fn normalize_public_key_pem(raw: &[u8]) -> String {
         }
     }
     let encoded = base64::engine::general_purpose::STANDARD.encode(raw);
-    let mut pem =
-        String::with_capacity(encoded.len() + "PUBLIC KEY".len() * 2 + 64);
+    let mut pem = String::with_capacity(encoded.len() + "PUBLIC KEY".len() * 2 + 64);
     pem.push_str("-----BEGIN PUBLIC KEY-----\n");
     for chunk in encoded.as_bytes().chunks(64) {
         pem.push_str(std::str::from_utf8(chunk).expect("base64 output is valid ascii"));
@@ -81,10 +80,9 @@ fn main() {
 
     // Stage the fixture in a temp dir with absolute paths + colon filenames,
     // mirroring `prepare_jacs_fixture` in cli_integration.rs.
-    let mut config_value: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(&source_config).expect("read config"),
-    )
-    .expect("parse config");
+    let mut config_value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&source_config).expect("read config"))
+            .expect("parse config");
 
     let temp = tempfile::tempdir().expect("tempdir");
     let src_key_dir = source_agent_dir.join(
@@ -96,13 +94,11 @@ fn main() {
     std::fs::create_dir_all(&tmp_key_dir).expect("mkdir keys");
     for entry in std::fs::read_dir(&src_key_dir).expect("read keys") {
         let entry = entry.expect("entry");
-        std::fs::copy(entry.path(), tmp_key_dir.join(entry.file_name()))
-            .expect("copy key");
+        std::fs::copy(entry.path(), tmp_key_dir.join(entry.file_name())).expect("copy key");
     }
 
-    let src_data_dir = source_agent_dir.join(
-        config_value["jacs_data_directory"].as_str().unwrap_or("."),
-    );
+    let src_data_dir =
+        source_agent_dir.join(config_value["jacs_data_directory"].as_str().unwrap_or("."));
     let tmp_data_dir = temp.path().join("data");
     copy_fixture_dir(&src_data_dir, &tmp_data_dir);
 
@@ -126,11 +122,9 @@ fn main() {
         std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "secretpassord");
     }
 
-    let agent = jacs::simple::SimpleAgent::load(
-        Some(&tmp_config.display().to_string()),
-        Some(false),
-    )
-    .expect("load fixture SimpleAgent");
+    let agent =
+        jacs::simple::SimpleAgent::load(Some(&tmp_config.display().to_string()), Some(false))
+            .expect("load fixture SimpleAgent");
 
     let public_key_pem_bytes = agent.get_public_key().expect("get public key bytes");
     // Normalise to PEM. For raw-byte keys (pq2025 DER), ASCII-armor into a
@@ -175,17 +169,14 @@ fn main() {
     raw_mime.extend_from_slice(
         b"Hello, this body contains CRLF line endings, a non-ASCII char (\xc3\xa9), and\r\n",
     );
-    raw_mime.extend_from_slice(
-        b"a NUL byte: \x00 between words. Byte-fidelity is mandatory.\r\n",
-    );
+    raw_mime.extend_from_slice(b"a NUL byte: \x00 between words. Byte-fidelity is mandatory.\r\n");
 
     // Sign. This produces a new multipart/mixed with a hai.ai.signature.jacs.json attachment.
     let signed = jacs::email::sign_email(&raw_mime, &agent).expect("sign_email");
 
     // Determine signingAlgorithm from the JACS attachment (so the fixture
     // registry entry stays in sync with whatever the agent actually used).
-    let jacs_bytes =
-        jacs::email::get_jacs_attachment(&signed).expect("get_jacs_attachment");
+    let jacs_bytes = jacs::email::get_jacs_attachment(&signed).expect("get_jacs_attachment");
     let jacs_value: serde_json::Value =
         serde_json::from_slice(&jacs_bytes).expect("parse jacs attachment");
     let signing_algorithm = jacs_value["jacsSignature"]["signingAlgorithm"]
@@ -230,7 +221,10 @@ fn main() {
     let out = serde_json::to_string_pretty(&doc).expect("serialize");
     std::fs::write(&fixture_path, format!("{out}\n")).expect("write fixture");
 
-    println!("wrote {} ({size_bytes} bytes, sha256={sha})", fixture_path.display());
+    println!(
+        "wrote {} ({size_bytes} bytes, sha256={sha})",
+        fixture_path.display()
+    );
     println!("jacs_id = {composite_jacs_id}");
     println!("algorithm = {signing_algorithm}");
 }

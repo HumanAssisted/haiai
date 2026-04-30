@@ -172,8 +172,7 @@ fn stage_fixture_agent() -> (tempfile::TempDir, PathBuf) {
 
     let temp = tempfile::tempdir().expect("tempdir");
 
-    let src_keys =
-        source_dir.join(value["jacs_key_directory"].as_str().unwrap_or("keys"));
+    let src_keys = source_dir.join(value["jacs_key_directory"].as_str().unwrap_or("keys"));
     let tmp_keys = temp.path().join("keys");
     fs::create_dir_all(&tmp_keys).expect("mkdir keys");
     for entry in fs::read_dir(&src_keys).expect("read keys") {
@@ -247,7 +246,9 @@ fn tamper_text_body(bytes: &mut Vec<u8>) {
         .position(|w| w == MARKER)
         .expect("BEGIN marker present in signed.md");
     // Walk back to a printable ASCII byte and toggle case.
-    let i = (0..body_end).rfind(|&i| bytes[i].is_ascii_alphabetic()).unwrap_or(0);
+    let i = (0..body_end)
+        .rfind(|&i| bytes[i].is_ascii_alphabetic())
+        .unwrap_or(0);
     bytes[i] ^= 0b0010_0000;
 }
 
@@ -404,4 +405,3 @@ fn cross_lang_signed_text_md_tampered_returns_hash_mismatch() {
         other => panic!("expected Signed (with HashMismatch), got {other:?}"),
     }
 }
-

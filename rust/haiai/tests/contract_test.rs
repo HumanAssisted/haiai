@@ -98,7 +98,10 @@ fn contract_deserialize_list_messages_response() {
     let outbound = &resp.messages[1];
     assert_eq!(outbound.id, "660e8400-e29b-41d4-a716-446655440001");
     assert_eq!(outbound.direction, "outbound");
-    assert!(outbound.trust_score.is_none(), "outbound trust_score should be None");
+    assert!(
+        outbound.trust_score.is_none(),
+        "outbound trust_score should be None"
+    );
 }
 
 #[test]
@@ -272,8 +275,12 @@ fn contract_trust_score_round_trip() {
 
     // Build a minimal EmailMessage without trust_score
     let json_without = r#"{}"#;
-    let msg_none: EmailMessage = serde_json::from_str(json_without).expect("deser without trust_score");
-    assert!(msg_none.trust_score.is_none(), "absent trust_score should be None");
+    let msg_none: EmailMessage =
+        serde_json::from_str(json_without).expect("deser without trust_score");
+    assert!(
+        msg_none.trust_score.is_none(),
+        "absent trust_score should be None"
+    );
 
     // Verify absent trust_score is not serialized
     let serialized_none = serde_json::to_string(&msg_none).expect("serialize none");
@@ -291,8 +298,8 @@ fn contract_trust_score_round_trip() {
 fn ffi_method_parity_includes_media_local_section() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/ffi_method_parity.json");
-    let raw = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let raw =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let val: serde_json::Value =
         serde_json::from_str(&raw).expect("ffi_method_parity.json must be valid JSON");
     let media = val
@@ -323,8 +330,8 @@ fn ffi_method_parity_includes_media_local_section() {
 fn ffi_method_parity_total_count_is_92() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/ffi_method_parity.json");
-    let raw = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let raw =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let val: serde_json::Value =
         serde_json::from_str(&raw).expect("ffi_method_parity.json must be valid JSON");
     let total = val["total_method_count"]
@@ -353,7 +360,11 @@ fn ffi_method_parity_total_count_is_92() {
     let store_section = val["methods"]["jacs_document_store"]
         .as_array()
         .expect("jacs_document_store section must exist");
-    assert_eq!(store_section.len(), 20, "jacs_document_store must have 20 methods");
+    assert_eq!(
+        store_section.len(),
+        20,
+        "jacs_document_store must have 20 methods"
+    );
     let names: std::collections::HashSet<String> = store_section
         .iter()
         .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))

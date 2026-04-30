@@ -1,8 +1,6 @@
 use std::time::Duration;
 
-use haiai::{
-    ProRunOptions, HaiClient, HaiClientOptions, StaticJacsProvider, TransportType,
-};
+use haiai::{HaiClient, HaiClientOptions, ProRunOptions, StaticJacsProvider, TransportType};
 use httpmock::Method::{GET, POST};
 use httpmock::MockServer;
 use serde_json::json;
