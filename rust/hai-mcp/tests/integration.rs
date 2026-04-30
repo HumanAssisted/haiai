@@ -115,6 +115,10 @@ impl TestWorkspace {
     fn write_embedded_jacs_config(&self) -> PathBuf {
         let source = jacs_fixture_config();
         let source_dir = source.parent().expect("fixture config dir");
+        let workspace_root = self
+            .path()
+            .canonicalize()
+            .expect("canonical workspace tempdir");
         let mut value: Value =
             serde_json::from_str(&std::fs::read_to_string(&source).expect("read fixture config"))
                 .expect("parse fixture config");
@@ -123,9 +127,15 @@ impl TestWorkspace {
         let source_key_dir = value
             .get("jacs_key_directory")
             .and_then(Value::as_str)
-            .map(|p| if PathBuf::from(p).is_absolute() { PathBuf::from(p) } else { source_dir.join(p) })
+            .map(|p| {
+                if PathBuf::from(p).is_absolute() {
+                    PathBuf::from(p)
+                } else {
+                    source_dir.join(p)
+                }
+            })
             .expect("key dir in config");
-        let temp_key_dir = self.path().join("keys");
+        let temp_key_dir = workspace_root.join("keys");
         std::fs::create_dir_all(&temp_key_dir).expect("create temp key dir");
         for entry in std::fs::read_dir(&source_key_dir).expect("read key dir") {
             let entry = entry.expect("key dir entry");
@@ -136,15 +146,21 @@ impl TestWorkspace {
         let source_data_dir = value
             .get("jacs_data_directory")
             .and_then(Value::as_str)
-            .map(|p| if PathBuf::from(p).is_absolute() { PathBuf::from(p) } else { source_dir.join(p) })
+            .map(|p| {
+                if PathBuf::from(p).is_absolute() {
+                    PathBuf::from(p)
+                } else {
+                    source_dir.join(p)
+                }
+            })
             .expect("data dir in config");
-        let temp_data_dir = self.path().join("data");
+        let temp_data_dir = workspace_root.join("data");
         copy_fixture_dir(&source_data_dir, &temp_data_dir);
 
         value["jacs_data_directory"] = Value::String(temp_data_dir.to_string_lossy().into_owned());
         value["jacs_key_directory"] = Value::String(temp_key_dir.to_string_lossy().into_owned());
 
-        let config_path = self.path().join("embedded-jacs.config.json");
+        let config_path = workspace_root.join("embedded-jacs.config.json");
         std::fs::write(
             &config_path,
             serde_json::to_vec_pretty(&value).expect("encode temp config"),
@@ -162,16 +178,49 @@ struct McpSession {
 
 impl McpSession {
     fn spawn(_workspace: &TestWorkspace, hai_url: &str, jacs_config: &Path) -> Self {
-        let mut child = Command::new(haiai_bin())
+        Self::spawn_inner(hai_url, jacs_config, None, "warn", None)
+    }
+
+    fn spawn_with_log(
+        _workspace: &TestWorkspace,
+        hai_url: &str,
+        jacs_config: &Path,
+        log_file: &Path,
+        rust_log: &str,
+        storage: Option<&str>,
+    ) -> Self {
+        Self::spawn_inner(hai_url, jacs_config, Some(log_file), rust_log, storage)
+    }
+
+    fn spawn_inner(
+        hai_url: &str,
+        jacs_config: &Path,
+        log_file: Option<&Path>,
+        rust_log: &str,
+        storage: Option<&str>,
+    ) -> Self {
+        let mut command = Command::new(haiai_bin());
+        if let Some(path) = log_file {
+            command.arg("--log-file").arg(path);
+        }
+        command
             .arg("mcp")
             .env("HAI_URL", hai_url)
             .env("JACS_CONFIG", jacs_config)
             .env("JACS_PRIVATE_KEY_PASSWORD", "secretpassord")
-            .env("RUST_LOG", "warn")
+            .env("RUST_LOG", rust_log);
+        if let Some(label) = storage {
+            command.env("JACS_DEFAULT_STORAGE", label);
+        }
+        let mut child = command
             .current_dir(jacs_config.parent().expect("JACS config dir"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(if log_file.is_some() {
+                Stdio::null()
+            } else {
+                Stdio::inherit()
+            })
             .spawn()
             .expect("spawn haiai mcp");
 
@@ -470,9 +519,27 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     let tools = session.list_tools();
     assert!(tools.contains(&"hai_register_agent".to_string()));
     assert!(tools.contains(&"hai_send_email".to_string()));
+    assert!(tools.contains(&"hai_save_memory".to_string()));
     assert!(tools.contains(&"jacs_export_agent".to_string()));
+    assert!(!tools.contains(&"jacs_memory_save".to_string()));
+    assert!(tools.contains(&"jacs_memory_recall".to_string()));
+    assert!(tools.contains(&"jacs_memory_list".to_string()));
+    assert!(tools.contains(&"jacs_memory_forget".to_string()));
+    assert!(tools.contains(&"jacs_memory_update".to_string()));
     assert!(!tools.contains(&"hai_create_agent".to_string()));
     assert!(tools.contains(&"hai_self_knowledge".to_string()));
+
+    let saved_memory = session.call_tool(
+        9,
+        "hai_save_memory",
+        json!({
+            "content": "MCP routed provider saves locally when storage is fs"
+        }),
+    );
+    assert_eq!(
+        saved_memory["structuredContent"]["key"].as_str().is_some(),
+        true
+    );
 
     let exported = session.call_tool(10, "jacs_export_agent", json!({}));
     let export_text = exported["content"][0]["text"]
@@ -499,9 +566,13 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     );
 
     // Self-knowledge tool (no auth required, no network)
-    let sk_result = session.call_tool(13, "hai_self_knowledge", json!({
-        "query": "key rotation"
-    }));
+    let sk_result = session.call_tool(
+        13,
+        "hai_self_knowledge",
+        json!({
+            "query": "key rotation"
+        }),
+    );
     let sk_text = sk_result["content"][0]["text"]
         .as_str()
         .expect("hai_self_knowledge text");
@@ -522,6 +593,45 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
         },
         "GET /api/agents/hai-agent-123/email/status with JACS auth",
     );
+}
+
+#[test]
+fn hai_save_memory_traces_tool_storage_and_outcome() {
+    let workspace = TestWorkspace::new();
+    let jacs_config = workspace.write_embedded_jacs_config();
+    let server = MiniHaiServer::start();
+    let log_file = workspace.path().join("haiai-mcp.log");
+
+    let mut session = McpSession::spawn_with_log(
+        &workspace,
+        server.base_url(),
+        &jacs_config,
+        &log_file,
+        "info,rmcp=warn",
+        Some("fs"),
+    );
+    session.initialize();
+
+    let saved_memory = session.call_tool(
+        14,
+        "hai_save_memory",
+        json!({
+            "content": "MCP tracing proves local routed storage"
+        }),
+    );
+    assert_eq!(
+        saved_memory["structuredContent"]["key"].as_str().is_some(),
+        true
+    );
+
+    thread::sleep(Duration::from_millis(100));
+    let logs = std::fs::read_to_string(&log_file).expect("read mcp log file");
+    assert!(logs.contains("hai_save_memory"), "{logs}");
+    assert!(
+        logs.contains("storage=fs") || logs.contains("storage=\"fs\""),
+        "{logs}"
+    );
+    assert!(logs.contains("routed memory save completed"), "{logs}");
 }
 
 #[test]

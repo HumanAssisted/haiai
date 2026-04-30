@@ -39,6 +39,8 @@ pub mod agent;
 pub mod client;
 pub mod config;
 #[cfg(feature = "jacs-crate")]
+pub mod document_store;
+#[cfg(feature = "jacs-crate")]
 pub mod email;
 pub mod error;
 pub mod jacs;
@@ -64,10 +66,14 @@ pub use client::{
     HaiClient, HaiClientOptions, SseConnection, WsConnection, DEFAULT_BASE_URL,
     DEFAULT_DNS_RESOLVER, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_SECS,
 };
+#[cfg(feature = "jacs-crate")]
+pub use config::resolve_log_filter;
 pub use config::{
     load_config, redacted_display, resolve_private_key_candidates, resolve_storage_backend,
-    resolve_storage_backend_label, AgentConfig, StorageConfigSummary,
+    resolve_storage_backend_label, AgentConfig, StorageConfigSummary, DEFAULT_LOG_FILTER,
 };
+#[cfg(feature = "jacs-crate")]
+pub use document_store::{build_document_provider, build_document_provider_for_backend};
 #[cfg(feature = "jacs-crate")]
 pub use email::{
     // JACS email types re-exported for consumer convenience
@@ -87,10 +93,10 @@ pub use email::{
     SignedHeaderEntry,
 };
 pub use error::{HaiError, Result};
-pub use jacs::{
-    JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider, JacsProvider,
-    JacsVerificationProvider, NoopJacsProvider, StaticJacsProvider,
-};
+#[cfg(feature = "agreements")]
+pub use jacs::JacsAgreementProvider;
+#[cfg(feature = "attestation")]
+pub use jacs::JacsAttestationProvider;
 #[cfg(feature = "jacs-crate")]
 pub use jacs::{
     media_verify_result_to_json, media_verify_status_to_str, text_signature_status_to_str,
@@ -98,10 +104,10 @@ pub use jacs::{
     SignImageOptions, SignTextOptions, SignTextOutcome, SignedMedia, TextSignatureEntry,
     TextSignatureStatus, VerifyImageOptions, VerifyTextOptions, VerifyTextResult,
 };
-#[cfg(feature = "agreements")]
-pub use jacs::JacsAgreementProvider;
-#[cfg(feature = "attestation")]
-pub use jacs::JacsAttestationProvider;
+pub use jacs::{
+    JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider, JacsProvider,
+    JacsVerificationProvider, NoopJacsProvider, StaticJacsProvider,
+};
 #[cfg(feature = "jacs-crate")]
 pub use jacs_local::LocalJacsProvider;
 pub use jacs_remote::{RemoteJacsProvider, RemoteJacsProviderOptions};

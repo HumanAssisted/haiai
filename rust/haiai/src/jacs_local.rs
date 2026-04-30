@@ -6,21 +6,21 @@ use std::sync::{Arc, Mutex};
 use jacs::agent::boilerplate::BoilerPlate;
 use jacs::agent::document::DocumentTraits;
 use jacs::crypt::KeyManager;
-use jacs::document::{DocumentService, service_from_agent};
+use jacs::document::{service_from_agent, DocumentService};
 use jacs::simple::{self, CreateAgentParams, SimpleAgent};
 use serde_json::Value;
 
 use crate::error::{HaiError, Result};
+#[cfg(feature = "agreements")]
+use crate::jacs::JacsAgreementProvider;
+#[cfg(feature = "attestation")]
+use crate::jacs::JacsAttestationProvider;
 use crate::jacs::{
     JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider,
     JacsMediaProvider, JacsProvider, JacsVerificationProvider, MediaVerificationResult,
     SignImageOptions, SignTextOptions, SignTextOutcome, SignedMedia, VerifyImageOptions,
     VerifyTextOptions, VerifyTextResult,
 };
-#[cfg(feature = "agreements")]
-use crate::jacs::JacsAgreementProvider;
-#[cfg(feature = "attestation")]
-use crate::jacs::JacsAttestationProvider;
 use crate::key_format::normalize_public_key_pem;
 #[cfg(feature = "jacs-crate")]
 use crate::types::RotationResult;
@@ -42,6 +42,7 @@ pub struct LocalJacsProvider {
     /// The resolved storage backend label (e.g., "fs", "rusqlite").
     /// Used to report accurate capabilities per backend.
     storage_label: Option<String>,
+    document_dir: PathBuf,
 }
 
 impl LocalJacsProvider {
@@ -72,17 +73,34 @@ impl LocalJacsProvider {
         let saved_config_dir = config.config_dir().map(std::path::PathBuf::from);
         config.apply_env_overrides();
         config.set_config_dir(saved_config_dir);
+        let document_dir = resolve_config_relative_path(
+            &config_path,
+            config
+                .jacs_data_directory()
+                .as_deref()
+                .unwrap_or("./jacs_data"),
+        )
+        .join("documents");
 
         // If a storage label was requested, validate and apply it to the config
         // so Agent::from_config uses the caller's explicit choice, not the config file default.
         let validated_label = if let Some(label) = storage_label {
             let validated = resolve_storage_label(label)?;
-            let override_config = jacs::config::Config::builder()
-                .default_storage(&validated)
-                .build();
+            let override_config = default_storage_override(&validated);
             config.merge(override_config);
             Some(validated)
         } else {
+            // `remote` is a haiai routed document backend, not a JACS local
+            // storage service. Keep generic local-agent loads usable when
+            // JACS_DEFAULT_STORAGE=remote selects remote document storage.
+            if config
+                .jacs_default_storage()
+                .as_deref()
+                .map(|label| label == "remote")
+                .unwrap_or(false)
+            {
+                config.merge(default_storage_override("fs"));
+            }
             None
         };
 
@@ -120,25 +138,35 @@ impl LocalJacsProvider {
                 ))
             })?;
             // Reload a fresh agent for the provider's own signing operations.
-            let mut reload_config =
-                jacs::config::Config::from_file(&config_path.display().to_string()).map_err(
-                    |e| {
-                        HaiError::Provider(format!(
-                            "failed to reload config for provider agent: {e}"
-                        ))
-                    },
-                )?;
+            let mut reload_config = jacs::config::Config::from_file(
+                &config_path.display().to_string(),
+            )
+            .map_err(|e| {
+                HaiError::Provider(format!("failed to reload config for provider agent: {e}"))
+            })?;
             let saved_dir = reload_config.config_dir().map(std::path::PathBuf::from);
             reload_config.apply_env_overrides();
             reload_config.set_config_dir(saved_dir);
+            if let Some(label) = &validated_label {
+                reload_config.merge(default_storage_override(label));
+            }
             let agent = jacs::agent::Agent::from_config(reload_config, None).map_err(|e| {
-                HaiError::Provider(format!(
-                    "failed to reload JACS agent for provider: {e}",
-                ))
+                HaiError::Provider(format!("failed to reload JACS agent for provider: {e}",))
             })?;
             (agent, Some(doc_service))
         } else {
             (agent, None)
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let document_dir = if validated_label.as_deref() == Some("fs") {
+            agent
+                .storage_ref()
+                .root()
+                .map(|root| root.join("documents"))
+                .unwrap_or(document_dir)
+        } else {
+            document_dir
         };
 
         Ok(Self {
@@ -148,6 +176,7 @@ impl LocalJacsProvider {
             config_path,
             document_service,
             storage_label: validated_label,
+            document_dir,
         })
     }
 
@@ -246,18 +275,17 @@ impl LocalJacsProvider {
     /// initial signed config. This matches the pattern in
     /// `jacs/src/simple/advanced.rs:277-285`.
     fn write_config_signed(&self, config_value: &Value) -> Result<()> {
-        let mut agent = self
-            .agent
-            .lock()
-            .map_err(|e| HaiError::Provider(format!("failed to lock agent for config signing: {e}")))?;
+        let mut agent = self.agent.lock().map_err(|e| {
+            HaiError::Provider(format!("failed to lock agent for config signing: {e}"))
+        })?;
         let signed = if config_value.get("jacsSignature").is_some() {
-            agent.update_config(config_value).map_err(|e| {
-                HaiError::Provider(format!("failed to re-sign config: {e}"))
-            })?
+            agent
+                .update_config(config_value)
+                .map_err(|e| HaiError::Provider(format!("failed to re-sign config: {e}")))?
         } else {
-            agent.sign_config(config_value).map_err(|e| {
-                HaiError::Provider(format!("failed to sign config: {e}"))
-            })?
+            agent
+                .sign_config(config_value)
+                .map_err(|e| HaiError::Provider(format!("failed to sign config: {e}")))?
         };
         let updated_str = serde_json::to_string_pretty(&signed)?;
         std::fs::write(&self.config_path, updated_str)
@@ -277,10 +305,7 @@ impl LocalJacsProvider {
         })?;
         let mut config_value: Value = serde_json::from_str(&config_str)?;
         if let Some(obj) = config_value.as_object_mut() {
-            obj.insert(
-                "agent_email".to_string(),
-                serde_json::json!(email),
-            );
+            obj.insert("agent_email".to_string(), serde_json::json!(email));
         }
         self.write_config_signed(&config_value)
     }
@@ -320,6 +345,89 @@ impl LocalJacsProvider {
             )
         })
     }
+
+    fn list_filesystem_document_keys(&self) -> Result<Vec<String>> {
+        if !self.document_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut keys = Vec::new();
+        let entries = std::fs::read_dir(&self.document_dir).map_err(|e| {
+            HaiError::Provider(format!(
+                "failed to read local JACS document directory {}: {e}",
+                self.document_dir.display()
+            ))
+        })?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                HaiError::Provider(format!("failed to read local JACS document entry: {e}"))
+            })?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            if path
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                == Some("archive")
+            {
+                continue;
+            }
+            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                keys.push(stem.to_string());
+            }
+        }
+
+        Ok(keys)
+    }
+
+    fn filter_document_keys_by_type(
+        &self,
+        keys: Vec<String>,
+        jacs_type: Option<&str>,
+        limit: Option<usize>,
+        offset: usize,
+    ) -> Result<Vec<String>> {
+        let service = self.require_document_service()?;
+        let mut matches = Vec::new();
+
+        for key in keys {
+            let doc = match service.get(&key) {
+                Ok(doc) => doc,
+                Err(_) => continue,
+            };
+            let doc_type = doc
+                .value
+                .get("jacsType")
+                .and_then(Value::as_str)
+                .unwrap_or(&doc.jacs_type);
+            if jacs_type.map(|expected| expected != doc_type).unwrap_or(false) {
+                continue;
+            }
+            let created_at = doc
+                .value
+                .get("jacsVersionDate")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            matches.push((key, created_at));
+        }
+
+        matches.sort_by(|left, right| {
+            right
+                .1
+                .cmp(&left.1)
+                .then_with(|| right.0.cmp(&left.0))
+        });
+
+        let iter = matches.into_iter().skip(offset).map(|(key, _)| key);
+        Ok(match limit {
+            Some(limit) => iter.take(limit).collect(),
+            None => iter.collect(),
+        })
+    }
 }
 
 fn map_agent_info(info: simple::AgentInfo) -> CreateAgentResult {
@@ -341,9 +449,42 @@ fn map_agent_info(info: simple::AgentInfo) -> CreateAgentResult {
 /// Validate routed backend labels for DocumentService-backed operations.
 /// Delegates to [`crate::config::resolve_storage_backend_label`] and maps the error type.
 fn resolve_storage_label(label: &str) -> Result<String> {
-    crate::config::resolve_storage_backend_label(label).map_err(|e| {
-        HaiError::Provider(e.to_string())
-    })
+    let resolved = crate::config::resolve_storage_backend_label(label)
+        .map_err(|e| HaiError::Provider(e.to_string()))?;
+    if resolved == "remote" {
+        return Err(HaiError::Provider(
+            "remote storage is a routed haiai document provider, not a local JACS backend"
+                .to_string(),
+        ));
+    }
+    Ok(resolved)
+}
+
+fn default_storage_override(label: &str) -> jacs::config::Config {
+    jacs::config::Config::new(
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(label.to_string()),
+    )
+}
+
+fn resolve_config_relative_path(config_path: &Path, candidate: &str) -> PathBuf {
+    let path = Path::new(candidate);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        config_path
+            .parent()
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .join(path)
+    }
 }
 
 // =============================================================================
@@ -431,9 +572,8 @@ impl JacsProvider for LocalJacsProvider {
             .create_document_and_load(&json_str, None, None)
             .map_err(|e| HaiError::Provider(format!("JACS sign_envelope failed: {e}")))?;
 
-        serde_json::to_string(&jacs_doc.value).map_err(|e| {
-            HaiError::Provider(format!("sign_envelope: serialize signed doc: {e}"))
-        })
+        serde_json::to_string(&jacs_doc.value)
+            .map_err(|e| HaiError::Provider(format!("sign_envelope: serialize signed doc: {e}")))
     }
 
     /// Issue 006: produce a JACS file envelope via `SimpleAgent::sign_file`.
@@ -604,9 +744,9 @@ impl JacsAgentLifecycle for LocalJacsProvider {
 
     fn verify_self(&self) -> Result<DocVerificationResult> {
         let simple = self.load_simple_agent()?;
-        let result = simple.verify_self().map_err(|e| {
-            HaiError::Provider(format!("JACS verify_self failed: {e}"))
-        })?;
+        let result = simple
+            .verify_self()
+            .map_err(|e| HaiError::Provider(format!("JACS verify_self failed: {e}")))?;
         Ok(DocVerificationResult {
             key: self.jacs_id.clone(),
             valid: result.valid,
@@ -681,9 +821,9 @@ impl JacsDocumentProvider for LocalJacsProvider {
         // Uses SimpleAgent::sign_message() which creates and signs a document
         // in memory without writing to any backend.
         let simple = self.load_simple_agent()?;
-        let signed = simple.sign_message(data).map_err(|e| {
-            HaiError::Provider(format!("sign_document failed: {e}"))
-        })?;
+        let signed = simple
+            .sign_message(data)
+            .map_err(|e| HaiError::Provider(format!("sign_document failed: {e}")))?;
         Ok(signed.raw)
     }
 
@@ -697,11 +837,16 @@ impl JacsDocumentProvider for LocalJacsProvider {
 
     fn sign_and_store(&self, data: &Value) -> Result<SignedDocument> {
         let service = self.require_document_service()?;
+        let options = jacs::document::types::CreateOptions {
+            jacs_type: data
+                .get("jacsType")
+                .and_then(Value::as_str)
+                .unwrap_or("artifact")
+                .to_string(),
+            ..jacs::document::types::CreateOptions::default()
+        };
         let doc = service
-            .create(
-                &serde_json::to_string(data)?,
-                jacs::document::types::CreateOptions::default(),
-            )
+            .create(&serde_json::to_string(data)?, options)
             .map_err(|e| HaiError::Provider(format!("sign_and_store failed: {e}")))?;
         Ok(SignedDocument {
             key: format!("{}:{}", doc.id, doc.version),
@@ -727,6 +872,11 @@ impl JacsDocumentProvider for LocalJacsProvider {
 
     fn list_documents(&self, jacs_type: Option<&str>) -> Result<Vec<String>> {
         let service = self.require_document_service()?;
+        if self.storage_label.as_deref() == Some("fs") {
+            let keys = self.list_filesystem_document_keys()?;
+            return self.filter_document_keys_by_type(keys, jacs_type, None, 0);
+        }
+
         let filter = jacs::document::types::ListFilter {
             jacs_type: jacs_type.map(|s| s.to_string()),
             ..Default::default()
@@ -811,13 +961,13 @@ impl JacsDocumentProvider for LocalJacsProvider {
         })
     }
 
-    fn query_by_type(
-        &self,
-        doc_type: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<String>> {
+    fn query_by_type(&self, doc_type: &str, limit: usize, offset: usize) -> Result<Vec<String>> {
         let service = self.require_document_service()?;
+        if self.storage_label.as_deref() == Some("fs") {
+            let keys = self.list_filesystem_document_keys()?;
+            return self.filter_document_keys_by_type(keys, Some(doc_type), Some(limit), offset);
+        }
+
         let filter = jacs::document::types::ListFilter {
             jacs_type: Some(doc_type.to_string()),
             limit: Some(limit),
@@ -858,12 +1008,7 @@ impl JacsDocumentProvider for LocalJacsProvider {
             .collect())
     }
 
-    fn query_by_agent(
-        &self,
-        agent_id: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<String>> {
+    fn query_by_agent(&self, agent_id: &str, limit: usize, offset: usize) -> Result<Vec<String>> {
         let service = self.require_document_service()?;
         let search_query = jacs::search::SearchQuery {
             query: String::new(),
@@ -974,9 +1119,9 @@ impl JacsVerificationProvider for LocalJacsProvider {
     fn verify_document(&self, document: &str) -> Result<DocVerificationResult> {
         // Use general JACS verification (SimpleAgent::verify), not A2A-specific verification.
         let simple = self.load_simple_agent()?;
-        let result = simple.verify(document).map_err(|e| {
-            HaiError::Provider(format!("verify_document failed: {e}"))
-        })?;
+        let result = simple
+            .verify(document)
+            .map_err(|e| HaiError::Provider(format!("verify_document failed: {e}")))?;
         Ok(DocVerificationResult {
             key: result.signer_id.clone(),
             valid: result.valid,
@@ -1009,10 +1154,10 @@ impl JacsVerificationProvider for LocalJacsProvider {
         let mut errors = Vec::new();
         if let Err(e) = agent.verify_document_signature(
             &document_key,
-            None,    // signature_key_from
-            None,    // fields
+            None,      // signature_key_from
+            None,      // fields
             Some(key), // explicit public key
-            None,    // public_key_enc_type
+            None,      // public_key_enc_type
         ) {
             errors.push(e.to_string());
         }
@@ -1026,12 +1171,20 @@ impl JacsVerificationProvider for LocalJacsProvider {
         Ok(DocVerificationResult {
             key: jacs_doc.id.clone(),
             valid,
-            error: if errors.is_empty() { None } else { Some(errors.join("; ")) },
-            signer_id: jacs_doc.value.get("jacsSignature")
+            error: if errors.is_empty() {
+                None
+            } else {
+                Some(errors.join("; "))
+            },
+            signer_id: jacs_doc
+                .value
+                .get("jacsSignature")
                 .and_then(|s| s.get("agentID"))
                 .and_then(|s| s.as_str())
                 .map(String::from),
-            timestamp: jacs_doc.value.get("jacsVersionDate")
+            timestamp: jacs_doc
+                .value
+                .get("jacsVersionDate")
                 .and_then(|s| s.as_str())
                 .map(String::from),
             signer_name: None,
@@ -1052,12 +1205,13 @@ impl JacsVerificationProvider for LocalJacsProvider {
             .agent
             .lock()
             .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
-        let pk = agent.get_public_key().map_err(|e| {
-            HaiError::Provider(format!("failed to get public key: {e}"))
-        })?;
-        let agent_value = agent.get_value().cloned().ok_or_else(|| {
-            HaiError::Provider("agent not loaded".to_string())
-        })?;
+        let pk = agent
+            .get_public_key()
+            .map_err(|e| HaiError::Provider(format!("failed to get public key: {e}")))?;
+        let agent_value = agent
+            .get_value()
+            .cloned()
+            .ok_or_else(|| HaiError::Provider("agent not loaded".to_string()))?;
         let agent_id = agent_value["jacsId"].as_str().unwrap_or("");
         let embedded_fp = agent_value["jacsPublicKeyFingerprint"].as_str();
 
@@ -1180,8 +1334,8 @@ impl JacsAgreementProvider for LocalJacsProvider {
             &simple,
             doc,
             agent_ids,
-            None,   // question
-            None,   // context
+            None, // question
+            None, // context
             options.as_ref(),
         )
         .map_err(|e| HaiError::Provider(format!("create_agreement failed: {e}")))?;
@@ -1221,9 +1375,8 @@ impl JacsAttestationProvider for LocalJacsProvider {
 
         // Parse subject from Value
         let subject: jacs::attestation::types::AttestationSubject =
-            serde_json::from_value(subject.clone()).map_err(|e| {
-                HaiError::Provider(format!("invalid attestation subject: {e}"))
-            })?;
+            serde_json::from_value(subject.clone())
+                .map_err(|e| HaiError::Provider(format!("invalid attestation subject: {e}")))?;
 
         // Parse claims from Values
         let claims: Vec<jacs::attestation::types::Claim> = claims
@@ -1236,9 +1389,9 @@ impl JacsAttestationProvider for LocalJacsProvider {
             &simple,
             &subject,
             &claims,
-            &[],    // evidence
-            None,   // derivation
-            None,   // policy_context
+            &[],  // evidence
+            None, // derivation
+            None, // policy_context
         )
         .map_err(|e| HaiError::Provider(format!("create_attestation failed: {e}")))?;
 
@@ -1333,4 +1486,3 @@ fn resolve_jacs_config_path(config_path: Option<&Path>) -> PathBuf {
 
     PathBuf::from("./jacs.config.json")
 }
-

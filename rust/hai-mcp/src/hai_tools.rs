@@ -1,9 +1,8 @@
 use haiai::{
     generate_verify_link, generate_verify_link_hosted, media_verify_status_to_str,
-    text_signature_status_to_str, CreateEmailTemplateOptions, HaiClient, JacsDocumentProvider,
-    JacsMediaProvider, JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions,
-    LocalJacsProvider, MediaVerifyStatus, RegisterAgentOptions, RemoteJacsProvider,
-    RemoteJacsProviderOptions, SearchOptions, SendEmailOptions, SignImageOptions, SignTextOptions,
+    text_signature_status_to_str, CreateEmailTemplateOptions, HaiClient, JacsMediaProvider,
+    JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions, MediaVerifyStatus,
+    RegisterAgentOptions, SearchOptions, SendEmailOptions, SignImageOptions, SignTextOptions,
     TextSignatureStatus, UpdateEmailTemplateOptions, VerifyImageOptions, VerifyTextOptions,
     VerifyTextResult,
 };
@@ -1026,7 +1025,9 @@ async fn call_verify_text(context: &HaiServerContext, args: &Value) -> ToolResul
         strict: false,
         key_dir,
     };
-    let result = provider.verify_text_file(&path, opts).map_err(tool_message)?;
+    let result = provider
+        .verify_text_file(&path, opts)
+        .map_err(tool_message)?;
 
     let (status, sigs, malformed_detail) = match &result {
         VerifyTextResult::Signed { signatures } => {
@@ -1148,7 +1149,9 @@ async fn call_verify_image(context: &HaiServerContext, args: &Value) -> ToolResu
         },
         scan_robust: robust,
     };
-    let result = provider.verify_image(&file_path, opts).map_err(tool_message)?;
+    let result = provider
+        .verify_image(&file_path, opts)
+        .map_err(tool_message)?;
 
     let status = media_verify_status_to_str(&result.status);
     let success = match &result.status {
@@ -1197,9 +1200,7 @@ async fn call_extract_media_signature(context: &HaiServerContext, args: &Value) 
         "payload": payload,
     });
     if !success {
-        envelope["error"] = Value::String(format!(
-            "no JACS signature found in {file_path}"
-        ));
+        envelope["error"] = Value::String(format!("no JACS signature found in {file_path}"));
     }
 
     Ok(success_tool_result(
@@ -1214,42 +1215,42 @@ async fn call_extract_media_signature(context: &HaiServerContext, args: &Value) 
 // =============================================================================
 // Issue 004: D5 / D9 record-store handlers.
 //
-// These build a `RemoteJacsProvider` wrapping the local agent's signing
-// material and dispatch to the new trait methods on `JacsDocumentProvider`
-// (Issue 003). Local-only operations (sign_text/sign_image) use
-// `EmbeddedJacsProvider` directly; the record-store operations need the
-// network so they construct a fresh `RemoteJacsProvider<LocalJacsProvider>`.
+// These dispatch through the shared routed document provider, so MCP follows
+// the same local/remote storage decision as CLI and FFI.
 // =============================================================================
 
-fn build_remote_provider(
-    context: &HaiServerContext,
-    args: &Value,
-) -> Result<RemoteJacsProvider<LocalJacsProvider>, ToolError> {
-    // Issue 004: hai-mcp pins the outgoing hai-api URL at startup (HAI_URL env).
-    // Runtime hai_url overrides are explicitly NOT supported (matches the email
-    // path's `prepare_email_client` policy and the existing
-    // `hai_tool_definitions_do_not_expose_create_agent_or_runtime_hai_url_override`
-    // contract test).
-    let local = context
-        .local_provider(optional_string(args, "config_path"))
-        .map_err(ToolError::Message)?;
-    let base_url = context
-        .resolve_base_url(None)
-        .map_err(ToolError::Message)?;
-    RemoteJacsProvider::new(
-        local,
-        RemoteJacsProviderOptions {
-            base_url,
-            ..RemoteJacsProviderOptions::default()
-        },
-    )
-    .map_err(tool_message)
-}
-
 async fn call_save_memory(context: &HaiServerContext, args: &Value) -> ToolResult {
-    let provider = build_remote_provider(context, args)?;
+    let config_path = optional_string(args, "config_path");
+    let storage = context
+        .document_storage_label(config_path)
+        .map_err(ToolError::Message)?;
+    tracing::info!(
+        tool = "hai_save_memory",
+        storage = %storage,
+        "dispatching routed memory save"
+    );
+    let provider = context
+        .document_provider(config_path)
+        .map_err(ToolError::Message)?;
     let content = optional_string(args, "content");
-    let key = JacsDocumentProvider::save_memory(&provider, content).map_err(tool_message)?;
+    let key = match provider.save_memory(content) {
+        Ok(key) => key,
+        Err(e) => {
+            tracing::warn!(
+                tool = "hai_save_memory",
+                storage = %storage,
+                error = %e,
+                "routed memory save failed"
+            );
+            return Err(tool_message(e));
+        }
+    };
+    tracing::info!(
+        tool = "hai_save_memory",
+        storage = %storage,
+        key = %key,
+        "routed memory save completed"
+    );
     Ok(success_tool_result(
         format!("save_memory key={key}"),
         json!({ "key": key }),
@@ -1257,9 +1258,37 @@ async fn call_save_memory(context: &HaiServerContext, args: &Value) -> ToolResul
 }
 
 async fn call_get_memory(context: &HaiServerContext, args: &Value) -> ToolResult {
-    let provider = build_remote_provider(context, args)?;
-    let envelope = JacsDocumentProvider::get_memory(&provider).map_err(tool_message)?;
+    let config_path = optional_string(args, "config_path");
+    let storage = context
+        .document_storage_label(config_path)
+        .map_err(ToolError::Message)?;
+    tracing::info!(
+        tool = "hai_get_memory",
+        storage = %storage,
+        "dispatching routed memory get"
+    );
+    let provider = context
+        .document_provider(config_path)
+        .map_err(ToolError::Message)?;
+    let envelope = match provider.get_memory() {
+        Ok(envelope) => envelope,
+        Err(e) => {
+            tracing::warn!(
+                tool = "hai_get_memory",
+                storage = %storage,
+                error = %e,
+                "routed memory get failed"
+            );
+            return Err(tool_message(e));
+        }
+    };
     let success = envelope.is_some();
+    tracing::info!(
+        tool = "hai_get_memory",
+        storage = %storage,
+        present = success,
+        "routed memory get completed"
+    );
     Ok(success_tool_result(
         format!("get_memory present={}", success),
         json!({ "present": success, "envelope": envelope }),
@@ -1267,9 +1296,37 @@ async fn call_get_memory(context: &HaiServerContext, args: &Value) -> ToolResult
 }
 
 async fn call_save_soul(context: &HaiServerContext, args: &Value) -> ToolResult {
-    let provider = build_remote_provider(context, args)?;
+    let config_path = optional_string(args, "config_path");
+    let storage = context
+        .document_storage_label(config_path)
+        .map_err(ToolError::Message)?;
+    tracing::info!(
+        tool = "hai_save_soul",
+        storage = %storage,
+        "dispatching routed soul save"
+    );
+    let provider = context
+        .document_provider(config_path)
+        .map_err(ToolError::Message)?;
     let content = optional_string(args, "content");
-    let key = JacsDocumentProvider::save_soul(&provider, content).map_err(tool_message)?;
+    let key = match provider.save_soul(content) {
+        Ok(key) => key,
+        Err(e) => {
+            tracing::warn!(
+                tool = "hai_save_soul",
+                storage = %storage,
+                error = %e,
+                "routed soul save failed"
+            );
+            return Err(tool_message(e));
+        }
+    };
+    tracing::info!(
+        tool = "hai_save_soul",
+        storage = %storage,
+        key = %key,
+        "routed soul save completed"
+    );
     Ok(success_tool_result(
         format!("save_soul key={key}"),
         json!({ "key": key }),
@@ -1277,9 +1334,37 @@ async fn call_save_soul(context: &HaiServerContext, args: &Value) -> ToolResult 
 }
 
 async fn call_get_soul(context: &HaiServerContext, args: &Value) -> ToolResult {
-    let provider = build_remote_provider(context, args)?;
-    let envelope = JacsDocumentProvider::get_soul(&provider).map_err(tool_message)?;
+    let config_path = optional_string(args, "config_path");
+    let storage = context
+        .document_storage_label(config_path)
+        .map_err(ToolError::Message)?;
+    tracing::info!(
+        tool = "hai_get_soul",
+        storage = %storage,
+        "dispatching routed soul get"
+    );
+    let provider = context
+        .document_provider(config_path)
+        .map_err(ToolError::Message)?;
+    let envelope = match provider.get_soul() {
+        Ok(envelope) => envelope,
+        Err(e) => {
+            tracing::warn!(
+                tool = "hai_get_soul",
+                storage = %storage,
+                error = %e,
+                "routed soul get failed"
+            );
+            return Err(tool_message(e));
+        }
+    };
     let success = envelope.is_some();
+    tracing::info!(
+        tool = "hai_get_soul",
+        storage = %storage,
+        present = success,
+        "routed soul get completed"
+    );
     Ok(success_tool_result(
         format!("get_soul present={}", success),
         json!({ "present": success, "envelope": envelope }),
@@ -1289,8 +1374,10 @@ async fn call_get_soul(context: &HaiServerContext, args: &Value) -> ToolResult {
 async fn call_store_text_file(context: &HaiServerContext, args: &Value) -> ToolResult {
     let raw_path = required_string(args, "path")?;
     let path = guard_input_path("path", raw_path)?;
-    let provider = build_remote_provider(context, args)?;
-    let key = JacsDocumentProvider::store_text_file(&provider, &path).map_err(tool_message)?;
+    let provider = context
+        .document_provider(optional_string(args, "config_path"))
+        .map_err(ToolError::Message)?;
+    let key = provider.store_text_file(&path).map_err(tool_message)?;
     Ok(success_tool_result(
         format!("store_text_file path={path} key={key}"),
         json!({ "path": path, "key": key }),
@@ -1300,8 +1387,10 @@ async fn call_store_text_file(context: &HaiServerContext, args: &Value) -> ToolR
 async fn call_store_image_file(context: &HaiServerContext, args: &Value) -> ToolResult {
     let raw_path = required_string(args, "path")?;
     let path = guard_input_path("path", raw_path)?;
-    let provider = build_remote_provider(context, args)?;
-    let key = JacsDocumentProvider::store_image_file(&provider, &path).map_err(tool_message)?;
+    let provider = context
+        .document_provider(optional_string(args, "config_path"))
+        .map_err(ToolError::Message)?;
+    let key = provider.store_image_file(&path).map_err(tool_message)?;
     Ok(success_tool_result(
         format!("store_image_file path={path} key={key}"),
         json!({ "path": path, "key": key }),
@@ -1311,9 +1400,10 @@ async fn call_store_image_file(context: &HaiServerContext, args: &Value) -> Tool
 async fn call_get_record_bytes(context: &HaiServerContext, args: &Value) -> ToolResult {
     use base64::Engine;
     let key = required_string(args, "key")?;
-    let provider = build_remote_provider(context, args)?;
-    let bytes =
-        JacsDocumentProvider::get_record_bytes(&provider, key).map_err(tool_message)?;
+    let provider = context
+        .document_provider(optional_string(args, "config_path"))
+        .map_err(ToolError::Message)?;
+    let bytes = provider.get_record_bytes(key).map_err(tool_message)?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(success_tool_result(
         format!("get_record_bytes key={key} bytes_len={}", bytes.len()),
@@ -1592,7 +1682,8 @@ async fn call_update_email_template(context: &HaiServerContext, args: &Value) ->
             &UpdateEmailTemplateOptions {
                 name: optional_string(args, "name").map(ToString::to_string),
                 how_to_send: optional_string(args, "how_to_send").map(|s| Some(s.to_string())),
-                how_to_respond: optional_string(args, "how_to_respond").map(|s| Some(s.to_string())),
+                how_to_respond: optional_string(args, "how_to_respond")
+                    .map(|s| Some(s.to_string())),
                 goal: optional_string(args, "goal").map(|s| Some(s.to_string())),
                 rules: optional_string(args, "rules").map(|s| Some(s.to_string())),
             },
@@ -1785,8 +1876,11 @@ mod tests {
     #[test]
     fn fixture_contains_all_code_tools() {
         let fixture = load_mcp_tool_contract_fixture();
-        let fixture_names: HashSet<String> =
-            fixture.required_tools.iter().map(|t| t.name.clone()).collect();
+        let fixture_names: HashSet<String> = fixture
+            .required_tools
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
         for tool in definition_values() {
             let name = tool["name"].as_str().expect("tool name").to_string();
             assert!(
@@ -1961,10 +2055,7 @@ mod tests {
 
     #[test]
     fn definitions_includes_media_tools() {
-        let names: Vec<String> = definitions()
-            .iter()
-            .map(|t| t.name.to_string())
-            .collect();
+        let names: Vec<String> = definitions().iter().map(|t| t.name.to_string()).collect();
         for required in &[
             "hai_sign_text",
             "hai_verify_text",
@@ -1988,10 +2079,11 @@ mod tests {
             .join("../../fixtures/mcp_tool_contract.json");
         let raw = std::fs::read_to_string(&path).expect("read mcp_tool_contract.json");
         let val: Value = serde_json::from_str(&raw).expect("parse fixture");
-        let total = val["total_tool_count"]
-            .as_u64()
-            .expect("total_tool_count");
-        let count = val["required_tools"].as_array().expect("required_tools").len() as u64;
+        let total = val["total_tool_count"].as_u64().expect("total_tool_count");
+        let count = val["required_tools"]
+            .as_array()
+            .expect("required_tools")
+            .len() as u64;
         assert_eq!(total, 39);
         assert_eq!(count, 39);
     }
@@ -2012,9 +2104,7 @@ mod tests {
             .expect("format description");
         let lower = format_desc.to_lowercase();
         assert!(
-            lower.contains("reserved")
-                || lower.contains("ignored")
-                || lower.contains("no-op"),
+            lower.contains("reserved") || lower.contains("ignored") || lower.contains("no-op"),
             "format description must acknowledge upstream JACS REVIEW_002 \
              (dead parameter); got: {format_desc}"
         );
@@ -2148,9 +2238,8 @@ mod tests {
     /// owned tempdir guard so caller fs writes stay alive for the test scope.
     /// Uses `serial_test`-style chdir caller responsibility — caller wraps the
     /// test body in `chdir` while the context is alive.
-    fn build_media_context_with_fixture()
-        -> (HaiServerContext, tempfile::TempDir, std::path::PathBuf)
-    {
+    fn build_media_context_with_fixture(
+    ) -> (HaiServerContext, tempfile::TempDir, std::path::PathBuf) {
         use crate::embedded_provider::LoadedSharedAgent;
 
         let (temp_dir, config_path) =
@@ -2181,12 +2270,7 @@ mod tests {
         let mut buf = Vec::new();
         let encoder = image::codecs::png::PngEncoder::new(&mut buf);
         encoder
-            .write_image(
-                img.as_raw(),
-                width,
-                height,
-                image::ExtendedColorType::Rgba8,
-            )
+            .write_image(img.as_raw(), width, height, image::ExtendedColorType::Rgba8)
             .expect("png encode");
         buf
     }
@@ -2207,15 +2291,10 @@ mod tests {
     }
     impl CwdGuard {
         fn enter(dir: &std::path::Path) -> Self {
-            let lock = CWD_LOCK
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
+            let lock = CWD_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
             let prev = std::env::current_dir().expect("cwd");
             std::env::set_current_dir(dir).expect("chdir into tempdir");
-            CwdGuard {
-                prev,
-                _lock: lock,
-            }
+            CwdGuard { prev, _lock: lock }
         }
     }
     impl Drop for CwdGuard {
@@ -2281,12 +2360,7 @@ mod tests {
         let signed = dispatch(
             &context,
             "hai_sign_text",
-            Some(
-                json!({ "path": "hello.md" })
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-            ),
+            Some(json!({ "path": "hello.md" }).as_object().unwrap().clone()),
         )
         .await
         .expect("dispatch sign_text");
@@ -2297,12 +2371,7 @@ mod tests {
         let verified = dispatch(
             &context,
             "hai_verify_text",
-            Some(
-                json!({ "path": "hello.md" })
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-            ),
+            Some(json!({ "path": "hello.md" }).as_object().unwrap().clone()),
         )
         .await
         .expect("dispatch verify_text");
@@ -2595,8 +2664,7 @@ mod tests {
     #[tokio::test]
     async fn sign_image_rejects_existing_output_without_overwrite_ok() {
         let (context, temp_dir, _config_path) = build_media_context_with_fixture();
-        std::fs::write(temp_dir.path().join("in.png"), make_test_png(16, 16))
-            .expect("write input");
+        std::fs::write(temp_dir.path().join("in.png"), make_test_png(16, 16)).expect("write input");
         std::fs::write(temp_dir.path().join("existing.png"), b"existing bytes")
             .expect("write existing output target");
 

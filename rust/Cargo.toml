@@ -28,3 +28,4 @@ sha2 = "0.10"
 jacs = { path = "../../JACS/jacs" }
 jacs-binding-core = { path = "../../JACS/binding-core" }
 jacs-mcp = { path = "../../JACS/jacs-mcp" }
+jacs-media = { path = "../../JACS/jacs-media" }

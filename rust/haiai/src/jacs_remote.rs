@@ -9,15 +9,16 @@
 //! does (matching `client.rs:210-215`).
 
 use std::time::Duration;
+use std::time::Instant;
 
 use base64::Engine;
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use reqwest::{Client as HttpClient, StatusCode};
 
 fn url_encode(s: &str) -> String {
     utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()
 }
-use serde_json::{Value, json};
+use serde_json::Value;
 use time::OffsetDateTime;
 
 use crate::client::encode_path_segment;
@@ -116,7 +117,14 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
     fn build_auth_header(&self) -> Result<String> {
         let ts = OffsetDateTime::now_utc().unix_timestamp();
         let message = format!("{}:{ts}", self.inner.jacs_id());
-        let signature = self.inner.sign_string(&message)?;
+        let signature = self.inner.sign_string(&message).map_err(|e| {
+            tracing::warn!(
+                operation = "remote_build_auth_header",
+                error = %e,
+                "failed to sign remote auth header"
+            );
+            e
+        })?;
         Ok(format!("JACS {}:{ts}:{signature}", self.inner.jacs_id()))
     }
 
@@ -134,21 +142,47 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
         body: Vec<u8>,
         content_type: &str,
     ) -> Result<Value> {
+        let started = Instant::now();
         let auth = self.build_auth_header()?;
+        let url = self.url(RECORDS_PATH);
+        tracing::debug!(
+            operation = "remote_post_record",
+            url = %url,
+            content_type,
+            "remote record POST starting"
+        );
         let resp = self
             .http
-            .post(self.url(RECORDS_PATH))
+            .post(&url)
             .header("Authorization", auth)
             .header("Content-Type", content_type)
             .body(body)
             .send()
             .await
-            .map_err(|e| HaiError::Provider(format!("network error: {e}")))?;
+            .map_err(|e| {
+                tracing::warn!(
+                    operation = "remote_post_record",
+                    url = %url,
+                    error = %e,
+                    "remote record POST network error"
+                );
+                HaiError::Provider(format!("network error: {e}"))
+            })?;
+        let status = resp.status().as_u16();
+        tracing::info!(
+            operation = "remote_post_record",
+            url = %url,
+            content_type,
+            status,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "remote record POST completed"
+        );
         Self::parse_response(resp).await
     }
 
     /// GET raw bytes from a record path (D9).
     pub async fn get_record_bytes_async(&self, key: &str) -> Result<Vec<u8>> {
+        let started = Instant::now();
         let (id, ver) = Self::split_key(key);
         // Issue 007: percent-encode `id` and `version` per CLAUDE.md path-segment
         // rule. UUID-shaped IDs in the happy path don't carry reserved bytes,
@@ -165,13 +199,35 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
             None => format!("{}/{}", RECORDS_PATH, encode_path_segment(id)),
         };
         let auth = self.build_auth_header()?;
+        let url = self.url(&path);
+        tracing::debug!(
+            operation = "remote_get_record_bytes",
+            url = %url,
+            "remote record GET starting"
+        );
         let resp = self
             .http
-            .get(self.url(&path))
+            .get(&url)
             .header("Authorization", auth)
             .send()
             .await
-            .map_err(|e| HaiError::Provider(format!("network error: {e}")))?;
+            .map_err(|e| {
+                tracing::warn!(
+                    operation = "remote_get_record_bytes",
+                    url = %url,
+                    error = %e,
+                    "remote record GET network error"
+                );
+                HaiError::Provider(format!("network error: {e}"))
+            })?;
+        let status = resp.status().as_u16();
+        tracing::info!(
+            operation = "remote_get_record_bytes",
+            url = %url,
+            status,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "remote record GET completed"
+        );
         Self::parse_response_bytes(resp).await
     }
 
@@ -188,6 +244,12 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
                 serde_json::from_str(&text).map_err(HaiError::from)
             }
         } else {
+            tracing::warn!(
+                operation = "remote_parse_response",
+                status = status.as_u16(),
+                body = %text,
+                "remote record request failed"
+            );
             Err(map_status_error(status, &text))
         }
     }
@@ -205,6 +267,12 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
                 .text()
                 .await
                 .unwrap_or_else(|_| "<no body>".to_string());
+            tracing::warn!(
+                operation = "remote_parse_response_bytes",
+                status = status.as_u16(),
+                body = %text,
+                "remote record bytes request failed"
+            );
             Err(map_status_error(status, &text))
         }
     }
@@ -254,7 +322,11 @@ fn map_status_error(status: StatusCode, body: &str) -> HaiError {
         // Try to extract a server-shaped { "error": "..." } message.
         serde_json::from_str::<Value>(body)
             .ok()
-            .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(|s| s.to_string()))
+            .and_then(|v| {
+                v.get("error")
+                    .and_then(|e| e.as_str())
+                    .map(|s| s.to_string())
+            })
             .unwrap_or_else(|| body.to_string())
     };
     HaiError::Api {
@@ -360,11 +432,15 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
 
     fn get_document(&self, key: &str) -> Result<String> {
         let bytes = Self::block_on(self.get_record_bytes_async(key))?;
-        String::from_utf8(bytes).map_err(|e| HaiError::Provider(format!("invalid utf-8 in record: {e}")))
+        String::from_utf8(bytes)
+            .map_err(|e| HaiError::Provider(format!("invalid utf-8 in record: {e}")))
     }
 
     fn list_documents(&self, jacs_type: Option<&str>) -> Result<Vec<String>> {
-        let mut url = format!("{}{}?latest_only=true&limit=100", self.base_url, RECORDS_PATH);
+        let mut url = format!(
+            "{}{}?latest_only=true&limit=100",
+            self.base_url, RECORDS_PATH
+        );
         if let Some(t) = jacs_type {
             url.push_str(&format!("&type={}", url_encode(t)));
         }
@@ -391,8 +467,14 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
                             .and_then(|k| k.as_str())
                             .map(|s| s.to_string())
                             .or_else(|| {
-                                let id = item.get("id").or_else(|| item.get("jacs_id")).and_then(|v| v.as_str())?;
-                                let ver = item.get("version").or_else(|| item.get("jacs_version")).and_then(|v| v.as_str())?;
+                                let id = item
+                                    .get("id")
+                                    .or_else(|| item.get("jacs_id"))
+                                    .and_then(|v| v.as_str())?;
+                                let ver = item
+                                    .get("version")
+                                    .or_else(|| item.get("jacs_version"))
+                                    .and_then(|v| v.as_str())?;
                                 Some(format!("{}:{}", id, ver))
                             })
                     })
@@ -489,10 +571,7 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
                     Some(DocSearchHit {
                         key: format!("{}:{}", id, version),
                         json: serde_json::to_string(item).ok().unwrap_or_default(),
-                        score: item
-                            .get("ts_rank")
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(0.0),
+                        score: item.get("ts_rank").and_then(|v| v.as_f64()).unwrap_or(0.0),
                         matched_fields: Vec::new(),
                     })
                 })
@@ -532,12 +611,7 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
         })
     }
 
-    fn query_by_type(
-        &self,
-        doc_type: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<String>> {
+    fn query_by_type(&self, doc_type: &str, limit: usize, offset: usize) -> Result<Vec<String>> {
         // Issue 009: walk forward via `next_cursor` rather than asking the
         // server for `min(limit + offset, 100)` and discarding the head. The
         // old approach silently returned an empty result for any
@@ -582,12 +656,7 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
         })
     }
 
-    fn query_by_agent(
-        &self,
-        agent_id: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<String>> {
+    fn query_by_agent(&self, agent_id: &str, limit: usize, offset: usize) -> Result<Vec<String>> {
         // Server enforces D4 owner-only — `agent` param must equal caller or be omitted.
         // We surface the 400 directly so a developer mistake doesn't silently return [].
         //
@@ -619,42 +688,6 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
     }
 
     // =========================================================================
-    // D5: MEMORY / SOUL convenience wrappers — Issue 003.
-    //
-    // Now in the trait impl (was inherent) so they route through
-    // `Box<dyn JacsDocumentProvider>` and Python/Node/Go FFI facades. Inherent
-    // methods are not callable through the trait object.
-    //
-    // Thin wrappers on top of the generic CRUD that set `jacsType="memory"` or
-    // `jacsType="soul"`. The server treats these as ordinary records; the
-    // convenience is purely SDK-side so LLMs and CLI/MCP surfaces see them by name.
-    // =========================================================================
-
-    /// Sign and store a MEMORY.md record. If `content` is `None`, reads
-    /// `MEMORY.md` from CWD. Returns the record key (`id:version`).
-    fn save_memory(&self, content: Option<&str>) -> Result<String> {
-        self.save_typed_doc("memory", content, "MEMORY.md")
-    }
-
-    /// Sign and store a SOUL.md record. If `content` is `None`, reads
-    /// `SOUL.md` from CWD. Returns the record key.
-    fn save_soul(&self, content: Option<&str>) -> Result<String> {
-        self.save_typed_doc("soul", content, "SOUL.md")
-    }
-
-    /// Fetch the latest MEMORY record's signed envelope JSON. Returns `None`
-    /// when no memory record exists for the caller.
-    fn get_memory(&self) -> Result<Option<String>> {
-        self.get_typed_latest("memory")
-    }
-
-    /// Fetch the latest SOUL record's signed envelope JSON. Returns `None`
-    /// when no soul record exists for the caller.
-    fn get_soul(&self) -> Result<Option<String>> {
-        self.get_typed_latest("soul")
-    }
-
-    // =========================================================================
     // D9: typed-content helpers — Issue 003.
     //
     // Now in the trait impl (was inherent). Reads a local file, sets the right
@@ -664,25 +697,26 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
     /// Read a signed-text file (markdown w/ appended `-----BEGIN JACS SIGNATURE-----` block)
     /// and POST it to `/api/v1/records` with `Content-Type: text/markdown; profile=jacs-text-v1`.
     fn store_text_file(&self, path: &str) -> Result<String> {
-        let bytes = std::fs::read(path)
-            .map_err(|e| HaiError::Provider(format!("read {}: {}", path, e)))?;
+        let bytes =
+            std::fs::read(path).map_err(|e| HaiError::Provider(format!("read {}: {}", path, e)))?;
         let text = std::str::from_utf8(&bytes)
             .map_err(|_| HaiError::Provider("text file is not valid UTF-8".to_string()))?;
         if !text.contains("-----BEGIN JACS SIGNATURE-----") {
             return Err(HaiError::Provider(
-                "text file has no JACS signature block — sign with sign_text_file first".to_string(),
+                "text file has no JACS signature block — sign with sign_text_file first"
+                    .to_string(),
             ));
         }
         // DRY: shared POST + key-extraction with `store_document` /
-        // `store_image_file` / `save_typed_doc`.
+        // `store_image_file`.
         self.post_record_for_key(bytes, CT_TEXT_MD)
     }
 
     /// Detect a signed image's format from leading magic bytes and POST it with
     /// `Content-Type: image/png|jpeg|webp`.
     fn store_image_file(&self, path: &str) -> Result<String> {
-        let bytes = std::fs::read(path)
-            .map_err(|e| HaiError::Provider(format!("read {}: {}", path, e)))?;
+        let bytes =
+            std::fs::read(path).map_err(|e| HaiError::Provider(format!("read {}: {}", path, e)))?;
         let ct = detect_image_content_type(&bytes)?;
         // Sanity-check: the image carries an embedded JACS chunk. We don't verify here
         // (server runs the real verifier); we just refuse to upload obviously-unsigned bytes.
@@ -692,7 +726,7 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
             ));
         }
         // DRY: shared POST + key-extraction with `store_document` /
-        // `store_text_file` / `save_typed_doc`.
+        // `store_text_file`.
         self.post_record_for_key(bytes, ct)
     }
 
@@ -710,61 +744,13 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
     /// `/api/v1/records` and return the server-issued record key.
     ///
     /// **DRY single source of truth.** `store_document`, `store_text_file`,
-    /// `store_image_file`, and the D5 `save_typed_doc` (memory/soul) helper
-    /// all route through this method. Before this consolidation each call
-    /// site duplicated the `block_on(post_record_bytes_async(...)) →
-    /// resp.get("key").as_str()` sequence; the next "missing 'key'" error
-    /// message change would have required four edits in four places. Now a
-    /// single edit propagates everywhere.
+    /// and `store_image_file` all route through this method.
     fn post_record_for_key(&self, bytes: Vec<u8>, content_type: &str) -> Result<String> {
         let resp = Self::block_on(self.post_record_bytes_async(bytes, content_type))?;
         resp.get("key")
             .and_then(|v| v.as_str())
             .map(str::to_string)
             .ok_or_else(|| HaiError::Provider("server response missing 'key'".to_string()))
-    }
-
-    /// Resolve `content` (or fall back to reading `default_filename` from
-    /// CWD), wrap it in a JACS-signed envelope tagged with `jacs_type`, and
-    /// POST to `/api/v1/records`.
-    ///
-    /// Backs `save_memory` (jacs_type="memory") and `save_soul`
-    /// (jacs_type="soul"); single source of truth for the typed-doc shape so
-    /// adding `save_<other_type>` becomes a 1-line wrapper. Routes through
-    /// the trait's `sign_document` + `store_document` rather than reaching
-    /// for `post_record_for_key` directly, so any provider extending
-    /// `RemoteJacsProvider` (e.g., a future audit-logging wrapper) still
-    /// observes the canonical sign/store pair.
-    fn save_typed_doc(
-        &self,
-        jacs_type: &str,
-        content: Option<&str>,
-        default_filename: &str,
-    ) -> Result<String> {
-        let body = match content {
-            Some(s) => s.to_string(),
-            None => std::fs::read_to_string(default_filename).map_err(|e| {
-                HaiError::Provider(format!("read {}: {}", default_filename, e))
-            })?,
-        };
-        let payload = json!({
-            "jacsType": jacs_type,
-            "body": body,
-        });
-        let signed = JacsDocumentProvider::sign_document(self, &payload)?;
-        JacsDocumentProvider::store_document(self, &signed)
-    }
-
-    fn get_typed_latest(&self, jacs_type: &str) -> Result<Option<String>> {
-        // query_by_type returns up to N keys for `jacsType=<x>` ordered by
-        // created_at DESC server-side. The first hit is the latest.
-        let keys = JacsDocumentProvider::query_by_type(self, jacs_type, 1, 0)?;
-        let key = match keys.into_iter().next() {
-            Some(k) => k,
-            None => return Ok(None),
-        };
-        let envelope = JacsDocumentProvider::get_document(self, &key)?;
-        Ok(Some(envelope))
     }
 
     async fn get_json_async(&self, url: &str) -> Result<Value> {
@@ -871,10 +857,7 @@ fn detect_image_content_type(bytes: &[u8]) -> Result<&'static str> {
         Ok("image/png")
     } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
         Ok("image/jpeg")
-    } else if bytes.len() >= 12
-        && &bytes[..4] == b"RIFF"
-        && &bytes[8..12] == b"WEBP"
-    {
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
         Ok("image/webp")
     } else {
         Err(HaiError::Provider("unknown image format".to_string()))
@@ -894,10 +877,7 @@ fn detect_image_content_type(bytes: &[u8]) -> Result<&'static str> {
 /// unreadable image returns `Ok(false)` — the server will 400 it anyway and we
 /// don't want to mask the real error here.
 fn contains_jacs_chunk(bytes: &[u8]) -> bool {
-    matches!(
-        jacs_media::extract_signature(bytes, false),
-        Ok(Some(_))
-    )
+    matches!(jacs_media::extract_signature(bytes, false), Ok(Some(_)))
 }
 
 // Unused but kept here because TASK_009 will reuse it for additional helpers.
@@ -1011,7 +991,9 @@ mod tests {
             })
             .await;
         let provider = make_provider(server.base_url());
-        let key = provider.store_document("{\"hello\":\"world\"}").expect("store");
+        let key = provider
+            .store_document("{\"hello\":\"world\"}")
+            .expect("store");
         assert_eq!(key, "id1:v1");
         mock.assert_async().await;
     }
@@ -1110,7 +1092,9 @@ mod tests {
         let server = MockServer::start_async().await;
         let mock = server
             .mock_async(|when, then| {
-                when.method(HMethod::GET).path("/api/v1/records").query_param("agent", "other-agent");
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("agent", "other-agent");
                 then.status(400).json_body(json!({
                     "error": "search is owner-scoped; agent param must equal caller or be omitted"
                 }));
@@ -1172,7 +1156,10 @@ mod tests {
             .expect_err("must error before any network call");
         match &err {
             HaiError::BackendUnsupported { method, detail } => {
-                assert_eq!(method, "query_by_field", "method name pinned for FFI consumers");
+                assert_eq!(
+                    method, "query_by_field",
+                    "method name pinned for FFI consumers"
+                );
                 assert!(
                     detail.contains("foo"),
                     "detail must echo the requested field for debuggability, got: {detail}"
@@ -1300,7 +1287,10 @@ mod tests {
         let err = provider.store_document("{}").expect_err("must error");
         match &err {
             HaiError::Api { status, .. } => {
-                assert_eq!(*status, 401, "401 must round-trip as HaiError::Api status, got: {err}");
+                assert_eq!(
+                    *status, 401,
+                    "401 must round-trip as HaiError::Api status, got: {err}"
+                );
             }
             other => panic!("expected HaiError::Api status 401, got: {other:?}"),
         }
@@ -1315,20 +1305,20 @@ mod tests {
         let server = MockServer::start_async().await;
         server
             .mock_async(|when, then| {
-                when.method(HMethod::GET)
-                    .path("/api/v1/records/missing-id");
+                when.method(HMethod::GET).path("/api/v1/records/missing-id");
                 then.status(404).json_body(json!({
                     "error": "record not found"
                 }));
             })
             .await;
         let provider = make_provider(server.base_url());
-        let err = provider
-            .get_document("missing-id")
-            .expect_err("must error");
+        let err = provider.get_document("missing-id").expect_err("must error");
         match &err {
             HaiError::Api { status, message } => {
-                assert_eq!(*status, 404, "404 must round-trip as HaiError::Api, got: {err}");
+                assert_eq!(
+                    *status, 404,
+                    "404 must round-trip as HaiError::Api, got: {err}"
+                );
                 assert!(
                     message.contains("record not found"),
                     "must extract server reason, got: {message}"
@@ -1346,20 +1336,20 @@ mod tests {
         let server = MockServer::start_async().await;
         server
             .mock_async(|when, then| {
-                when.method(HMethod::GET)
-                    .path("/api/v1/records/some-id");
+                when.method(HMethod::GET).path("/api/v1/records/some-id");
                 then.status(429).json_body(json!({
                     "error": "rate limit exceeded"
                 }));
             })
             .await;
         let provider = make_provider(server.base_url());
-        let err = provider
-            .get_document("some-id")
-            .expect_err("must error");
+        let err = provider.get_document("some-id").expect_err("must error");
         match &err {
             HaiError::Api { status, .. } => {
-                assert_eq!(*status, 429, "429 must round-trip as HaiError::Api, got: {err}");
+                assert_eq!(
+                    *status, 429,
+                    "429 must round-trip as HaiError::Api, got: {err}"
+                );
             }
             other => panic!("expected HaiError::Api status 429, got: {other:?}"),
         }
@@ -1381,7 +1371,10 @@ mod tests {
         let err = provider.store_document("{}").expect_err("must error");
         match &err {
             HaiError::Api { status, .. } => {
-                assert_eq!(*status, 503, "503 must round-trip as HaiError::Api, got: {err}");
+                assert_eq!(
+                    *status, 503,
+                    "503 must round-trip as HaiError::Api, got: {err}"
+                );
             }
             other => panic!("expected HaiError::Api status 503, got: {other:?}"),
         }
@@ -1501,7 +1494,10 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         let img = image::GrayImage::from_pixel(1, 1, image::Luma([128]));
         image::DynamicImage::ImageLuma8(img)
-            .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Jpeg)
+            .write_to(
+                &mut std::io::Cursor::new(&mut buf),
+                image::ImageFormat::Jpeg,
+            )
             .expect("encode jpeg");
         let claim_json = r#"{"jacsId":"test","jacsSignature":{"agentID":"x","signature":"y"}}"#;
         let payload_b64u = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claim_json);
@@ -1631,10 +1627,7 @@ mod tests {
             .store_image_file(path.to_str().unwrap())
             .expect_err("must reject");
         let s = format!("{}", err);
-        assert!(
-            s.contains("no JACS signature"),
-            "got: {s}",
-        );
+        assert!(s.contains("no JACS signature"), "got: {s}",);
         no_traffic.assert_calls_async(0).await;
     }
 
@@ -1692,9 +1685,7 @@ mod tests {
             })
             .await;
         let provider = make_provider(server.base_url());
-        let key = provider
-            .save_soul(Some("my soul text"))
-            .expect("save_soul");
+        let key = provider.save_soul(Some("my soul text")).expect("save_soul");
         assert_eq!(key, "soul1:v1");
         mock.assert_async().await;
     }
@@ -1707,7 +1698,8 @@ mod tests {
                 when.method(HMethod::GET)
                     .path("/api/v1/records")
                     .query_param("type", "memory");
-                then.status(200).json_body(json!({"items":[],"has_more":false}));
+                then.status(200)
+                    .json_body(json!({"items":[],"has_more":false}));
             })
             .await;
         let provider = make_provider(server.base_url());
@@ -1755,8 +1747,7 @@ mod tests {
         std::fs::write(dir.path().join("MEMORY.md"), "from-disk-memory").expect("write");
         // We can't fully exercise without an HTTP server, but `read_to_string`
         // succeeding is half the battle — confirm the file is read.
-        let body =
-            std::fs::read_to_string("MEMORY.md").expect("read MEMORY.md");
+        let body = std::fs::read_to_string("MEMORY.md").expect("read MEMORY.md");
         assert_eq!(body, "from-disk-memory");
         std::env::set_current_dir(&prev_cwd).expect("restore cwd");
     }
@@ -2123,8 +2114,7 @@ mod tests {
         // still hand-rolling the envelope, this call would *succeed* (signing
         // a flat `payload_b64` payload via `sign_document`).
         assert!(
-            s.contains("sign_file_envelope not supported")
-                || s.contains("LocalJacsProvider"),
+            s.contains("sign_file_envelope not supported") || s.contains("LocalJacsProvider"),
             "expected default-error from sign_file_envelope, got: {s}"
         );
         // Pin: zero HTTP calls — `sign_file` must be local-only.

@@ -242,12 +242,13 @@ impl JacsSigner for AgentSigner {
             message: format!("Failed to acquire agent lock: {e}"),
         })?;
 
-        let jacs_doc = agent.load_document(signed_document).map_err(|e| {
-            JacsError::DocumentMalformed {
-                field: "document".to_string(),
-                reason: e.to_string(),
-            }
-        })?;
+        let jacs_doc =
+            agent
+                .load_document(signed_document)
+                .map_err(|e| JacsError::DocumentMalformed {
+                    field: "document".to_string(),
+                    reason: e.to_string(),
+                })?;
 
         let document_key = jacs_doc.getkey();
         let mut errors = Vec::new();
@@ -386,11 +387,7 @@ impl JacsMediaProvider for EmbeddedJacsProvider {
             .map_err(|e| HaiError::Provider(format!("sign_text_file failed: {e}")))
     }
 
-    fn verify_text_file(
-        &self,
-        path: &str,
-        opts: VerifyTextOptions,
-    ) -> HaiResult<VerifyTextResult> {
+    fn verify_text_file(&self, path: &str, opts: VerifyTextOptions) -> HaiResult<VerifyTextResult> {
         let simple = self.simple_agent()?;
         jacs::simple::advanced::verify_text_file(&simple, path, opts)
             .map_err(|e| HaiError::Provider(format!("verify_text_file failed: {e}")))
@@ -417,11 +414,7 @@ impl JacsMediaProvider for EmbeddedJacsProvider {
             .map_err(|e| HaiError::Provider(format!("verify_image failed: {e}")))
     }
 
-    fn extract_media_signature(
-        &self,
-        path: &str,
-        raw_payload: bool,
-    ) -> HaiResult<Option<String>> {
+    fn extract_media_signature(&self, path: &str, raw_payload: bool) -> HaiResult<Option<String>> {
         // Same dispatch logic as LocalJacsProvider — JACS exposes two free
         // functions (decoded vs raw); neither needs a SimpleAgent.
         let result = if raw_payload {
@@ -484,14 +477,21 @@ pub(crate) mod tests {
                 .expect("parse fixture config");
 
         let temp_dir = tempfile::tempdir().expect("tempdir");
+        let workspace_root = temp_dir.path().canonicalize().expect("canonical tempdir");
 
         // Copy key directory to temp
         let source_key_dir = value
             .get("jacs_key_directory")
             .and_then(Value::as_str)
-            .map(|p| if PathBuf::from(p).is_absolute() { PathBuf::from(p) } else { source_dir.join(p) })
+            .map(|p| {
+                if PathBuf::from(p).is_absolute() {
+                    PathBuf::from(p)
+                } else {
+                    source_dir.join(p)
+                }
+            })
             .expect("key dir in config");
-        let temp_key_dir = temp_dir.path().join("keys");
+        let temp_key_dir = workspace_root.join("keys");
         fs::create_dir_all(&temp_key_dir).expect("create temp key dir");
         for entry in fs::read_dir(&source_key_dir).expect("read key dir") {
             let entry = entry.expect("key dir entry");
@@ -503,9 +503,15 @@ pub(crate) mod tests {
         let source_data_dir = value
             .get("jacs_data_directory")
             .and_then(Value::as_str)
-            .map(|p| if PathBuf::from(p).is_absolute() { PathBuf::from(p) } else { source_dir.join(p) })
+            .map(|p| {
+                if PathBuf::from(p).is_absolute() {
+                    PathBuf::from(p)
+                } else {
+                    source_dir.join(p)
+                }
+            })
             .expect("data dir in config");
-        let temp_data_dir = temp_dir.path().join("data");
+        let temp_data_dir = workspace_root.join("data");
         fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
             fs::create_dir_all(dst).expect("create dir");
             for entry in fs::read_dir(src).expect("read dir") {
@@ -527,7 +533,7 @@ pub(crate) mod tests {
         value["jacs_data_directory"] = Value::String(temp_data_dir.to_string_lossy().into_owned());
         value["jacs_key_directory"] = Value::String(temp_key_dir.to_string_lossy().into_owned());
 
-        let config_path = temp_dir.path().join("embedded-jacs.config.json");
+        let config_path = workspace_root.join("embedded-jacs.config.json");
         fs::write(
             &config_path,
             serde_json::to_vec_pretty(&value).expect("encode fixture config"),
@@ -564,8 +570,7 @@ pub(crate) mod tests {
     // -------------------------------------------------------------------------
 
     fn make_test_png(width: u32, height: u32) -> Vec<u8> {
-        let img =
-            image::RgbaImage::from_pixel(width, height, image::Rgba([32, 64, 128, 255]));
+        let img = image::RgbaImage::from_pixel(width, height, image::Rgba([32, 64, 128, 255]));
         let mut buf = Vec::new();
         let mut cur = std::io::Cursor::new(&mut buf);
         img.write_to(&mut cur, image::ImageFormat::Png)
@@ -651,7 +656,10 @@ pub(crate) mod tests {
             .expect("extract")
             .expect("present");
         let parsed: Value = serde_json::from_str(&payload).expect("decoded JSON");
-        assert!(parsed.is_object(), "decoded payload should be a JSON object");
+        assert!(
+            parsed.is_object(),
+            "decoded payload should be a JSON object"
+        );
     }
 
     #[test]
@@ -659,8 +667,8 @@ pub(crate) mod tests {
         // Sign with LocalJacsProvider, verify with EmbeddedJacsProvider, both
         // pointed at the same fixture config. Proves trait-impl parity.
         let (temp_dir, config_path) = write_temp_fixture_config();
-        let local = LocalJacsProvider::from_config_path(Some(&config_path), None)
-            .expect("local provider");
+        let local =
+            LocalJacsProvider::from_config_path(Some(&config_path), None).expect("local provider");
         let shared = LoadedSharedAgent::load_from_config_path(&config_path).expect("shared");
         let embedded = shared.embedded_provider().expect("embedded provider");
 

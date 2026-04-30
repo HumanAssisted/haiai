@@ -20,7 +20,10 @@ impl HaiMcpServer {
     }
 
     fn combined_tools(&self) -> Vec<Tool> {
-        let mut tools = JacsMcpServer::tools();
+        let mut tools: Vec<Tool> = JacsMcpServer::tools()
+            .into_iter()
+            .filter(|tool| tool.name != "jacs_memory_save")
+            .collect();
         tools.extend(hai_tools::definitions());
         tools
     }
@@ -68,6 +71,13 @@ impl ServerHandler for HaiMcpServer {
         request: CallToolRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
+        if request.name.as_ref() == "jacs_memory_save" {
+            return Err(McpError::invalid_request(
+                "jacs_memory_save is hidden in hai-mcp; use hai_save_memory",
+                None,
+            ));
+        }
+
         if hai_tools::has_tool(request.name.as_ref()) {
             let name = request.name.to_string();
             return hai_tools::dispatch(&self.context, &name, request.arguments).await;
