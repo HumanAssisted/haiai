@@ -19,6 +19,7 @@ use tokio::sync::RwLock;
 use std::path::Path;
 
 use haiai::client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
+use haiai::document_store::build_document_provider;
 use haiai::error::HaiError;
 use haiai::jacs::{
     media_verify_result_to_json, verify_text_result_to_json, JacsDocumentProvider,
@@ -26,7 +27,6 @@ use haiai::jacs::{
     VerifyImageOptions, VerifyTextOptions,
 };
 use haiai::jacs_local::LocalJacsProvider;
-use haiai::jacs_remote::{RemoteJacsProvider, RemoteJacsProviderOptions};
 use std::path::PathBuf;
 
 // =============================================================================
@@ -255,16 +255,14 @@ pub struct HaiClientWrapper {
     /// fallback was used.
     ///
     /// The 20 doc-store methods (`save_memory`, `store_document`, etc.) need
-    /// a `RemoteJacsProvider<LocalJacsProvider>` that holds the agent's
-    /// signing material. Rather than try to share the inner provider with
-    /// `HaiClient` (which owns it as a `Box<dyn JacsMediaProvider>`), we
-    /// rebuild a fresh `RemoteJacsProvider` per call from the cached path —
-    /// matching the existing CLI / MCP `build_remote_provider` helpers
-    /// (`rust/haiai-cli/src/main.rs:2746`, `rust/hai-mcp/src/hai_tools.rs:1224`).
+    /// a routed document provider that holds the agent's signing material.
+    /// Rather than try to share the inner provider with `HaiClient` (which
+    /// owns it as a `Box<dyn JacsMediaProvider>`), we rebuild a fresh routed
+    /// provider per call from the cached path.
     jacs_config_path: Option<PathBuf>,
     /// Base URL passed to the inner `HaiClient` and reused when constructing
-    /// the per-call `RemoteJacsProvider` for doc-store operations. Stored
-    /// because `HaiClient` does not re-expose this through its public API.
+    /// the per-call remote provider for doc-store operations. Stored because
+    /// `HaiClient` does not re-expose this through its public API.
     base_url: String,
 }
 
@@ -1381,21 +1379,17 @@ impl HaiClientWrapper {
     // =========================================================================
     // JACS Document Store (20 methods)
     //
-    // These wrap `RemoteJacsProvider<LocalJacsProvider>` so the language
-    // bindings (haiipy, haiinpm, haiigo) can hit `/api/v1/records` with the
-    // same wire shape as the CLI / MCP server. Each public method is a
+    // These wrap the shared routed document provider so the language bindings
+    // (haiipy, haiinpm, haiigo) follow the same local/remote storage decision
+    // as the CLI / MCP server. Each public method is a
     // 2-line shim: build the per-call provider via `build_doc_store()`, then
     // delegate to the matching `*_with` associated function. The `*_with`
     // helpers are `pub(crate)` so unit tests can call them directly with a
-    // `RemoteJacsProvider<StaticJacsProvider>` (no on-disk JACS config
-    // required).
+    // trait object backed by a test provider (no on-disk JACS config required).
     //
     // The sync trait calls run inline inside the async wrappers — matching
     // `rust/hai-mcp/src/hai_tools.rs::call_save_memory` and
-    // `rust/haiai-cli/src/main.rs` — because `RemoteJacsProvider::block_on`
-    // uses `tokio::task::block_in_place`, which is safe on the multi-thread
-    // runtime that haiipy / haiinpm / haiigo all build with `new_multi_thread`.
-    // No `spawn_blocking` indirection.
+    // `rust/haiai-cli/src/main.rs`; no `spawn_blocking` indirection.
     //
     // Return-type convention:
     // - Key-returning methods return `String`.
@@ -1410,34 +1404,24 @@ impl HaiClientWrapper {
     // - `()` for `remove_document`.
     // =========================================================================
 
-    /// Build a fresh `RemoteJacsProvider<LocalJacsProvider>` from the cached
-    /// `jacs_config_path` and `base_url`.
-    ///
-    /// Mirrors `build_remote_provider` in `rust/haiai-cli/src/main.rs:2746`
-    /// and `rust/hai-mcp/src/hai_tools.rs:1224`. Per-call construction keeps
-    /// ownership trivial — `LocalJacsProvider` is not `Clone`, and each
-    /// `RemoteJacsProvider` instance owns its own `reqwest::Client`.
-    fn build_doc_store(&self) -> HaiBindingResult<RemoteJacsProvider<LocalJacsProvider>> {
+    /// Build a fresh routed document provider from the cached
+    /// `jacs_config_path`, storage config, and `base_url`.
+    fn build_doc_store(&self) -> HaiBindingResult<Box<dyn JacsDocumentProvider>> {
         let path = self.jacs_config_path.as_deref().ok_or_else(|| {
             HaiBindingError::new(
                 ErrorKind::ProviderError,
                 "jacs_config_path required for document-store operations",
             )
         })?;
-        let local = LocalJacsProvider::from_config_path(Some(path), None).map_err(|e| {
+        build_document_provider(Some(path), None, Some(self.base_url.clone())).map_err(|e| {
             HaiBindingError::new(
                 ErrorKind::ConfigFailed,
-                format!("failed to load JACS config from {}: {e}", path.display()),
+                format!(
+                    "failed to build document provider from {}: {e}",
+                    path.display()
+                ),
             )
-        })?;
-        RemoteJacsProvider::new(
-            local,
-            RemoteJacsProviderOptions {
-                base_url: self.base_url.clone(),
-                ..RemoteJacsProviderOptions::default()
-            },
-        )
-        .map_err(HaiBindingError::from)
+        })
     }
 
     // ---- 13 trait CRUD/query methods ----
@@ -1446,30 +1430,33 @@ impl HaiClientWrapper {
     /// the document key (`id:version`).
     pub async fn store_document(&self, signed_json: String) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::store_document_with(&store, signed_json)
+        Self::store_document_with(store.as_ref(), signed_json)
     }
 
-    pub(crate) fn store_document_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn store_document_with(
+        store: &dyn JacsDocumentProvider,
         signed_json: String,
     ) -> HaiBindingResult<String> {
-        JacsDocumentProvider::store_document(store, &signed_json).map_err(HaiBindingError::from)
+        store
+            .store_document(&signed_json)
+            .map_err(HaiBindingError::from)
     }
 
     /// Sign and store a JSON value in one call. Returns the `SignedDocument`
     /// (key + signed JSON) JSON-serialised.
     pub async fn sign_and_store(&self, data_json: String) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::sign_and_store_with(&store, data_json)
+        Self::sign_and_store_with(store.as_ref(), data_json)
     }
 
-    pub(crate) fn sign_and_store_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn sign_and_store_with(
+        store: &dyn JacsDocumentProvider,
         data_json: String,
     ) -> HaiBindingResult<String> {
         let value: Value = serde_json::from_str(&data_json)?;
-        let signed =
-            JacsDocumentProvider::sign_and_store(store, &value).map_err(HaiBindingError::from)?;
+        let signed = store
+            .sign_and_store(&value)
+            .map_err(HaiBindingError::from)?;
         Ok(serde_json::to_string(&signed)?)
     }
 
@@ -1477,40 +1464,43 @@ impl HaiClientWrapper {
     /// envelope JSON.
     pub async fn get_document(&self, key: String) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::get_document_with(&store, key)
+        Self::get_document_with(store.as_ref(), key)
     }
 
-    pub(crate) fn get_document_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn get_document_with(
+        store: &dyn JacsDocumentProvider,
         key: String,
     ) -> HaiBindingResult<String> {
-        JacsDocumentProvider::get_document(store, &key).map_err(HaiBindingError::from)
+        store.get_document(&key).map_err(HaiBindingError::from)
     }
 
     /// Get the latest version of a document by id.
     pub async fn get_latest_document(&self, doc_id: String) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::get_latest_document_with(&store, doc_id)
+        Self::get_latest_document_with(store.as_ref(), doc_id)
     }
 
-    pub(crate) fn get_latest_document_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn get_latest_document_with(
+        store: &dyn JacsDocumentProvider,
         doc_id: String,
     ) -> HaiBindingResult<String> {
-        JacsDocumentProvider::get_latest_document(store, &doc_id).map_err(HaiBindingError::from)
+        store
+            .get_latest_document(&doc_id)
+            .map_err(HaiBindingError::from)
     }
 
     /// List all versions of a document. Returns a JSON array of keys.
     pub async fn get_document_versions(&self, doc_id: String) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::get_document_versions_with(&store, doc_id)
+        Self::get_document_versions_with(store.as_ref(), doc_id)
     }
 
-    pub(crate) fn get_document_versions_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn get_document_versions_with(
+        store: &dyn JacsDocumentProvider,
         doc_id: String,
     ) -> HaiBindingResult<String> {
-        let keys = JacsDocumentProvider::get_document_versions(store, &doc_id)
+        let keys = store
+            .get_document_versions(&doc_id)
             .map_err(HaiBindingError::from)?;
         Ok(serde_json::to_string(&keys)?)
     }
@@ -1519,14 +1509,15 @@ impl HaiClientWrapper {
     /// array of keys.
     pub async fn list_documents(&self, jacs_type: Option<String>) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::list_documents_with(&store, jacs_type)
+        Self::list_documents_with(store.as_ref(), jacs_type)
     }
 
-    pub(crate) fn list_documents_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn list_documents_with(
+        store: &dyn JacsDocumentProvider,
         jacs_type: Option<String>,
     ) -> HaiBindingResult<String> {
-        let keys = JacsDocumentProvider::list_documents(store, jacs_type.as_deref())
+        let keys = store
+            .list_documents(jacs_type.as_deref())
             .map_err(HaiBindingError::from)?;
         Ok(serde_json::to_string(&keys)?)
     }
@@ -1534,14 +1525,14 @@ impl HaiClientWrapper {
     /// Tombstone a document by key. Returns `()` on success.
     pub async fn remove_document(&self, key: String) -> HaiBindingResult<()> {
         let store = self.build_doc_store()?;
-        Self::remove_document_with(&store, key)
+        Self::remove_document_with(store.as_ref(), key)
     }
 
-    pub(crate) fn remove_document_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn remove_document_with(
+        store: &dyn JacsDocumentProvider,
         key: String,
     ) -> HaiBindingResult<()> {
-        JacsDocumentProvider::remove_document(store, &key).map_err(HaiBindingError::from)
+        store.remove_document(&key).map_err(HaiBindingError::from)
     }
 
     /// Update a document, creating a new signed version. Returns the
@@ -1552,15 +1543,16 @@ impl HaiClientWrapper {
         signed_json: String,
     ) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::update_document_with(&store, doc_id, signed_json)
+        Self::update_document_with(store.as_ref(), doc_id, signed_json)
     }
 
-    pub(crate) fn update_document_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn update_document_with(
+        store: &dyn JacsDocumentProvider,
         doc_id: String,
         signed_json: String,
     ) -> HaiBindingResult<String> {
-        let updated = JacsDocumentProvider::update_document(store, &doc_id, &signed_json)
+        let updated = store
+            .update_document(&doc_id, &signed_json)
             .map_err(HaiBindingError::from)?;
         Ok(serde_json::to_string(&updated)?)
     }
@@ -1575,16 +1567,17 @@ impl HaiClientWrapper {
         offset: usize,
     ) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::search_documents_with(&store, query, limit, offset)
+        Self::search_documents_with(store.as_ref(), query, limit, offset)
     }
 
-    pub(crate) fn search_documents_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn search_documents_with(
+        store: &dyn JacsDocumentProvider,
         query: String,
         limit: usize,
         offset: usize,
     ) -> HaiBindingResult<String> {
-        let results = JacsDocumentProvider::search_documents(store, &query, limit, offset)
+        let results = store
+            .search_documents(&query, limit, offset)
             .map_err(HaiBindingError::from)?;
         Ok(serde_json::to_string(&results)?)
     }
@@ -1597,16 +1590,17 @@ impl HaiClientWrapper {
         offset: usize,
     ) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::query_by_type_with(&store, doc_type, limit, offset)
+        Self::query_by_type_with(store.as_ref(), doc_type, limit, offset)
     }
 
-    pub(crate) fn query_by_type_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn query_by_type_with(
+        store: &dyn JacsDocumentProvider,
         doc_type: String,
         limit: usize,
         offset: usize,
     ) -> HaiBindingResult<String> {
-        let keys = JacsDocumentProvider::query_by_type(store, &doc_type, limit, offset)
+        let keys = store
+            .query_by_type(&doc_type, limit, offset)
             .map_err(HaiBindingError::from)?;
         Ok(serde_json::to_string(&keys)?)
     }
@@ -1622,17 +1616,18 @@ impl HaiClientWrapper {
         offset: usize,
     ) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::query_by_field_with(&store, field, value, limit, offset)
+        Self::query_by_field_with(store.as_ref(), field, value, limit, offset)
     }
 
-    pub(crate) fn query_by_field_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn query_by_field_with(
+        store: &dyn JacsDocumentProvider,
         field: String,
         value: String,
         limit: usize,
         offset: usize,
     ) -> HaiBindingResult<String> {
-        let keys = JacsDocumentProvider::query_by_field(store, &field, &value, limit, offset)
+        let keys = store
+            .query_by_field(&field, &value, limit, offset)
             .map_err(HaiBindingError::from)?;
         Ok(serde_json::to_string(&keys)?)
     }
@@ -1646,16 +1641,17 @@ impl HaiClientWrapper {
         offset: usize,
     ) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::query_by_agent_with(&store, agent_id, limit, offset)
+        Self::query_by_agent_with(store.as_ref(), agent_id, limit, offset)
     }
 
-    pub(crate) fn query_by_agent_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn query_by_agent_with(
+        store: &dyn JacsDocumentProvider,
         agent_id: String,
         limit: usize,
         offset: usize,
     ) -> HaiBindingResult<String> {
-        let keys = JacsDocumentProvider::query_by_agent(store, &agent_id, limit, offset)
+        let keys = store
+            .query_by_agent(&agent_id, limit, offset)
             .map_err(HaiBindingError::from)?;
         Ok(serde_json::to_string(&keys)?)
     }
@@ -1664,14 +1660,15 @@ impl HaiClientWrapper {
     /// `StorageCapabilities` JSON-serialised.
     pub async fn storage_capabilities(&self) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::storage_capabilities_with(&store)
+        Self::storage_capabilities_with(store.as_ref())
     }
 
-    pub(crate) fn storage_capabilities_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn storage_capabilities_with(
+        store: &dyn JacsDocumentProvider,
     ) -> HaiBindingResult<String> {
-        let caps =
-            JacsDocumentProvider::storage_capabilities(store).map_err(HaiBindingError::from)?;
+        let caps = store
+            .storage_capabilities()
+            .map_err(HaiBindingError::from)?;
         Ok(serde_json::to_string(&caps)?)
     }
 
@@ -1681,51 +1678,55 @@ impl HaiClientWrapper {
     /// reads `MEMORY.md` from CWD. Returns the record key.
     pub async fn save_memory(&self, content: Option<String>) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::save_memory_with(&store, content)
+        Self::save_memory_with(store.as_ref(), content)
     }
 
-    pub(crate) fn save_memory_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn save_memory_with(
+        store: &dyn JacsDocumentProvider,
         content: Option<String>,
     ) -> HaiBindingResult<String> {
-        JacsDocumentProvider::save_memory(store, content.as_deref()).map_err(HaiBindingError::from)
+        store
+            .save_memory(content.as_deref())
+            .map_err(HaiBindingError::from)
     }
 
     /// Sign and store a `SOUL.md` record. Mirror of `save_memory`.
     pub async fn save_soul(&self, content: Option<String>) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::save_soul_with(&store, content)
+        Self::save_soul_with(store.as_ref(), content)
     }
 
-    pub(crate) fn save_soul_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn save_soul_with(
+        store: &dyn JacsDocumentProvider,
         content: Option<String>,
     ) -> HaiBindingResult<String> {
-        JacsDocumentProvider::save_soul(store, content.as_deref()).map_err(HaiBindingError::from)
+        store
+            .save_soul(content.as_deref())
+            .map_err(HaiBindingError::from)
     }
 
     /// Fetch the latest MEMORY record's signed envelope JSON.
     pub async fn get_memory(&self) -> HaiBindingResult<Option<String>> {
         let store = self.build_doc_store()?;
-        Self::get_memory_with(&store)
+        Self::get_memory_with(store.as_ref())
     }
 
-    pub(crate) fn get_memory_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn get_memory_with(
+        store: &dyn JacsDocumentProvider,
     ) -> HaiBindingResult<Option<String>> {
-        JacsDocumentProvider::get_memory(store).map_err(HaiBindingError::from)
+        store.get_memory().map_err(HaiBindingError::from)
     }
 
     /// Fetch the latest SOUL record's signed envelope JSON.
     pub async fn get_soul(&self) -> HaiBindingResult<Option<String>> {
         let store = self.build_doc_store()?;
-        Self::get_soul_with(&store)
+        Self::get_soul_with(store.as_ref())
     }
 
-    pub(crate) fn get_soul_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn get_soul_with(
+        store: &dyn JacsDocumentProvider,
     ) -> HaiBindingResult<Option<String>> {
-        JacsDocumentProvider::get_soul(store).map_err(HaiBindingError::from)
+        store.get_soul().map_err(HaiBindingError::from)
     }
 
     // ---- 3 D9 methods (typed-content helpers) ----
@@ -1733,27 +1734,27 @@ impl HaiClientWrapper {
     /// Read a signed-text file and POST it as `text/markdown; profile=jacs-text-v1`.
     pub async fn store_text_file(&self, path: String) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::store_text_file_with(&store, path)
+        Self::store_text_file_with(store.as_ref(), path)
     }
 
-    pub(crate) fn store_text_file_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn store_text_file_with(
+        store: &dyn JacsDocumentProvider,
         path: String,
     ) -> HaiBindingResult<String> {
-        JacsDocumentProvider::store_text_file(store, &path).map_err(HaiBindingError::from)
+        store.store_text_file(&path).map_err(HaiBindingError::from)
     }
 
     /// Detect a signed image's format and POST it with the matching content type.
     pub async fn store_image_file(&self, path: String) -> HaiBindingResult<String> {
         let store = self.build_doc_store()?;
-        Self::store_image_file_with(&store, path)
+        Self::store_image_file_with(store.as_ref(), path)
     }
 
-    pub(crate) fn store_image_file_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn store_image_file_with(
+        store: &dyn JacsDocumentProvider,
         path: String,
     ) -> HaiBindingResult<String> {
-        JacsDocumentProvider::store_image_file(store, &path).map_err(HaiBindingError::from)
+        store.store_image_file(&path).map_err(HaiBindingError::from)
     }
 
     /// Fetch raw record bytes (any content type, no UTF-8 decode, no JSON
@@ -1761,14 +1762,14 @@ impl HaiClientWrapper {
     /// native byte type (Python `bytes`, Node `Buffer`, Go `[]byte`).
     pub async fn get_record_bytes(&self, key: String) -> HaiBindingResult<Vec<u8>> {
         let store = self.build_doc_store()?;
-        Self::get_record_bytes_with(&store, key)
+        Self::get_record_bytes_with(store.as_ref(), key)
     }
 
-    pub(crate) fn get_record_bytes_with<P: JacsProvider>(
-        store: &RemoteJacsProvider<P>,
+    pub(crate) fn get_record_bytes_with(
+        store: &dyn JacsDocumentProvider,
         key: String,
     ) -> HaiBindingResult<Vec<u8>> {
-        JacsDocumentProvider::get_record_bytes(store, &key).map_err(HaiBindingError::from)
+        store.get_record_bytes(&key).map_err(HaiBindingError::from)
     }
 }
 
@@ -1990,6 +1991,9 @@ pub async fn ws_close(handle_id: u64) -> HaiBindingResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn error_kind_variants_create() {
@@ -2425,6 +2429,36 @@ mod tests {
             "unexpected error message: {}",
             err.message
         );
+    }
+
+    #[test]
+    fn doc_store_honors_local_storage_without_http() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let (_temp, config_path) = write_temp_media_fixture_config();
+        let saved_storage = std::env::var("JACS_DEFAULT_STORAGE").ok();
+        std::env::set_var("JACS_DEFAULT_STORAGE", "fs");
+
+        let config = format!(
+            r#"{{"base_url": "http://127.0.0.1:9", "jacs_config_path": "{}", "jacs_id": "fixture"}}"#,
+            config_path.display()
+        );
+        let wrapper =
+            HaiClientWrapper::from_config_json_auto(&config).expect("wrapper with fixture config");
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let key = runtime
+            .block_on(wrapper.save_memory(Some("binding-core should save locally".to_string())))
+            .expect("save_memory should not require HTTP when storage is fs");
+
+        restore_env("JACS_DEFAULT_STORAGE", saved_storage);
+        assert!(key.contains(':'));
+    }
+
+    fn restore_env(key: &str, saved: Option<String>) {
+        if let Some(value) = saved {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
     }
 
     #[test]
@@ -2924,6 +2958,7 @@ mod tests {
                 .expect("parse fixture");
 
         let temp_dir = tempfile::tempdir().expect("tempdir");
+        let temp_root = temp_dir.path().canonicalize().expect("canonical tempdir");
 
         // Copy keys
         let source_key_dir = value
@@ -2937,7 +2972,7 @@ mod tests {
                 }
             })
             .expect("key dir");
-        let temp_key_dir = temp_dir.path().join("keys");
+        let temp_key_dir = temp_root.join("keys");
         std::fs::create_dir_all(&temp_key_dir).expect("temp key dir");
         for entry in std::fs::read_dir(&source_key_dir).expect("read keys") {
             let entry = entry.expect("key entry");
@@ -2956,7 +2991,7 @@ mod tests {
                 }
             })
             .expect("data dir");
-        let temp_data_dir = temp_dir.path().join("data");
+        let temp_data_dir = temp_root.join("data");
         fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
             std::fs::create_dir_all(dst).expect("create dst");
             for entry in std::fs::read_dir(src).expect("read src") {
@@ -2976,7 +3011,7 @@ mod tests {
         value["jacs_data_directory"] = Value::String(temp_data_dir.to_string_lossy().into_owned());
         value["jacs_key_directory"] = Value::String(temp_key_dir.to_string_lossy().into_owned());
 
-        let config_path = temp_dir.path().join("media-binding.config.json");
+        let config_path = temp_root.join("media-binding.config.json");
         std::fs::write(
             &config_path,
             serde_json::to_vec_pretty(&value).expect("serialize config"),

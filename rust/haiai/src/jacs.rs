@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use base64::Engine;
-use serde_json::Value;
+use serde_json::{json, Value};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -28,14 +28,14 @@ use crate::types::{
 // VerifyTextResult / SignatureEntry / SignatureStatus also lack Serde derives;
 // binding-core converts them to a JSON envelope for FFI transport.
 #[cfg(feature = "jacs-crate")]
-pub use jacs::simple::types::{
-    MediaVerificationResult, MediaVerifyStatus, SignImageOptions, SignTextOptions,
-    SignTextOutcome, SignedMedia, VerifyImageOptions,
-};
-#[cfg(feature = "jacs-crate")]
 pub use jacs::inline::{
     SignatureEntry as TextSignatureEntry, SignatureStatus as TextSignatureStatus,
     VerifyOptions as VerifyTextOptions, VerifyTextResult,
+};
+#[cfg(feature = "jacs-crate")]
+pub use jacs::simple::types::{
+    MediaVerificationResult, MediaVerifyStatus, SignImageOptions, SignTextOptions, SignTextOutcome,
+    SignedMedia, VerifyImageOptions,
 };
 
 // =============================================================================
@@ -445,12 +445,7 @@ pub trait JacsDocumentProvider: JacsProvider {
     ) -> Result<DocSearchResults>;
 
     /// Query documents by `jacsType`.
-    fn query_by_type(
-        &self,
-        doc_type: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<String>>;
+    fn query_by_type(&self, doc_type: &str, limit: usize, offset: usize) -> Result<Vec<String>>;
 
     /// Query documents by field value.
     ///
@@ -473,12 +468,7 @@ pub trait JacsDocumentProvider: JacsProvider {
     ) -> Result<Vec<String>>;
 
     /// Query documents signed by a specific agent.
-    fn query_by_agent(
-        &self,
-        agent_id: &str,
-        limit: usize,
-        offset: usize,
-    ) -> Result<Vec<String>>;
+    fn query_by_agent(&self, agent_id: &str, limit: usize, offset: usize) -> Result<Vec<String>>;
 
     /// Report the capabilities of the configured storage backend.
     fn storage_capabilities(&self) -> Result<StorageCapabilities>;
@@ -487,40 +477,31 @@ pub trait JacsDocumentProvider: JacsProvider {
     // D5: MEMORY / SOUL convenience wrappers (Issue 003)
     //
     // These wrap the generic CRUD with a specific `jacsType` so the LLM caller
-    // and the CLI/MCP surfaces see them by name. Implementations that do not
-    // support typed records (e.g., `StaticJacsProvider`) inherit the default
-    // `Err("not supported")` shape — the Box<dyn JacsDocumentProvider> route
-    // works uniformly without a panic.
+    // and the CLI/MCP surfaces see them by name. The default implementation is
+    // the single D5 path for local and remote providers: sign typed JSON,
+    // store through the configured backend, and query latest by type.
     // =========================================================================
 
     /// Sign and store a MEMORY record. If `content` is `None` the implementation
     /// reads `MEMORY.md` from CWD. Returns the record key (`id:version`).
-    fn save_memory(&self, _content: Option<&str>) -> Result<String> {
-        Err(HaiError::Provider(
-            "save_memory: not implemented for this provider".to_string(),
-        ))
+    fn save_memory(&self, content: Option<&str>) -> Result<String> {
+        save_typed_document(self, "memory", content, "MEMORY.md")
     }
 
     /// Sign and store a SOUL record. Mirror of `save_memory`.
-    fn save_soul(&self, _content: Option<&str>) -> Result<String> {
-        Err(HaiError::Provider(
-            "save_soul: not implemented for this provider".to_string(),
-        ))
+    fn save_soul(&self, content: Option<&str>) -> Result<String> {
+        save_typed_document(self, "soul", content, "SOUL.md")
     }
 
     /// Fetch the latest MEMORY record's signed envelope JSON. `Ok(None)` when
     /// no memory record exists for the caller.
     fn get_memory(&self) -> Result<Option<String>> {
-        Err(HaiError::Provider(
-            "get_memory: not implemented for this provider".to_string(),
-        ))
+        get_typed_latest_document(self, "memory")
     }
 
     /// Fetch the latest SOUL record's signed envelope JSON. Mirror of `get_memory`.
     fn get_soul(&self) -> Result<Option<String>> {
-        Err(HaiError::Provider(
-            "get_soul: not implemented for this provider".to_string(),
-        ))
+        get_typed_latest_document(self, "soul")
     }
 
     // =========================================================================
@@ -553,6 +534,54 @@ pub trait JacsDocumentProvider: JacsProvider {
             "get_record_bytes: not implemented for this provider".to_string(),
         ))
     }
+}
+
+fn save_typed_document<P: JacsDocumentProvider + ?Sized>(
+    provider: &P,
+    jacs_type: &str,
+    content: Option<&str>,
+    default_filename: &str,
+) -> Result<String> {
+    let body = match content {
+        Some(s) => s.to_string(),
+        None => std::fs::read_to_string(default_filename)
+            .map_err(|e| HaiError::Provider(format!("read {}: {}", default_filename, e)))?,
+    };
+    tracing::info!(
+        operation = "save_typed_document",
+        jacs_type,
+        "saving typed JACS document"
+    );
+    let payload = json!({
+        "jacsType": jacs_type,
+        "body": body,
+    });
+    provider.sign_and_store(&payload).map(|doc| doc.key)
+}
+
+fn get_typed_latest_document<P: JacsDocumentProvider + ?Sized>(
+    provider: &P,
+    jacs_type: &str,
+) -> Result<Option<String>> {
+    tracing::info!(
+        operation = "get_typed_latest_document",
+        jacs_type,
+        "fetching latest typed JACS document"
+    );
+    let keys = provider.query_by_type(jacs_type, 1, 0)?;
+    if let Some(key) = keys.first() {
+        return provider.get_document(key).map(Some);
+    }
+
+    for key in provider.list_documents(None)? {
+        let doc = provider.get_document(&key)?;
+        let value: Value = serde_json::from_str(&doc)?;
+        if value.get("jacsType").and_then(Value::as_str) == Some(jacs_type) {
+            return Ok(Some(doc));
+        }
+    }
+
+    Ok(None)
 }
 
 // =============================================================================
@@ -668,7 +697,8 @@ pub trait JacsMediaProvider: JacsProvider {
     /// Verify the JACS signature embedded in an image. Returns a status
     /// discriminator (`Valid`, `HashMismatch`, `MissingSignature`, etc.) and
     /// the signer info when available.
-    fn verify_image(&self, path: &str, opts: VerifyImageOptions) -> Result<MediaVerificationResult>;
+    fn verify_image(&self, path: &str, opts: VerifyImageOptions)
+        -> Result<MediaVerificationResult>;
 
     /// Extract the JACS signature payload from a signed image without
     /// verifying it. `raw_payload = false` returns the decoded JSON string;
@@ -850,7 +880,11 @@ impl JacsMediaProvider for Box<dyn JacsMediaProvider> {
         (**self).sign_image(in_path, out_path, opts)
     }
 
-    fn verify_image(&self, path: &str, opts: VerifyImageOptions) -> Result<MediaVerificationResult> {
+    fn verify_image(
+        &self,
+        path: &str,
+        opts: VerifyImageOptions,
+    ) -> Result<MediaVerificationResult> {
         (**self).verify_image(path, opts)
     }
 
@@ -1072,15 +1106,17 @@ fn media_op_test_only_error(provider: &str, op: &str) -> HaiError {
 #[cfg(feature = "jacs-crate")]
 impl JacsMediaProvider for NoopJacsProvider {
     fn sign_text_file(&self, _path: &str, _opts: SignTextOptions) -> Result<SignTextOutcome> {
-        Err(media_op_test_only_error("NoopJacsProvider", "sign_text_file"))
+        Err(media_op_test_only_error(
+            "NoopJacsProvider",
+            "sign_text_file",
+        ))
     }
 
-    fn verify_text_file(
-        &self,
-        _path: &str,
-        _opts: VerifyTextOptions,
-    ) -> Result<VerifyTextResult> {
-        Err(media_op_test_only_error("NoopJacsProvider", "verify_text_file"))
+    fn verify_text_file(&self, _path: &str, _opts: VerifyTextOptions) -> Result<VerifyTextResult> {
+        Err(media_op_test_only_error(
+            "NoopJacsProvider",
+            "verify_text_file",
+        ))
     }
 
     fn sign_image(
@@ -1100,11 +1136,7 @@ impl JacsMediaProvider for NoopJacsProvider {
         Err(media_op_test_only_error("NoopJacsProvider", "verify_image"))
     }
 
-    fn extract_media_signature(
-        &self,
-        _path: &str,
-        _raw_payload: bool,
-    ) -> Result<Option<String>> {
+    fn extract_media_signature(&self, _path: &str, _raw_payload: bool) -> Result<Option<String>> {
         Err(media_op_test_only_error(
             "NoopJacsProvider",
             "extract_media_signature",
@@ -1121,11 +1153,7 @@ impl JacsMediaProvider for StaticJacsProvider {
         ))
     }
 
-    fn verify_text_file(
-        &self,
-        _path: &str,
-        _opts: VerifyTextOptions,
-    ) -> Result<VerifyTextResult> {
+    fn verify_text_file(&self, _path: &str, _opts: VerifyTextOptions) -> Result<VerifyTextResult> {
         Err(media_op_test_only_error(
             "StaticJacsProvider",
             "verify_text_file",
@@ -1152,11 +1180,7 @@ impl JacsMediaProvider for StaticJacsProvider {
         ))
     }
 
-    fn extract_media_signature(
-        &self,
-        _path: &str,
-        _raw_payload: bool,
-    ) -> Result<Option<String>> {
+    fn extract_media_signature(&self, _path: &str, _raw_payload: bool) -> Result<Option<String>> {
         Err(media_op_test_only_error(
             "StaticJacsProvider",
             "extract_media_signature",

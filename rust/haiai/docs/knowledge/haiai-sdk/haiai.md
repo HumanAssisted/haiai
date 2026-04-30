@@ -108,11 +108,11 @@ let verified = a2a.verify_artifact(&wrapped)?;
 | Priority | Method | Example |
 |----------|--------|---------|
 | 1 (highest) | `--storage` CLI flag | `haiai store-document --storage sqlite doc.json` |
-| 2 | `JACS_STORAGE` env var | `JACS_STORAGE=rusqlite haiai list-documents` |
-| 3 | `default_storage` in config | `"defaultStorage": "sqlite"` |
+| 2 | `JACS_DEFAULT_STORAGE` env var | `JACS_DEFAULT_STORAGE=rusqlite haiai list-documents` |
+| 3 | `jacs_default_storage` in config | `"jacs_default_storage": "sqlite"` |
 | 4 (lowest) | Default | `fs` (filesystem) |
 
-Available backends: `fs` (filesystem), `rusqlite`/`sqlite` (SQLite with fulltext search).
+Available local backends: `fs` (filesystem), `rusqlite`/`sqlite` (SQLite with fulltext search). The `remote` label is a haiai routed document-provider mode.
 
 ## Features
 

@@ -7,6 +7,8 @@ use serde_json::Value;
 
 use crate::error::{HaiError, Result};
 
+pub const DEFAULT_LOG_FILTER: &str = "info,rmcp=warn";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     pub jacs_agent_name: String,
@@ -136,8 +138,8 @@ pub fn resolve_storage_backend_label(label: &str) -> Result<String> {
 
 /// Resolve which storage backend to use with priority:
 /// 1. Explicit parameter (CLI `--storage` flag)
-/// 2. `JACS_STORAGE` env var
-/// 3. `default_storage` field in `jacs.config.json`
+/// 2. `JACS_DEFAULT_STORAGE` env var
+/// 3. `jacs_default_storage` field in `jacs.config.json`
 /// 4. `"fs"` default
 pub fn resolve_storage_backend(
     explicit: Option<&str>,
@@ -148,19 +150,22 @@ pub fn resolve_storage_backend(
         return resolve_storage_backend_label(label);
     }
 
-    // Priority 2: JACS_STORAGE env var
-    if let Ok(label) = env::var("JACS_STORAGE") {
+    // Priority 2: JACS_DEFAULT_STORAGE env var
+    if let Ok(label) = env::var("JACS_DEFAULT_STORAGE") {
         if !label.is_empty() {
             return resolve_storage_backend_label(&label);
         }
     }
 
-    // Priority 3: default_storage in config
+    // Priority 3: storage field in config
     let config_path_resolved = resolve_config_path(config_path);
     if config_path_resolved.is_file() {
         if let Ok(raw) = fs::read_to_string(&config_path_resolved) {
             if let Ok(data) = serde_json::from_str::<Value>(&raw) {
-                if let Some(label) = get_string(&data, &["default_storage", "defaultStorage"]) {
+                if let Some(label) = get_string(
+                    &data,
+                    &["jacs_default_storage", "default_storage", "defaultStorage"],
+                ) {
                     return resolve_storage_backend_label(&label);
                 }
             }
@@ -192,7 +197,10 @@ impl std::fmt::Display for StorageConfigSummary {
 /// This is safe for logging, CLI output, and error messages.
 /// It reports the backend label and its resolution source, but never
 /// exposes connection strings, passwords, or file system paths.
-pub fn redacted_display(explicit: Option<&str>, config_path: Option<&Path>) -> StorageConfigSummary {
+pub fn redacted_display(
+    explicit: Option<&str>,
+    config_path: Option<&Path>,
+) -> StorageConfigSummary {
     // Priority 1: explicit parameter
     if let Some(label) = explicit {
         return StorageConfigSummary {
@@ -201,12 +209,12 @@ pub fn redacted_display(explicit: Option<&str>, config_path: Option<&Path>) -> S
         };
     }
 
-    // Priority 2: JACS_STORAGE env var
-    if let Ok(label) = env::var("JACS_STORAGE") {
+    // Priority 2: JACS_DEFAULT_STORAGE env var
+    if let Ok(label) = env::var("JACS_DEFAULT_STORAGE") {
         if !label.is_empty() {
             return StorageConfigSummary {
                 backend: label,
-                source: "JACS_STORAGE env var",
+                source: "JACS_DEFAULT_STORAGE env var",
             };
         }
     }
@@ -216,7 +224,10 @@ pub fn redacted_display(explicit: Option<&str>, config_path: Option<&Path>) -> S
     if config_path_resolved.is_file() {
         if let Ok(raw) = fs::read_to_string(&config_path_resolved) {
             if let Ok(data) = serde_json::from_str::<Value>(&raw) {
-                if let Some(label) = get_string(&data, &["default_storage", "defaultStorage"]) {
+                if let Some(label) = get_string(
+                    &data,
+                    &["jacs_default_storage", "default_storage", "defaultStorage"],
+                ) {
                     return StorageConfigSummary {
                         backend: label,
                         source: "config file",
@@ -231,6 +242,30 @@ pub fn redacted_display(explicit: Option<&str>, config_path: Option<&Path>) -> S
         backend: "fs".to_string(),
         source: "default",
     }
+}
+
+/// Resolve the tracing filter with precedence: RUST_LOG, JACS config, default.
+#[cfg(feature = "jacs-crate")]
+pub fn resolve_log_filter(config_path: Option<&Path>) -> String {
+    if let Ok(filter) = env::var("RUST_LOG") {
+        if !filter.trim().is_empty() {
+            return filter;
+        }
+    }
+
+    let config_path_resolved = resolve_config_path(config_path);
+    if config_path_resolved.is_file() {
+        if let Ok(raw) = fs::read_to_string(&config_path_resolved) {
+            if let Ok(config) = serde_json::from_str::<jacs::config::Config>(&raw) {
+                let level = config.effective_log_level().trim();
+                if !level.is_empty() && level != "info" {
+                    return format!("{level},rmcp=warn");
+                }
+            }
+        }
+    }
+
+    DEFAULT_LOG_FILTER.to_string()
 }
 
 fn get_string(data: &Value, keys: &[&str]) -> Option<String> {
@@ -249,7 +284,7 @@ mod tests {
 
     use super::*;
 
-    /// Shared serialisation guard for tests that mutate `JACS_STORAGE` env var.
+    /// Shared serialisation guard for tests that mutate storage env vars.
     /// Without this, parallel test threads race and produce non-deterministic failures.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -292,7 +327,10 @@ mod tests {
         .expect("write config");
 
         let result = load_config(Some(&config_path));
-        assert!(result.is_err(), "missing jacs_agent_name should be an error");
+        assert!(
+            result.is_err(),
+            "missing jacs_agent_name should be an error"
+        );
         let err = format!("{}", result.unwrap_err());
         assert!(
             err.contains("jacsAgentName") || err.contains("agent_name"),
@@ -329,7 +367,8 @@ mod tests {
         )
         .expect("write config");
 
-        let cfg = load_config(Some(&config_path)).expect("should succeed with defaults for version and key_dir");
+        let cfg = load_config(Some(&config_path))
+            .expect("should succeed with defaults for version and key_dir");
         assert_eq!(cfg.jacs_agent_version, "1.0.0");
         assert_eq!(cfg.jacs_agent_name, "my-agent");
         assert_eq!(cfg.jacs_id, Some("agent-1".to_string()));
@@ -354,18 +393,74 @@ mod tests {
     }
 
     #[test]
-    fn resolve_storage_backend_env_var_remote() {
+    fn resolve_storage_backend_jacs_default_storage_env_var_remote() {
         let _guard = ENV_LOCK.lock().expect("env lock");
-        let saved = env::var("JACS_STORAGE").ok();
-        env::set_var("JACS_STORAGE", "remote");
-        let r = resolve_storage_backend(None, Some(Path::new("/nonexistent/path.json")))
-            .expect("ok");
-        if let Some(v) = saved {
-            env::set_var("JACS_STORAGE", v);
-        } else {
-            env::remove_var("JACS_STORAGE");
-        }
+        let saved_default = env::var("JACS_DEFAULT_STORAGE").ok();
+        let saved_legacy = env::var("JACS_STORAGE").ok();
+        env::set_var("JACS_DEFAULT_STORAGE", "remote");
+        env::set_var("JACS_STORAGE", "rusqlite");
+        let r =
+            resolve_storage_backend(None, Some(Path::new("/nonexistent/path.json"))).expect("ok");
+        restore_env("JACS_DEFAULT_STORAGE", saved_default);
+        restore_env("JACS_STORAGE", saved_legacy);
         assert_eq!(r, "remote");
+    }
+
+    #[test]
+    fn resolve_storage_backend_ignores_legacy_jacs_storage_env_var() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let saved_default = env::var("JACS_DEFAULT_STORAGE").ok();
+        let saved_legacy = env::var("JACS_STORAGE").ok();
+        env::remove_var("JACS_DEFAULT_STORAGE");
+        env::set_var("JACS_STORAGE", "remote");
+
+        let r =
+            resolve_storage_backend(None, Some(Path::new("/nonexistent/path.json"))).expect("ok");
+
+        restore_env("JACS_DEFAULT_STORAGE", saved_default);
+        restore_env("JACS_STORAGE", saved_legacy);
+        assert_eq!(r, "fs");
+    }
+
+    #[test]
+    fn resolve_storage_backend_reads_jacs_default_storage_config_key() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("jacs.config.json");
+        fs::write(
+            &config_path,
+            r#"{"jacs_default_storage": "remote", "default_storage": "fs", "jacsAgentName": "test"}"#,
+        )
+        .expect("write config");
+
+        let saved_default = env::var("JACS_DEFAULT_STORAGE").ok();
+        env::remove_var("JACS_DEFAULT_STORAGE");
+
+        let r = resolve_storage_backend(None, Some(&config_path)).expect("ok");
+
+        restore_env("JACS_DEFAULT_STORAGE", saved_default);
+        assert_eq!(r, "remote");
+    }
+
+    #[test]
+    fn redacted_display_uses_jacs_default_storage_env_source() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let saved = env::var("JACS_DEFAULT_STORAGE").ok();
+        env::set_var("JACS_DEFAULT_STORAGE", "remote");
+
+        let summary = redacted_display(None, Some(Path::new("/nonexistent/path.json")));
+
+        restore_env("JACS_DEFAULT_STORAGE", saved);
+        assert_eq!(summary.backend, "remote");
+        assert_eq!(summary.source, "JACS_DEFAULT_STORAGE env var");
+    }
+
+    fn restore_env(key: &str, saved: Option<String>) {
+        if let Some(v) = saved {
+            env::set_var(key, v);
+        } else {
+            env::remove_var(key);
+        }
     }
 
     #[test]
@@ -394,16 +489,14 @@ mod tests {
     #[test]
     fn redacted_display_default_fallback() {
         let _guard = ENV_LOCK.lock().expect("env lock");
-        let orig = env::var("JACS_STORAGE").ok();
-        env::remove_var("JACS_STORAGE");
+        let orig = env::var("JACS_DEFAULT_STORAGE").ok();
+        env::remove_var("JACS_DEFAULT_STORAGE");
 
         let summary = redacted_display(None, Some(Path::new("/nonexistent/path.json")));
         assert_eq!(summary.backend, "fs");
         assert_eq!(summary.source, "default");
 
-        if let Some(val) = orig {
-            env::set_var("JACS_STORAGE", val);
-        }
+        restore_env("JACS_DEFAULT_STORAGE", orig);
     }
 
     #[test]
@@ -417,16 +510,45 @@ mod tests {
         )
         .expect("write config");
 
-        let orig = env::var("JACS_STORAGE").ok();
-        env::remove_var("JACS_STORAGE");
+        let orig = env::var("JACS_DEFAULT_STORAGE").ok();
+        env::remove_var("JACS_DEFAULT_STORAGE");
 
         let summary = redacted_display(None, Some(&config_path));
         assert_eq!(summary.backend, "sqlite");
         assert_eq!(summary.source, "config file");
 
-        if let Some(val) = orig {
-            env::set_var("JACS_STORAGE", val);
-        }
+        restore_env("JACS_DEFAULT_STORAGE", orig);
+    }
+
+    #[test]
+    fn resolve_log_filter_rust_log_wins() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let saved = env::var("RUST_LOG").ok();
+        env::set_var("RUST_LOG", "trace,rmcp=debug");
+
+        let filter = resolve_log_filter(Some(Path::new("/nonexistent/path.json")));
+
+        restore_env("RUST_LOG", saved);
+        assert_eq!(filter, "trace,rmcp=debug");
+    }
+
+    #[test]
+    fn resolve_log_filter_reads_observability_logs_level() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let saved = env::var("RUST_LOG").ok();
+        env::remove_var("RUST_LOG");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("jacs.config.json");
+        fs::write(
+            &config_path,
+            r#"{"observability":{"logs":{"level":"debug"}}}"#,
+        )
+        .expect("write config");
+
+        let filter = resolve_log_filter(Some(&config_path));
+
+        restore_env("RUST_LOG", saved);
+        assert_eq!(filter, "debug,rmcp=warn");
     }
 
     #[test]
@@ -447,11 +569,8 @@ mod tests {
     fn load_config_agent_email_absent_is_none() {
         let temp = tempfile::tempdir().expect("tempdir");
         let config_path = temp.path().join("jacs.config.json");
-        fs::write(
-            &config_path,
-            r#"{"jacsAgentName": "bot", "jacsId": "a-1"}"#,
-        )
-        .expect("write config");
+        fs::write(&config_path, r#"{"jacsAgentName": "bot", "jacsId": "a-1"}"#)
+            .expect("write config");
 
         let cfg = load_config(Some(&config_path)).expect("load");
         assert_eq!(cfg.agent_email, None);

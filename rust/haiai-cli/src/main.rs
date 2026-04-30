@@ -2,10 +2,10 @@ use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use hai_mcp::{HaiMcpServer, HaiServerContext, LoadedSharedAgent};
 use haiai::{
-    CreateAgentOptions, CreateEmailTemplateOptions, HaiClient, HaiClientOptions,
-    JacsAgentLifecycle, JacsDocumentProvider, JacsProvider, ListEmailTemplatesOptions,
-    ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions, RemoteJacsProvider,
-    RemoteJacsProviderOptions, SearchOptions, SendEmailOptions, UpdateEmailTemplateOptions,
+    build_document_provider, CreateAgentOptions, CreateEmailTemplateOptions, HaiClient,
+    HaiClientOptions, JacsAgentLifecycle, JacsDocumentProvider, JacsProvider,
+    ListEmailTemplatesOptions, ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions,
+    SearchOptions, SendEmailOptions, UpdateEmailTemplateOptions,
 };
 use jacs_mcp::JacsMcpServer;
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
@@ -52,7 +52,7 @@ struct Cli {
     #[arg(long, global = true)]
     password_file: Option<String>,
 
-    /// Document storage backend: fs, rusqlite, sqlite
+    /// Document storage backend: fs, rusqlite, sqlite, remote
     #[arg(long, global = true)]
     storage: Option<String>,
 
@@ -485,7 +485,6 @@ enum Commands {
     // non-Rust callers (Python/Node/Go via shell) and LLMs invoking via CLI
     // can reach the same functionality the MCP layer exposes.
     // =========================================================================
-
     /// Sign and store a MEMORY record on hai-api (D5)
     Memory {
         #[command(subcommand)]
@@ -866,7 +865,10 @@ async fn upload_file_to_anthropic(
         .context("Files API request failed")?;
 
     let status = resp.status();
-    let body: serde_json::Value = resp.json().await.context("failed to parse Files API response")?;
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .context("failed to parse Files API response")?;
     if !status.is_success() {
         anyhow::bail!("Files API error ({}): {}", status, body);
     }
@@ -953,9 +955,7 @@ struct IdentityFiles {
 fn discover_identity_files() -> anyhow::Result<IdentityFiles> {
     let config_path = std::path::PathBuf::from("jacs.config.json");
     if !config_path.exists() {
-        anyhow::bail!(
-            "jacs.config.json not found in current directory. Run 'haiai init' first."
-        );
+        anyhow::bail!("jacs.config.json not found in current directory. Run 'haiai init' first.");
     }
 
     let config_content =
@@ -963,9 +963,7 @@ fn discover_identity_files() -> anyhow::Result<IdentityFiles> {
     let config: serde_json::Value =
         serde_json::from_str(&config_content).context("invalid JSON in jacs.config.json")?;
 
-    let key_dir_str = config["key_directory"]
-        .as_str()
-        .unwrap_or("./jacs_keys");
+    let key_dir_str = config["key_directory"].as_str().unwrap_or("./jacs_keys");
     let key_dir = std::path::PathBuf::from(key_dir_str);
     if !key_dir.exists() {
         anyhow::bail!(
@@ -990,8 +988,8 @@ fn discover_identity_files() -> anyhow::Result<IdentityFiles> {
         }
     }
 
-    let public_key_path =
-        public_key_path.ok_or_else(|| anyhow::anyhow!("no .pem file found in {}", key_dir.display()))?;
+    let public_key_path = public_key_path
+        .ok_or_else(|| anyhow::anyhow!("no .pem file found in {}", key_dir.display()))?;
     let private_key_path = private_key_path
         .ok_or_else(|| anyhow::anyhow!("no .pem.enc file found in {}", key_dir.display()))?;
 
@@ -1071,8 +1069,7 @@ fn read_deploy_state() -> anyhow::Result<DeployState> {
     let raw = std::fs::read_to_string(&path).context(
         ".haiai-deploy.json not found. Run 'haiai deploy anthropic' first or pass --agent-id.",
     )?;
-    let state: DeployState =
-        serde_json::from_str(&raw).context("invalid .haiai-deploy.json")?;
+    let state: DeployState = serde_json::from_str(&raw).context("invalid .haiai-deploy.json")?;
     Ok(state)
 }
 
@@ -1156,10 +1153,10 @@ fn ensure_agent_password(quiet: bool, password_file: Option<&str>) -> anyhow::Re
     }
     if !atty::is(atty::Stream::Stdin) {
         anyhow::bail!(
-                "JACS_PRIVATE_KEY_PASSWORD is not set. \
+            "JACS_PRIVATE_KEY_PASSWORD is not set. \
                 Set it to the password for your private key, pass --password-file /path/to/file, \
                 or run haiai from a terminal to be prompted."
-            );
+        );
     }
     eprintln!("Enter private key password:");
     let password = rpassword::read_password().context("failed to read password")?;
@@ -1184,8 +1181,7 @@ fn load_client() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
         client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
         ..Default::default()
     };
-    let mut client =
-        HaiClient::new(provider, options).context("failed to construct HaiClient")?;
+    let mut client = HaiClient::new(provider, options).context("failed to construct HaiClient")?;
     if let Some(email) = cached_email {
         client.set_agent_email(email);
     }
@@ -1204,17 +1200,14 @@ async fn load_client_with_email() -> anyhow::Result<HaiClient<LocalJacsProvider>
         client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
         ..Default::default()
     };
-    let mut client =
-        HaiClient::new(provider, options).context("failed to construct HaiClient")?;
+    let mut client = HaiClient::new(provider, options).context("failed to construct HaiClient")?;
 
     if let Some(email) = cached_email {
         client.set_agent_email(email);
     } else if let Ok(status) = client.get_email_status().await {
         if !status.email.is_empty() {
-            let write_provider = LocalJacsProvider::from_config_path(
-                Some(config_path.as_path()),
-                None,
-            );
+            let write_provider =
+                LocalJacsProvider::from_config_path(Some(config_path.as_path()), None);
             if let Ok(wp) = write_provider {
                 let _ = wp.update_config_email(&status.email);
             }
@@ -1224,12 +1217,12 @@ async fn load_client_with_email() -> anyhow::Result<HaiClient<LocalJacsProvider>
     Ok(client)
 }
 
-/// Load a local JACS provider with document storage configured.
-fn load_provider_with_storage(storage_flag: Option<&str>) -> anyhow::Result<LocalJacsProvider> {
-    let label = haiai::resolve_storage_backend(storage_flag, None)
-        .context("failed to resolve storage backend")?;
-    LocalJacsProvider::from_config_path(None, Some(&label))
-        .context("failed to load JACS agent with storage")
+/// Load the routed document provider selected by --storage, env, or config.
+fn load_document_provider(
+    storage_flag: Option<&str>,
+) -> anyhow::Result<Box<dyn JacsDocumentProvider>> {
+    build_document_provider(None, storage_flag, Some(hai_url()))
+        .context("failed to load routed JACS document provider")
 }
 
 /// Print a table of email messages in a consistent format.
@@ -1294,7 +1287,10 @@ async fn main() -> anyhow::Result<()> {
             if name_lower.starts_with('-') || name_lower.ends_with('-') {
                 anyhow::bail!("Invalid username '{}': must be 3-30 lowercase alphanumeric characters or hyphens, no leading/trailing hyphens.", name);
             }
-            if !name_lower.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+            if !name_lower
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            {
                 anyhow::bail!("Invalid username '{}': must be 3-30 lowercase alphanumeric characters or hyphens, no leading/trailing hyphens.", name);
             }
 
@@ -1306,7 +1302,10 @@ async fn main() -> anyhow::Result<()> {
                     );
                 }
                 let k = key.as_ref().unwrap();
-                if !k.starts_with("hk_") || k.len() != 67 || !k[3..].chars().all(|c| c.is_ascii_hexdigit()) {
+                if !k.starts_with("hk_")
+                    || k.len() != 67
+                    || !k[3..].chars().all(|c| c.is_ascii_hexdigit())
+                {
                     anyhow::bail!(
                         "Invalid registration key format. Keys start with 'hk_' followed by 64 hex characters."
                     );
@@ -1386,7 +1385,10 @@ async fn main() -> anyhow::Result<()> {
 
                 match client.register(&reg_options).await {
                     Ok(response) => {
-                        println!("Agent '{}' registered. Email: {}@hai.ai", name_lower, name_lower);
+                        println!(
+                            "Agent '{}' registered. Email: {}@hai.ai",
+                            name_lower, name_lower
+                        );
                         println!("  Registration ID: {}", response.agent_id);
                         // Persist the email address to config so future
                         // invocations skip the GET /email/status round-trip.
@@ -1419,11 +1421,11 @@ async fn main() -> anyhow::Result<()> {
                 use tracing_subscriber::layer::SubscriberExt;
                 use tracing_subscriber::util::SubscriberInitExt;
 
-                let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| "info,rmcp=warn".parse().unwrap());
+                let env_filter =
+                    tracing_subscriber::EnvFilter::try_new(haiai::resolve_log_filter(None))
+                        .unwrap_or_else(|_| haiai::DEFAULT_LOG_FILTER.parse().unwrap());
 
-                let stderr_layer = tracing_subscriber::fmt::layer()
-                    .with_writer(std::io::stderr);
+                let stderr_layer = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
 
                 let registry = tracing_subscriber::registry()
                     .with(env_filter)
@@ -1440,14 +1442,15 @@ async fn main() -> anyhow::Result<()> {
                         .with_writer(std::sync::Mutex::new(file));
                     registry.with(file_layer).init();
                 } else {
-                    registry.with(None::<tracing_subscriber::fmt::Layer<_>>).init();
+                    registry
+                        .with(None::<tracing_subscriber::fmt::Layer<_>>)
+                        .init();
                 };
             }
 
-            // Honor JACS_STORAGE env var and --storage / --storage-env flags for MCP document
-            // operations (PRD Section 5.2).
-            let storage_summary =
-                haiai::redacted_display(effective_storage.as_deref(), None);
+            // Honor JACS_DEFAULT_STORAGE env var and --storage / --storage-env flags for MCP
+            // document operations (PRD Section 5.2).
+            let storage_summary = haiai::redacted_display(effective_storage.as_deref(), None);
             tracing::info!(
                 backend = %storage_summary.backend,
                 source = storage_summary.source,
@@ -1462,8 +1465,12 @@ async fn main() -> anyhow::Result<()> {
             let fallback_jacs_id = provider.jacs_id().to_string();
             let default_config_path = Some(shared_agent.config_path().display().to_string());
 
-            let context =
-                HaiServerContext::from_process_env(fallback_jacs_id.clone(), default_config_path, provider);
+            let context = HaiServerContext::from_process_env_with_storage(
+                fallback_jacs_id.clone(),
+                default_config_path,
+                provider,
+                effective_storage.clone(),
+            );
             // Pre-populate the email cache from the config file so the MCP
             // skips the GET /email/status round-trip when email is known.
             if let Some(email) = shared_agent.agent_email() {
@@ -1662,9 +1669,9 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(2);
             }
 
-            let bytes = resp
-                .raw_email
-                .ok_or_else(|| anyhow::anyhow!("server reported available but returned no bytes"))?;
+            let bytes = resp.raw_email.ok_or_else(|| {
+                anyhow::anyhow!("server reported available but returned no bytes")
+            })?;
 
             if base64 {
                 use base64::Engine;
@@ -1688,10 +1695,7 @@ async fn main() -> anyhow::Result<()> {
 
         Commands::ListContacts => {
             let client = load_client_with_email().await?;
-            let contacts = client
-                .contacts()
-                .await
-                .context("list contacts failed")?;
+            let contacts = client.contacts().await.context("list contacts failed")?;
             if contacts.is_empty() {
                 println!("No contacts.");
             } else {
@@ -1722,7 +1726,10 @@ async fn main() -> anyhow::Result<()> {
             println!("  Email:       {}", status.email);
             println!("  Status:      {}", status.status);
             println!("  Tier:        {}", status.tier);
-            println!("  Daily Used:  {}/{}", status.daily_used, status.daily_limit);
+            println!(
+                "  Daily Used:  {}/{}",
+                status.daily_used, status.daily_limit
+            );
         }
 
         Commands::Update { set } => {
@@ -1817,7 +1824,9 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::Doctor => {
-            let provider = load_provider_with_storage(effective_storage.as_deref())?;
+            let provider = LocalJacsProvider::from_config_path(None, None)
+                .context("failed to load JACS agent from config")?;
+            let doc_provider = load_document_provider(effective_storage.as_deref())?;
 
             println!("Agent Diagnostics");
             println!("{}", "=".repeat(50));
@@ -1859,34 +1868,25 @@ async fn main() -> anyhow::Result<()> {
             println!("\nStorage");
             println!("{}", "-".repeat(50));
             println!("  Backend:    {}", storage_label);
-            println!(
-                "  Configured: {}",
-                if provider.has_document_service() {
-                    "yes"
-                } else {
-                    "no"
+            println!("  Configured: yes");
+            match doc_provider.storage_capabilities() {
+                Ok(caps) => {
+                    println!("  Fulltext:   {}", caps.fulltext);
+                    println!("  Vector:     {}", caps.vector);
+                    println!("  Pagination: {}", caps.pagination);
                 }
-            );
-            if provider.has_document_service() {
-                match provider.storage_capabilities() {
-                    Ok(caps) => {
-                        println!("  Fulltext:   {}", caps.fulltext);
-                        println!("  Vector:     {}", caps.vector);
-                        println!("  Pagination: {}", caps.pagination);
-                    }
-                    Err(e) => println!("  Capabilities: ERROR ({})", e),
-                }
+                Err(e) => println!("  Capabilities: ERROR ({})", e),
+            }
 
-                // Document count
-                match provider.list_documents(None) {
-                    Ok(docs) => println!("  Documents:  {}", docs.len()),
-                    Err(e) => println!("  Documents:  ERROR ({})", e),
-                }
+            // Document count
+            match doc_provider.list_documents(None) {
+                Ok(docs) => println!("  Documents:  {}", docs.len()),
+                Err(e) => println!("  Documents:  ERROR ({})", e),
             }
         }
 
         Commands::StoreDocument { path } => {
-            let provider = load_provider_with_storage(effective_storage.as_deref())?;
+            let provider = load_document_provider(effective_storage.as_deref())?;
             let content = if path == "-" {
                 use std::io::Read;
                 let mut buf = String::new();
@@ -1908,7 +1908,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::ListDocuments { doc_type } => {
-            let provider = load_provider_with_storage(effective_storage.as_deref())?;
+            let provider = load_document_provider(effective_storage.as_deref())?;
             let keys = provider
                 .list_documents(doc_type.as_deref())
                 .context("list_documents failed")?;
@@ -1923,7 +1923,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::SearchDocuments { query, limit } => {
-            let provider = load_provider_with_storage(effective_storage.as_deref())?;
+            let provider = load_document_provider(effective_storage.as_deref())?;
             let results = provider
                 .search_documents(&query, limit, 0)
                 .context("search failed")?;
@@ -1941,15 +1941,13 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Commands::GetDocument { key } => {
-            let provider = load_provider_with_storage(effective_storage.as_deref())?;
-            let json = provider
-                .get_document(&key)
-                .context("get_document failed")?;
+            let provider = load_document_provider(effective_storage.as_deref())?;
+            let json = provider.get_document(&key).context("get_document failed")?;
             println!("{}", json);
         }
 
         Commands::RemoveDocument { key } => {
-            let provider = load_provider_with_storage(effective_storage.as_deref())?;
+            let provider = load_document_provider(effective_storage.as_deref())?;
             provider
                 .remove_document(&key)
                 .context("remove_document failed")?;
@@ -2104,7 +2102,9 @@ async fn main() -> anyhow::Result<()> {
                         Some(p) => p,
                         None => {
                             if !atty::is(atty::Stream::Stdin) {
-                                anyhow::bail!("No password provided. Use --password or run from a terminal.");
+                                anyhow::bail!(
+                                    "No password provided. Use --password or run from a terminal."
+                                );
                             }
                             eprintln!("Enter password to store in keychain:");
                             rpassword::read_password().context("failed to read password")?
@@ -2117,19 +2117,16 @@ async fn main() -> anyhow::Result<()> {
                         .map_err(|e| anyhow::anyhow!("{e}"))?;
                     println!("Password stored in OS keychain.");
                 }
-                KeychainAction::Get => {
-                    match keychain::get_password(&agent_id) {
-                        Ok(Some(p)) => println!("{p}"),
-                        Ok(None) => {
-                            eprintln!("No password stored in OS keychain.");
-                            std::process::exit(1);
-                        }
-                        Err(e) => anyhow::bail!("Keychain error: {e}"),
+                KeychainAction::Get => match keychain::get_password(&agent_id) {
+                    Ok(Some(p)) => println!("{p}"),
+                    Ok(None) => {
+                        eprintln!("No password stored in OS keychain.");
+                        std::process::exit(1);
                     }
-                }
+                    Err(e) => anyhow::bail!("Keychain error: {e}"),
+                },
                 KeychainAction::Delete => {
-                    keychain::delete_password(&agent_id)
-                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                    keychain::delete_password(&agent_id).map_err(|e| anyhow::anyhow!("{e}"))?;
                     println!("Password deleted from OS keychain.");
                 }
                 KeychainAction::Status => {
@@ -2233,7 +2230,8 @@ async fn main() -> anyhow::Result<()> {
                         )
                         .await?;
                         let new_pw_id =
-                            upload_file_to_anthropic(&http_client, &api_key, password_tmp.path()).await?;
+                            upload_file_to_anthropic(&http_client, &api_key, password_tmp.path())
+                                .await?;
 
                         state.file_ids = DeployFileIds {
                             config: new_config_id,
@@ -2311,12 +2309,9 @@ async fn main() -> anyhow::Result<()> {
                         let password_tmp = write_deploy_password_tempfile(&password)?;
 
                         println!("Identity files uploaded:");
-                        let config_file_id = upload_file_to_anthropic(
-                            &http_client,
-                            &api_key,
-                            &identity.config_path,
-                        )
-                        .await?;
+                        let config_file_id =
+                            upload_file_to_anthropic(&http_client, &api_key, &identity.config_path)
+                                .await?;
                         println!("  Config:   {}", config_file_id);
                         let pub_file_id = upload_file_to_anthropic(
                             &http_client,
@@ -2333,7 +2328,8 @@ async fn main() -> anyhow::Result<()> {
                         .await?;
                         println!("  PrivKey:  {}", priv_file_id);
                         let pw_file_id =
-                            upload_file_to_anthropic(&http_client, &api_key, password_tmp.path()).await?;
+                            upload_file_to_anthropic(&http_client, &api_key, password_tmp.path())
+                                .await?;
                         println!("  Password: {}", pw_file_id);
 
                         let file_ids = DeployFileIds {
@@ -2356,15 +2352,14 @@ async fn main() -> anyhow::Result<()> {
                                 &env_config,
                             )
                             .await?;
-                            let eid = env_resp["id"]
-                                .as_str()
-                                .map(|s| s.to_string())
-                                .ok_or_else(|| {
+                            let eid = env_resp["id"].as_str().map(|s| s.to_string()).ok_or_else(
+                                || {
                                     anyhow::anyhow!(
                                         "Environment response missing 'id': {}",
                                         env_resp
                                     )
-                                })?;
+                                },
+                            )?;
                             println!("  Environment ID: {}", eid);
                             eid
                         };
@@ -2407,7 +2402,10 @@ async fn main() -> anyhow::Result<()> {
                             .context("failed to write .haiai-deploy.json")?;
                         println!("\nDeploy state saved to .haiai-deploy.json");
 
-                        println!("\nEnvironment: {} (haiai-{}-env)", resolved_env_id, agent_name);
+                        println!(
+                            "\nEnvironment: {} (haiai-{}-env)",
+                            resolved_env_id, agent_name
+                        );
                         println!("Agent:       {} ({})", resolved_agent_id, agent_name);
                         println!("Model:       {}", model_id);
                         println!(
@@ -2596,14 +2594,12 @@ async fn main() -> anyhow::Result<()> {
                     });
 
                     let http_client = reqwest::Client::new();
-                    let resp =
-                        anthropic_managed_post(&http_client, &api_key, &url, &body).await?;
+                    let resp = anthropic_managed_post(&http_client, &api_key, &url, &body).await?;
 
                     // Print the event response
                     println!(
                         "{}",
-                        serde_json::to_string_pretty(&resp)
-                            .unwrap_or_else(|_| resp.to_string())
+                        serde_json::to_string_pretty(&resp).unwrap_or_else(|_| resp.to_string())
                     );
                 }
             }
@@ -2624,8 +2620,7 @@ async fn main() -> anyhow::Result<()> {
             strict,
             json,
         } => {
-            let code =
-                media_cmds::handle_verify_text(&file, key_dir.as_deref(), strict, json)?;
+            let code = media_cmds::handle_verify_text(&file, key_dir.as_deref(), strict, json)?;
             std::process::exit(code);
         }
         Commands::SignImage {
@@ -2650,13 +2645,8 @@ async fn main() -> anyhow::Result<()> {
             robust,
             json,
         } => {
-            let code = media_cmds::handle_verify_image(
-                &file,
-                key_dir.as_deref(),
-                strict,
-                robust,
-                json,
-            )?;
+            let code =
+                media_cmds::handle_verify_image(&file, key_dir.as_deref(), strict, robust, json)?;
             std::process::exit(code);
         }
         Commands::ExtractMediaSignature { file, raw_payload } => {
@@ -2669,14 +2659,15 @@ async fn main() -> anyhow::Result<()> {
         Commands::Memory { command } => match command {
             MemoryCommands::Save { from, content } => {
                 let body = resolve_typed_body(content, from, "MEMORY.md")?;
-                let provider = build_remote_provider()?;
-                let key = JacsDocumentProvider::save_memory(&provider, Some(&body))
+                let provider = load_document_provider(effective_storage.as_deref())?;
+                let key = provider
+                    .save_memory(Some(&body))
                     .context("save_memory failed")?;
                 println!("MEMORY saved: {}", key);
             }
             MemoryCommands::Get => {
-                let provider = build_remote_provider()?;
-                match JacsDocumentProvider::get_memory(&provider).context("get_memory failed")? {
+                let provider = load_document_provider(effective_storage.as_deref())?;
+                match provider.get_memory().context("get_memory failed")? {
                     Some(envelope) => println!("{}", envelope),
                     None => {
                         eprintln!("No MEMORY record found.");
@@ -2688,14 +2679,15 @@ async fn main() -> anyhow::Result<()> {
         Commands::Soul { command } => match command {
             SoulCommands::Save { from, content } => {
                 let body = resolve_typed_body(content, from, "SOUL.md")?;
-                let provider = build_remote_provider()?;
-                let key = JacsDocumentProvider::save_soul(&provider, Some(&body))
+                let provider = load_document_provider(effective_storage.as_deref())?;
+                let key = provider
+                    .save_soul(Some(&body))
                     .context("save_soul failed")?;
                 println!("SOUL saved: {}", key);
             }
             SoulCommands::Get => {
-                let provider = build_remote_provider()?;
-                match JacsDocumentProvider::get_soul(&provider).context("get_soul failed")? {
+                let provider = load_document_provider(effective_storage.as_deref())?;
+                match provider.get_soul().context("get_soul failed")? {
                     Some(envelope) => println!("{}", envelope),
                     None => {
                         eprintln!("No SOUL record found.");
@@ -2706,23 +2698,25 @@ async fn main() -> anyhow::Result<()> {
         },
         Commands::Records { command } => match command {
             RecordsCommands::StoreText { path } => {
-                let provider = build_remote_provider()?;
-                let key = JacsDocumentProvider::store_text_file(&provider, &path)
+                let provider = load_document_provider(effective_storage.as_deref())?;
+                let key = provider
+                    .store_text_file(&path)
                     .context("store_text_file failed")?;
                 println!("Record stored: {}", key);
             }
             RecordsCommands::StoreImage { path } => {
-                let provider = build_remote_provider()?;
-                let key = JacsDocumentProvider::store_image_file(&provider, &path)
+                let provider = load_document_provider(effective_storage.as_deref())?;
+                let key = provider
+                    .store_image_file(&path)
                     .context("store_image_file failed")?;
                 println!("Record stored: {}", key);
             }
             RecordsCommands::GetBytes { key, out } => {
-                let provider = build_remote_provider()?;
-                let bytes = JacsDocumentProvider::get_record_bytes(&provider, &key)
+                let provider = load_document_provider(effective_storage.as_deref())?;
+                let bytes = provider
+                    .get_record_bytes(&key)
                     .context("get_record_bytes failed")?;
-                std::fs::write(&out, &bytes)
-                    .with_context(|| format!("failed to write {}", out))?;
+                std::fs::write(&out, &bytes).with_context(|| format!("failed to write {}", out))?;
                 println!("Wrote {} bytes to {}", bytes.len(), out);
             }
         },
@@ -2743,23 +2737,6 @@ fn resolve_typed_body(
     }
     let path = from.unwrap_or_else(|| default_filename.to_string());
     std::fs::read_to_string(&path).with_context(|| format!("failed to read {}", path))
-}
-
-/// Issue 005: construct a `RemoteJacsProvider<LocalJacsProvider>` from the local
-/// agent's signing material plus the configured `HAI_URL`. Mirrors the MCP
-/// helper from Issue 004.
-fn build_remote_provider() -> anyhow::Result<RemoteJacsProvider<LocalJacsProvider>> {
-    let local = LocalJacsProvider::from_config_path(None, None)
-        .context("failed to load JACS agent from config")?;
-    let provider = RemoteJacsProvider::new(
-        local,
-        RemoteJacsProviderOptions {
-            base_url: hai_url(),
-            ..RemoteJacsProviderOptions::default()
-        },
-    )
-    .context("failed to construct RemoteJacsProvider")?;
-    Ok(provider)
 }
 
 #[cfg(test)]
@@ -2834,8 +2811,7 @@ mod tests {
                     "Sub-subcommands of '{name}' in fixture but not in CLI: {:?}",
                     fixture_only_subs
                 );
-                let code_only_subs: Vec<&String> =
-                    actual_subs.difference(&fixture_subs).collect();
+                let code_only_subs: Vec<&String> = actual_subs.difference(&fixture_subs).collect();
                 assert!(
                     code_only_subs.is_empty(),
                     "Sub-subcommands of '{name}' in CLI but not in fixture: {:?}",
@@ -2998,12 +2974,21 @@ mod tests {
     #[test]
     fn parse_init_with_key_and_register() {
         let cli = Cli::parse_from([
-            "haiai", "init",
-            "--name", "myagent",
-            "--key", "hk_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+            "haiai",
+            "init",
+            "--name",
+            "myagent",
+            "--key",
+            "hk_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
         ]);
         match cli.command {
-            Commands::Init { name, key, register, domain, .. } => {
+            Commands::Init {
+                name,
+                key,
+                register,
+                domain,
+                ..
+            } => {
                 assert_eq!(name, "myagent");
                 assert!(key.is_some());
                 assert!(register); // default true
@@ -3015,13 +3000,14 @@ mod tests {
 
     #[test]
     fn parse_init_register_false_no_key() {
-        let cli = Cli::parse_from([
-            "haiai", "init",
-            "--name", "myagent",
-            "--register=false",
-        ]);
+        let cli = Cli::parse_from(["haiai", "init", "--name", "myagent", "--register=false"]);
         match cli.command {
-            Commands::Init { name, key, register, .. } => {
+            Commands::Init {
+                name,
+                key,
+                register,
+                ..
+            } => {
                 assert_eq!(name, "myagent");
                 assert!(key.is_none());
                 assert!(!register);
@@ -3033,10 +3019,14 @@ mod tests {
     #[test]
     fn parse_init_domain_optional() {
         let cli = Cli::parse_from([
-            "haiai", "init",
-            "--name", "myagent",
-            "--key", "hk_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
-            "--domain", "example.com",
+            "haiai",
+            "init",
+            "--name",
+            "myagent",
+            "--key",
+            "hk_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+            "--domain",
+            "example.com",
         ]);
         match cli.command {
             Commands::Init { domain, .. } => {
@@ -3117,10 +3107,7 @@ mod tests {
         ]);
         match cli.command {
             Commands::SendEmail {
-                cc,
-                bcc,
-                labels,
-                ..
+                cc, bcc, labels, ..
             } => {
                 assert_eq!(cc, vec!["a@hai.ai", "b@hai.ai"]);
                 assert_eq!(bcc, vec!["secret@hai.ai"]);
@@ -3226,8 +3213,7 @@ mod tests {
         let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/cli_command_parity.json");
         let raw = std::fs::read_to_string(&fixture_path).expect("read parity fixture");
-        let fixture: serde_json::Value =
-            serde_json::from_str(&raw).expect("parse parity fixture");
+        let fixture: serde_json::Value = serde_json::from_str(&raw).expect("parse parity fixture");
         let names: Vec<&str> = fixture["commands"]
             .as_array()
             .expect("commands array")
@@ -3255,8 +3241,7 @@ mod tests {
         let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/cli_command_parity.json");
         let raw = std::fs::read_to_string(&fixture_path).expect("read parity fixture");
-        let fixture: serde_json::Value =
-            serde_json::from_str(&raw).expect("parse parity fixture");
+        let fixture: serde_json::Value = serde_json::from_str(&raw).expect("parse parity fixture");
         let total = fixture["total_command_count"]
             .as_u64()
             .expect("total_command_count");
@@ -3386,7 +3371,9 @@ mod tests {
             "5",
         ]);
         match cli.command {
-            Commands::SearchMessages { q, from, to, limit, .. } => {
+            Commands::SearchMessages {
+                q, from, to, limit, ..
+            } => {
                 assert_eq!(q.as_deref(), Some("invoice"));
                 assert_eq!(from.as_deref(), Some("sender@hai.ai"));
                 assert_eq!(to.as_deref(), Some("me@hai.ai"));
@@ -3564,7 +3551,11 @@ mod tests {
     fn parse_get_raw_email_defaults() {
         let cli = Cli::parse_from(["haiai", "get-raw-email", "msg-1"]);
         match cli.command {
-            Commands::GetRawEmail { message_id, output, base64 } => {
+            Commands::GetRawEmail {
+                message_id,
+                output,
+                base64,
+            } => {
                 assert_eq!(message_id, "msg-1");
                 assert!(output.is_none());
                 assert!(!base64);
@@ -3583,7 +3574,11 @@ mod tests {
             "/tmp/out.eml",
         ]);
         match cli.command {
-            Commands::GetRawEmail { message_id, output, base64 } => {
+            Commands::GetRawEmail {
+                message_id,
+                output,
+                base64,
+            } => {
                 assert_eq!(message_id, "msg-2");
                 assert_eq!(output.unwrap().to_string_lossy(), "/tmp/out.eml");
                 assert!(!base64);
@@ -3596,7 +3591,11 @@ mod tests {
     fn parse_get_raw_email_base64_flag() {
         let cli = Cli::parse_from(["haiai", "get-raw-email", "msg-3", "--base64"]);
         match cli.command {
-            Commands::GetRawEmail { message_id, output, base64 } => {
+            Commands::GetRawEmail {
+                message_id,
+                output,
+                base64,
+            } => {
                 assert_eq!(message_id, "msg-3");
                 assert!(output.is_none());
                 assert!(base64);
@@ -3621,7 +3620,11 @@ mod tests {
             "/tmp/out.b64",
         ]);
         match cli.command {
-            Commands::GetRawEmail { message_id, output, base64 } => {
+            Commands::GetRawEmail {
+                message_id,
+                output,
+                base64,
+            } => {
                 assert_eq!(message_id, "msg-4");
                 assert_eq!(output.unwrap().to_string_lossy(), "/tmp/out.b64");
                 assert!(base64);
@@ -3633,7 +3636,10 @@ mod tests {
     #[test]
     fn parse_get_raw_email_missing_arg_fails() {
         let result = Cli::try_parse_from(["haiai", "get-raw-email"]);
-        assert!(result.is_err(), "get-raw-email without message_id should fail");
+        assert!(
+            result.is_err(),
+            "get-raw-email without message_id should fail"
+        );
     }
 
     #[test]
@@ -3886,12 +3892,7 @@ mod tests {
 
     #[test]
     fn parse_global_password_file_flag() {
-        let cli = Cli::parse_from([
-            "haiai",
-            "--password-file",
-            "/tmp/my-secret.txt",
-            "hello",
-        ]);
+        let cli = Cli::parse_from(["haiai", "--password-file", "/tmp/my-secret.txt", "hello"]);
         assert_eq!(cli.password_file.as_deref(), Some("/tmp/my-secret.txt"));
         assert!(matches!(cli.command, Commands::Hello));
     }
@@ -3963,40 +3964,36 @@ mod tests {
             .collect();
 
         // --- Extract fixture sections ---
-        let paired = fixture["paired"]
-            .as_array()
-            .expect("paired array");
-        let mcp_only = fixture["mcp_only"]
-            .as_array()
-            .expect("mcp_only array");
-        let cli_only = fixture["cli_only"]
-            .as_array()
-            .expect("cli_only array");
+        let paired = fixture["paired"].as_array().expect("paired array");
+        let mcp_only = fixture["mcp_only"].as_array().expect("mcp_only array");
+        let cli_only = fixture["cli_only"].as_array().expect("cli_only array");
 
         // Collect all MCP tools declared in the fixture (paired + mcp_only)
         let mut fixture_mcp_tools: HashSet<String> = HashSet::new();
         for entry in paired {
             fixture_mcp_tools.insert(
-                entry["mcp_tool"].as_str().expect("mcp_tool string").to_string(),
+                entry["mcp_tool"]
+                    .as_str()
+                    .expect("mcp_tool string")
+                    .to_string(),
             );
         }
         for entry in mcp_only {
-            fixture_mcp_tools.insert(
-                entry["name"].as_str().expect("name string").to_string(),
-            );
+            fixture_mcp_tools.insert(entry["name"].as_str().expect("name string").to_string());
         }
 
         // Collect all CLI commands declared in the fixture (paired + cli_only)
         let mut fixture_cli_commands: HashSet<String> = HashSet::new();
         for entry in paired {
             fixture_cli_commands.insert(
-                entry["cli_command"].as_str().expect("cli_command string").to_string(),
+                entry["cli_command"]
+                    .as_str()
+                    .expect("cli_command string")
+                    .to_string(),
             );
         }
         for entry in cli_only {
-            fixture_cli_commands.insert(
-                entry["name"].as_str().expect("name string").to_string(),
-            );
+            fixture_cli_commands.insert(entry["name"].as_str().expect("name string").to_string());
         }
 
         // --- Verify every paired MCP tool exists in real MCP ---
@@ -4040,8 +4037,7 @@ mod tests {
         }
 
         // --- Exhaustive coverage: no undeclared MCP tools ---
-        let undeclared_mcp: Vec<&String> =
-            real_mcp_tools.difference(&fixture_mcp_tools).collect();
+        let undeclared_mcp: Vec<&String> = real_mcp_tools.difference(&fixture_mcp_tools).collect();
         assert!(
             undeclared_mcp.is_empty(),
             "MCP tools exist but are not declared in mcp_cli_parity.json: {:?}\n\
@@ -4050,8 +4046,9 @@ mod tests {
         );
 
         // --- Exhaustive coverage: no undeclared CLI commands ---
-        let undeclared_cli: Vec<&String> =
-            real_cli_commands.difference(&fixture_cli_commands).collect();
+        let undeclared_cli: Vec<&String> = real_cli_commands
+            .difference(&fixture_cli_commands)
+            .collect();
         assert!(
             undeclared_cli.is_empty(),
             "CLI commands exist but are not declared in mcp_cli_parity.json: {:?}\n\
@@ -4060,16 +4057,16 @@ mod tests {
         );
 
         // --- No phantom entries in fixture ---
-        let phantom_mcp: Vec<&String> =
-            fixture_mcp_tools.difference(&real_mcp_tools).collect();
+        let phantom_mcp: Vec<&String> = fixture_mcp_tools.difference(&real_mcp_tools).collect();
         assert!(
             phantom_mcp.is_empty(),
             "mcp_cli_parity.json references MCP tools that don't exist: {:?}",
             phantom_mcp
         );
 
-        let phantom_cli: Vec<&String> =
-            fixture_cli_commands.difference(&real_cli_commands).collect();
+        let phantom_cli: Vec<&String> = fixture_cli_commands
+            .difference(&real_cli_commands)
+            .collect();
         assert!(
             phantom_cli.is_empty(),
             "mcp_cli_parity.json references CLI commands that don't exist: {:?}",
@@ -4371,7 +4368,10 @@ mod tests {
         let env = build_environment_config("test");
         let cargo = &env["config"]["packages"]["cargo"];
         assert!(
-            cargo.as_array().unwrap().contains(&serde_json::json!("haiai-cli")),
+            cargo
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("haiai-cli")),
             "environment must install haiai-cli via cargo"
         );
     }
@@ -4384,12 +4384,19 @@ mod tests {
             path.file_name().and_then(|s| s.to_str()),
             Some("haiai-deploy-pw.tmp")
         );
-        assert_eq!(std::fs::read_to_string(path).expect("read temp password"), "secret");
+        assert_eq!(
+            std::fs::read_to_string(path).expect("read temp password"),
+            "secret"
+        );
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(path).expect("metadata").permissions().mode() & 0o777;
+            let mode = std::fs::metadata(path)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777;
             assert_eq!(mode, 0o600);
         }
     }

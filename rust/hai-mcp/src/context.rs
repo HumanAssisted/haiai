@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex as StdMutex;
 
-use haiai::{HaiClient, HaiClientOptions, JacsProvider, LocalJacsProvider, NoopJacsProvider};
+use haiai::{
+    build_document_provider, resolve_storage_backend, HaiClient, HaiClientOptions,
+    JacsDocumentProvider, JacsProvider, LocalJacsProvider, NoopJacsProvider,
+};
 
 use crate::embedded_provider::EmbeddedJacsProvider;
 
@@ -16,6 +19,7 @@ pub struct HaiServerContext {
     base_url: String,
     fallback_jacs_id: String,
     default_config_path: Option<PathBuf>,
+    storage_override: Option<String>,
     embedded_provider: EmbeddedJacsProvider,
     cached_agent_state: StdMutex<BTreeMap<String, CachedAgentState>>,
 }
@@ -26,6 +30,20 @@ impl HaiServerContext {
         default_config_path: Option<String>,
         embedded_provider: EmbeddedJacsProvider,
     ) -> Self {
+        Self::from_process_env_with_storage(
+            fallback_jacs_id,
+            default_config_path,
+            embedded_provider,
+            None,
+        )
+    }
+
+    pub fn from_process_env_with_storage(
+        fallback_jacs_id: String,
+        default_config_path: Option<String>,
+        embedded_provider: EmbeddedJacsProvider,
+        storage_override: Option<String>,
+    ) -> Self {
         let base_url = normalize_base_url(
             &std::env::var("HAI_URL").unwrap_or_else(|_| haiai::DEFAULT_BASE_URL.to_string()),
         );
@@ -34,6 +52,7 @@ impl HaiServerContext {
             base_url,
             fallback_jacs_id,
             default_config_path,
+            storage_override,
             embedded_provider,
             cached_agent_state: StdMutex::new(BTreeMap::new()),
         }
@@ -96,9 +115,33 @@ impl HaiServerContext {
     }
 
     pub fn local_provider(&self, config_path: Option<&str>) -> Result<LocalJacsProvider, String> {
-        LocalJacsProvider::from_config_path(self.effective_config_path(config_path), None).map_err(|e| {
-            format!("failed to load local JACS agent; set JACS_CONFIG or pass config_path: {e}")
-        })
+        LocalJacsProvider::from_config_path(self.effective_config_path(config_path), None).map_err(
+            |e| {
+                format!("failed to load local JACS agent; set JACS_CONFIG or pass config_path: {e}")
+            },
+        )
+    }
+
+    pub fn document_provider(
+        &self,
+        config_path: Option<&str>,
+    ) -> Result<Box<dyn JacsDocumentProvider>, String> {
+        self.validate_embedded_config_path(config_path)?;
+        build_document_provider(
+            self.effective_config_path(config_path),
+            self.storage_override.as_deref(),
+            Some(self.resolve_base_url(None)?),
+        )
+        .map_err(|e| format!("failed to build routed JACS document provider: {e}"))
+    }
+
+    pub fn document_storage_label(&self, config_path: Option<&str>) -> Result<String, String> {
+        self.validate_embedded_config_path(config_path)?;
+        resolve_storage_backend(
+            self.storage_override.as_deref(),
+            self.effective_config_path(config_path),
+        )
+        .map_err(|e| format!("failed to resolve routed JACS document storage: {e}"))
     }
 
     pub fn client_with_provider<P: JacsProvider>(
@@ -118,9 +161,7 @@ impl HaiServerContext {
         .map_err(|e| e.to_string())
     }
 
-    /// Issue 004: exposed for the D5/D9 record-store tools, which build a
-    /// `RemoteJacsProvider` directly (not via `client_with_provider`) and need
-    /// the same startup-pinned base URL as the email path.
+    /// Exposed for tools that need the same startup-pinned base URL as the email path.
     pub fn resolve_base_url(&self, base_url_override: Option<&str>) -> Result<String, String> {
         let configured = normalize_base_url(&self.base_url);
         match base_url_override {
@@ -232,6 +273,7 @@ mod tests {
             base_url: normalize_base_url(base_url),
             fallback_jacs_id: "anonymous-agent".to_string(),
             default_config_path: default_config_path.map(PathBuf::from),
+            storage_override: None,
             embedded_provider: EmbeddedJacsProvider::testing("agent-123"),
             cached_agent_state: StdMutex::new(BTreeMap::new()),
         }
