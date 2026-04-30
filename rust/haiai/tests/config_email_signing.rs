@@ -26,11 +26,8 @@ struct TestPaths {
 impl TestPaths {
     fn new(label: &str) -> Self {
         let original_cwd = std::env::current_dir().expect("current dir");
-        let absolute_base = original_cwd.join(format!(
-            "target/config-email-{}-{}",
-            label,
-            Uuid::new_v4()
-        ));
+        let absolute_base =
+            original_cwd.join(format!("target/config-email-{}-{}", label, Uuid::new_v4()));
         fs::create_dir_all(&absolute_base).expect("create unique test base");
         std::env::set_current_dir(&absolute_base).expect("cd to test dir");
 

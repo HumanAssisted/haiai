@@ -64,8 +64,8 @@ async fn email_integration_lifecycle() {
     eprintln!("Created agent: id={}", create_result.agent_id);
 
     // Load the provider from the config that create_agent_with_options wrote.
-    let provider =
-        LocalJacsProvider::from_config_path(Some(config_path.as_path()), None).expect("load provider");
+    let provider = LocalJacsProvider::from_config_path(Some(config_path.as_path()), None)
+        .expect("load provider");
     let agent_json = provider.export_agent_json().expect("export agent json");
     let public_key_pem = provider.public_key_pem().expect("public key pem");
 

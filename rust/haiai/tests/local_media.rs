@@ -79,7 +79,8 @@ fn make_png(width: u32, height: u32) -> Vec<u8> {
     let img = image::RgbaImage::from_pixel(width, height, image::Rgba([32, 64, 128, 255]));
     let mut buf = Vec::new();
     let mut cur = std::io::Cursor::new(&mut buf);
-    img.write_to(&mut cur, image::ImageFormat::Png).expect("png encode");
+    img.write_to(&mut cur, image::ImageFormat::Png)
+        .expect("png encode");
     buf
 }
 
@@ -123,9 +124,7 @@ fn make_webp() -> Vec<u8> {
 
 #[test]
 fn local_provider_sign_text_round_trip() {
-    let _lock = MEDIA_TEST_LOCK
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
+    let _lock = MEDIA_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let env = AgentEnv::new();
     let path = env.write("hello.md", b"# Hello\n");
     let provider = env.provider();
@@ -153,9 +152,7 @@ fn local_provider_sign_text_round_trip() {
 
 #[test]
 fn local_provider_sign_text_tampered_returns_hash_mismatch() {
-    let _lock = MEDIA_TEST_LOCK
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
+    let _lock = MEDIA_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let env = AgentEnv::new();
     let path = env.write("tamper.md", b"# Hello\n");
     let provider = env.provider();
@@ -215,20 +212,20 @@ fn assert_image_round_trip(env: &AgentEnv, in_name: &str, out_name: &str, bytes:
     assert!(out_path.exists());
 
     let result = provider
-        .verify_image(
-            out_path.to_str().unwrap(),
-            VerifyImageOptions::default(),
-        )
+        .verify_image(out_path.to_str().unwrap(), VerifyImageOptions::default())
         .expect("verify_image");
-    assert_eq!(result.status, MediaVerifyStatus::Valid, "expected Valid, got {:?}", result.status);
+    assert_eq!(
+        result.status,
+        MediaVerifyStatus::Valid,
+        "expected Valid, got {:?}",
+        result.status
+    );
     assert_eq!(result.signer_id.as_deref(), Some(signed.signer_id.as_str()));
 }
 
 #[test]
 fn local_provider_sign_image_png_round_trip() {
-    let _lock = MEDIA_TEST_LOCK
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
+    let _lock = MEDIA_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let env = AgentEnv::new();
     let png = make_png(32, 32);
     assert_image_round_trip(&env, "in.png", "out.png", &png);
@@ -236,9 +233,7 @@ fn local_provider_sign_image_png_round_trip() {
 
 #[test]
 fn local_provider_sign_image_jpeg_round_trip() {
-    let _lock = MEDIA_TEST_LOCK
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
+    let _lock = MEDIA_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let env = AgentEnv::new();
     let jpg = make_jpeg(32, 32);
     assert_image_round_trip(&env, "in.jpg", "out.jpg", &jpg);
@@ -246,9 +241,7 @@ fn local_provider_sign_image_jpeg_round_trip() {
 
 #[test]
 fn local_provider_sign_image_webp_round_trip() {
-    let _lock = MEDIA_TEST_LOCK
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
+    let _lock = MEDIA_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let env = AgentEnv::new();
     let webp = make_webp();
     assert_image_round_trip(&env, "in.webp", "out.webp", &webp);
@@ -256,9 +249,7 @@ fn local_provider_sign_image_webp_round_trip() {
 
 #[test]
 fn local_provider_sign_image_robust_round_trip() {
-    let _lock = MEDIA_TEST_LOCK
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
+    let _lock = MEDIA_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let env = AgentEnv::new();
     // Robust LSB embedding uses 1 bit per pixel (alpha channel for PNG). The
     // JACS payload for pq2025 keys is ≈10 KB ≈ 80,000 bits. 320×320 carries
@@ -272,11 +263,7 @@ fn local_provider_sign_image_robust_round_trip() {
         ..SignImageOptions::default()
     };
     let signed = provider
-        .sign_image(
-            in_path.to_str().unwrap(),
-            out_path.to_str().unwrap(),
-            opts,
-        )
+        .sign_image(in_path.to_str().unwrap(), out_path.to_str().unwrap(), opts)
         .expect("sign_image robust");
     assert!(signed.robust);
 
@@ -297,9 +284,7 @@ fn local_provider_sign_image_robust_round_trip() {
 
 #[test]
 fn local_provider_sign_image_webp_robust_returns_unsupported() {
-    let _lock = MEDIA_TEST_LOCK
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
+    let _lock = MEDIA_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let env = AgentEnv::new();
     let in_path = env.write("in_robust.webp", &make_webp());
     let out_path = env.base.join("out_robust.webp");
@@ -310,15 +295,12 @@ fn local_provider_sign_image_webp_robust_returns_unsupported() {
         ..SignImageOptions::default()
     };
     let err = provider
-        .sign_image(
-            in_path.to_str().unwrap(),
-            out_path.to_str().unwrap(),
-            opts,
-        )
+        .sign_image(in_path.to_str().unwrap(), out_path.to_str().unwrap(), opts)
         .expect_err("WebP + robust must fail");
     let msg = err.to_string();
     assert!(
-        msg.contains("webp robust mode deferred") || msg.to_ascii_lowercase().contains("unsupported"),
+        msg.contains("webp robust mode deferred")
+            || msg.to_ascii_lowercase().contains("unsupported"),
         "expected JACS verbatim 'webp robust mode deferred' or unsupported error, got: {msg}"
     );
 }
@@ -329,9 +311,7 @@ fn local_provider_sign_image_webp_robust_returns_unsupported() {
 
 #[test]
 fn local_provider_extract_media_signature_returns_decoded_json() {
-    let _lock = MEDIA_TEST_LOCK
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
+    let _lock = MEDIA_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let env = AgentEnv::new();
     let in_path = env.write("ex.png", &make_png(32, 32));
     let out_path = env.base.join("ex_signed.png");
@@ -350,15 +330,16 @@ fn local_provider_extract_media_signature_returns_decoded_json() {
         .expect("payload present");
     let parsed: serde_json::Value =
         serde_json::from_str(&payload).expect("decoded payload must be JSON");
-    assert!(parsed.is_object(), "decoded payload should be a JSON object");
+    assert!(
+        parsed.is_object(),
+        "decoded payload should be a JSON object"
+    );
 }
 
 #[test]
 fn local_provider_extract_media_signature_raw_returns_base64url() {
     use base64::Engine;
-    let _lock = MEDIA_TEST_LOCK
-        .lock()
-        .unwrap_or_else(|p| p.into_inner());
+    let _lock = MEDIA_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let env = AgentEnv::new();
     let in_path = env.write("raw.png", &make_png(32, 32));
     let out_path = env.base.join("raw_signed.png");

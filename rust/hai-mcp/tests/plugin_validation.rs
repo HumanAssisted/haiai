@@ -243,7 +243,11 @@ fn skill_md_tool_names_exist_in_mcp_server() {
         "SKILL.md references {} tool(s) that don't exist in the MCP server:\n  {}\n\n\
          Real tools ({} total): update SKILL.md or add the tool to the server.",
         missing.len(),
-        missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n  "),
+        missing
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("\n  "),
         real_tools.len()
     );
 }
@@ -343,12 +347,20 @@ fn skill_md_cli_commands_exist_in_binary() {
          Real subcommands ({} total): {}\n\n\
          Update SKILL.md or add the missing subcommands to the CLI binary.",
         missing.len(),
-        missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n  "),
+        missing
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("\n  "),
         real_subcommands.len(),
         {
             let mut sorted: Vec<&String> = real_subcommands.iter().collect();
             sorted.sort();
-            sorted.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            sorted
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         }
     );
 }

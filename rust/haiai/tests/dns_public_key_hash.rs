@@ -24,7 +24,8 @@ fn jacs_hash_public_key_is_lowercase_hex_sha256() {
     let hash = hash_public_key(SAMPLE_PEM_LF);
     assert_eq!(hash.len(), 64, "expected 64-char hex digest, got {hash:?}");
     assert!(
-        hash.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        hash.chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
         "expected lowercase hex digest, got {hash:?}"
     );
 }

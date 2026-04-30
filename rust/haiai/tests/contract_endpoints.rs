@@ -175,8 +175,7 @@ async fn register_is_unauthenticated() {
 
     let mock_ok = server
         .mock_async(|when, then| {
-            when.method(POST)
-                .path("/api/v1/agents/register");
+            when.method(POST).path("/api/v1/agents/register");
             then.status(201).json_body(json!({
                 "agent_id": "agent-1",
                 "jacs_id": "agent-1",
@@ -201,7 +200,11 @@ async fn register_is_unauthenticated() {
 
     assert_eq!(result.jacs_id, "agent-1");
     // The JACS auth mock should have zero hits (register doesn't send auth)
-    assert_eq!(mock_no_auth.hits_async().await, 0, "register must NOT send Authorization header");
+    assert_eq!(
+        mock_no_auth.hits_async().await,
+        0,
+        "register must NOT send Authorization header"
+    );
     mock_ok.assert_async().await;
 }
 
@@ -224,8 +227,7 @@ async fn register_omits_private_key() {
 
     let mock_ok = server
         .mock_async(|when, then| {
-            when.method(POST)
-                .path("/api/v1/agents/register");
+            when.method(POST).path("/api/v1/agents/register");
             then.status(201).json_body(json!({
                 "agent_id": "agent-1",
                 "jacs_id": "agent-1",
@@ -240,7 +242,9 @@ async fn register_omits_private_key() {
     let result = client
         .register(&RegisterAgentOptions {
             agent_json: "{\"jacsId\":\"agent-1\"}".to_string(),
-            public_key_pem: Some("-----BEGIN PUBLIC KEY-----\nfake\n-----END PUBLIC KEY-----".to_string()),
+            public_key_pem: Some(
+                "-----BEGIN PUBLIC KEY-----\nfake\n-----END PUBLIC KEY-----".to_string(),
+            ),
             owner_email: Some("owner@hai.ai".to_string()),
             domain: None,
             ..Default::default()
@@ -250,6 +254,10 @@ async fn register_omits_private_key() {
 
     assert_eq!(result.jacs_id, "agent-1");
     // The private key trap mock should have zero hits
-    assert_eq!(private_key_trap.hits_async().await, 0, "register body must NOT contain PRIVATE KEY");
+    assert_eq!(
+        private_key_trap.hits_async().await,
+        0,
+        "register body must NOT contain PRIVATE KEY"
+    );
     mock_ok.assert_async().await;
 }

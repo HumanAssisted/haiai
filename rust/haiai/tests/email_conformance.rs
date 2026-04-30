@@ -6,7 +6,9 @@
 #![cfg(feature = "jacs-crate")]
 
 use base64::Engine;
-use haiai::{EmailVerificationResultV2, FieldStatus, HaiClient, HaiClientOptions, StaticJacsProvider};
+use haiai::{
+    EmailVerificationResultV2, FieldStatus, HaiClient, HaiClientOptions, StaticJacsProvider,
+};
 use httpmock::{Method::GET, MockServer};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -208,9 +210,7 @@ async fn raw_email_roundtrip_fixture_byte_identity_and_verify_valid() {
         "fixture verify_implemented_by must be \"rust_only\" (Issue 017)"
     );
 
-    let expected_b64 = scenario["input_raw_b64"]
-        .as_str()
-        .expect("input_raw_b64");
+    let expected_b64 = scenario["input_raw_b64"].as_str().expect("input_raw_b64");
     let expected_bytes = base64::engine::general_purpose::STANDARD
         .decode(expected_b64)
         .expect("decode input_raw_b64");
@@ -251,8 +251,7 @@ async fn raw_email_roundtrip_fixture_byte_identity_and_verify_valid() {
     // matches `fetch_public_key_from_registry`: GET /api/agents/keys/{email}.
     let registry_mock = server
         .mock_async(|when, then| {
-            when.method(GET)
-                .path_includes("/api/agents/keys/");
+            when.method(GET).path_includes("/api/agents/keys/");
             then.status(200).json_body(serde_json::json!({
                 "email": registry_email,
                 "jacs_id": registry_jacs_id,

@@ -17,7 +17,10 @@ fn cli_sign_image_png_round_trip() {
     let (temp, _config_path) = prepare_jacs_fixture();
     write_to_fixture(temp.path(), "in.png", &make_png(32, 32));
 
-    let out = run_haiai_in_fixture(temp.path(), &["sign-image", "in.png", "--out", "signed.png"]);
+    let out = run_haiai_in_fixture(
+        temp.path(),
+        &["sign-image", "in.png", "--out", "signed.png"],
+    );
     assert!(
         out.status.success(),
         "sign-image failed: stdout={} stderr={}",
@@ -40,11 +43,22 @@ fn cli_sign_image_jpeg_round_trip() {
     let (temp, _config_path) = prepare_jacs_fixture();
     write_to_fixture(temp.path(), "in.jpg", &make_jpeg(32, 32));
 
-    let out = run_haiai_in_fixture(temp.path(), &["sign-image", "in.jpg", "--out", "signed.jpg"]);
-    assert!(out.status.success(), "sign-image failed: {}", String::from_utf8_lossy(&out.stderr));
+    let out = run_haiai_in_fixture(
+        temp.path(),
+        &["sign-image", "in.jpg", "--out", "signed.jpg"],
+    );
+    assert!(
+        out.status.success(),
+        "sign-image failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let out = run_haiai_in_fixture(temp.path(), &["verify-image", "signed.jpg"]);
-    assert!(out.status.success(), "verify-image failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "verify-image failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -53,7 +67,11 @@ fn cli_verify_image_strict_missing_signature_exits_1() {
     write_to_fixture(temp.path(), "unsigned.png", &make_png(32, 32));
 
     let out = run_haiai_in_fixture(temp.path(), &["verify-image", "unsigned.png", "--strict"]);
-    assert_eq!(out.status.code(), Some(1), "expected exit 1 (strict missing signature)");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "expected exit 1 (strict missing signature)"
+    );
 }
 
 #[test]
@@ -62,7 +80,11 @@ fn cli_verify_image_permissive_missing_signature_exits_2() {
     write_to_fixture(temp.path(), "unsigned.png", &make_png(32, 32));
 
     let out = run_haiai_in_fixture(temp.path(), &["verify-image", "unsigned.png"]);
-    assert_eq!(out.status.code(), Some(2), "expected exit 2 (permissive missing)");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "expected exit 2 (permissive missing)"
+    );
 }
 
 #[test]
@@ -70,7 +92,10 @@ fn cli_verify_image_tampered_exits_1() {
     let (temp, _config_path) = prepare_jacs_fixture();
     write_to_fixture(temp.path(), "in.png", &make_png(32, 32));
 
-    let out = run_haiai_in_fixture(temp.path(), &["sign-image", "in.png", "--out", "signed.png"]);
+    let out = run_haiai_in_fixture(
+        temp.path(),
+        &["sign-image", "in.png", "--out", "signed.png"],
+    );
     assert!(out.status.success());
 
     // Mutate one byte inside the IDAT region (well past the iTXt signature
@@ -167,9 +192,8 @@ fn cli_verify_image_json_malformed_emits_flat_status_with_detail() {
     let out = run_haiai_in_fixture(temp.path(), &["verify-image", "signed.png", "--json"]);
     // verify-image returns exit 1 for Malformed (and other failures); JSON
     // must still be emitted on stdout, regardless of exit code.
-    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).expect(
-        "verify-image --json must emit valid JSON even on malformed/invalid signatures",
-    );
+    let parsed: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .expect("verify-image --json must emit valid JSON even on malformed/invalid signatures");
     assert!(
         parsed["status"].is_string(),
         "status must be a flat string; got tagged shape: {}",
@@ -206,7 +230,11 @@ fn cli_extract_media_signature_returns_decoded_json() {
     );
 
     let out = run_haiai_in_fixture(temp.path(), &["extract-media-signature", "signed.png"]);
-    assert!(out.status.success(), "extract failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "extract failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let parsed: serde_json::Value =
         serde_json::from_str(stdout.trim()).expect("decoded payload should be JSON");

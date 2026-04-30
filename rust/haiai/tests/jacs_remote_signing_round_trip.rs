@@ -194,8 +194,12 @@ fn remote_sign_document_produces_distinct_envelopes_per_call() {
     let env = AgentEnv::new();
     let remote = env.remote();
 
-    let a = remote.sign_document(&serde_json::json!({"k": 1})).expect("a");
-    let b = remote.sign_document(&serde_json::json!({"k": 1})).expect("b");
+    let a = remote
+        .sign_document(&serde_json::json!({"k": 1}))
+        .expect("a");
+    let b = remote
+        .sign_document(&serde_json::json!({"k": 1}))
+        .expect("b");
     let a_v: serde_json::Value = serde_json::from_str(&a).unwrap();
     let b_v: serde_json::Value = serde_json::from_str(&b).unwrap();
     assert_ne!(

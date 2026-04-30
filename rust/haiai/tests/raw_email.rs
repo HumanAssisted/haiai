@@ -46,10 +46,7 @@ async fn get_raw_email_returns_bytes_and_metadata() {
         .await;
 
     let client = make_client(&server.base_url(), "agent-1");
-    let resp = client
-        .get_raw_email("m.abc")
-        .await
-        .expect("get_raw_email");
+    let resp = client.get_raw_email("m.abc").await.expect("get_raw_email");
     mock.assert_async().await;
 
     assert!(resp.available);
@@ -179,12 +176,16 @@ async fn get_raw_email_404_is_api_error() {
         .mock_async(|when, then| {
             when.method(GET)
                 .path("/api/agents/a/email/messages/missing/raw");
-            then.status(404).json_body(json!({"error": "message not found"}));
+            then.status(404)
+                .json_body(json!({"error": "message not found"}));
         })
         .await;
 
     let client = make_client(&server.base_url(), "a");
-    let err = client.get_raw_email("missing").await.expect_err("not found");
+    let err = client
+        .get_raw_email("missing")
+        .await
+        .expect_err("not found");
     mock.assert_async().await;
     match err {
         HaiError::Api { status, .. } => assert_eq!(status, 404),
@@ -213,10 +214,7 @@ async fn get_raw_email_url_escapes_message_id() {
         .await;
 
     let client = make_client(&server.base_url(), "agent/with/slash");
-    let resp = client
-        .get_raw_email("msg/with/slash")
-        .await
-        .expect("ok");
+    let resp = client.get_raw_email("msg/with/slash").await.expect("ok");
     mock.assert_async().await;
     assert!(resp.available);
     assert_eq!(resp.raw_email.as_deref(), Some(&b"hello"[..]));
@@ -227,12 +225,12 @@ async fn get_raw_email_byte_identity_crlf_nul_non_ascii() {
     // The critical R2 assertion: bytes in == bytes out, no normalization.
     let bytes: Vec<u8> = {
         let mut v = Vec::new();
-        v.extend_from_slice(b"\r\n");       // leading CRLF
-        v.push(0x00);                        // embedded NUL
-        v.extend_from_slice(b"mid");         // ASCII
-        v.extend_from_slice(&[0xc3, 0xa9]);  // é utf-8
-        v.push(0xff);                        // lone 0xFF (invalid utf-8 on purpose)
-        v.extend_from_slice(b"\r\n");       // trailing CRLF
+        v.extend_from_slice(b"\r\n"); // leading CRLF
+        v.push(0x00); // embedded NUL
+        v.extend_from_slice(b"mid"); // ASCII
+        v.extend_from_slice(&[0xc3, 0xa9]); // é utf-8
+        v.push(0xff); // lone 0xFF (invalid utf-8 on purpose)
+        v.extend_from_slice(b"\r\n"); // trailing CRLF
         v
     };
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);

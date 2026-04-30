@@ -98,10 +98,7 @@ pub fn make_jpeg(width: u32, height: u32) -> Vec<u8> {
 
 /// Run the haiai binary with `cwd` set to the fixture tempdir and the
 /// `init`-generated agent password env var set. Returns the captured Output.
-pub fn run_haiai_in_fixture(
-    fixture_dir: &Path,
-    args: &[&str],
-) -> std::process::Output {
+pub fn run_haiai_in_fixture(fixture_dir: &Path, args: &[&str]) -> std::process::Output {
     std::process::Command::new(haiai_bin())
         .args(args)
         .current_dir(fixture_dir)

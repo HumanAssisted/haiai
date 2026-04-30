@@ -596,7 +596,13 @@ async fn reply_with_custom_recipients_posts_to_reply_endpoint() {
     let client = make_client(&server.base_url());
     let recipients = vec!["agent-a@hai.ai".to_string(), "agent-b@hai.ai".to_string()];
     let result = client
-        .reply_with_options("orig-msg-uuid", "Custom reply", None, Some("custom"), &recipients)
+        .reply_with_options(
+            "orig-msg-uuid",
+            "Custom reply",
+            None,
+            Some("custom"),
+            &recipients,
+        )
         .await
         .expect("reply_with_options custom");
 

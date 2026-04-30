@@ -99,7 +99,8 @@ fn local_provider_loads_created_agent_and_signs() {
     assert!(config_path.is_file());
     std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123");
 
-    let provider = LocalJacsProvider::from_config_path(Some(&config_path), None).expect("load provider");
+    let provider =
+        LocalJacsProvider::from_config_path(Some(&config_path), None).expect("load provider");
 
     assert!(!provider.jacs_id().is_empty());
     assert_eq!(created.agent_id, provider.jacs_id());
@@ -141,11 +142,8 @@ fn from_config_path_with_storage_resolves_document_service() {
     LocalJacsProvider::create_agent_with_options(&options).expect("create agent");
     std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123");
 
-    let provider = LocalJacsProvider::from_config_path(
-        Some(&paths.config_path()),
-        Some("fs"),
-    )
-    .expect("load provider with storage");
+    let provider = LocalJacsProvider::from_config_path(Some(&paths.config_path()), Some("fs"))
+        .expect("load provider with storage");
 
     assert!(
         provider.has_document_service(),
