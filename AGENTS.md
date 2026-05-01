@@ -4,6 +4,14 @@
 
 HAIAI SDK -- HAI platform integration layer around `jacs`. Helps agents use JACS identity/provenance to register with HAI, receive benchmark jobs, interact with other agents, and send/receive agent email.
 
+## Working Norms
+
+1. **Observability.** Good logging and how a system admin monitors the system. More 12-factor. Structured logs to stdout, env-driven config (`RUST_LOG`, `LOG_FORMAT`, `LOG_LEVEL`), request IDs propagated to the HAI API. Auth and verification failures log at WARN, not DEBUG. `--log-file` on `haiai mcp` (`rust/haiai-cli/src/main.rs` ~1434) is dev-only — production deployments rely on stdout. Every PRD says what the sysadmin sees when this fails: which log line, which metric, which alert.
+
+2. **Vertical integration.** In a buy-or-build decision, prefer a well-integrated monolith over a bloated open-source dependency we use 10% of, when the feature is simple, sure, and well known. Every PRD that introduces or depends on an external service includes a buy/build assessment: what surface we use, what ships unused, what the smallest owned alternative would cost.
+
+3. **Simplicity.** We don't want a cap on tasks. We want small reversible changes. 100 tasks is fine if each is clear, well-defined, simple, and atomic. The bar is per-task: each task is reversible — its diff can be reverted in one commit without dependent fallout. When stuck, cut scope before adding layers.
+
 ## Ownership Boundary
 
 **`jacs` owns:** key generation, key encryption/decryption, canonicalization, document signing/verification, cryptographic primitives.
