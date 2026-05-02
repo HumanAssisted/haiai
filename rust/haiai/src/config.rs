@@ -176,6 +176,55 @@ pub fn resolve_storage_backend(
     Ok("fs".to_string())
 }
 
+/// Resolve whether the SDK should operate in remote mode (resolve and push
+/// documents to the HAI records API) or local-only mode.
+///
+/// Priority order:
+/// 1. Explicit `explicit` parameter (e.g. CLI `--remote` flag)
+/// 2. `JACS_REMOTE` env var (`"true"` / `"1"` / `"yes"`)
+/// 3. `remote` field in `jacs.config.json`
+/// 4. Backward compat: `JACS_DEFAULT_STORAGE=remote` implies `remote=true`
+/// 5. Default: `false`
+pub fn resolve_remote(explicit: Option<bool>, config_path: Option<&Path>) -> bool {
+    // Priority 1: explicit parameter
+    if let Some(r) = explicit {
+        return r;
+    }
+
+    // Priority 2: JACS_REMOTE env var
+    if let Ok(val) = env::var("JACS_REMOTE") {
+        let val = val.trim().to_lowercase();
+        if matches!(val.as_str(), "true" | "1" | "yes") {
+            return true;
+        }
+        if matches!(val.as_str(), "false" | "0" | "no") {
+            return false;
+        }
+    }
+
+    // Priority 3: config file `remote` field
+    let config_path_resolved = resolve_config_path(config_path);
+    if config_path_resolved.is_file() {
+        if let Ok(raw) = fs::read_to_string(&config_path_resolved) {
+            if let Ok(data) = serde_json::from_str::<Value>(&raw) {
+                if let Some(val) = data.get("remote").and_then(|v| v.as_bool()) {
+                    return val;
+                }
+            }
+        }
+    }
+
+    // Priority 4: backward compat — JACS_DEFAULT_STORAGE=remote implies remote=true
+    if let Ok(label) = env::var("JACS_DEFAULT_STORAGE") {
+        if label.trim().eq_ignore_ascii_case("remote") {
+            return true;
+        }
+    }
+
+    // Priority 5: default
+    false
+}
+
 /// A storage configuration summary safe for logging/display.
 ///
 /// Never includes passwords, connection strings, or credentials.
@@ -184,11 +233,17 @@ pub fn resolve_storage_backend(
 pub struct StorageConfigSummary {
     pub backend: String,
     pub source: &'static str,
+    /// Whether the SDK operates in remote mode (resolve/push to HAI records API).
+    pub remote: bool,
 }
 
 impl std::fmt::Display for StorageConfigSummary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "backend={} (from {})", self.backend, self.source)
+        write!(
+            f,
+            "backend={} (from {}), remote={}",
+            self.backend, self.source, self.remote
+        )
     }
 }
 
@@ -201,11 +256,14 @@ pub fn redacted_display(
     explicit: Option<&str>,
     config_path: Option<&Path>,
 ) -> StorageConfigSummary {
+    let remote = resolve_remote(None, config_path);
+
     // Priority 1: explicit parameter
     if let Some(label) = explicit {
         return StorageConfigSummary {
             backend: label.to_string(),
             source: "--storage flag",
+            remote,
         };
     }
 
@@ -215,6 +273,7 @@ pub fn redacted_display(
             return StorageConfigSummary {
                 backend: label,
                 source: "JACS_DEFAULT_STORAGE env var",
+                remote,
             };
         }
     }
@@ -231,6 +290,7 @@ pub fn redacted_display(
                     return StorageConfigSummary {
                         backend: label,
                         source: "config file",
+                        remote,
                     };
                 }
             }
@@ -241,6 +301,7 @@ pub fn redacted_display(
     StorageConfigSummary {
         backend: "fs".to_string(),
         source: "default",
+        remote,
     }
 }
 
@@ -574,5 +635,112 @@ mod tests {
 
         let cfg = load_config(Some(&config_path)).expect("load");
         assert_eq!(cfg.agent_email, None);
+    }
+
+    #[test]
+    fn resolve_remote_defaults_to_false() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let saved_remote = env::var("JACS_REMOTE").ok();
+        let saved_storage = env::var("JACS_DEFAULT_STORAGE").ok();
+        env::remove_var("JACS_REMOTE");
+        env::remove_var("JACS_DEFAULT_STORAGE");
+
+        let result = resolve_remote(None, Some(Path::new("/nonexistent/path.json")));
+        assert!(!result, "default should be false");
+
+        restore_env("JACS_REMOTE", saved_remote);
+        restore_env("JACS_DEFAULT_STORAGE", saved_storage);
+    }
+
+    #[test]
+    fn resolve_remote_explicit_true_overrides() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let saved = env::var("JACS_REMOTE").ok();
+        env::set_var("JACS_REMOTE", "false");
+
+        let result = resolve_remote(Some(true), None);
+        assert!(result, "explicit true must override env var");
+
+        restore_env("JACS_REMOTE", saved);
+    }
+
+    #[test]
+    fn resolve_remote_env_var_true() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let saved = env::var("JACS_REMOTE").ok();
+        env::set_var("JACS_REMOTE", "true");
+
+        let result = resolve_remote(None, Some(Path::new("/nonexistent/path.json")));
+        assert!(result, "JACS_REMOTE=true should be true");
+
+        restore_env("JACS_REMOTE", saved);
+    }
+
+    #[test]
+    fn resolve_remote_env_var_one() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let saved = env::var("JACS_REMOTE").ok();
+        env::set_var("JACS_REMOTE", "1");
+
+        let result = resolve_remote(None, Some(Path::new("/nonexistent/path.json")));
+        assert!(result, "JACS_REMOTE=1 should be true");
+
+        restore_env("JACS_REMOTE", saved);
+    }
+
+    #[test]
+    fn resolve_remote_config_file_field() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let saved_remote = env::var("JACS_REMOTE").ok();
+        let saved_storage = env::var("JACS_DEFAULT_STORAGE").ok();
+        env::remove_var("JACS_REMOTE");
+        env::remove_var("JACS_DEFAULT_STORAGE");
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_path = temp.path().join("jacs.config.json");
+        fs::write(&config_path, r#"{"remote": true, "jacsAgentName": "bot"}"#)
+            .expect("write config");
+
+        let result = resolve_remote(None, Some(&config_path));
+        assert!(result, "config file remote=true should be true");
+
+        restore_env("JACS_REMOTE", saved_remote);
+        restore_env("JACS_DEFAULT_STORAGE", saved_storage);
+    }
+
+    #[test]
+    fn resolve_remote_backward_compat_jacs_default_storage_remote() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let saved_remote = env::var("JACS_REMOTE").ok();
+        let saved_storage = env::var("JACS_DEFAULT_STORAGE").ok();
+        env::remove_var("JACS_REMOTE");
+        env::set_var("JACS_DEFAULT_STORAGE", "remote");
+
+        let result = resolve_remote(None, Some(Path::new("/nonexistent/path.json")));
+        assert!(
+            result,
+            "JACS_DEFAULT_STORAGE=remote should imply remote=true"
+        );
+
+        restore_env("JACS_REMOTE", saved_remote);
+        restore_env("JACS_DEFAULT_STORAGE", saved_storage);
+    }
+
+    #[test]
+    fn resolve_remote_false_when_jacs_default_storage_is_fs() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let saved_remote = env::var("JACS_REMOTE").ok();
+        let saved_storage = env::var("JACS_DEFAULT_STORAGE").ok();
+        env::remove_var("JACS_REMOTE");
+        env::set_var("JACS_DEFAULT_STORAGE", "fs");
+
+        let result = resolve_remote(None, Some(Path::new("/nonexistent/path.json")));
+        assert!(
+            !result,
+            "JACS_DEFAULT_STORAGE=fs should not imply remote=true"
+        );
+
+        restore_env("JACS_REMOTE", saved_remote);
+        restore_env("JACS_DEFAULT_STORAGE", saved_storage);
     }
 }

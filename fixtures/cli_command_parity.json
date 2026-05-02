@@ -141,12 +141,12 @@
     {
       "name": "memory",
       "args": [],
-      "subcommands": ["save", "get"]
+      "subcommands": ["save", "get", "sync"]
     },
     {
       "name": "soul",
       "args": [],
-      "subcommands": ["save", "get"]
+      "subcommands": ["save", "get", "sync"]
     },
     {
       "name": "records",
