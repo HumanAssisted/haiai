@@ -764,6 +764,14 @@ impl HaiClient {
     }
 
     #[napi]
+    pub async fn save_document(&self, request_json: String) -> Result<String> {
+        self.inner
+            .save_document(&request_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
     pub async fn save_memory(&self, content: Option<String>) -> Result<String> {
         self.inner.save_memory(content).await.map_err(to_napi_err)
     }

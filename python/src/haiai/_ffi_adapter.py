@@ -554,7 +554,7 @@ class FFIAdapter:
 
     # --- JACS Document Store (sync surface) ---
     #
-    # All 20 methods round-trip through the haiipy native binding's `*_sync`
+    # All 21 methods round-trip through the haiipy native binding's `*_sync`
     # shims onto `RemoteJacsProvider` (the Rust SDK's HTTP-backed JACS doc
     # store). The 13 trait CRUD/query methods plus 4 D5 (save_memory /
     # save_soul / get_memory / get_soul) and 3 D9 (store_text_file /
@@ -652,6 +652,13 @@ class FFIAdapter:
     def storage_capabilities(self) -> dict[str, Any]:
         try:
             raw = self._native.storage_capabilities_sync()
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def save_document(self, request_json: str) -> dict[str, Any]:
+        try:
+            raw = self._native.save_document_sync(request_json)
             return json.loads(raw)
         except RuntimeError as err:
             raise map_ffi_error(err) from err
@@ -1359,6 +1366,13 @@ class AsyncFFIAdapter:
     async def storage_capabilities(self) -> dict[str, Any]:
         try:
             raw = await self._native.storage_capabilities()
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def save_document(self, request_json: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.save_document(request_json)
             return json.loads(raw)
         except RuntimeError as err:
             raise map_ffi_error(err) from err

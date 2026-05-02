@@ -203,4 +203,3 @@ fn update_preserves_jacs_id_and_sets_previous_version() {
         "old content must not be present"
     );
 }
-

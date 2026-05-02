@@ -153,7 +153,7 @@ extern void hai_ws_close(unsigned long long handle_id);
 // Error retrieval for hai_client_new
 extern char* hai_last_error();
 
-// JACS Document Store (20 methods + 2 helpers for the bytes-return convention)
+// JACS Document Store (21 methods + 2 helpers for the bytes-return convention)
 extern char* hai_store_document(HaiClientHandle handle, const char* signed_json);
 extern char* hai_sign_and_store(HaiClientHandle handle, const char* data_json);
 extern char* hai_get_document(HaiClientHandle handle, const char* key);
@@ -168,6 +168,7 @@ extern char* hai_query_by_type(HaiClientHandle handle, const char* doc_type, siz
 extern char* hai_query_by_field(HaiClientHandle handle, const char* field, const char* value, size_t limit, size_t offset);
 extern char* hai_query_by_agent(HaiClientHandle handle, const char* agent_id, size_t limit, size_t offset);
 extern char* hai_storage_capabilities(HaiClientHandle handle);
+extern char* hai_save_document(HaiClientHandle handle, const char* request_json);
 extern char* hai_save_memory(HaiClientHandle handle, const char* content);
 extern char* hai_save_soul(HaiClientHandle handle, const char* content);
 extern char* hai_get_memory(HaiClientHandle handle);
@@ -1209,9 +1210,9 @@ func (c *Client) WSClose(handleID uint64) {
 }
 
 // =============================================================================
-// JACS Document Store (20 methods)
+// JACS Document Store (21 methods)
 //
-// All 20 methods now route through libhaiigo. Five of the trait methods
+// All 21 methods now route through libhaiigo. Five of the trait methods
 // (`ListDocuments`, `GetDocumentVersions`, `QueryByType`, `QueryByField`,
 // `QueryByAgent`) return `[]string` because `RemoteJacsProvider` produces
 // `Vec<String>`; binding-core JSON-serialises that to `["k1","k2"]` which
@@ -1438,6 +1439,17 @@ func (c *Client) StorageCapabilities() (json.RawMessage, error) {
 		return nil, err
 	}
 	return parseEnvelope(goString(C.hai_storage_capabilities(c.handle)))
+}
+
+func (c *Client) SaveDocument(requestJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(requestJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_save_document(c.handle, cs)))
 }
 
 // ---- 4 D5 methods ----

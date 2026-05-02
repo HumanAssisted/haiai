@@ -131,8 +131,8 @@ class TestD9TypedContentHelpers:
 
 
 # ---------------------------------------------------------------------------
-# Generic JACS Document Store CRUD — also part of Issue 025's "20 methods"
-# scope (the 13 generic + 4 D5 + 3 D9 = 20).
+# Generic JACS Document Store CRUD — also part of the 21-method
+# scope (14 generic + 4 D5 + 3 D9).
 # ---------------------------------------------------------------------------
 
 
@@ -146,6 +146,16 @@ class TestJacsDocumentStoreCrud:
         out = mock_ffi.sign_and_store(payload_json)
         assert out == {"key": "id1:v1", "json": "{}"}
         assert mock_ffi.calls[-1] == ("sign_and_store", (payload_json,), {})
+
+    def test_save_document_passes_request_json(self, mock_ffi: MockFFIAdapter) -> None:
+        request_json = json.dumps({"jacs_type": "memory", "plaintext": "remember"})
+        mock_ffi.responses["save_document"] = {
+            "key": "memory-id:v2",
+            "json": "# Memory\n\nremember",
+        }
+        out = mock_ffi.save_document(request_json)
+        assert out == {"key": "memory-id:v2", "json": "# Memory\n\nremember"}
+        assert mock_ffi.calls[-1] == ("save_document", (request_json,), {})
 
     def test_search_documents_passes_query_limit_offset(
         self, mock_ffi: MockFFIAdapter

@@ -327,7 +327,7 @@ fn ffi_method_parity_includes_media_local_section() {
 }
 
 #[test]
-fn ffi_method_parity_total_count_is_92() {
+fn ffi_method_parity_total_count_is_94() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/ffi_method_parity.json");
     let raw =
@@ -337,11 +337,11 @@ fn ffi_method_parity_total_count_is_92() {
     let total = val["total_method_count"]
         .as_u64()
         .expect("total_method_count must be a number");
-    // Bumped from 72 → 92 (TASK_013): adds the `jacs_document_store` section
-    // — 13 trait methods + 4 MEMORY/SOUL wrappers (D5) + 3 D9 helpers.
+    // Bumped to 94: adds generic `save_document` alongside the document-store
+    // trait methods, MEMORY/SOUL wrappers (D5), and D9 helpers.
     assert_eq!(
-        total, 92,
-        "total_method_count must equal 92 after JACS Document Store PRD (D5 + D9)"
+        total, 94,
+        "total_method_count must include generic save_document"
     );
 
     let methods = val["methods"]
@@ -352,7 +352,7 @@ fn ffi_method_parity_total_count_is_92() {
         sum += arr.as_array().expect("section must be an array").len() as u64;
     }
     assert_eq!(
-        sum, 92,
+        sum, 94,
         "Sum of method counts across all sections must equal total_method_count"
     );
 
@@ -362,8 +362,8 @@ fn ffi_method_parity_total_count_is_92() {
         .expect("jacs_document_store section must exist");
     assert_eq!(
         store_section.len(),
-        20,
-        "jacs_document_store must have 20 methods"
+        21,
+        "jacs_document_store must have 21 methods"
     );
     let names: std::collections::HashSet<String> = store_section
         .iter()
@@ -383,6 +383,7 @@ fn ffi_method_parity_total_count_is_92() {
         "query_by_field",
         "query_by_agent",
         "storage_capabilities",
+        "save_document",
         "save_memory",
         "save_soul",
         "get_memory",

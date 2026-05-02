@@ -525,6 +525,109 @@ pub struct DocSummary {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone)]
+struct ExistingEditableDocument {
+    summary: DocSummary,
+    signed_bytes: Vec<u8>,
+}
+
+pub(crate) fn summary_from_document_bytes(
+    fallback_id: Option<&str>,
+    fallback_key: Option<&str>,
+    fallback_content_type: &str,
+    bytes: &[u8],
+) -> Result<Option<DocSummary>> {
+    let text = std::str::from_utf8(bytes).map_err(|e| {
+        HaiError::Provider(format!(
+            "save_document: existing signed document is not UTF-8 text: {e}"
+        ))
+    })?;
+
+    let metadata = if let Ok(value) = serde_json::from_str::<Value>(text) {
+        Some(value)
+    } else {
+        jacs_inline_metadata(text)
+    };
+
+    let Some(value) = metadata else {
+        return Ok(None);
+    };
+
+    let id = value
+        .get("jacsId")
+        .and_then(Value::as_str)
+        .or(fallback_id)
+        .unwrap_or("")
+        .to_string();
+    let version = value
+        .get("jacsVersion")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if id.is_empty() || version.is_empty() {
+        return Ok(None);
+    }
+    let jacs_type = value
+        .get("jacsType")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    let created_at = value
+        .get("jacsVersionDate")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let content_type = if text.contains("-----BEGIN JACS SIGNATURE-----") {
+        fallback_content_type.to_string()
+    } else {
+        "application/json".to_string()
+    };
+    let key = fallback_key
+        .filter(|key| key.contains(':'))
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{id}:{version}"));
+
+    Ok(Some(DocSummary {
+        id,
+        version,
+        key,
+        jacs_type,
+        logical_name: None,
+        content_type,
+        created_at,
+    }))
+}
+
+fn is_document_not_found_error(err: &HaiError) -> bool {
+    match err {
+        HaiError::Api { status: 404, .. } => true,
+        HaiError::Provider(message) | HaiError::Message(message) => {
+            let lower = message.to_ascii_lowercase();
+            lower.contains("not found") || lower.contains("no document")
+        }
+        _ => false,
+    }
+}
+
+#[cfg(feature = "jacs-crate")]
+pub(crate) fn jacs_inline_metadata(text: &str) -> Option<Value> {
+    let (_content, footer) = jacs::inline::split_at_first_signature_marker(text);
+    if footer.is_empty() {
+        return None;
+    }
+    let begin_idx = footer.find(jacs::inline::BEGIN_MARKER)?;
+    let end_idx = footer.rfind(jacs::inline::END_MARKER)?;
+    let body_start = begin_idx + jacs::inline::BEGIN_MARKER.len();
+    let body = footer.get(body_start..end_idx)?.trim();
+    let json = jacs::convert::yaml_to_jacs(body).ok()?;
+    serde_json::from_str(&json).ok()
+}
+
+#[cfg(not(feature = "jacs-crate"))]
+pub(crate) fn jacs_inline_metadata(_text: &str) -> Option<Value> {
+    None
+}
+
 /// Extension trait for document storage, retrieval, versioning, and search.
 ///
 /// Wraps the JACS `DocumentService` into SDK-friendly signatures
@@ -804,15 +907,48 @@ pub trait JacsDocumentProvider: JacsProvider {
     /// `intent = Upsert`.
     fn save_document(&self, request: SaveDocumentRequest) -> Result<SignedDocument> {
         // 1. Resolve existing document
-        let existing: Option<DocSummary> = if let Some(ref doc_id) = request.doc_id {
-            let summaries = self.find_document(&request.jacs_type, None, 100)?;
-            summaries.into_iter().find(|s| s.id == *doc_id)
+        let existing: Option<ExistingEditableDocument> = if let Some(ref doc_id) = request.doc_id {
+            match self.get_record_bytes(doc_id) {
+                Ok(signed_bytes) => summary_from_document_bytes(
+                    Some(doc_id),
+                    None,
+                    &request.content_type,
+                    &signed_bytes,
+                )?
+                .map(|summary| ExistingEditableDocument {
+                    summary,
+                    signed_bytes,
+                }),
+                Err(err) if is_document_not_found_error(&err) => None,
+                Err(err) => {
+                    return Err(HaiError::Provider(format!(
+                        "save_document: failed to resolve existing doc_id '{}': {err}",
+                        doc_id
+                    )));
+                }
+            }
         } else if request.singleton {
             let summaries = self.find_document(&request.jacs_type, None, 1)?;
-            summaries.into_iter().next()
+            if let Some(summary) = summaries.into_iter().next() {
+                let signed_bytes = self.get_record_bytes(&summary.key)?;
+                Some(ExistingEditableDocument {
+                    summary,
+                    signed_bytes,
+                })
+            } else {
+                None
+            }
         } else if let Some(ref name) = request.logical_name {
             let summaries = self.find_document(&request.jacs_type, Some(name.as_str()), 1)?;
-            summaries.into_iter().next()
+            if let Some(summary) = summaries.into_iter().next() {
+                let signed_bytes = self.get_record_bytes(&summary.key)?;
+                Some(ExistingEditableDocument {
+                    summary,
+                    signed_bytes,
+                })
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -825,7 +961,7 @@ pub trait JacsDocumentProvider: JacsProvider {
                         tracing::warn!(
                             result = "duplicate_singleton",
                             jacs_type = %request.jacs_type,
-                            owner_agent_id = %doc.id,
+                            existing_doc_id = %doc.summary.id,
                             "save_document"
                         );
                         return Err(HaiError::Provider(format!(
@@ -835,7 +971,7 @@ pub trait JacsDocumentProvider: JacsProvider {
                     }
                     return Err(HaiError::Provider(format!(
                         "document already exists with id '{}'",
-                        doc.id
+                        doc.summary.id
                     )));
                 }
             }
@@ -851,31 +987,29 @@ pub trait JacsDocumentProvider: JacsProvider {
         }
 
         // 3. Stale version check
-        if let (Some(ref expected), Some(ref doc)) =
-            (&request.expected_previous_version, &existing)
+        if let (Some(ref expected), Some(ref doc)) = (&request.expected_previous_version, &existing)
         {
-            if doc.version != *expected {
+            if doc.summary.version != *expected {
                 tracing::warn!(
                     result = "stale_previous_version",
-                    doc_id = %doc.id,
+                    doc_id = %doc.summary.id,
                     expected = %expected,
-                    latest = %doc.version,
+                    latest = %doc.summary.version,
                     "save_document"
                 );
                 return Err(HaiError::Provider(format!(
                     "stale version: expected '{}' but latest is '{}'",
-                    expected, doc.version
+                    expected, doc.summary.version
                 )));
             }
         }
 
         // 4. Sign — delegate to create or update
         let signed_bytes = if let Some(ref doc) = existing {
-            let existing_bytes = self.get_record_bytes(&doc.key)?;
             self.sign_text_document_update(
-                &existing_bytes,
+                &doc.signed_bytes,
                 &request.plaintext,
-                &doc.version,
+                &doc.summary.version,
             )?
         } else {
             let logical = request.logical_name.as_deref().unwrap_or("");
@@ -891,7 +1025,11 @@ pub trait JacsDocumentProvider: JacsProvider {
         let key = self.store_signed_text(signed_bytes.clone(), &request.content_type)?;
 
         // 6. Log
-        let action = if existing.is_some() { "update" } else { "create" };
+        let action = if existing.is_some() {
+            "update"
+        } else {
+            "create"
+        };
         tracing::info!(
             action,
             jacs_type = %request.jacs_type,
@@ -904,7 +1042,6 @@ pub trait JacsDocumentProvider: JacsProvider {
         Ok(SignedDocument { key, json })
     }
 }
-
 
 fn get_typed_latest_document<P: JacsDocumentProvider + ?Sized>(
     provider: &P,
@@ -922,7 +1059,7 @@ fn get_typed_latest_document<P: JacsDocumentProvider + ?Sized>(
 
     for key in provider.list_documents(None)? {
         let doc = provider.get_document(&key)?;
-        // Try JSON first; fall back to scanning YAML footer lines for jacsType.
+        // Try JSON first; fall back to JACS footer metadata for signed text.
         let doc_type = if let Ok(value) = serde_json::from_str::<Value>(&doc) {
             value
                 .get("jacsType")
@@ -939,18 +1076,12 @@ fn get_typed_latest_document<P: JacsDocumentProvider + ?Sized>(
     Ok(None)
 }
 
-/// Extract `jacsType` from a signed markdown document's YAML footer.
-/// Scans lines for `jacsType: <value>` (plain YAML key).
+/// Extract `jacsType` from a signed markdown document's JACS footer.
 fn extract_jacs_type_from_text(text: &str) -> Option<String> {
-    for line in text.lines() {
-        if let Some(val) = line.strip_prefix("jacsType:") {
-            let trimmed = val.trim().trim_matches('"').trim_matches('\'');
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
-    }
-    None
+    jacs_inline_metadata(text)?
+        .get("jacsType")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 // =============================================================================
@@ -1512,19 +1643,18 @@ impl JacsProvider for StaticJacsProvider {
         let existing_str = std::str::from_utf8(existing_signed_bytes).map_err(|e| {
             HaiError::Provider(format!("sign_text_update: existing not UTF-8: {e}"))
         })?;
-        // Extract jacsId from existing footer
-        let id = existing_str
-            .lines()
-            .find(|l| l.starts_with("jacsId:"))
-            .and_then(|l| l.strip_prefix("jacsId:"))
-            .map(|s| s.trim().to_string())
+        let metadata = jacs_inline_metadata(existing_str);
+        let id = metadata
+            .as_ref()
+            .and_then(|m| m.get("jacsId"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
             .unwrap_or_else(|| Uuid::new_v4().to_string());
-        // Extract jacsType from existing footer
-        let jacs_type = existing_str
-            .lines()
-            .find(|l| l.starts_with("jacsType:"))
-            .and_then(|l| l.strip_prefix("jacsType:"))
-            .map(|s| s.trim().to_string())
+        let jacs_type = metadata
+            .as_ref()
+            .and_then(|m| m.get("jacsType"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
             .unwrap_or_else(|| "document".to_string());
 
         let text = std::str::from_utf8(plaintext).map_err(|e| {
@@ -1816,13 +1946,7 @@ mod tests {
             fn query_by_type(&self, _: &str, _: usize, _: usize) -> Result<Vec<String>> {
                 unimplemented!()
             }
-            fn query_by_field(
-                &self,
-                _: &str,
-                _: &str,
-                _: usize,
-                _: usize,
-            ) -> Result<Vec<String>> {
+            fn query_by_field(&self, _: &str, _: &str, _: usize, _: usize) -> Result<Vec<String>> {
                 unimplemented!()
             }
             fn query_by_agent(&self, _: &str, _: usize, _: usize) -> Result<Vec<String>> {

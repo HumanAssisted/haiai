@@ -536,11 +536,9 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
         let latest_version = Self::extract_version_from_footer(existing_str)?;
 
         // Step 3: Sign the update via the inner provider (local key material).
-        let signed_bytes = self.inner.sign_text_update(
-            &existing_bytes,
-            data.as_bytes(),
-            &latest_version,
-        )?;
+        let signed_bytes =
+            self.inner
+                .sign_text_update(&existing_bytes, data.as_bytes(), &latest_version)?;
 
         // Step 4: POST the new signed bytes with markdown content type.
         let key = self.post_record_for_key(signed_bytes.clone(), CT_TEXT_MD)?;
@@ -807,7 +805,8 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
         content_type: &str,
         plaintext: &[u8],
     ) -> Result<Vec<u8>> {
-        self.inner.sign_text_create(jacs_type, logical_name, content_type, plaintext)
+        self.inner
+            .sign_text_create(jacs_type, logical_name, content_type, plaintext)
     }
 
     fn sign_text_document_update(
@@ -843,58 +842,20 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
     }
 
     /// Extract `jacsVersion` from the JACS signature footer of a signed text artifact.
-    ///
-    /// Uses `jacs::inline::split_at_first_signature_marker` and
-    /// `jacs::convert::yaml_to_jacs` (same approach as `jacs_local.rs`).
-    #[cfg(feature = "jacs-crate")]
     fn extract_version_from_footer(signed_text: &str) -> Result<String> {
-        let (_content, footer) = jacs::inline::split_at_first_signature_marker(signed_text);
-        if footer.is_empty() {
-            return Err(HaiError::Provider(
-                "update_document: existing document has no JACS signature footer".to_string(),
-            ));
-        }
-        let begin_marker = jacs::inline::BEGIN_MARKER;
-        let end_marker = jacs::inline::END_MARKER;
-        let begin_idx = footer.find(begin_marker).ok_or_else(|| {
-            HaiError::Provider(
-                "update_document: footer missing BEGIN marker".to_string(),
-            )
-        })?;
-        let end_idx = footer.rfind(end_marker).ok_or_else(|| {
-            HaiError::Provider(
-                "update_document: footer missing END marker".to_string(),
-            )
-        })?;
-        let body_start = begin_idx + begin_marker.len();
-        let body = footer[body_start..end_idx].trim();
-
-        let json_str = jacs::convert::yaml_to_jacs(body).map_err(|e| {
-            HaiError::Provider(format!(
-                "update_document: cannot parse JACS footer YAML: {e}"
-            ))
-        })?;
-        let doc: Value = serde_json::from_str(&json_str).map_err(|e| {
-            HaiError::Provider(format!(
-                "update_document: cannot parse footer JSON: {e}"
-            ))
-        })?;
-        doc.get("jacsVersion")
+        crate::jacs::jacs_inline_metadata(signed_text)
+            .ok_or_else(|| {
+                HaiError::Provider(
+                    "update_document: existing document has no JACS signature footer or footer is not parseable"
+                        .to_string(),
+                )
+            })?
+            .get("jacsVersion")
             .and_then(|v| v.as_str())
             .map(str::to_string)
             .ok_or_else(|| {
-                HaiError::Provider(
-                    "update_document: footer missing jacsVersion".to_string(),
-                )
+                HaiError::Provider("update_document: footer missing jacsVersion".to_string())
             })
-    }
-
-    /// Fallback when `jacs-crate` feature is not enabled — always errors.
-    #[cfg(not(feature = "jacs-crate"))]
-    fn extract_version_from_footer(_signed_text: &str) -> Result<String> {
-        Err(HaiError::Provider(
-            "update_document: requires jacs-crate feature for footer parsing".to_string(),
-        ))
     }
 
     async fn get_json_async(&self, url: &str) -> Result<Value> {
@@ -2440,8 +2401,7 @@ mod tests {
         let server = MockServer::start_async().await;
         let _mock = server
             .mock_async(|when, then| {
-                when.method(HMethod::GET)
-                    .path("/api/v1/records/doc-id-123");
+                when.method(HMethod::GET).path("/api/v1/records/doc-id-123");
                 then.status(404).json_body(json!({"error": "not found"}));
             })
             .await;
@@ -2451,7 +2411,9 @@ mod tests {
         assert!(result.is_err(), "should error on 404 fetch");
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("404") || err_msg.contains("not found") || err_msg.contains("Not Found"),
+            err_msg.contains("404")
+                || err_msg.contains("not found")
+                || err_msg.contains("Not Found"),
             "error should indicate fetch failure: {err_msg}"
         );
     }
@@ -2558,8 +2520,7 @@ mod tests {
         );
         let _get_mock = server
             .mock_async(|when, then| {
-                when.method(HMethod::GET)
-                    .path("/api/v1/records/doc-xyz");
+                when.method(HMethod::GET).path("/api/v1/records/doc-xyz");
                 then.status(200)
                     .header("Content-Type", "text/markdown")
                     .body(signed_body);
@@ -2578,7 +2539,11 @@ mod tests {
 
         let provider = make_provider(server.base_url());
         let result = provider.update_document("doc-xyz", "# New content\n");
-        assert!(result.is_ok(), "update_document should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "update_document should succeed: {:?}",
+            result.err()
+        );
         let doc = result.unwrap();
         assert_eq!(doc.key, "doc-xyz:v2");
         assert!(doc.json.contains("# New content"));

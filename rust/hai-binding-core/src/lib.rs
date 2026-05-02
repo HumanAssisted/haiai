@@ -254,7 +254,7 @@ pub struct HaiClientWrapper {
     /// the inner provider. `None` when the test-only `StaticJacsProvider`
     /// fallback was used.
     ///
-    /// The 20 doc-store methods (`save_memory`, `store_document`, etc.) need
+    /// The 21 doc-store methods (`save_memory`, `store_document`, etc.) need
     /// a routed document provider that holds the agent's signing material.
     /// Rather than try to share the inner provider with `HaiClient` (which
     /// owns it as a `Box<dyn JacsMediaProvider>`), we rebuild a fresh routed
@@ -1377,7 +1377,7 @@ impl HaiClientWrapper {
     }
 
     // =========================================================================
-    // JACS Document Store (20 methods)
+    // JACS Document Store (21 methods)
     //
     // These wrap the shared routed document provider so the language bindings
     // (haiipy, haiinpm, haiigo) follow the same local/remote storage decision
@@ -1730,7 +1730,10 @@ impl HaiClientWrapper {
             .get("jacs_type")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                HaiBindingError::new(ErrorKind::InvalidArgument, "missing required field 'jacs_type'")
+                HaiBindingError::new(
+                    ErrorKind::InvalidArgument,
+                    "missing required field 'jacs_type'",
+                )
             })?
             .to_string();
 
@@ -1797,7 +1800,9 @@ impl HaiClientWrapper {
             intent,
         };
 
-        let signed = store.save_document(request).map_err(HaiBindingError::from)?;
+        let signed = store
+            .save_document(request)
+            .map_err(HaiBindingError::from)?;
         Ok(serde_json::to_string(&signed)?)
     }
 
@@ -3212,9 +3217,9 @@ mod tests {
             );
         }
         let summary = val.get("summary").unwrap();
-        // 55 base + 20 jacs_document_store (TASK_001) + 1 save_document (TASK_017) = 76 async methods.
+        // 55 base + 21 jacs_document_store methods = 76 async methods.
         assert_eq!(summary["async_methods"].as_u64(), Some(76));
-        // 82 base + 20 doc-store + 1 save_document = 103 total public methods.
+        // 82 base + 21 doc-store methods = 103 total public methods.
         assert_eq!(summary["total_public_methods"].as_u64(), Some(103));
     }
 
@@ -3441,7 +3446,7 @@ mod tests {
     // =========================================================================
     // JACS Document Store wrapper tests (TASK_001)
     //
-    // These exercise the 20 doc-store methods on `HaiClientWrapper`. The
+    // These exercise the 21 doc-store methods on `HaiClientWrapper`. The
     // public methods build a `RemoteJacsProvider<LocalJacsProvider>` from
     // disk; instead, the tests construct a `RemoteJacsProvider<StaticJacsProvider>`
     // directly (matching `rust/haiai/src/jacs_remote.rs::tests::make_provider`)
@@ -3490,8 +3495,7 @@ mod tests {
             .await;
         let mock = server
             .mock_async(|when, then| {
-                when.method(HMethod::POST)
-                    .path("/api/v1/records");
+                when.method(HMethod::POST).path("/api/v1/records");
                 then.status(201).json_body(serde_json::json!({
                     "key": "memory:v1",
                     "id": "memory",
@@ -3778,8 +3782,8 @@ mod tests {
         })
         .to_string();
 
-        let result = HaiClientWrapper::save_document_with(&store, &request_json)
-            .expect("save_document");
+        let result =
+            HaiClientWrapper::save_document_with(&store, &request_json).expect("save_document");
         let parsed: Value = serde_json::from_str(&result).expect("parse result");
         assert_eq!(parsed["key"].as_str(), Some("doc1:v1"));
         assert!(parsed["json"].as_str().is_some());
@@ -3837,9 +3841,8 @@ mod tests {
         let server = MockServer::start_async().await;
         let store = make_doc_store_provider(server.base_url());
 
-        let err =
-            HaiClientWrapper::save_document_with(&store, "\"just a string\"")
-                .expect_err("must fail");
+        let err = HaiClientWrapper::save_document_with(&store, "\"just a string\"")
+            .expect_err("must fail");
         assert_eq!(err.kind, ErrorKind::InvalidArgument);
         assert!(err.message.contains("JSON object"));
     }

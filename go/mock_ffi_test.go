@@ -48,6 +48,7 @@ type mockFFIClient struct {
 	queryByFieldFn        func(field, value string, limit, offset int) ([]string, error)
 	queryByAgentFn        func(agentID string, limit, offset int) ([]string, error)
 	storageCapabilitiesFn func() (json.RawMessage, error)
+	saveDocumentFn        func(requestJSON string) (json.RawMessage, error)
 	saveMemoryFn          func(content string) (string, error)
 	saveSoulFn            func(content string) (string, error)
 	getMemoryFn           func() (string, error)
@@ -780,6 +781,13 @@ func (m *mockFFIClient) StorageCapabilities() (json.RawMessage, error) {
 		return m.storageCapabilitiesFn()
 	}
 	return nil, fmt.Errorf("mock: StorageCapabilities not stubbed")
+}
+
+func (m *mockFFIClient) SaveDocument(requestJSON string) (json.RawMessage, error) {
+	if m.saveDocumentFn != nil {
+		return m.saveDocumentFn(requestJSON)
+	}
+	return nil, fmt.Errorf("mock: SaveDocument not stubbed")
 }
 
 // D5 — MEMORY / SOUL convenience wrappers

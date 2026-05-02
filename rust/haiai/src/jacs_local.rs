@@ -415,7 +415,10 @@ impl LocalJacsProvider {
                     .get("jacsType")
                     .and_then(Value::as_str)
                     .unwrap_or(&doc.jacs_type);
-                if jacs_type.map(|expected| expected != doc_type).unwrap_or(false) {
+                if jacs_type
+                    .map(|expected| expected != doc_type)
+                    .unwrap_or(false)
+                {
                     continue;
                 }
                 let created_at = doc
@@ -431,35 +434,48 @@ impl LocalJacsProvider {
             let filename = format!("{}.md", key.replace(':', "_"));
             let path = self.document_dir.join(&filename);
             if let Ok(text) = std::fs::read_to_string(&path) {
-                let mut doc_type_found = None;
-                let mut created_at = String::new();
-                for line in text.lines() {
-                    if let Some(val) = line.strip_prefix("jacsType:") {
-                        doc_type_found = Some(val.trim().to_string());
-                    } else if let Some(val) = line.strip_prefix("jacsVersionDate:") {
-                        created_at = val.trim().to_string();
-                    }
-                }
-                let found_type = doc_type_found.as_deref().unwrap_or("");
-                if jacs_type.map(|expected| expected != found_type).unwrap_or(false) {
+                let Some(summary) = extract_summary_from_signed_text(&text, &key) else {
+                    continue;
+                };
+                if jacs_type
+                    .map(|expected| expected != summary.jacs_type)
+                    .unwrap_or(false)
+                {
                     continue;
                 }
-                matches.push((key, created_at));
+                matches.push((key, summary.created_at));
             }
         }
 
-        matches.sort_by(|left, right| {
-            right
-                .1
-                .cmp(&left.1)
-                .then_with(|| right.0.cmp(&left.0))
-        });
+        matches.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| right.0.cmp(&left.0)));
 
         let iter = matches.into_iter().skip(offset).map(|(key, _)| key);
         Ok(match limit {
             Some(limit) => iter.take(limit).collect(),
             None => iter.collect(),
         })
+    }
+
+    fn latest_filesystem_key_for_id(&self, doc_id: &str) -> Result<Option<String>> {
+        let keys = self.list_filesystem_document_keys()?;
+        let mut matches = Vec::new();
+        for key in keys {
+            let Some((id, _version)) = key.split_once(':') else {
+                continue;
+            };
+            if id != doc_id {
+                continue;
+            }
+            let filename = format!("{}.md", key.replace(':', "_"));
+            let path = self.document_dir.join(&filename);
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                if let Some(summary) = extract_summary_from_signed_text(&text, &key) {
+                    matches.push((summary.created_at, summary.version, key));
+                }
+            }
+        }
+        matches.sort_by(|left, right| right.cmp(left));
+        Ok(matches.into_iter().next().map(|(_, _, key)| key))
     }
 }
 
@@ -477,6 +493,17 @@ fn map_agent_info(info: simple::AgentInfo) -> CreateAgentResult {
         domain: info.domain,
         dns_record: info.dns_record,
     }
+}
+
+fn extract_summary_from_signed_text(text: &str, key: &str) -> Option<DocSummary> {
+    crate::jacs::summary_from_document_bytes(
+        None,
+        Some(key),
+        "text/markdown; profile=jacs-text-v1",
+        text.as_bytes(),
+    )
+    .ok()
+    .flatten()
 }
 
 /// Validate routed backend labels for DocumentService-backed operations.
@@ -664,8 +691,7 @@ impl JacsProvider for LocalJacsProvider {
         })?;
 
         // Split existing signed document to extract the footer blocks.
-        let (_old_content, existing_footer) =
-            inline::split_at_first_signature_marker(existing_str);
+        let (_old_content, existing_footer) = inline::split_at_first_signature_marker(existing_str);
         if existing_footer.is_empty() {
             return Err(HaiError::Provider(
                 "sign_text_update: existing_signed_bytes has no JACS signature footer".to_string(),
@@ -673,17 +699,15 @@ impl JacsProvider for LocalJacsProvider {
         }
 
         // Assemble framed text: new plaintext + existing footer blocks.
-        let mut framed =
-            String::with_capacity(new_plaintext_str.len() + 1 + existing_footer.len());
+        let mut framed = String::with_capacity(new_plaintext_str.len() + 1 + existing_footer.len());
         framed.push_str(new_plaintext_str);
         if !new_plaintext_str.ends_with('\n') {
             framed.push('\n');
         }
         framed.push_str(existing_footer);
 
-        let signed = inline::sign_inline_typed(&framed, &simple, None).map_err(|e| {
-            HaiError::Provider(format!("sign_text_update failed: {e}"))
-        })?;
+        let signed = inline::sign_inline_typed(&framed, &simple, None)
+            .map_err(|e| HaiError::Provider(format!("sign_text_update failed: {e}")))?;
 
         // Verify the result has the correct jacsPreviousVersion.
         let (_new_content, new_footer) = inline::split_at_first_signature_marker(&signed);
@@ -838,7 +862,6 @@ impl JacsProvider for LocalJacsProvider {
             signed_agent_json: jacs_result.signed_agent_json,
         })
     }
-
 }
 
 // =============================================================================
@@ -1038,6 +1061,11 @@ impl JacsDocumentProvider for LocalJacsProvider {
     }
 
     fn get_latest_document(&self, doc_id: &str) -> Result<String> {
+        if self.storage_label.as_deref() == Some("fs") {
+            if let Some(key) = self.latest_filesystem_key_for_id(doc_id)? {
+                return self.get_document(&key);
+            }
+        }
         let service = self.require_document_service()?;
         let doc = service
             .get_latest(doc_id)
@@ -1213,7 +1241,12 @@ impl JacsDocumentProvider for LocalJacsProvider {
         expected_previous_version: &str,
     ) -> Result<Vec<u8>> {
         // Delegate to the JacsProvider-level method (single source of truth).
-        JacsProvider::sign_text_update(self, existing_signed_bytes, plaintext, expected_previous_version)
+        JacsProvider::sign_text_update(
+            self,
+            existing_signed_bytes,
+            plaintext,
+            expected_previous_version,
+        )
     }
 
     fn list_doc_summaries(
@@ -1225,8 +1258,9 @@ impl JacsDocumentProvider for LocalJacsProvider {
         let keys = self.list_documents(jacs_type)?;
         let mut summaries = Vec::new();
         for key in keys.into_iter().skip(offset).take(limit) {
-            if let Ok(doc_json) = self.get_document(&key) {
-                if let Ok(value) = serde_json::from_str::<Value>(&doc_json) {
+            if let Ok(doc_content) = self.get_document(&key) {
+                // Try JSON first (legacy path).
+                if let Ok(value) = serde_json::from_str::<Value>(&doc_content) {
                     let id = value
                         .get("jacsId")
                         .and_then(|v| v.as_str())
@@ -1256,6 +1290,12 @@ impl JacsDocumentProvider for LocalJacsProvider {
                         content_type: "application/json".to_string(),
                         created_at,
                     });
+                    continue;
+                }
+
+                // Fallback: extract metadata from JACS footer for signed-text documents.
+                if let Some(summary) = extract_summary_from_signed_text(&doc_content, &key) {
+                    summaries.push(summary);
                 }
             }
         }
@@ -1275,15 +1315,17 @@ impl JacsDocumentProvider for LocalJacsProvider {
     }
 
     fn get_record_bytes(&self, key: &str) -> Result<Vec<u8>> {
+        if !key.contains(':') && self.storage_label.as_deref() == Some("fs") {
+            if let Some(latest_key) = self.latest_filesystem_key_for_id(key)? {
+                return self.get_record_bytes(&latest_key);
+            }
+        }
         // Try to read from the documents directory as a signed-text file first.
         let filename = format!("{}.md", key.replace(':', "_"));
         let path = self.document_dir.join(&filename);
         if path.exists() {
             return std::fs::read(&path).map_err(|e| {
-                HaiError::Provider(format!(
-                    "get_record_bytes: read {}: {e}",
-                    path.display()
-                ))
+                HaiError::Provider(format!("get_record_bytes: read {}: {e}", path.display()))
             });
         }
         // Fall back: try to read the JSON document and return its bytes.
@@ -1293,48 +1335,47 @@ impl JacsDocumentProvider for LocalJacsProvider {
 
     fn store_signed_text(&self, signed_bytes: Vec<u8>, _content_type: &str) -> Result<String> {
         let text = std::str::from_utf8(&signed_bytes).map_err(|e| {
-            HaiError::Provider(format!("store_signed_text: signed bytes not valid UTF-8: {e}"))
+            HaiError::Provider(format!(
+                "store_signed_text: signed bytes not valid UTF-8: {e}"
+            ))
         })?;
 
-        // Extract jacsId and jacsVersion from the JACS footer to build the key.
-        let mut jacs_id = None;
-        let mut jacs_version = None;
-        for line in text.lines() {
-            if let Some(val) = line.strip_prefix("jacsId:") {
-                jacs_id = Some(val.trim().to_string());
-            } else if let Some(val) = line.strip_prefix("jacsVersion:") {
-                jacs_version = Some(val.trim().to_string());
-            }
-            if jacs_id.is_some() && jacs_version.is_some() {
-                break;
-            }
-        }
-
-        let id = jacs_id.ok_or_else(|| {
+        // Extract metadata through JACS footer parsing; haiai must not scan or
+        // reimplement the inline signature format.
+        let metadata = crate::jacs::jacs_inline_metadata(text).ok_or_else(|| {
             HaiError::Provider(
-                "store_signed_text: could not extract jacsId from signed text footer".to_string(),
+                "store_signed_text: could not parse signed text footer metadata".to_string(),
             )
         })?;
-        let version = jacs_version.ok_or_else(|| {
-            HaiError::Provider(
-                "store_signed_text: could not extract jacsVersion from signed text footer"
-                    .to_string(),
-            )
-        })?;
+        let id = metadata
+            .get("jacsId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                HaiError::Provider("store_signed_text: footer missing jacsId".to_string())
+            })?;
+        let version = metadata
+            .get("jacsVersion")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                HaiError::Provider(
+                    "store_signed_text: could not extract jacsVersion from signed text footer"
+                        .to_string(),
+                )
+            })?;
         let key = format!("{id}:{version}");
 
         // Write signed text to the documents directory.
         let doc_dir = &self.document_dir;
         std::fs::create_dir_all(doc_dir).map_err(|e| {
-            HaiError::Provider(format!("store_signed_text: create dir {}: {e}", doc_dir.display()))
+            HaiError::Provider(format!(
+                "store_signed_text: create dir {}: {e}",
+                doc_dir.display()
+            ))
         })?;
         let filename = format!("{}.md", key.replace(':', "_"));
         let path = doc_dir.join(&filename);
         std::fs::write(&path, &signed_bytes).map_err(|e| {
-            HaiError::Provider(format!(
-                "store_signed_text: write {}: {e}",
-                path.display()
-            ))
+            HaiError::Provider(format!("store_signed_text: write {}: {e}", path.display()))
         })?;
 
         Ok(key)
@@ -1769,4 +1810,67 @@ fn resolve_jacs_config_path(config_path: Option<&Path>) -> PathBuf {
     }
 
     PathBuf::from("./jacs.config.json")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_summary_from_signed_text_parses_footer() {
+        let text = r#"# My Soul Document
+
+Some markdown content here.
+
+-----BEGIN JACS SIGNATURE-----
+jacsId: 550e8400-e29b-41d4-a716-446655440000
+jacsVersion: v2
+jacsType: soul
+jacsVersionDate: 2024-06-15T10:30:00Z
+jacsSha256: abc123
+jacsSignature: base64data==
+-----END JACS SIGNATURE-----
+"#;
+        let key = "550e8400-e29b-41d4-a716-446655440000:v2";
+        let summary = extract_summary_from_signed_text(text, key).unwrap();
+
+        assert_eq!(summary.id, "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(summary.version, "v2");
+        assert_eq!(summary.key, key);
+        assert_eq!(summary.jacs_type, "soul");
+        assert_eq!(summary.content_type, "text/markdown; profile=jacs-text-v1");
+        assert_eq!(summary.created_at, "2024-06-15T10:30:00Z");
+        assert!(summary.logical_name.is_none());
+    }
+
+    #[test]
+    fn extract_summary_returns_none_without_footer() {
+        let text = "# Just plain markdown\nNo signature here.\n";
+        let result = extract_summary_from_signed_text(text, "key:v1");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn extract_summary_returns_none_without_required_fields() {
+        // Footer exists but missing jacsId
+        let text = r#"-----BEGIN JACS SIGNATURE-----
+jacsVersion: v1
+jacsType: soul
+-----END JACS SIGNATURE-----
+"#;
+        let result = extract_summary_from_signed_text(text, "key:v1");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn extract_summary_defaults_type_to_unknown() {
+        let text = r#"-----BEGIN JACS SIGNATURE-----
+jacsId: abc-123
+jacsVersion: v1
+-----END JACS SIGNATURE-----
+"#;
+        let summary = extract_summary_from_signed_text(text, "abc-123:v1").unwrap();
+        assert_eq!(summary.jacs_type, "unknown");
+        assert_eq!(summary.created_at, "");
+    }
 }

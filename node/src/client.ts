@@ -1974,7 +1974,7 @@ export class HaiClient {
   }
 
   // ---------------------------------------------------------------------------
-  // JACS Document Store (20 methods)
+  // JACS Document Store (21 methods)
   //
   // Thin delegations to the FFI adapter, which routes through napi-rs to
   // RemoteJacsProvider in Rust. Naming follows the fixture's
@@ -2064,6 +2064,11 @@ export class HaiClient {
   /** Report storage backend capabilities. */
   async storageCapabilities(): Promise<Record<string, unknown>> {
     return this.ffi.storageCapabilities();
+  }
+
+  /** Save an editable JACS text document from a JSON request. */
+  async saveDocument(requestJson: string): Promise<Record<string, unknown>> {
+    return this.ffi.saveDocument(requestJson);
   }
 
   /** Sign and store a `MEMORY.md` record. If `content` is null, reads from CWD. */

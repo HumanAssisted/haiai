@@ -136,7 +136,7 @@ interface NativeHaiClient {
   wsNextEvent(handle: number): Promise<string | null>;
   wsClose(handle: number): Promise<void>;
 
-  // JACS Document Store (Issue 025) — 13 generic + 4 D5 + 3 D9 = 20 methods.
+  // JACS Document Store — 14 generic + 4 D5 + 3 D9 = 21 methods.
   storeDocument(signedJson: string): Promise<string>;
   signAndStore(dataJson: string): Promise<string>;
   getDocument(key: string): Promise<string>;
@@ -150,6 +150,7 @@ interface NativeHaiClient {
   queryByField(field: string, value: string, limit: number, offset: number): Promise<string>;
   queryByAgent(agentId: string, limit: number, offset: number): Promise<string>;
   storageCapabilities(): Promise<string>;
+  saveDocument(requestJson: string): Promise<string>;
 
   // D5 — MEMORY / SOUL convenience wrappers
   saveMemory(content?: string | null): Promise<string>;
@@ -1133,6 +1134,15 @@ export class FFIClientAdapter {
   async storageCapabilities(): Promise<Record<string, unknown>> {
     try {
       const raw = await this.native.storageCapabilities();
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async saveDocument(requestJson: string): Promise<Record<string, unknown>> {
+    try {
+      const raw = await this.native.saveDocument(requestJson);
       return JSON.parse(raw) as Record<string, unknown>;
     } catch (err) {
       throw mapFFIError(err);

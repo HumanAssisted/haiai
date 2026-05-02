@@ -4,7 +4,7 @@
 //
 // Loads the real cgo binding and round-trips `SaveMemory("smoke")` against a
 // local `httptest.NewServer`. This is the one test that would have caught the
-// regression where the Go FFI surface declared 20 methods that returned
+// regression where the Go FFI surface declared 21 methods that returned
 // `notWiredThroughLibhaiigo` instead of dispatching to libhaiigo.
 //
 // Gated by the `cgo_smoke` build tag so it only runs when explicitly invoked:
