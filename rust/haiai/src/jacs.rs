@@ -1270,3 +1270,57 @@ pub fn canonicalize_json_rfc8785(value: &Value) -> String {
 compile_error!(
     "Either `jacs-crate` or `serde_json_canonicalizer` feature must be enabled for JSON canonicalization"
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_intent_variants_are_constructable_and_matchable() {
+        let create = SaveIntent::Create;
+        let update = SaveIntent::Update;
+        let upsert = SaveIntent::Upsert;
+        assert_eq!(create, SaveIntent::Create);
+        assert_eq!(update, SaveIntent::Update);
+        assert_eq!(upsert, SaveIntent::Upsert);
+        assert_ne!(create, update);
+        assert_ne!(update, upsert);
+        assert_ne!(create, upsert);
+    }
+
+    #[test]
+    fn save_document_request_constructable_with_all_fields() {
+        let req = SaveDocumentRequest {
+            doc_id: None,
+            jacs_type: "soul".into(),
+            logical_name: Some("SOUL.md".into()),
+            content_type: "text/markdown; profile=jacs-text-v1".into(),
+            plaintext: b"# Soul\n\nContent.\n".to_vec(),
+            expected_previous_version: None,
+            singleton: true,
+            intent: SaveIntent::Upsert,
+        };
+        assert_eq!(req.jacs_type, "soul");
+        assert_eq!(req.singleton, true);
+        assert!(matches!(req.intent, SaveIntent::Upsert));
+        assert_eq!(req.logical_name, Some("SOUL.md".into()));
+        assert_eq!(req.content_type, "text/markdown; profile=jacs-text-v1");
+    }
+
+    #[test]
+    fn save_document_request_with_explicit_doc_id() {
+        let req = SaveDocumentRequest {
+            doc_id: Some("abc-123".into()),
+            jacs_type: "memory".into(),
+            logical_name: Some("MEMORY.md".into()),
+            content_type: "text/markdown; profile=jacs-text-v1".into(),
+            plaintext: b"# Memory".to_vec(),
+            expected_previous_version: Some("v1".into()),
+            singleton: true,
+            intent: SaveIntent::Update,
+        };
+        assert_eq!(req.doc_id, Some("abc-123".into()));
+        assert!(matches!(req.intent, SaveIntent::Update));
+        assert_eq!(req.expected_previous_version, Some("v1".into()));
+    }
+}
