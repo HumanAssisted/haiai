@@ -1603,7 +1603,7 @@ func parseRawEmailJSON(raw json.RawMessage) (*RawEmailResult, error) {
 }
 
 // =============================================================================
-// JACS Document Store (20 methods)
+// JACS Document Store (21 methods)
 //
 // Thin delegations to the FFI client.
 //
@@ -1727,6 +1727,14 @@ func (c *Client) QueryByAgent(_ctx context.Context, agentID string, limit, offse
 // cgo FFI boundary. See Issue 015.
 func (c *Client) StorageCapabilities(_ctx context.Context) (json.RawMessage, error) {
 	return c.ffi.StorageCapabilities()
+}
+
+// SaveDocument saves an editable JACS text document from a JSON request.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SaveDocument(_ctx context.Context, requestJSON string) (json.RawMessage, error) {
+	return c.ffi.SaveDocument(requestJSON)
 }
 
 // SaveMemory signs and stores a `MEMORY.md` record. Pass empty string to read

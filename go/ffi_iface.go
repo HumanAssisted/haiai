@@ -115,7 +115,7 @@ type FFIClient interface {
 	WSNextEvent(handleID uint64) (json.RawMessage, error)
 	WSClose(handleID uint64)
 
-	// JACS Document Store — 13 generic + 4 D5 + 3 D9 = 20 methods.
+	// JACS Document Store — 14 generic + 4 D5 + 3 D9 = 21 methods.
 	//
 	// The five array-returning trait methods (`ListDocuments`,
 	// `GetDocumentVersions`, `QueryByType`, `QueryByField`, `QueryByAgent`)
@@ -136,6 +136,7 @@ type FFIClient interface {
 	QueryByField(field, value string, limit, offset int) ([]string, error)
 	QueryByAgent(agentID string, limit, offset int) ([]string, error)
 	StorageCapabilities() (json.RawMessage, error)
+	SaveDocument(requestJSON string) (json.RawMessage, error)
 
 	// D5 — MEMORY / SOUL convenience wrappers
 	SaveMemory(content string) (string, error)

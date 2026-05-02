@@ -152,7 +152,7 @@ func TestGetRecordBytesReturnsBytes(t *testing.T) {
 }
 
 // =============================================================================
-// Generic JACS Document Store CRUD — also part of the 20-method scope
+// Generic JACS Document Store CRUD — also part of the 21-method scope
 // =============================================================================
 
 func TestSignAndStorePassesDataJSON(t *testing.T) {
@@ -171,6 +171,25 @@ func TestSignAndStorePassesDataJSON(t *testing.T) {
 	}
 	if captured != `{"hello":"world"}` {
 		t.Errorf("captured data mismatch: got %q", captured)
+	}
+}
+
+func TestSaveDocumentPassesRequestJSON(t *testing.T) {
+	mock := newMockFFIClient("http://localhost:0", "agent-test", "")
+	var captured string
+	mock.saveDocumentFn = func(requestJSON string) (json.RawMessage, error) {
+		captured = requestJSON
+		return json.RawMessage(`{"key":"memory-id:v2","json":"# Memory\n\nremember"}`), nil
+	}
+	out, err := mock.SaveDocument(`{"jacs_type":"memory","plaintext":"remember"}`)
+	if err != nil {
+		t.Fatalf("SaveDocument returned error: %v", err)
+	}
+	if !bytes.Equal(out, []byte(`{"key":"memory-id:v2","json":"# Memory\n\nremember"}`)) {
+		t.Errorf("output mismatch: got %s", string(out))
+	}
+	if captured != `{"jacs_type":"memory","plaintext":"remember"}` {
+		t.Errorf("captured request mismatch: got %q", captured)
 	}
 }
 
@@ -248,7 +267,7 @@ func TestRemoveDocumentReturnsNil(t *testing.T) {
 
 func TestD5MethodsAreInParityFixture(t *testing.T) {
 	fixture := loadParityFixture(t)
-	expected := []string{"save_memory", "save_soul", "get_memory", "get_soul"}
+	expected := []string{"save_document", "save_memory", "save_soul", "get_memory", "get_soul"}
 	all := make(map[string]bool)
 	for _, group := range fixture.Methods {
 		for _, m := range group {
@@ -281,7 +300,7 @@ func TestD9MethodsAreInParityFixture(t *testing.T) {
 // =============================================================================
 // Real `ffi.Client` doc-store wiring
 //
-// The 20 doc-store methods previously returned a "not yet wired through
+// The 21 doc-store methods previously returned a "not yet wired through
 // libhaiigo" stub error. Wiring is now complete (TASK_004 of the
 // JACS_DOCUMENT_STORE_FFI_PRD). Real-binding tests live in
 // `go/ffi_native_smoke_test.go` (`//go:build cgo_smoke`).

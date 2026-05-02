@@ -2173,7 +2173,7 @@ class HaiClient:
     # ------------------------------------------------------------------
     # JACS Document Store (sync)
     #
-    # 20 methods that delegate to RemoteJacsProvider via the FFI adapter.
+    # 21 methods that delegate to RemoteJacsProvider via the FFI adapter.
     # Naming matches `fixtures/ffi_method_parity.json["jacs_document_store"]`.
     # ------------------------------------------------------------------
 
@@ -2236,6 +2236,10 @@ class HaiClient:
     def storage_capabilities(self) -> dict[str, Any]:
         """Report storage backend capabilities (fulltext, vector, etc.)."""
         return self._get_ffi().storage_capabilities()
+
+    def save_document(self, request_json: str) -> dict[str, Any]:
+        """Save an editable JACS text document from a JSON request."""
+        return self._get_ffi().save_document(request_json)
 
     # D5 — MEMORY / SOUL
 

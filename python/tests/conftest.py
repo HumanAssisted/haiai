@@ -444,6 +444,9 @@ class MockFFIAdapter:
     def sign_and_store(self, data_json: str) -> dict:
         return self._record("sign_and_store", data_json)
 
+    def save_document(self, request_json: str) -> dict:
+        return self._record("save_document", request_json)
+
     def get_document(self, key: str) -> str:
         result = self._record("get_document", key)
         return result if isinstance(result, str) else ""

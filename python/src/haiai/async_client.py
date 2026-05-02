@@ -1257,7 +1257,7 @@ class AsyncHaiClient:
     # ------------------------------------------------------------------
     # JACS Document Store (async)
     #
-    # 20 methods that delegate to RemoteJacsProvider via the async FFI
+    # 21 methods that delegate to RemoteJacsProvider via the async FFI
     # adapter. Naming matches `fixtures/ffi_method_parity.json`.
     # ------------------------------------------------------------------
 
@@ -1322,6 +1322,10 @@ class AsyncHaiClient:
     async def storage_capabilities(self) -> dict[str, Any]:
         """Report storage backend capabilities."""
         return await self._get_ffi().storage_capabilities()
+
+    async def save_document(self, request_json: str) -> dict[str, Any]:
+        """Save an editable JACS text document from a JSON request."""
+        return await self._get_ffi().save_document(request_json)
 
     async def save_memory(self, content: Optional[str] = None) -> str:
         """Sign and store a `MEMORY.md` record."""

@@ -1751,6 +1751,25 @@ impl HaiClient {
             .map_err(to_py_err)
     }
 
+    // ---- save_document ----
+    fn save_document<'py>(
+        &self,
+        py: Python<'py>,
+        request_json: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.save_document(&request_json).await.map_err(to_py_err)
+        })
+    }
+
+    fn save_document_sync(&self, py: Python, request_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| RT.block_on(async { client.save_document(&request_json).await }))
+            .map_err(to_py_err)
+    }
+
     // ---- save_memory ----
     #[pyo3(signature = (content=None))]
     fn save_memory<'py>(

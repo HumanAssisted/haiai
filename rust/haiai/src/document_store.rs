@@ -15,12 +15,26 @@ const LOCAL_SIGNER_STORAGE: &str = "fs";
 /// operations. `storage` may be an explicit CLI/config override; otherwise
 /// [`resolve_storage_backend`] applies `JACS_DEFAULT_STORAGE`, `jacs.config.json`,
 /// and the `fs` default.
+///
+/// The `remote` config axis (PRD Section 6.1) is consulted independently of the
+/// storage backend label. When `remote=true` (via env, config, or backward-compat
+/// `JACS_DEFAULT_STORAGE=remote`), the provider syncs with HAI records API
+/// regardless of which local storage label was resolved.
 pub fn build_document_provider(
     config_path: Option<&Path>,
     storage: Option<&str>,
     base_url: Option<String>,
 ) -> Result<Box<dyn JacsDocumentProvider>> {
     let backend = resolve_storage_backend(storage, config_path)?;
+    let remote = crate::config::resolve_remote(None, config_path);
+
+    // When remote=true and backend is a local label (fs/sqlite), promote to
+    // remote provider with local signing — the PRD's two-axis model.
+    if remote && backend != "remote" {
+        tracing::info!(backend = %backend, remote = true, "promoting to remote provider (remote=true in config)");
+        return build_document_provider_for_backend(config_path, "remote", base_url);
+    }
+
     build_document_provider_for_backend(config_path, &backend, base_url)
 }
 
@@ -142,6 +156,92 @@ mod tests {
             latest.contains("remember the routed provider"),
             "saved local memory should be retrievable through get_memory"
         );
+    }
+
+    #[test]
+    fn local_backend_save_memory_twice_versions_same_document() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let (_dir, config_path) = create_test_agent();
+        let provider =
+            build_document_provider(Some(&config_path), Some("fs"), None).expect("local provider");
+
+        let first = provider
+            .save_memory(Some("first memory"))
+            .expect("first save");
+        let first_id = first.split_once(':').expect("id:version").0.to_string();
+
+        let second = provider
+            .save_memory(Some("second memory"))
+            .expect("second save updates same memory document");
+        let (second_id, second_version) = second.split_once(':').expect("id:version");
+        assert_eq!(second_id, first_id);
+        assert_ne!(second, first);
+
+        let latest = provider
+            .get_record_bytes(&first_id)
+            .expect("fetch latest by doc id");
+        let latest_text = String::from_utf8(latest).expect("signed markdown is UTF-8");
+        assert!(latest_text.contains("second memory"));
+        assert!(latest_text.contains(&format!(
+            "jacsPreviousVersion: {}",
+            first.split_once(':').unwrap().1
+        )));
+        assert!(latest_text.contains(&format!("jacsVersion: {second_version}")));
+    }
+
+    #[test]
+    fn local_backend_explicit_doc_id_update_uses_real_latest_key() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let (_dir, config_path) = create_test_agent();
+        let provider =
+            build_document_provider(Some(&config_path), Some("fs"), None).expect("local provider");
+
+        let first = provider
+            .save_memory(Some("first memory"))
+            .expect("first save");
+        let first_id = first.split_once(':').expect("id:version").0.to_string();
+        let updated = provider
+            .save_document(crate::jacs::SaveDocumentRequest {
+                doc_id: Some(first_id.clone()),
+                jacs_type: "memory".to_string(),
+                logical_name: Some("MEMORY.md".to_string()),
+                content_type: "text/markdown; profile=jacs-text-v1".to_string(),
+                plaintext: b"explicit update".to_vec(),
+                expected_previous_version: None,
+                singleton: true,
+                intent: crate::jacs::SaveIntent::Update,
+            })
+            .expect("explicit update");
+
+        assert!(updated.key.starts_with(&format!("{first_id}:")));
+        assert_ne!(updated.key, first);
+        assert!(updated.json.contains("explicit update"));
+    }
+
+    #[test]
+    fn local_backend_create_intent_rejects_existing_singleton() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let (_dir, config_path) = create_test_agent();
+        let provider =
+            build_document_provider(Some(&config_path), Some("fs"), None).expect("local provider");
+
+        provider
+            .save_memory(Some("first memory"))
+            .expect("first save");
+        let err = provider
+            .save_document(crate::jacs::SaveDocumentRequest {
+                doc_id: None,
+                jacs_type: "memory".to_string(),
+                logical_name: Some("MEMORY.md".to_string()),
+                content_type: "text/markdown; profile=jacs-text-v1".to_string(),
+                plaintext: b"should not create".to_vec(),
+                expected_previous_version: None,
+                singleton: true,
+                intent: crate::jacs::SaveIntent::Create,
+            })
+            .expect_err("create intent must reject existing memory singleton");
+
+        assert!(err.to_string().contains("duplicate singleton"));
     }
 
     fn restore_env(key: &str, saved: Option<String>) {

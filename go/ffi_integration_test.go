@@ -647,6 +647,10 @@ func (r *recordingFFIClient) StorageCapabilities() (json.RawMessage, error) {
 	*r.calls = append(*r.calls, "StorageCapabilities")
 	return r.inner.StorageCapabilities()
 }
+func (r *recordingFFIClient) SaveDocument(requestJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "SaveDocument")
+	return r.inner.SaveDocument(requestJSON)
+}
 func (r *recordingFFIClient) SaveMemory(content string) (string, error) {
 	*r.calls = append(*r.calls, "SaveMemory")
 	return r.inner.SaveMemory(content)

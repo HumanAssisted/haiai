@@ -1,5 +1,5 @@
 /**
- * Issue 025 — Node FFI tests for the 7 D5/D9 JACS Document Store methods.
+ * Node FFI tests for the JACS Document Store methods.
  *
  * Exercises every D5 (saveMemory / saveSoul / getMemory / getSoul) and D9
  * (storeTextFile / storeImageFile / getRecordBytes) wrapper through the
@@ -142,7 +142,7 @@ describe('D9 typed-content helpers (Issue 025)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Generic JACS Document Store CRUD — also part of the 20-method scope
+// Generic JACS Document Store CRUD — also part of the 21-method scope
 // ---------------------------------------------------------------------------
 
 describe('Generic JACS Document Store CRUD (Issue 025)', () => {
@@ -155,6 +155,17 @@ describe('Generic JACS Document Store CRUD (Issue 025)', () => {
     });
     const out = await ffi.signAndStore('{"hello":"world"}');
     expect(out).toEqual({ key: 'id1:v1', json: '{}' });
+  });
+
+  it('saveDocument passes request JSON through and returns Record', async () => {
+    const ffi = createMockFFI({
+      saveDocument: async (requestJson) => {
+        expect(requestJson).toBe('{"jacs_type":"memory","plaintext":"remember"}');
+        return { key: 'memory-id:v2', json: '# Memory\n\nremember' };
+      },
+    });
+    const out = await ffi.saveDocument('{"jacs_type":"memory","plaintext":"remember"}');
+    expect(out).toEqual({ key: 'memory-id:v2', json: '# Memory\n\nremember' });
   });
 
   it('searchDocuments forwards limit + offset', async () => {

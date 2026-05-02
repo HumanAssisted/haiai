@@ -1280,6 +1280,29 @@ pub extern "C" fn hai_storage_capabilities(handle: HaiClientHandle) -> *mut c_ch
     result.unwrap_or_else(|_| panic_json())
 }
 
+#[no_mangle]
+pub extern "C" fn hai_save_document(
+    handle: HaiClientHandle,
+    request_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(
+            r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string(),
+        );
+    }
+    let client = unsafe { &*handle }.clone();
+    let arg = unsafe { c_str_to_string(request_json) };
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.save_document(&arg).await;
+            let _ = tx.send(r);
+        });
+        to_c_string(result_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
 // ---- 4 D5 methods (memory / soul) ----
 
 /// `save_memory` takes `Option<String>` content. Empty cstring → `None`
