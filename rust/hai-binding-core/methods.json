@@ -756,6 +756,17 @@
       "notes": "D5 wrapper \u2014 sets jacsType='soul'."
     },
     {
+      "name": "save_document",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "request_json": "string (JSON: {jacs_type, content_type, plaintext, doc_id?, logical_name?, expected_previous_version?, singleton?, intent?})"
+      },
+      "returns": "string (SignedDocument JSON: {key, json})",
+      "auth_required": true,
+      "notes": "Generic save with intent resolution. intent is 'create'|'update'|'upsert' (default 'upsert'). singleton defaults to false. Delegates to JacsDocumentProvider::save_document."
+    },
+    {
       "name": "get_memory",
       "category": "async",
       "group": "jacs_document_store",
@@ -1009,13 +1020,13 @@
     }
   ],
   "summary": {
-    "async_methods": 75,
+    "async_methods": 76,
     "streaming_methods": 6,
     "callback_methods": 2,
     "sync_methods": 12,
     "mutating_methods": 2,
     "excluded_methods": 5,
-    "total_public_methods": 102,
-    "binding_core_scope": "75 async + 6 streaming + 2 callback + 12 sync + 2 mutating = 97 methods"
+    "total_public_methods": 103,
+    "binding_core_scope": "76 async + 6 streaming + 2 callback + 12 sync + 2 mutating = 98 methods"
   }
 }

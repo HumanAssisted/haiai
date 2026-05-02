@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use base64::Engine;
-use serde_json::{json, Value};
+use serde_json::Value;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -258,6 +258,48 @@ pub trait JacsProvider: Send + Sync {
         ))
     }
 
+    /// Sign plaintext content as a new JACS footer-signed text artifact.
+    ///
+    /// Mirrors [`JacsDocumentProvider::sign_text_document_create`] but lives on
+    /// `JacsProvider` so wrapper providers (e.g. `RemoteJacsProvider`) can
+    /// delegate to `self.inner` without requiring `P: JacsDocumentProvider`.
+    ///
+    /// The default implementation returns an error: providers without a real
+    /// JACS agent cannot produce inline-signed text. [`LocalJacsProvider`]
+    /// overrides this via JACS's `inline::create_inline_typed`.
+    fn sign_text_create(
+        &self,
+        _jacs_type: &str,
+        _logical_name: &str,
+        _content_type: &str,
+        _plaintext: &[u8],
+    ) -> Result<Vec<u8>> {
+        Err(HaiError::Provider(
+            "sign_text_create not supported by this provider; use LocalJacsProvider \
+             or any provider that wraps a real JACS SimpleAgent"
+                .to_string(),
+        ))
+    }
+
+    /// Sign an update to an existing footer-signed text artifact.
+    ///
+    /// Mirrors [`JacsDocumentProvider::sign_text_document_update`] but lives on
+    /// `JacsProvider` so wrapper providers can delegate to `self.inner`.
+    ///
+    /// The default implementation returns an error.
+    fn sign_text_update(
+        &self,
+        _existing_signed_bytes: &[u8],
+        _plaintext: &[u8],
+        _expected_previous_version: &str,
+    ) -> Result<Vec<u8>> {
+        Err(HaiError::Provider(
+            "sign_text_update not supported by this provider; use LocalJacsProvider \
+             or any provider that wraps a real JACS SimpleAgent"
+                .to_string(),
+        ))
+    }
+
     /// Return a signed payload accepted by `/api/v1/agents/jobs/{job_id}/response`.
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload>;
 
@@ -458,6 +500,31 @@ pub struct SaveDocumentRequest {
     pub intent: SaveIntent,
 }
 
+/// Lightweight summary of a stored document, returned by listing and find
+/// operations without fetching the full signed content.
+///
+/// Fields mirror the server-side `DocumentSummary` metadata columns; when
+/// metadata is unavailable (e.g. local-only FS backend), the implementation
+/// fills as many fields as possible and leaves `logical_name` as `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocSummary {
+    /// The document's stable `jacsId`.
+    pub id: String,
+    /// The version string (e.g. `"v1"`, `"v2"`, ...).
+    pub version: String,
+    /// Composite `id:version` key used by other trait methods.
+    pub key: String,
+    /// JACS document type (`"soul"`, `"memory"`, `"inline-md"`, etc.).
+    pub jacs_type: String,
+    /// Optional logical name / filename. `None` when the server or backend
+    /// does not store a title column.
+    pub logical_name: Option<String>,
+    /// MIME content type (e.g. `"application/json"`, `"text/markdown"`).
+    pub content_type: String,
+    /// ISO-8601 creation timestamp (or best-effort from `jacsVersionDate`).
+    pub created_at: String,
+}
+
 /// Extension trait for document storage, retrieval, versioning, and search.
 ///
 /// Wraps the JACS `DocumentService` into SDK-friendly signatures
@@ -531,6 +598,45 @@ pub trait JacsDocumentProvider: JacsProvider {
     fn storage_capabilities(&self) -> Result<StorageCapabilities>;
 
     // =========================================================================
+    // Document summary listing and find (PRD Section 7.5)
+    //
+    // Return lightweight `DocSummary` structs without fetching full content.
+    // Used by `save_document` (TASK_005) for singleton resolution and by
+    // CLI/MCP listing tools.
+    // =========================================================================
+
+    /// List document summaries, optionally filtered by `jacs_type`.
+    ///
+    /// Returns at most `limit` summaries starting at `offset`. Latest versions
+    /// only (no historical versions).
+    fn list_doc_summaries(
+        &self,
+        _jacs_type: Option<&str>,
+        _limit: usize,
+        _offset: usize,
+    ) -> Result<Vec<DocSummary>> {
+        Err(HaiError::Provider(
+            "list_doc_summaries: not implemented for this provider".to_string(),
+        ))
+    }
+
+    /// Find documents matching `jacs_type` and optionally `logical_name`.
+    ///
+    /// When `logical_name` is `None`, returns all documents of the given type
+    /// (up to `limit`). This is the primary resolution path for singleton
+    /// types like `"soul"` and `"memory"`.
+    fn find_document(
+        &self,
+        _jacs_type: &str,
+        _logical_name: Option<&str>,
+        _limit: usize,
+    ) -> Result<Vec<DocSummary>> {
+        Err(HaiError::Provider(
+            "find_document: not implemented for this provider".to_string(),
+        ))
+    }
+
+    // =========================================================================
     // D5: MEMORY / SOUL convenience wrappers (Issue 003)
     //
     // These wrap the generic CRUD with a specific `jacsType` so the LLM caller
@@ -542,12 +648,42 @@ pub trait JacsDocumentProvider: JacsProvider {
     /// Sign and store a MEMORY record. If `content` is `None` the implementation
     /// reads `MEMORY.md` from CWD. Returns the record key (`id:version`).
     fn save_memory(&self, content: Option<&str>) -> Result<String> {
-        save_typed_document(self, "memory", content, "MEMORY.md")
+        let plaintext = match content {
+            Some(s) => s.as_bytes().to_vec(),
+            None => std::fs::read("MEMORY.md")
+                .map_err(|e| HaiError::Provider(format!("read MEMORY.md: {e}")))?,
+        };
+        let doc = self.save_document(SaveDocumentRequest {
+            doc_id: None,
+            jacs_type: "memory".into(),
+            logical_name: Some("MEMORY.md".into()),
+            content_type: "text/markdown; profile=jacs-text-v1".into(),
+            plaintext,
+            expected_previous_version: None,
+            singleton: true,
+            intent: SaveIntent::Upsert,
+        })?;
+        Ok(doc.key)
     }
 
     /// Sign and store a SOUL record. Mirror of `save_memory`.
     fn save_soul(&self, content: Option<&str>) -> Result<String> {
-        save_typed_document(self, "soul", content, "SOUL.md")
+        let plaintext = match content {
+            Some(s) => s.as_bytes().to_vec(),
+            None => std::fs::read("SOUL.md")
+                .map_err(|e| HaiError::Provider(format!("read SOUL.md: {e}")))?,
+        };
+        let doc = self.save_document(SaveDocumentRequest {
+            doc_id: None,
+            jacs_type: "soul".into(),
+            logical_name: Some("SOUL.md".into()),
+            content_type: "text/markdown; profile=jacs-text-v1".into(),
+            plaintext,
+            expected_previous_version: None,
+            singleton: true,
+            intent: SaveIntent::Upsert,
+        })?;
+        Ok(doc.key)
     }
 
     /// Fetch the latest MEMORY record's signed envelope JSON. `Ok(None)` when
@@ -591,30 +727,184 @@ pub trait JacsDocumentProvider: JacsProvider {
             "get_record_bytes: not implemented for this provider".to_string(),
         ))
     }
+
+    // =========================================================================
+    // Text document create/update signing (PRD Section 7.2)
+    //
+    // These produce footer-signed markdown/text artifacts using JACS's
+    // versioned inline create/update primitives. `save_document` (TASK_005)
+    // calls these; providers that cannot sign locally (e.g. hosted remote
+    // signer) override these to delegate to signer-service.
+    // =========================================================================
+
+    /// Sign plaintext content as a new JACS footer-signed markdown/text
+    /// artifact with the given `jacs_type`.
+    ///
+    /// Returns the signed bytes (plaintext + JACS footer).
+    fn sign_text_document_create(
+        &self,
+        _jacs_type: &str,
+        _logical_name: &str,
+        _content_type: &str,
+        _plaintext: &[u8],
+    ) -> Result<Vec<u8>> {
+        Err(HaiError::Provider(
+            "sign_text_document_create: not implemented for this provider".to_string(),
+        ))
+    }
+
+    /// Sign an update to an existing footer-signed markdown/text artifact.
+    ///
+    /// The implementation must preserve `jacsId` from the existing artifact,
+    /// produce a new `jacsVersion`, and set `jacsPreviousVersion` to
+    /// `expected_previous_version`.
+    ///
+    /// Returns the new signed bytes (new plaintext + updated JACS footer).
+    fn sign_text_document_update(
+        &self,
+        _existing_signed_bytes: &[u8],
+        _plaintext: &[u8],
+        _expected_previous_version: &str,
+    ) -> Result<Vec<u8>> {
+        Err(HaiError::Provider(
+            "sign_text_document_update: not implemented for this provider".to_string(),
+        ))
+    }
+
+    // =========================================================================
+    // Store signed text bytes (TASK_005)
+    //
+    // Persist already-signed text bytes (markdown + JACS footer) to the
+    // configured backend. Returns the record key (`id:version`).
+    // =========================================================================
+
+    /// Store signed text bytes to the backend. Returns the record key.
+    ///
+    /// The bytes MUST already contain a valid JACS signature footer.
+    /// `content_type` is typically `"text/markdown; profile=jacs-text-v1"`.
+    fn store_signed_text(&self, _signed_bytes: Vec<u8>, _content_type: &str) -> Result<String> {
+        Err(HaiError::Provider(
+            "store_signed_text: not implemented for this provider".to_string(),
+        ))
+    }
+
+    // =========================================================================
+    // save_document: unified create/update with intent and resolution (TASK_005)
+    //
+    // Single decision point for create-vs-update. Callers (save_soul,
+    // save_memory, and future editable-document surfaces) supply a
+    // SaveDocumentRequest; this method resolves existing state, enforces
+    // intent, signs, stores, and returns the SignedDocument.
+    // =========================================================================
+
+    /// Save (create, update, or upsert) an editable document.
+    ///
+    /// This is the single source of truth for the create-vs-update decision.
+    /// `save_soul` and `save_memory` delegate here with `singleton = true` and
+    /// `intent = Upsert`.
+    fn save_document(&self, request: SaveDocumentRequest) -> Result<SignedDocument> {
+        // 1. Resolve existing document
+        let existing: Option<DocSummary> = if let Some(ref doc_id) = request.doc_id {
+            let summaries = self.find_document(&request.jacs_type, None, 100)?;
+            summaries.into_iter().find(|s| s.id == *doc_id)
+        } else if request.singleton {
+            let summaries = self.find_document(&request.jacs_type, None, 1)?;
+            summaries.into_iter().next()
+        } else if let Some(ref name) = request.logical_name {
+            let summaries = self.find_document(&request.jacs_type, Some(name.as_str()), 1)?;
+            summaries.into_iter().next()
+        } else {
+            None
+        };
+
+        // 2. Enforce intent
+        match request.intent {
+            SaveIntent::Create => {
+                if let Some(ref doc) = existing {
+                    if request.singleton {
+                        tracing::warn!(
+                            result = "duplicate_singleton",
+                            jacs_type = %request.jacs_type,
+                            owner_agent_id = %doc.id,
+                            "save_document"
+                        );
+                        return Err(HaiError::Provider(format!(
+                            "duplicate singleton: a '{}' document already exists for this owner",
+                            request.jacs_type
+                        )));
+                    }
+                    return Err(HaiError::Provider(format!(
+                        "document already exists with id '{}'",
+                        doc.id
+                    )));
+                }
+            }
+            SaveIntent::Update => {
+                if existing.is_none() {
+                    return Err(HaiError::Provider(format!(
+                        "cannot update: no existing '{}' document found",
+                        request.jacs_type
+                    )));
+                }
+            }
+            SaveIntent::Upsert => { /* create if missing, update if found */ }
+        }
+
+        // 3. Stale version check
+        if let (Some(ref expected), Some(ref doc)) =
+            (&request.expected_previous_version, &existing)
+        {
+            if doc.version != *expected {
+                tracing::warn!(
+                    result = "stale_previous_version",
+                    doc_id = %doc.id,
+                    expected = %expected,
+                    latest = %doc.version,
+                    "save_document"
+                );
+                return Err(HaiError::Provider(format!(
+                    "stale version: expected '{}' but latest is '{}'",
+                    expected, doc.version
+                )));
+            }
+        }
+
+        // 4. Sign — delegate to create or update
+        let signed_bytes = if let Some(ref doc) = existing {
+            let existing_bytes = self.get_record_bytes(&doc.key)?;
+            self.sign_text_document_update(
+                &existing_bytes,
+                &request.plaintext,
+                &doc.version,
+            )?
+        } else {
+            let logical = request.logical_name.as_deref().unwrap_or("");
+            self.sign_text_document_create(
+                &request.jacs_type,
+                logical,
+                &request.content_type,
+                &request.plaintext,
+            )?
+        };
+
+        // 5. Store
+        let key = self.store_signed_text(signed_bytes.clone(), &request.content_type)?;
+
+        // 6. Log
+        let action = if existing.is_some() { "update" } else { "create" };
+        tracing::info!(
+            action,
+            jacs_type = %request.jacs_type,
+            logical_name = ?request.logical_name,
+            "save_document"
+        );
+
+        // 7. Return
+        let json = String::from_utf8_lossy(&signed_bytes).to_string();
+        Ok(SignedDocument { key, json })
+    }
 }
 
-fn save_typed_document<P: JacsDocumentProvider + ?Sized>(
-    provider: &P,
-    jacs_type: &str,
-    content: Option<&str>,
-    default_filename: &str,
-) -> Result<String> {
-    let body = match content {
-        Some(s) => s.to_string(),
-        None => std::fs::read_to_string(default_filename)
-            .map_err(|e| HaiError::Provider(format!("read {}: {}", default_filename, e)))?,
-    };
-    tracing::info!(
-        operation = "save_typed_document",
-        jacs_type,
-        "saving typed JACS document"
-    );
-    let payload = json!({
-        "jacsType": jacs_type,
-        "body": body,
-    });
-    provider.sign_and_store(&payload).map(|doc| doc.key)
-}
 
 fn get_typed_latest_document<P: JacsDocumentProvider + ?Sized>(
     provider: &P,
@@ -632,13 +922,35 @@ fn get_typed_latest_document<P: JacsDocumentProvider + ?Sized>(
 
     for key in provider.list_documents(None)? {
         let doc = provider.get_document(&key)?;
-        let value: Value = serde_json::from_str(&doc)?;
-        if value.get("jacsType").and_then(Value::as_str) == Some(jacs_type) {
+        // Try JSON first; fall back to scanning YAML footer lines for jacsType.
+        let doc_type = if let Ok(value) = serde_json::from_str::<Value>(&doc) {
+            value
+                .get("jacsType")
+                .and_then(Value::as_str)
+                .map(String::from)
+        } else {
+            extract_jacs_type_from_text(&doc)
+        };
+        if doc_type.as_deref() == Some(jacs_type) {
             return Ok(Some(doc));
         }
     }
 
     Ok(None)
+}
+
+/// Extract `jacsType` from a signed markdown document's YAML footer.
+/// Scans lines for `jacsType: <value>` (plain YAML key).
+fn extract_jacs_type_from_text(text: &str) -> Option<String> {
+    for line in text.lines() {
+        if let Some(val) = line.strip_prefix("jacsType:") {
+            let trimmed = val.trim().trim_matches('"').trim_matches('\'');
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
 }
 
 // =============================================================================
@@ -856,6 +1168,25 @@ impl JacsProvider for Box<dyn JacsProvider> {
     fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
         (**self).update_agent(new_agent_data)
     }
+
+    fn sign_text_create(
+        &self,
+        jacs_type: &str,
+        logical_name: &str,
+        content_type: &str,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>> {
+        (**self).sign_text_create(jacs_type, logical_name, content_type, plaintext)
+    }
+
+    fn sign_text_update(
+        &self,
+        existing_signed_bytes: &[u8],
+        plaintext: &[u8],
+        expected_previous_version: &str,
+    ) -> Result<Vec<u8>> {
+        (**self).sign_text_update(existing_signed_bytes, plaintext, expected_previous_version)
+    }
 }
 
 // Blanket impl so `HaiClient<Box<dyn JacsMediaProvider>>` works. The wrapper
@@ -915,6 +1246,25 @@ impl JacsProvider for Box<dyn JacsMediaProvider> {
 
     fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
         (**self).update_agent(new_agent_data)
+    }
+
+    fn sign_text_create(
+        &self,
+        jacs_type: &str,
+        logical_name: &str,
+        content_type: &str,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>> {
+        (**self).sign_text_create(jacs_type, logical_name, content_type, plaintext)
+    }
+
+    fn sign_text_update(
+        &self,
+        existing_signed_bytes: &[u8],
+        plaintext: &[u8],
+        expected_previous_version: &str,
+    ) -> Result<Vec<u8>> {
+        (**self).sign_text_update(existing_signed_bytes, plaintext, expected_previous_version)
     }
 }
 
@@ -1112,6 +1462,98 @@ impl JacsProvider for StaticJacsProvider {
         })
     }
 
+    /// Test-only synthetic inline-text signing. Produces a fake signed markdown
+    /// document with a `-----BEGIN JACS SIGNATURE-----` marker so downstream
+    /// code that checks for the marker (e.g. `store_text_file`) works in tests.
+    /// The signature is NOT cryptographically valid.
+    fn sign_text_create(
+        &self,
+        jacs_type: &str,
+        _logical_name: &str,
+        _content_type: &str,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>> {
+        let text = std::str::from_utf8(plaintext).map_err(|e| {
+            HaiError::Provider(format!("sign_text_create: plaintext not UTF-8: {e}"))
+        })?;
+        let id = Uuid::new_v4().to_string();
+        let version = Uuid::new_v4().to_string();
+        let now = OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|e| HaiError::Provider(format!("failed to format timestamp: {e}")))?;
+        let sig = self.sign_string(text)?;
+        let footer = format!(
+            "\n-----BEGIN JACS SIGNATURE-----\n\
+             jacsId: {id}\n\
+             jacsVersion: {version}\n\
+             jacsType: {jacs_type}\n\
+             jacsVersionDate: {now}\n\
+             agentID: {}\n\
+             signature: {sig}\n\
+             -----END JACS SIGNATURE-----\n",
+            self.jacs_id
+        );
+        let mut result = text.to_string();
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push_str(&footer);
+        Ok(result.into_bytes())
+    }
+
+    /// Test-only synthetic inline-text update. Preserves the existing jacsId
+    /// and bumps version. NOT cryptographically valid.
+    fn sign_text_update(
+        &self,
+        existing_signed_bytes: &[u8],
+        plaintext: &[u8],
+        _expected_previous_version: &str,
+    ) -> Result<Vec<u8>> {
+        let existing_str = std::str::from_utf8(existing_signed_bytes).map_err(|e| {
+            HaiError::Provider(format!("sign_text_update: existing not UTF-8: {e}"))
+        })?;
+        // Extract jacsId from existing footer
+        let id = existing_str
+            .lines()
+            .find(|l| l.starts_with("jacsId:"))
+            .and_then(|l| l.strip_prefix("jacsId:"))
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        // Extract jacsType from existing footer
+        let jacs_type = existing_str
+            .lines()
+            .find(|l| l.starts_with("jacsType:"))
+            .and_then(|l| l.strip_prefix("jacsType:"))
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "document".to_string());
+
+        let text = std::str::from_utf8(plaintext).map_err(|e| {
+            HaiError::Provider(format!("sign_text_update: plaintext not UTF-8: {e}"))
+        })?;
+        let new_version = Uuid::new_v4().to_string();
+        let now = OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|e| HaiError::Provider(format!("failed to format timestamp: {e}")))?;
+        let sig = self.sign_string(text)?;
+        let footer = format!(
+            "\n-----BEGIN JACS SIGNATURE-----\n\
+             jacsId: {id}\n\
+             jacsVersion: {new_version}\n\
+             jacsType: {jacs_type}\n\
+             jacsVersionDate: {now}\n\
+             agentID: {}\n\
+             signature: {sig}\n\
+             -----END JACS SIGNATURE-----\n",
+            self.jacs_id
+        );
+        let mut result = text.to_string();
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push_str(&footer);
+        Ok(result.into_bytes())
+    }
+
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
         let canonical_payload = canonicalize_json_rfc8785(payload);
         let data = serde_json::from_str::<Value>(&canonical_payload)?;
@@ -1305,6 +1747,161 @@ mod tests {
         assert!(matches!(req.intent, SaveIntent::Upsert));
         assert_eq!(req.logical_name, Some("SOUL.md".into()));
         assert_eq!(req.content_type, "text/markdown; profile=jacs-text-v1");
+    }
+
+    #[test]
+    fn sign_text_document_default_methods_return_error() {
+        // Build a minimal provider that inherits the default
+        // sign_text_document_create/update.
+        struct StubDocProvider;
+
+        impl JacsProvider for StubDocProvider {
+            fn jacs_id(&self) -> &str {
+                "stub"
+            }
+            fn sign_string(&self, _: &str) -> Result<String> {
+                unimplemented!()
+            }
+            fn sign_bytes(&self, _: &[u8]) -> Result<Vec<u8>> {
+                unimplemented!()
+            }
+            fn key_id(&self) -> &str {
+                "stub"
+            }
+            fn algorithm(&self) -> &str {
+                "none"
+            }
+            fn canonical_json(&self, _: &Value) -> Result<String> {
+                unimplemented!()
+            }
+            fn sign_response(&self, _: &Value) -> Result<SignedPayload> {
+                unimplemented!()
+            }
+        }
+
+        impl JacsDocumentProvider for StubDocProvider {
+            fn sign_document(&self, _: &Value) -> Result<String> {
+                unimplemented!()
+            }
+            fn store_document(&self, _: &str) -> Result<String> {
+                unimplemented!()
+            }
+            fn sign_and_store(&self, _: &Value) -> Result<SignedDocument> {
+                unimplemented!()
+            }
+            fn sign_file(&self, _: &str, _: bool) -> Result<SignedDocument> {
+                unimplemented!()
+            }
+            fn get_document(&self, _: &str) -> Result<String> {
+                unimplemented!()
+            }
+            fn list_documents(&self, _: Option<&str>) -> Result<Vec<String>> {
+                unimplemented!()
+            }
+            fn get_document_versions(&self, _: &str) -> Result<Vec<String>> {
+                unimplemented!()
+            }
+            fn get_latest_document(&self, _: &str) -> Result<String> {
+                unimplemented!()
+            }
+            fn remove_document(&self, _: &str) -> Result<()> {
+                unimplemented!()
+            }
+            fn update_document(&self, _: &str, _: &str) -> Result<SignedDocument> {
+                unimplemented!()
+            }
+            fn search_documents(&self, _: &str, _: usize, _: usize) -> Result<DocSearchResults> {
+                unimplemented!()
+            }
+            fn query_by_type(&self, _: &str, _: usize, _: usize) -> Result<Vec<String>> {
+                unimplemented!()
+            }
+            fn query_by_field(
+                &self,
+                _: &str,
+                _: &str,
+                _: usize,
+                _: usize,
+            ) -> Result<Vec<String>> {
+                unimplemented!()
+            }
+            fn query_by_agent(&self, _: &str, _: usize, _: usize) -> Result<Vec<String>> {
+                unimplemented!()
+            }
+            fn storage_capabilities(&self) -> Result<StorageCapabilities> {
+                unimplemented!()
+            }
+        }
+
+        let p = StubDocProvider;
+        let create_err =
+            p.sign_text_document_create("soul", "SOUL.md", "text/markdown", b"content");
+        assert!(create_err.is_err(), "default create must error");
+        let msg = create_err.unwrap_err().to_string();
+        assert!(
+            msg.contains("not implemented"),
+            "error should mention 'not implemented': {msg}"
+        );
+
+        let update_err = p.sign_text_document_update(b"existing", b"new", "v1");
+        assert!(update_err.is_err(), "default update must error");
+        let msg = update_err.unwrap_err().to_string();
+        assert!(
+            msg.contains("not implemented"),
+            "error should mention 'not implemented': {msg}"
+        );
+
+        // list_doc_summaries default
+        let list_err = p.list_doc_summaries(Some("soul"), 10, 0);
+        assert!(list_err.is_err(), "default list_doc_summaries must error");
+        let msg = list_err.unwrap_err().to_string();
+        assert!(
+            msg.contains("not implemented"),
+            "error should mention 'not implemented': {msg}"
+        );
+
+        // find_document default
+        let find_err = p.find_document("soul", None, 1);
+        assert!(find_err.is_err(), "default find_document must error");
+        let msg = find_err.unwrap_err().to_string();
+        assert!(
+            msg.contains("not implemented"),
+            "error should mention 'not implemented': {msg}"
+        );
+    }
+
+    #[test]
+    fn doc_summary_constructable_with_all_fields() {
+        let summary = DocSummary {
+            id: "abc-123".into(),
+            version: "v1".into(),
+            key: "abc-123:v1".into(),
+            jacs_type: "soul".into(),
+            logical_name: Some("SOUL.md".into()),
+            content_type: "text/markdown".into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+        };
+        assert_eq!(summary.id, "abc-123");
+        assert_eq!(summary.version, "v1");
+        assert_eq!(summary.key, "abc-123:v1");
+        assert_eq!(summary.jacs_type, "soul");
+        assert_eq!(summary.logical_name, Some("SOUL.md".into()));
+        assert_eq!(summary.content_type, "text/markdown");
+    }
+
+    #[test]
+    fn doc_summary_logical_name_none_when_absent() {
+        let summary = DocSummary {
+            id: "def-456".into(),
+            version: "v2".into(),
+            key: "def-456:v2".into(),
+            jacs_type: "memory".into(),
+            logical_name: None,
+            content_type: "application/json".into(),
+            created_at: "2026-02-01T00:00:00Z".into(),
+        };
+        assert_eq!(summary.logical_name, None);
+        assert_eq!(summary.jacs_type, "memory");
     }
 
     #[test]

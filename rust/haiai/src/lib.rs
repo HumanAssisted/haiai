@@ -69,8 +69,9 @@ pub use client::{
 #[cfg(feature = "jacs-crate")]
 pub use config::resolve_log_filter;
 pub use config::{
-    load_config, redacted_display, resolve_private_key_candidates, resolve_storage_backend,
-    resolve_storage_backend_label, AgentConfig, StorageConfigSummary, DEFAULT_LOG_FILTER,
+    load_config, redacted_display, resolve_private_key_candidates, resolve_remote,
+    resolve_storage_backend, resolve_storage_backend_label, AgentConfig, StorageConfigSummary,
+    DEFAULT_LOG_FILTER,
 };
 #[cfg(feature = "jacs-crate")]
 pub use document_store::{build_document_provider, build_document_provider_for_backend};
@@ -105,8 +106,9 @@ pub use jacs::{
     TextSignatureStatus, VerifyImageOptions, VerifyTextOptions, VerifyTextResult,
 };
 pub use jacs::{
-    JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider, JacsProvider,
-    JacsVerificationProvider, NoopJacsProvider, SaveDocumentRequest, SaveIntent, StaticJacsProvider,
+    DocSummary, JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider,
+    JacsProvider, JacsVerificationProvider, NoopJacsProvider, SaveDocumentRequest, SaveIntent,
+    StaticJacsProvider,
 };
 #[cfg(feature = "jacs-crate")]
 pub use jacs_local::LocalJacsProvider;

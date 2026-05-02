@@ -620,7 +620,7 @@ fn definition_values() -> Vec<Value> {
         }),
         json!({
             "name": "hai_get_memory",
-            "description": "Fetch the latest MEMORY record's signed envelope. Returns null when no memory record exists for the caller.",
+            "description": "Fetch the latest MEMORY record (signed markdown with JACS footer). Returns null when no memory record exists for the caller.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -641,7 +641,7 @@ fn definition_values() -> Vec<Value> {
         }),
         json!({
             "name": "hai_get_soul",
-            "description": "Fetch the latest SOUL record's signed envelope. Returns null when no soul record exists for the caller.",
+            "description": "Fetch the latest SOUL record (signed markdown with JACS footer). Returns null when no soul record exists for the caller.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1270,8 +1270,8 @@ async fn call_get_memory(context: &HaiServerContext, args: &Value) -> ToolResult
     let provider = context
         .document_provider(config_path)
         .map_err(ToolError::Message)?;
-    let envelope = match provider.get_memory() {
-        Ok(envelope) => envelope,
+    let document = match provider.get_memory() {
+        Ok(doc) => doc,
         Err(e) => {
             tracing::warn!(
                 tool = "hai_get_memory",
@@ -1282,7 +1282,7 @@ async fn call_get_memory(context: &HaiServerContext, args: &Value) -> ToolResult
             return Err(tool_message(e));
         }
     };
-    let success = envelope.is_some();
+    let success = document.is_some();
     tracing::info!(
         tool = "hai_get_memory",
         storage = %storage,
@@ -1291,7 +1291,7 @@ async fn call_get_memory(context: &HaiServerContext, args: &Value) -> ToolResult
     );
     Ok(success_tool_result(
         format!("get_memory present={}", success),
-        json!({ "present": success, "envelope": envelope }),
+        json!({ "present": success, "document": document }),
     ))
 }
 
@@ -1346,8 +1346,8 @@ async fn call_get_soul(context: &HaiServerContext, args: &Value) -> ToolResult {
     let provider = context
         .document_provider(config_path)
         .map_err(ToolError::Message)?;
-    let envelope = match provider.get_soul() {
-        Ok(envelope) => envelope,
+    let document = match provider.get_soul() {
+        Ok(doc) => doc,
         Err(e) => {
             tracing::warn!(
                 tool = "hai_get_soul",
@@ -1358,7 +1358,7 @@ async fn call_get_soul(context: &HaiServerContext, args: &Value) -> ToolResult {
             return Err(tool_message(e));
         }
     };
-    let success = envelope.is_some();
+    let success = document.is_some();
     tracing::info!(
         tool = "hai_get_soul",
         storage = %storage,
@@ -1367,7 +1367,7 @@ async fn call_get_soul(context: &HaiServerContext, args: &Value) -> ToolResult {
     );
     Ok(success_tool_result(
         format!("get_soul present={}", success),
-        json!({ "present": success, "envelope": envelope }),
+        json!({ "present": success, "document": document }),
     ))
 }
 

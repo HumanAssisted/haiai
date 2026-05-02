@@ -519,6 +519,17 @@ enum MemoryCommands {
 
     /// Fetch the latest MEMORY record's signed envelope JSON
     Get,
+
+    /// Synchronize MEMORY between local file and remote store
+    Sync {
+        /// Pull remote MEMORY and write plaintext to local MEMORY.md
+        #[arg(long, group = "direction")]
+        pull: bool,
+
+        /// Push local MEMORY.md to the remote store
+        #[arg(long, group = "direction")]
+        push: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -536,6 +547,17 @@ enum SoulCommands {
 
     /// Fetch the latest SOUL record's signed envelope JSON
     Get,
+
+    /// Synchronize SOUL between local file and remote store
+    Sync {
+        /// Pull remote SOUL and write plaintext to local SOUL.md
+        #[arg(long, group = "direction")]
+        pull: bool,
+
+        /// Push local SOUL.md to the remote store
+        #[arg(long, group = "direction")]
+        push: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2675,6 +2697,15 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
             }
+            MemoryCommands::Sync { pull, push } => {
+                handle_sync(
+                    pull,
+                    push,
+                    "memory",
+                    "MEMORY.md",
+                    effective_storage.as_deref(),
+                )?;
+            }
         },
         Commands::Soul { command } => match command {
             SoulCommands::Save { from, content } => {
@@ -2694,6 +2725,15 @@ async fn main() -> anyhow::Result<()> {
                         std::process::exit(2);
                     }
                 }
+            }
+            SoulCommands::Sync { pull, push } => {
+                handle_sync(
+                    pull,
+                    push,
+                    "soul",
+                    "SOUL.md",
+                    effective_storage.as_deref(),
+                )?;
             }
         },
         Commands::Records { command } => match command {
@@ -2720,6 +2760,77 @@ async fn main() -> anyhow::Result<()> {
                 println!("Wrote {} bytes to {}", bytes.len(), out);
             }
         },
+    }
+
+    Ok(())
+}
+
+/// Shared handler for `soul sync` and `memory sync` commands.
+///
+/// * `pull`: fetch the remote signed artifact, extract plaintext, write to `local_file`.
+/// * `push`: read `local_file`, push via save_soul/save_memory.
+///
+/// Exactly one of `pull`/`push` must be true (enforced by clap arg group).
+fn handle_sync(
+    pull: bool,
+    push: bool,
+    jacs_type: &str,
+    local_file: &str,
+    storage: Option<&str>,
+) -> anyhow::Result<()> {
+    let provider = load_document_provider(storage)?;
+
+    if push {
+        let body = std::fs::read_to_string(local_file)
+            .with_context(|| format!("failed to read {}", local_file))?;
+        let key = match jacs_type {
+            "soul" => provider.save_soul(Some(&body)).context("save_soul failed")?,
+            "memory" => provider.save_memory(Some(&body)).context("save_memory failed")?,
+            _ => anyhow::bail!("unknown jacs_type: {}", jacs_type),
+        };
+        tracing::info!(
+            direction = "push",
+            jacs_type,
+            file = local_file,
+            key = %key,
+            "sync_document"
+        );
+        println!("{} pushed: {}", jacs_type.to_uppercase(), key);
+    } else if pull {
+        let envelope = match jacs_type {
+            "soul" => provider.get_soul().context("get_soul failed")?,
+            "memory" => provider.get_memory().context("get_memory failed")?,
+            _ => anyhow::bail!("unknown jacs_type: {}", jacs_type),
+        };
+        match envelope {
+            Some(signed_text) => {
+                let (plaintext, _footer) =
+                    jacs::inline::split_at_first_signature_marker(&signed_text);
+                // Trim any trailing whitespace left before the signature marker
+                let plaintext = plaintext.trim_end();
+                std::fs::write(local_file, plaintext)
+                    .with_context(|| format!("failed to write {}", local_file))?;
+                tracing::info!(
+                    direction = "pull",
+                    jacs_type,
+                    file = local_file,
+                    key = "",
+                    "sync_document"
+                );
+                println!(
+                    "{} pulled -> {} ({} bytes)",
+                    jacs_type.to_uppercase(),
+                    local_file,
+                    plaintext.len()
+                );
+            }
+            None => {
+                eprintln!("No {} record found on remote.", jacs_type.to_uppercase());
+                std::process::exit(2);
+            }
+        }
+    } else {
+        anyhow::bail!("specify --pull or --push");
     }
 
     Ok(())

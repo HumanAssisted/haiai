@@ -23,7 +23,7 @@ use time::OffsetDateTime;
 
 use crate::client::encode_path_segment;
 use crate::error::{HaiError, Result};
-use crate::jacs::{JacsDocumentProvider, JacsProvider};
+use crate::jacs::{DocSummary, JacsDocumentProvider, JacsProvider};
 use crate::types::{DocSearchHit, DocSearchResults, SignedDocument, StorageCapabilities};
 
 /// Endpoint base for all record CRUD (D1).
@@ -363,6 +363,15 @@ impl<P: JacsProvider> JacsProvider for RemoteJacsProvider<P> {
     fn sign_response(&self, payload: &Value) -> Result<crate::types::SignedPayload> {
         self.inner.sign_response(payload)
     }
+    fn sign_text_update(
+        &self,
+        existing_signed_bytes: &[u8],
+        plaintext: &[u8],
+        expected_previous_version: &str,
+    ) -> Result<Vec<u8>> {
+        self.inner
+            .sign_text_update(existing_signed_bytes, plaintext, expected_previous_version)
+    }
 }
 
 // =============================================================================
@@ -511,12 +520,33 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
         Ok(())
     }
 
-    fn update_document(&self, _doc_id: &str, signed_json: &str) -> Result<SignedDocument> {
-        let key = self.store_document(signed_json)?;
-        Ok(SignedDocument {
-            key,
-            json: signed_json.to_string(),
-        })
+    fn update_document(&self, doc_id: &str, data: &str) -> Result<SignedDocument> {
+        // TASK_006: fetch-sign-post pattern.
+        // `data` is NEW PLAINTEXT (not pre-signed). We fetch the existing signed
+        // artifact, extract the latest version from its footer, sign the update
+        // locally, and POST the new signed bytes.
+
+        // Step 1: Fetch latest signed bytes for this document.
+        let existing_bytes = self.get_record_bytes(doc_id)?;
+
+        // Step 2: Extract jacsVersion from the existing footer.
+        let existing_str = std::str::from_utf8(&existing_bytes).map_err(|e| {
+            HaiError::Provider(format!("update_document: existing bytes not UTF-8: {e}"))
+        })?;
+        let latest_version = Self::extract_version_from_footer(existing_str)?;
+
+        // Step 3: Sign the update via the inner provider (local key material).
+        let signed_bytes = self.inner.sign_text_update(
+            &existing_bytes,
+            data.as_bytes(),
+            &latest_version,
+        )?;
+
+        // Step 4: POST the new signed bytes with markdown content type.
+        let key = self.post_record_for_key(signed_bytes.clone(), CT_TEXT_MD)?;
+
+        let json = String::from_utf8_lossy(&signed_bytes).to_string();
+        Ok(SignedDocument { key, json })
     }
 
     fn search_documents(
@@ -734,6 +764,65 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
     fn get_record_bytes(&self, key: &str) -> Result<Vec<u8>> {
         Self::block_on(self.get_record_bytes_async(key))
     }
+
+    fn list_doc_summaries(
+        &self,
+        jacs_type: Option<&str>,
+        limit: usize,
+        _offset: usize,
+    ) -> Result<Vec<DocSummary>> {
+        let mut url = format!(
+            "{}{}?latest_only=true&limit={}",
+            self.base_url,
+            RECORDS_PATH,
+            limit.min(100),
+        );
+        if let Some(t) = jacs_type {
+            url.push_str(&format!("&type={}", url_encode(t)));
+        }
+        let resp = Self::block_on(self.get_json_async(&url))?;
+        Ok(extract_summaries_from_list(&resp))
+    }
+
+    fn find_document(
+        &self,
+        jacs_type: &str,
+        _logical_name: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocSummary>> {
+        // For find_document, we query by type and return up to `limit` results.
+        // logical_name filtering is best-effort — the server does not have a
+        // title/name column, so we return all matches and let the caller filter.
+        self.list_doc_summaries(Some(jacs_type), limit, 0)
+    }
+
+    // =========================================================================
+    // Text document signing: delegate to inner JacsProvider (TASK_005)
+    // =========================================================================
+
+    fn sign_text_document_create(
+        &self,
+        jacs_type: &str,
+        logical_name: &str,
+        content_type: &str,
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>> {
+        self.inner.sign_text_create(jacs_type, logical_name, content_type, plaintext)
+    }
+
+    fn sign_text_document_update(
+        &self,
+        existing_signed_bytes: &[u8],
+        plaintext: &[u8],
+        expected_previous_version: &str,
+    ) -> Result<Vec<u8>> {
+        self.inner
+            .sign_text_update(existing_signed_bytes, plaintext, expected_previous_version)
+    }
+
+    fn store_signed_text(&self, signed_bytes: Vec<u8>, content_type: &str) -> Result<String> {
+        self.post_record_for_key(signed_bytes, content_type)
+    }
 }
 
 // =============================================================================
@@ -751,6 +840,61 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
             .and_then(|v| v.as_str())
             .map(str::to_string)
             .ok_or_else(|| HaiError::Provider("server response missing 'key'".to_string()))
+    }
+
+    /// Extract `jacsVersion` from the JACS signature footer of a signed text artifact.
+    ///
+    /// Uses `jacs::inline::split_at_first_signature_marker` and
+    /// `jacs::convert::yaml_to_jacs` (same approach as `jacs_local.rs`).
+    #[cfg(feature = "jacs-crate")]
+    fn extract_version_from_footer(signed_text: &str) -> Result<String> {
+        let (_content, footer) = jacs::inline::split_at_first_signature_marker(signed_text);
+        if footer.is_empty() {
+            return Err(HaiError::Provider(
+                "update_document: existing document has no JACS signature footer".to_string(),
+            ));
+        }
+        let begin_marker = jacs::inline::BEGIN_MARKER;
+        let end_marker = jacs::inline::END_MARKER;
+        let begin_idx = footer.find(begin_marker).ok_or_else(|| {
+            HaiError::Provider(
+                "update_document: footer missing BEGIN marker".to_string(),
+            )
+        })?;
+        let end_idx = footer.rfind(end_marker).ok_or_else(|| {
+            HaiError::Provider(
+                "update_document: footer missing END marker".to_string(),
+            )
+        })?;
+        let body_start = begin_idx + begin_marker.len();
+        let body = footer[body_start..end_idx].trim();
+
+        let json_str = jacs::convert::yaml_to_jacs(body).map_err(|e| {
+            HaiError::Provider(format!(
+                "update_document: cannot parse JACS footer YAML: {e}"
+            ))
+        })?;
+        let doc: Value = serde_json::from_str(&json_str).map_err(|e| {
+            HaiError::Provider(format!(
+                "update_document: cannot parse footer JSON: {e}"
+            ))
+        })?;
+        doc.get("jacsVersion")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                HaiError::Provider(
+                    "update_document: footer missing jacsVersion".to_string(),
+                )
+            })
+    }
+
+    /// Fallback when `jacs-crate` feature is not enabled — always errors.
+    #[cfg(not(feature = "jacs-crate"))]
+    fn extract_version_from_footer(_signed_text: &str) -> Result<String> {
+        Err(HaiError::Provider(
+            "update_document: requires jacs-crate feature for footer parsing".to_string(),
+        ))
     }
 
     async fn get_json_async(&self, url: &str) -> Result<Value> {
@@ -846,6 +990,57 @@ fn extract_keys_from_list(resp: &Value) -> Vec<String> {
                         .or_else(|| item.get("version"))
                         .and_then(|v| v.as_str())?;
                     Some(format!("{}:{}", id, version))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn extract_summaries_from_list(resp: &Value) -> Vec<DocSummary> {
+    resp.get("items")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    let id = item
+                        .get("jacs_id")
+                        .or_else(|| item.get("id"))
+                        .and_then(|v| v.as_str())?
+                        .to_string();
+                    let version = item
+                        .get("jacs_version")
+                        .or_else(|| item.get("version"))
+                        .and_then(|v| v.as_str())?
+                        .to_string();
+                    let key = format!("{}:{}", id, version);
+                    let jacs_type = item
+                        .get("jacs_type")
+                        .or_else(|| item.get("jacsType"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let content_type = item
+                        .get("content_type")
+                        .or_else(|| item.get("contentType"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("application/json")
+                        .to_string();
+                    let created_at = item
+                        .get("created_at")
+                        .or_else(|| item.get("jacsVersionDate"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    // logical_name is not stored server-side (v1); always None.
+                    Some(DocSummary {
+                        id,
+                        version,
+                        key,
+                        jacs_type,
+                        logical_name: None,
+                        content_type,
+                        created_at,
+                    })
                 })
                 .collect()
         })
@@ -1655,12 +1850,23 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn save_memory_posts_with_jacstype_memory() {
         let server = MockServer::start_async().await;
-        let mock = server
+        // Mock find_document: GET /api/v1/records?latest_only=true&limit=1&type=memory
+        let _find_mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("type", "memory");
+                then.status(200)
+                    .json_body(json!({"items":[], "has_more": false}));
+            })
+            .await;
+        // Mock store_signed_text: POST signed markdown to /api/v1/records
+        let post_mock = server
             .mock_async(|when, then| {
                 when.method(HMethod::POST)
                     .path("/api/v1/records")
-                    .body_includes(r#""jacsType":"memory""#)
-                    .body_includes(r#""body":"my memory text""#);
+                    .body_includes("-----BEGIN JACS SIGNATURE-----")
+                    .body_includes("my memory text");
                 then.status(201).json_body(json!({"key":"mem1:v1"}));
             })
             .await;
@@ -1669,25 +1875,36 @@ mod tests {
             .save_memory(Some("my memory text"))
             .expect("save_memory");
         assert_eq!(key, "mem1:v1");
-        mock.assert_async().await;
+        post_mock.assert_async().await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn save_soul_posts_with_jacstype_soul() {
         let server = MockServer::start_async().await;
-        let mock = server
+        // Mock find_document: GET /api/v1/records?latest_only=true&limit=1&type=soul
+        let _find_mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("type", "soul");
+                then.status(200)
+                    .json_body(json!({"items":[], "has_more": false}));
+            })
+            .await;
+        // Mock store_signed_text: POST signed markdown
+        let post_mock = server
             .mock_async(|when, then| {
                 when.method(HMethod::POST)
                     .path("/api/v1/records")
-                    .body_includes(r#""jacsType":"soul""#)
-                    .body_includes(r#""body":"my soul text""#);
+                    .body_includes("-----BEGIN JACS SIGNATURE-----")
+                    .body_includes("my soul text");
                 then.status(201).json_body(json!({"key":"soul1:v1"}));
             })
             .await;
         let provider = make_provider(server.base_url());
         let key = provider.save_soul(Some("my soul text")).expect("save_soul");
         assert_eq!(key, "soul1:v1");
-        mock.assert_async().await;
+        post_mock.assert_async().await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1702,10 +1919,22 @@ mod tests {
                     .json_body(json!({"items":[],"has_more":false}));
             })
             .await;
+        // The fallback in get_typed_latest_document calls list_documents(None)
+        // which hits a different query string (no type param).
+        let list_mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("latest_only", "true");
+                then.status(200)
+                    .json_body(json!({"items":[],"has_more":false}));
+            })
+            .await;
         let provider = make_provider(server.base_url());
         let out = provider.get_memory().expect("get_memory");
         assert!(out.is_none());
         mock.assert_async().await;
+        list_mock.assert_async().await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1760,11 +1989,22 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn d5_d9_helpers_callable_through_trait_object() {
         let server = MockServer::start_async().await;
-        let mock = server
+        // Mock find_document (singleton resolution)
+        let _find_mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("type", "memory");
+                then.status(200)
+                    .json_body(json!({"items":[], "has_more": false}));
+            })
+            .await;
+        // Mock store_signed_text
+        let post_mock = server
             .mock_async(|when, then| {
                 when.method(HMethod::POST)
                     .path("/api/v1/records")
-                    .body_includes(r#""jacsType":"memory""#);
+                    .body_includes("-----BEGIN JACS SIGNATURE-----");
                 then.status(201).json_body(json!({"key": "mem1:v1"}));
             })
             .await;
@@ -1778,7 +2018,7 @@ mod tests {
             .save_memory(Some("trait-object reachable"))
             .expect("save_memory through dyn");
         assert_eq!(key, "mem1:v1");
-        mock.assert_async().await;
+        post_mock.assert_async().await;
     }
 
     /// Issue 009 regression: `query_by_type` MUST walk forward via
@@ -2119,5 +2359,230 @@ mod tests {
         );
         // Pin: zero HTTP calls — `sign_file` must be local-only.
         no_traffic.assert_calls_async(0).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_doc_summaries_returns_typed_summaries() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("type", "soul")
+                    .query_param("latest_only", "true");
+                then.status(200).json_body(json!({
+                    "items": [{
+                        "jacs_id": "soul-001",
+                        "jacs_version": "v1",
+                        "jacs_type": "soul",
+                        "content_type": "text/markdown",
+                        "created_at": "2026-01-15T12:00:00Z"
+                    }],
+                    "next_cursor": null,
+                    "has_more": false
+                }));
+            })
+            .await;
+        let provider = make_provider(server.base_url());
+        let summaries = provider
+            .list_doc_summaries(Some("soul"), 10, 0)
+            .expect("list_doc_summaries");
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].id, "soul-001");
+        assert_eq!(summaries[0].version, "v1");
+        assert_eq!(summaries[0].key, "soul-001:v1");
+        assert_eq!(summaries[0].jacs_type, "soul");
+        assert_eq!(summaries[0].content_type, "text/markdown");
+        assert_eq!(summaries[0].logical_name, None);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_document_returns_soul_singleton() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("type", "soul")
+                    .query_param("latest_only", "true");
+                then.status(200).json_body(json!({
+                    "items": [{
+                        "jacs_id": "soul-001",
+                        "jacs_version": "v2",
+                        "jacs_type": "soul",
+                        "content_type": "text/markdown",
+                        "created_at": "2026-01-20T12:00:00Z"
+                    }],
+                    "next_cursor": null,
+                    "has_more": false
+                }));
+            })
+            .await;
+        let provider = make_provider(server.base_url());
+        let summaries = provider
+            .find_document("soul", None, 1)
+            .expect("find_document");
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].jacs_type, "soul");
+        assert_eq!(summaries[0].key, "soul-001:v2");
+        mock.assert_async().await;
+    }
+
+    // =========================================================================
+    // TASK_006: update_document fetch-sign-post tests
+    // =========================================================================
+
+    /// When the remote GET for the existing document returns 404,
+    /// `update_document` should propagate the error.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_document_errors_on_fetch_failure() {
+        let server = MockServer::start_async().await;
+        let _mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records/doc-id-123");
+                then.status(404).json_body(json!({"error": "not found"}));
+            })
+            .await;
+
+        let provider = make_provider(server.base_url());
+        let result = provider.update_document("doc-id-123", "# New content\n");
+        assert!(result.is_err(), "should error on 404 fetch");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("404") || err_msg.contains("not found") || err_msg.contains("Not Found"),
+            "error should indicate fetch failure: {err_msg}"
+        );
+    }
+
+    /// When the existing document has no JACS signature footer,
+    /// `update_document` should return a clear error.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_document_errors_on_missing_footer() {
+        let server = MockServer::start_async().await;
+        // Return plain text with no JACS footer
+        let _mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records/doc-no-footer");
+                then.status(200)
+                    .header("Content-Type", "text/markdown")
+                    .body("# Just markdown, no signature\n");
+            })
+            .await;
+
+        let provider = make_provider(server.base_url());
+        let result = provider.update_document("doc-no-footer", "# Updated\n");
+        assert!(result.is_err(), "should error on missing footer");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("no JACS signature footer"),
+            "error should mention missing footer: {err_msg}"
+        );
+    }
+
+    /// `extract_version_from_footer` correctly parses jacsVersion from a
+    /// well-formed JACS signature footer.
+    #[test]
+    fn extract_version_from_footer_parses_version() {
+        let signed_text = concat!(
+            "# My Document\n",
+            "\n",
+            "Some content here.\n",
+            "-----BEGIN JACS SIGNATURE-----\n",
+            "jacsId: \"abc-123\"\n",
+            "jacsVersion: \"ver-456\"\n",
+            "jacsType: soul\n",
+            "jacsSignature:\n",
+            "  agentID: agent-1\n",
+            "  signature: fakesig\n",
+            "-----END JACS SIGNATURE-----\n",
+        );
+        let version =
+            RemoteJacsProvider::<StaticJacsProvider>::extract_version_from_footer(signed_text)
+                .expect("should parse version");
+        assert_eq!(version, "ver-456");
+    }
+
+    /// `extract_version_from_footer` errors when the footer has no jacsVersion.
+    #[test]
+    fn extract_version_from_footer_errors_on_missing_version() {
+        let signed_text = concat!(
+            "# Doc\n",
+            "-----BEGIN JACS SIGNATURE-----\n",
+            "jacsId: \"abc-123\"\n",
+            "jacsType: soul\n",
+            "-----END JACS SIGNATURE-----\n",
+        );
+        let result =
+            RemoteJacsProvider::<StaticJacsProvider>::extract_version_from_footer(signed_text);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("missing jacsVersion"),
+            "should mention missing jacsVersion: {err_msg}"
+        );
+    }
+
+    /// `extract_version_from_footer` errors when there is no footer at all.
+    #[test]
+    fn extract_version_from_footer_errors_on_no_footer() {
+        let no_footer = "# Plain markdown with no signature\n";
+        let result =
+            RemoteJacsProvider::<StaticJacsProvider>::extract_version_from_footer(no_footer);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("no JACS signature footer"),
+            "should mention no footer: {err_msg}"
+        );
+    }
+
+    /// update_document succeeds: fetches existing, signs locally, and POSTs.
+    /// StaticJacsProvider now implements sign_text_update with synthetic output.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_document_fetch_sign_post_flow() {
+        let server = MockServer::start_async().await;
+        // Return a valid signed document (with footer) so fetch+parse succeed
+        let signed_body = concat!(
+            "# Existing content\n",
+            "\n",
+            "-----BEGIN JACS SIGNATURE-----\n",
+            "jacsId: doc-xyz\n",
+            "jacsVersion: v1-original\n",
+            "jacsType: soul\n",
+            "agentID: agent-1\n",
+            "signature: fakesig\n",
+            "-----END JACS SIGNATURE-----\n",
+        );
+        let _get_mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records/doc-xyz");
+                then.status(200)
+                    .header("Content-Type", "text/markdown")
+                    .body(signed_body);
+            })
+            .await;
+        // Mock the POST for storing the updated signed document
+        let post_mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::POST)
+                    .path("/api/v1/records")
+                    .body_includes("-----BEGIN JACS SIGNATURE-----")
+                    .body_includes("# New content");
+                then.status(201).json_body(json!({"key": "doc-xyz:v2"}));
+            })
+            .await;
+
+        let provider = make_provider(server.base_url());
+        let result = provider.update_document("doc-xyz", "# New content\n");
+        assert!(result.is_ok(), "update_document should succeed: {:?}", result.err());
+        let doc = result.unwrap();
+        assert_eq!(doc.key, "doc-xyz:v2");
+        assert!(doc.json.contains("# New content"));
+        assert!(doc.json.contains("-----BEGIN JACS SIGNATURE-----"));
+        post_mock.assert_async().await;
     }
 }

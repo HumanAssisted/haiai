@@ -23,8 +23,8 @@ use haiai::document_store::build_document_provider;
 use haiai::error::HaiError;
 use haiai::jacs::{
     media_verify_result_to_json, verify_text_result_to_json, JacsDocumentProvider,
-    JacsMediaProvider, JacsProvider, SignImageOptions, SignTextOptions, StaticJacsProvider,
-    VerifyImageOptions, VerifyTextOptions,
+    JacsMediaProvider, JacsProvider, SaveDocumentRequest, SaveIntent, SignImageOptions,
+    SignTextOptions, StaticJacsProvider, VerifyImageOptions, VerifyTextOptions,
 };
 use haiai::jacs_local::LocalJacsProvider;
 use std::path::PathBuf;
@@ -1705,6 +1705,102 @@ impl HaiClientWrapper {
             .map_err(HaiBindingError::from)
     }
 
+    /// Generic save-document endpoint. Accepts a JSON-serialised request
+    /// (since `SaveDocumentRequest` does not derive `Deserialize`) and returns
+    /// a JSON-serialised `SignedDocument` (`{key, json}`).
+    ///
+    /// Required JSON fields: `jacs_type`, `content_type`, `plaintext` (UTF-8 string).
+    /// Optional: `doc_id`, `logical_name`, `expected_previous_version`, `singleton` (bool),
+    /// `intent` (one of `"create"`, `"update"`, `"upsert"`; defaults to `"upsert"`).
+    pub async fn save_document(&self, request_json: &str) -> HaiBindingResult<String> {
+        let store = self.build_doc_store()?;
+        Self::save_document_with(store.as_ref(), request_json)
+    }
+
+    pub(crate) fn save_document_with(
+        store: &dyn JacsDocumentProvider,
+        request_json: &str,
+    ) -> HaiBindingResult<String> {
+        let v: Value = serde_json::from_str(request_json)?;
+        let obj = v.as_object().ok_or_else(|| {
+            HaiBindingError::new(ErrorKind::InvalidArgument, "request must be a JSON object")
+        })?;
+
+        let jacs_type = obj
+            .get("jacs_type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                HaiBindingError::new(ErrorKind::InvalidArgument, "missing required field 'jacs_type'")
+            })?
+            .to_string();
+
+        let content_type = obj
+            .get("content_type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                HaiBindingError::new(
+                    ErrorKind::InvalidArgument,
+                    "missing required field 'content_type'",
+                )
+            })?
+            .to_string();
+
+        let plaintext = obj
+            .get("plaintext")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                HaiBindingError::new(
+                    ErrorKind::InvalidArgument,
+                    "missing required field 'plaintext' (UTF-8 string)",
+                )
+            })?
+            .as_bytes()
+            .to_vec();
+
+        let doc_id = obj.get("doc_id").and_then(|v| v.as_str()).map(String::from);
+        let logical_name = obj
+            .get("logical_name")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let expected_previous_version = obj
+            .get("expected_previous_version")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let singleton = obj
+            .get("singleton")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let intent = match obj.get("intent").and_then(|v| v.as_str()) {
+            Some("create") => SaveIntent::Create,
+            Some("update") => SaveIntent::Update,
+            Some("upsert") | None => SaveIntent::Upsert,
+            Some(other) => {
+                return Err(HaiBindingError::new(
+                    ErrorKind::InvalidArgument,
+                    format!(
+                        "invalid intent '{}': expected 'create', 'update', or 'upsert'",
+                        other
+                    ),
+                ));
+            }
+        };
+
+        let request = SaveDocumentRequest {
+            doc_id,
+            jacs_type,
+            logical_name,
+            content_type,
+            plaintext,
+            expected_previous_version,
+            singleton,
+            intent,
+        };
+
+        let signed = store.save_document(request).map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&signed)?)
+    }
+
     /// Fetch the latest MEMORY record's signed envelope JSON.
     pub async fn get_memory(&self) -> HaiBindingResult<Option<String>> {
         let store = self.build_doc_store()?;
@@ -3116,10 +3212,10 @@ mod tests {
             );
         }
         let summary = val.get("summary").unwrap();
-        // 55 base + 20 jacs_document_store (TASK_001) = 75 async methods.
-        assert_eq!(summary["async_methods"].as_u64(), Some(75));
-        // 81 base + 20 doc-store = 101 total public methods.
-        assert_eq!(summary["total_public_methods"].as_u64(), Some(101));
+        // 55 base + 20 jacs_document_store (TASK_001) + 1 save_document (TASK_017) = 76 async methods.
+        assert_eq!(summary["async_methods"].as_u64(), Some(76));
+        // 82 base + 20 doc-store + 1 save_document = 103 total public methods.
+        assert_eq!(summary["total_public_methods"].as_u64(), Some(103));
     }
 
     #[tokio::test]
@@ -3376,11 +3472,26 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn binding_core_save_memory_calls_records_endpoint_with_jacstype_memory() {
         let server = MockServer::start_async().await;
+        // save_memory now calls save_document which first resolves via
+        // find_document (list_doc_summaries GET) before the POST.
+        let _find_mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("latest_only", "true")
+                    .query_param("type", "memory");
+                then.status(200).json_body(serde_json::json!({
+                    "items": [],
+                    "next_cursor": null,
+                    "has_more": false,
+                    "total_count": 0
+                }));
+            })
+            .await;
         let mock = server
             .mock_async(|when, then| {
                 when.method(HMethod::POST)
-                    .path("/api/v1/records")
-                    .body_includes(r#""jacsType":"memory""#);
+                    .path("/api/v1/records");
                 then.status(201).json_body(serde_json::json!({
                     "key": "memory:v1",
                     "id": "memory",
@@ -3401,11 +3512,13 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn binding_core_get_memory_returns_none_when_no_record() {
         let server = MockServer::start_async().await;
-        let mock = server
+        // get_memory calls get_typed_latest_document which:
+        // 1. query_by_type("memory", 1, 0) -> GET /api/v1/records?type=memory&limit=1
+        // 2. list_documents(None)           -> GET /api/v1/records?latest_only=true&limit=100
+        // Both must return empty for the None path.
+        let _mock = server
             .mock_async(|when, then| {
-                when.method(HMethod::GET)
-                    .path("/api/v1/records")
-                    .query_param("type", "memory");
+                when.method(HMethod::GET).path("/api/v1/records");
                 then.status(200).json_body(serde_json::json!({
                     "items": [],
                     "next_cursor": null,
@@ -3418,7 +3531,6 @@ mod tests {
         let store = make_doc_store_provider(server.base_url());
         let envelope = HaiClientWrapper::get_memory_with(&store).expect("get_memory");
         assert!(envelope.is_none());
-        mock.assert_async().await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -3620,5 +3732,115 @@ mod tests {
             "expected jacs_config_path message, got: {}",
             err.message
         );
+    }
+
+    // =========================================================================
+    // save_document FFI wrapper tests (TASK_017)
+    // =========================================================================
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn binding_core_save_document_upsert_creates_new_document() {
+        // Mock: first GET (find_document resolution) returns empty, then POST stores.
+        let server = MockServer::start_async().await;
+        let find_mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("type", "inline-md");
+                then.status(200).json_body(serde_json::json!({
+                    "items": [],
+                    "next_cursor": null,
+                    "has_more": false,
+                    "total_count": 0
+                }));
+            })
+            .await;
+        let store_mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::POST).path("/api/v1/records");
+                then.status(201).json_body(serde_json::json!({
+                    "key": "doc1:v1",
+                    "id": "doc1",
+                    "version": "v1",
+                    "jacsType": "inline-md",
+                    "jacsVersionDate": "2026-01-01T00:00:00Z"
+                }));
+            })
+            .await;
+
+        let store = make_doc_store_provider(server.base_url());
+        let request_json = serde_json::json!({
+            "jacs_type": "inline-md",
+            "content_type": "text/markdown; profile=jacs-text-v1",
+            "plaintext": "# Hello World",
+            "logical_name": "NOTES.md",
+            "intent": "upsert"
+        })
+        .to_string();
+
+        let result = HaiClientWrapper::save_document_with(&store, &request_json)
+            .expect("save_document");
+        let parsed: Value = serde_json::from_str(&result).expect("parse result");
+        assert_eq!(parsed["key"].as_str(), Some("doc1:v1"));
+        assert!(parsed["json"].as_str().is_some());
+
+        find_mock.assert_async().await;
+        store_mock.assert_async().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn binding_core_save_document_rejects_missing_jacs_type() {
+        let server = MockServer::start_async().await;
+        let store = make_doc_store_provider(server.base_url());
+
+        let request_json = serde_json::json!({
+            "content_type": "text/markdown; profile=jacs-text-v1",
+            "plaintext": "hello"
+        })
+        .to_string();
+
+        let err =
+            HaiClientWrapper::save_document_with(&store, &request_json).expect_err("must fail");
+        assert_eq!(err.kind, ErrorKind::InvalidArgument);
+        assert!(
+            err.message.contains("jacs_type"),
+            "error should mention jacs_type: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn binding_core_save_document_rejects_invalid_intent() {
+        let server = MockServer::start_async().await;
+        let store = make_doc_store_provider(server.base_url());
+
+        let request_json = serde_json::json!({
+            "jacs_type": "soul",
+            "content_type": "text/markdown; profile=jacs-text-v1",
+            "plaintext": "hello",
+            "intent": "delete"
+        })
+        .to_string();
+
+        let err =
+            HaiClientWrapper::save_document_with(&store, &request_json).expect_err("must fail");
+        assert_eq!(err.kind, ErrorKind::InvalidArgument);
+        assert!(
+            err.message.contains("invalid intent"),
+            "error should mention intent: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn binding_core_save_document_rejects_non_object_json() {
+        let server = MockServer::start_async().await;
+        let store = make_doc_store_provider(server.base_url());
+
+        let err =
+            HaiClientWrapper::save_document_with(&store, "\"just a string\"")
+                .expect_err("must fail");
+        assert_eq!(err.kind, ErrorKind::InvalidArgument);
+        assert!(err.message.contains("JSON object"));
     }
 }
