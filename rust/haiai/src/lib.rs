@@ -106,7 +106,7 @@ pub use jacs::{
 };
 pub use jacs::{
     JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider, JacsProvider,
-    JacsVerificationProvider, NoopJacsProvider, StaticJacsProvider,
+    JacsVerificationProvider, NoopJacsProvider, SaveDocumentRequest, SaveIntent, StaticJacsProvider,
 };
 #[cfg(feature = "jacs-crate")]
 pub use jacs_local::LocalJacsProvider;

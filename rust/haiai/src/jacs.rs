@@ -401,6 +401,63 @@ pub trait JacsAgentLifecycle: JacsProvider {
 // Layer 2: Document Operations (JacsDocumentProvider)
 // =============================================================================
 
+// ---------------------------------------------------------------------------
+// Editable-document intent and request types (PRD Section 7.4)
+// ---------------------------------------------------------------------------
+
+/// Caller's intent when saving a document.
+///
+/// - `Create` — fail if the target already exists.
+/// - `Update` — fail if the target does not exist.
+/// - `Upsert` — create when missing, update when present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveIntent {
+    /// Create a new document. Fails if a document with the same identity already
+    /// exists (e.g., a singleton soul/memory for the same owner).
+    Create,
+    /// Update an existing document. Fails if the target does not exist.
+    Update,
+    /// Create when missing, update when present.
+    Upsert,
+}
+
+/// A request to save (create, update, or upsert) an editable document.
+///
+/// `save_soul` and `save_memory` construct this with `singleton = true` and
+/// `intent = Upsert`. General editable documents use `singleton = false` and
+/// supply `doc_id` or `logical_name` for resolution.
+#[derive(Debug, Clone)]
+pub struct SaveDocumentRequest {
+    /// Explicit document ID for resolution. If present, the provider fetches
+    /// the latest version by this `jacsId` before deciding create vs. update.
+    pub doc_id: Option<String>,
+
+    /// JACS document type, e.g. `"soul"`, `"memory"`, `"inline-md"`.
+    pub jacs_type: String,
+
+    /// Optional logical name/filename for best-effort resolution when `doc_id`
+    /// is unknown (e.g. `"SOUL.md"`, `"MEMORY.md"`).
+    pub logical_name: Option<String>,
+
+    /// MIME content type for the signed artifact, e.g.
+    /// `"text/markdown; profile=jacs-text-v1"`.
+    pub content_type: String,
+
+    /// The plaintext body to sign.
+    pub plaintext: Vec<u8>,
+
+    /// If set, the SDK fails before signing when the remote latest version does
+    /// not match this value. Used for optimistic concurrency.
+    pub expected_previous_version: Option<String>,
+
+    /// Whether this document type is a singleton per owner (e.g. soul, memory).
+    /// When `true`, create-intent is rejected if a live singleton already exists.
+    pub singleton: bool,
+
+    /// The caller's create/update/upsert intent.
+    pub intent: SaveIntent,
+}
+
 /// Extension trait for document storage, retrieval, versioning, and search.
 ///
 /// Wraps the JACS `DocumentService` into SDK-friendly signatures
