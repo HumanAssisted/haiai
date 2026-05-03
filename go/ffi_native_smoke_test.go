@@ -91,6 +91,16 @@ func TestNativeSmokeSaveMemoryRoundTripsThroughLibhaiigo(t *testing.T) {
 		})
 		mu.Unlock()
 
+		// The FFI's `save_memory(singleton: true)` first issues a GET to
+		// /api/v1/records to check for an existing singleton. Reply with
+		// an empty `items` list so the caller takes the
+		// "no existing → create" branch and proceeds to POST.
+		if r.URL.Path == "/api/v1/records" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"items":[],"next_cursor":null}`))
+			return
+		}
 		if r.URL.Path == "/api/v1/records" && r.Method == http.MethodPost {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
@@ -131,13 +141,20 @@ func TestNativeSmokeSaveMemoryRoundTripsThroughLibhaiigo(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(captured) != 1 {
-		t.Fatalf("expected 1 POST, got %d", len(captured))
+	// The FFI does at least: 1 GET (find_document singleton check) + 1
+	// POST (sign+store). Assert the POST is what we expect; GET count can
+	// vary with future routing tweaks.
+	var posts []map[string]any
+	for _, r := range captured {
+		if r["method"] == "POST" {
+			posts = append(posts, r)
+		}
 	}
-	req := captured[0]
-	if req["method"] != "POST" {
-		t.Errorf("expected POST, got %v", req["method"])
+	if len(posts) != 1 {
+		t.Fatalf("expected exactly 1 POST to /api/v1/records, got %d (captured methods: %v)",
+			len(posts), capturedMethods(captured))
 	}
+	req := posts[0]
 	if req["path"] != "/api/v1/records" {
 		t.Errorf("expected /api/v1/records, got %v", req["path"])
 	}
@@ -147,6 +164,14 @@ func TestNativeSmokeSaveMemoryRoundTripsThroughLibhaiigo(t *testing.T) {
 	if !strings.Contains(req["body"].(string), `"jacsType":"memory"`) {
 		t.Errorf("expected jacsType:memory in body, got %v", req["body"])
 	}
+}
+
+func capturedMethods(reqs []map[string]any) []string {
+	out := make([]string, 0, len(reqs))
+	for _, r := range reqs {
+		out = append(out, r["method"].(string)+" "+r["path"].(string))
+	}
+	return out
 }
 
 // TestNativeSmokeSaveMemoryLocalPath exercises the LOCAL (fs) backend: the

@@ -80,7 +80,16 @@ def _restore_smoke_password(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _RecordsHandler(BaseHTTPRequestHandler):
-    """Minimal mock that handles POST /api/v1/records.
+    """Mock for `/api/v1/records`. Handles two methods used by the remote
+    `save_memory` flow:
+
+    - ``GET /api/v1/records?type=memory&...`` — issued by the FFI's
+      ``find_document`` step (singleton resolution) before POSTing. Returns
+      an empty ``items`` list so the FFI takes the "no existing singleton →
+      create" branch.
+    - ``POST /api/v1/records`` — issued by the FFI to persist the signed
+      memory artifact. Returns the canned ``key: "smoke:v1"`` envelope the
+      test asserts on.
 
     Records the request body and headers on the parent server so the test
     can assert what the FFI sent.
@@ -90,19 +99,39 @@ class _RecordsHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:  # type: ignore[override]
         del format, args
 
-    def do_POST(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler dispatch name
-        length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(length) if length else b""
-        # Stash for the test to assert against.
+    def _capture(self, body: bytes) -> None:
         captured = getattr(self.server, "captured", [])
         captured.append(
             {
+                "method": self.command,
                 "path": self.path,
                 "headers": dict(self.headers.items()),
                 "body": body,
             }
         )
         self.server.captured = captured  # type: ignore[attr-defined]
+
+    def do_GET(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler dispatch name
+        self._capture(b"")
+        # The FFI's find_document(singleton) issues GET with a `type=` query
+        # param. Return an empty items list so the caller takes the
+        # "no existing singleton → create" branch.
+        if self.path.startswith("/api/v1/records"):
+            payload = {"items": [], "next_cursor": None}
+            data = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self) -> None:  # noqa: N802 — BaseHTTPRequestHandler dispatch name
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length) if length else b""
+        self._capture(body)
 
         if self.path == "/api/v1/records":
             payload = {
@@ -224,8 +253,15 @@ def test_save_memory_round_trips_through_native_binding(
             assert key == "smoke:v1"
 
             captured = server.captured  # type: ignore[attr-defined]
-            assert len(captured) == 1, f"expected 1 POST, saw {len(captured)}"
-            req = captured[0]
+            # The FFI does at least: 1 GET (find_document singleton check)
+            # + 1 POST (sign+store). Assert the POST is what we expect; the
+            # GET count can vary with future routing tweaks.
+            posts = [r for r in captured if r["method"] == "POST"]
+            assert len(posts) == 1, (
+                f"expected exactly 1 POST to /api/v1/records, saw {len(posts)} "
+                f"in captured={[r['method'] + ' ' + r['path'] for r in captured]}"
+            )
+            req = posts[0]
             assert req["path"] == "/api/v1/records"
             # HTTP headers are case-insensitive; BaseHTTPRequestHandler
             # normalizes to lowercase. Look up in a case-insensitive way.
