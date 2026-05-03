@@ -341,13 +341,8 @@ fn get_string(data: &Value, keys: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::sync::Mutex;
 
     use super::*;
-
-    /// Shared serialisation guard for tests that mutate storage env vars.
-    /// Without this, parallel test threads race and produce non-deterministic failures.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn resolves_relative_paths_from_config_location() {
@@ -455,7 +450,7 @@ mod tests {
 
     #[test]
     fn resolve_storage_backend_jacs_default_storage_env_var_remote() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let saved_default = env::var("JACS_DEFAULT_STORAGE").ok();
         let saved_legacy = env::var("JACS_STORAGE").ok();
         env::set_var("JACS_DEFAULT_STORAGE", "remote");
@@ -469,7 +464,7 @@ mod tests {
 
     #[test]
     fn resolve_storage_backend_ignores_legacy_jacs_storage_env_var() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let saved_default = env::var("JACS_DEFAULT_STORAGE").ok();
         let saved_legacy = env::var("JACS_STORAGE").ok();
         env::remove_var("JACS_DEFAULT_STORAGE");
@@ -485,7 +480,7 @@ mod tests {
 
     #[test]
     fn resolve_storage_backend_reads_jacs_default_storage_config_key() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let temp = tempfile::tempdir().expect("tempdir");
         let config_path = temp.path().join("jacs.config.json");
         fs::write(
@@ -505,7 +500,7 @@ mod tests {
 
     #[test]
     fn redacted_display_uses_jacs_default_storage_env_source() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let saved = env::var("JACS_DEFAULT_STORAGE").ok();
         env::set_var("JACS_DEFAULT_STORAGE", "remote");
 
@@ -549,7 +544,7 @@ mod tests {
 
     #[test]
     fn redacted_display_default_fallback() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let orig = env::var("JACS_DEFAULT_STORAGE").ok();
         env::remove_var("JACS_DEFAULT_STORAGE");
 
@@ -562,7 +557,7 @@ mod tests {
 
     #[test]
     fn redacted_display_from_config_file() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let temp = tempfile::tempdir().expect("tempdir");
         let config_path = temp.path().join("jacs.config.json");
         fs::write(
@@ -583,7 +578,7 @@ mod tests {
 
     #[test]
     fn resolve_log_filter_rust_log_wins() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let saved = env::var("RUST_LOG").ok();
         env::set_var("RUST_LOG", "trace,rmcp=debug");
 
@@ -595,7 +590,7 @@ mod tests {
 
     #[test]
     fn resolve_log_filter_reads_observability_logs_level() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let saved = env::var("RUST_LOG").ok();
         env::remove_var("RUST_LOG");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -639,7 +634,7 @@ mod tests {
 
     #[test]
     fn resolve_remote_defaults_to_false() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let saved_remote = env::var("JACS_REMOTE").ok();
         let saved_storage = env::var("JACS_DEFAULT_STORAGE").ok();
         env::remove_var("JACS_REMOTE");
@@ -654,7 +649,7 @@ mod tests {
 
     #[test]
     fn resolve_remote_explicit_true_overrides() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let saved = env::var("JACS_REMOTE").ok();
         env::set_var("JACS_REMOTE", "false");
 
@@ -666,7 +661,7 @@ mod tests {
 
     #[test]
     fn resolve_remote_env_var_true() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let saved = env::var("JACS_REMOTE").ok();
         env::set_var("JACS_REMOTE", "true");
 
@@ -678,7 +673,7 @@ mod tests {
 
     #[test]
     fn resolve_remote_env_var_one() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let saved = env::var("JACS_REMOTE").ok();
         env::set_var("JACS_REMOTE", "1");
 
@@ -690,7 +685,7 @@ mod tests {
 
     #[test]
     fn resolve_remote_config_file_field() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let saved_remote = env::var("JACS_REMOTE").ok();
         let saved_storage = env::var("JACS_DEFAULT_STORAGE").ok();
         env::remove_var("JACS_REMOTE");
@@ -710,7 +705,7 @@ mod tests {
 
     #[test]
     fn resolve_remote_backward_compat_jacs_default_storage_remote() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let saved_remote = env::var("JACS_REMOTE").ok();
         let saved_storage = env::var("JACS_DEFAULT_STORAGE").ok();
         env::remove_var("JACS_REMOTE");
@@ -728,7 +723,7 @@ mod tests {
 
     #[test]
     fn resolve_remote_false_when_jacs_default_storage_is_fs() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let saved_remote = env::var("JACS_REMOTE").ok();
         let saved_storage = env::var("JACS_DEFAULT_STORAGE").ok();
         env::remove_var("JACS_REMOTE");

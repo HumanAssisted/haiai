@@ -1636,6 +1636,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn from_inner_returns_configinvalid_when_hai_url_missing() {
+        let _guard = crate::test_support::env_lock();
         let saved = std::env::var("HAI_URL").ok();
         unsafe {
             std::env::remove_var("HAI_URL");
