@@ -5,7 +5,7 @@ use haiai::{
     build_document_provider, CreateAgentOptions, CreateEmailTemplateOptions, HaiClient,
     HaiClientOptions, JacsAgentLifecycle, JacsDocumentProvider, JacsProvider,
     ListEmailTemplatesOptions, ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions,
-    SearchOptions, SendEmailOptions, UpdateEmailTemplateOptions,
+    SaveDocumentRequest, SaveIntent, SearchOptions, SendEmailOptions, UpdateEmailTemplateOptions,
 };
 use jacs_mcp::JacsMcpServer;
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
@@ -40,6 +40,8 @@ const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'@')
     .add(b'[')
     .add(b']');
+
+const JACS_MARKDOWN_CONTENT_TYPE: &str = "text/markdown; profile=jacs-text-v1";
 
 #[derive(Parser)]
 #[command(name = "haiai", version, about = "HAIAI CLI")]
@@ -1245,6 +1247,53 @@ fn load_document_provider(
 ) -> anyhow::Result<Box<dyn JacsDocumentProvider>> {
     build_document_provider(None, storage_flag, Some(hai_url()))
         .context("failed to load routed JACS document provider")
+}
+
+fn load_local_sync_provider(storage_flag: Option<&str>) -> anyhow::Result<LocalJacsProvider> {
+    let backend = haiai::config::resolve_storage_backend(storage_flag, None)
+        .context("failed to resolve local JACS storage backend")?;
+    let local_backend = if backend == "remote" {
+        "fs"
+    } else {
+        backend.as_str()
+    };
+    LocalJacsProvider::from_config_path(None, Some(local_backend))
+        .with_context(|| format!("failed to load local JACS sync backend '{}'", local_backend))
+}
+
+fn latest_local_sync_version(
+    jacs_type: &str,
+    storage_flag: Option<&str>,
+) -> anyhow::Result<Option<String>> {
+    let provider = load_local_sync_provider(storage_flag)?;
+    Ok(provider
+        .list_doc_summaries(Some(jacs_type), 1, 0)
+        .context("failed to read local JACS sync metadata")?
+        .into_iter()
+        .next()
+        .map(|summary| summary.version))
+}
+
+fn cache_signed_sync_artifact(
+    jacs_type: &str,
+    signed_text: &str,
+    storage_flag: Option<&str>,
+) -> anyhow::Result<String> {
+    let provider = load_local_sync_provider(storage_flag)?;
+    let key = provider
+        .store_signed_text(signed_text.as_bytes().to_vec(), JACS_MARKDOWN_CONTENT_TYPE)
+        .with_context(|| {
+            format!(
+                "failed to cache pulled {} signed artifact locally",
+                jacs_type
+            )
+        })?;
+    tracing::info!(
+        jacs_type,
+        key = %key,
+        "sync_document_local_cache"
+    );
+    Ok(key)
 }
 
 /// Print a table of email messages in a consistent format.
@@ -2727,13 +2776,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             SoulCommands::Sync { pull, push } => {
-                handle_sync(
-                    pull,
-                    push,
-                    "soul",
-                    "SOUL.md",
-                    effective_storage.as_deref(),
-                )?;
+                handle_sync(pull, push, "soul", "SOUL.md", effective_storage.as_deref())?;
             }
         },
         Commands::Records { command } => match command {
@@ -2783,19 +2826,46 @@ fn handle_sync(
     if push {
         let body = std::fs::read_to_string(local_file)
             .with_context(|| format!("failed to read {}", local_file))?;
-        let key = match jacs_type {
-            "soul" => provider.save_soul(Some(&body)).context("save_soul failed")?,
-            "memory" => provider.save_memory(Some(&body)).context("save_memory failed")?,
+        let expected_previous_version = latest_local_sync_version(jacs_type, storage)
+            .with_context(|| format!("failed to resolve local {} sync metadata", jacs_type))?;
+        if expected_previous_version.is_none()
+            && !provider
+                .find_document(jacs_type, None, 1)
+                .with_context(|| format!("failed to resolve remote {} metadata", jacs_type))?
+                .is_empty()
+        {
+            anyhow::bail!(
+                "local {} sync metadata is missing; run `haiai {} sync --pull` before pushing",
+                jacs_type,
+                jacs_type
+            );
+        }
+        let logical_name = match jacs_type {
+            "soul" => "SOUL.md",
+            "memory" => "MEMORY.md",
             _ => anyhow::bail!("unknown jacs_type: {}", jacs_type),
         };
+        let doc = provider
+            .save_document(SaveDocumentRequest {
+                doc_id: None,
+                jacs_type: jacs_type.to_string(),
+                logical_name: Some(logical_name.to_string()),
+                content_type: JACS_MARKDOWN_CONTENT_TYPE.to_string(),
+                plaintext: body.into_bytes(),
+                expected_previous_version,
+                singleton: true,
+                intent: SaveIntent::Upsert,
+            })
+            .with_context(|| format!("save_{} failed", jacs_type))?;
+        cache_signed_sync_artifact(jacs_type, &doc.json, storage)?;
         tracing::info!(
             direction = "push",
             jacs_type,
             file = local_file,
-            key = %key,
+            key = %doc.key,
             "sync_document"
         );
-        println!("{} pushed: {}", jacs_type.to_uppercase(), key);
+        println!("{} pushed: {}", jacs_type.to_uppercase(), doc.key);
     } else if pull {
         let envelope = match jacs_type {
             "soul" => provider.get_soul().context("get_soul failed")?,
@@ -2806,15 +2876,19 @@ fn handle_sync(
             Some(signed_text) => {
                 let (plaintext, _footer) =
                     jacs::inline::split_at_first_signature_marker(&signed_text);
+                if _footer.is_empty() {
+                    anyhow::bail!("pulled {} record has no JACS signature footer", jacs_type);
+                }
                 // Trim any trailing whitespace left before the signature marker
                 let plaintext = plaintext.trim_end();
                 std::fs::write(local_file, plaintext)
                     .with_context(|| format!("failed to write {}", local_file))?;
+                let local_key = cache_signed_sync_artifact(jacs_type, &signed_text, storage)?;
                 tracing::info!(
                     direction = "pull",
                     jacs_type,
                     file = local_file,
-                    key = "",
+                    key = %local_key,
                     "sync_document"
                 );
                 println!(

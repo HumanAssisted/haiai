@@ -1305,13 +1305,33 @@ impl JacsDocumentProvider for LocalJacsProvider {
     fn find_document(
         &self,
         jacs_type: &str,
-        _logical_name: Option<&str>,
+        logical_name: Option<&str>,
         limit: usize,
     ) -> Result<Vec<DocSummary>> {
-        // For local provider, query by type and return summaries.
-        // logical_name filtering is best-effort; the local FS backend
-        // does not store a title column.
-        self.list_doc_summaries(Some(jacs_type), limit, 0)
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let Some(name) = logical_name else {
+            return self.list_doc_summaries(Some(jacs_type), limit, 0);
+        };
+
+        let summaries = self.list_doc_summaries(Some(jacs_type), usize::MAX, 0)?;
+        let saw_logical_metadata = summaries
+            .iter()
+            .any(|summary| summary.logical_name.is_some());
+        let matches = summaries
+            .into_iter()
+            .filter(|summary| crate::jacs::summary_matches_logical_name(summary, name))
+            .take(limit)
+            .collect::<Vec<_>>();
+        if !matches.is_empty() || saw_logical_metadata {
+            return Ok(matches);
+        }
+
+        Err(HaiError::BackendUnsupported {
+            method: "find_document".to_string(),
+            detail: "logical_name lookup is not available for local documents without logical-name metadata; supply doc_id instead".to_string(),
+        })
     }
 
     fn get_record_bytes(&self, key: &str) -> Result<Vec<u8>> {

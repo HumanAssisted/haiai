@@ -23,7 +23,10 @@ use time::OffsetDateTime;
 
 use crate::client::encode_path_segment;
 use crate::error::{HaiError, Result};
-use crate::jacs::{DocSummary, JacsDocumentProvider, JacsProvider};
+use crate::jacs::{
+    logical_name_from_metadata, summary_from_document_bytes, summary_matches_logical_name,
+    DocSummary, JacsDocumentProvider, JacsProvider,
+};
 use crate::types::{DocSearchHit, DocSearchResults, SignedDocument, StorageCapabilities};
 
 /// Endpoint base for all record CRUD (D1).
@@ -767,31 +770,126 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
         &self,
         jacs_type: Option<&str>,
         limit: usize,
-        _offset: usize,
+        offset: usize,
     ) -> Result<Vec<DocSummary>> {
-        let mut url = format!(
-            "{}{}?latest_only=true&limit={}",
-            self.base_url,
-            RECORDS_PATH,
-            limit.min(100),
-        );
-        if let Some(t) = jacs_type {
-            url.push_str(&format!("&type={}", url_encode(t)));
+        if limit == 0 {
+            return Ok(Vec::new());
         }
-        let resp = Self::block_on(self.get_json_async(&url))?;
-        Ok(extract_summaries_from_list(&resp))
+
+        let mut cursor: Option<String> = None;
+        let mut skipped = 0usize;
+        let mut summaries = Vec::new();
+
+        loop {
+            let page_size = limit.clamp(1, 100);
+            let mut url = format!(
+                "{}{}?latest_only=true&limit={}",
+                self.base_url, RECORDS_PATH, page_size,
+            );
+            if let Some(t) = jacs_type {
+                url.push_str(&format!("&type={}", url_encode(t)));
+            }
+            if let Some(c) = &cursor {
+                url.push_str(&format!("&cursor={}", url_encode(c)));
+            }
+
+            let resp = Self::block_on(self.get_json_async(&url))?;
+            let next_cursor = resp
+                .get("next_cursor")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let page = extract_summaries_from_list(&resp);
+            let page_len = page.len();
+
+            if skipped < offset {
+                let to_skip = (offset - skipped).min(page_len);
+                skipped += to_skip;
+                summaries.extend(page.into_iter().skip(to_skip));
+            } else {
+                summaries.extend(page);
+            }
+
+            if summaries.len() >= limit {
+                summaries.truncate(limit);
+                break;
+            }
+            if page_len == 0 {
+                break;
+            }
+            match next_cursor {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+        }
+
+        Ok(summaries)
     }
 
     fn find_document(
         &self,
         jacs_type: &str,
-        _logical_name: Option<&str>,
+        logical_name: Option<&str>,
         limit: usize,
     ) -> Result<Vec<DocSummary>> {
-        // For find_document, we query by type and return up to `limit` results.
-        // logical_name filtering is best-effort — the server does not have a
-        // title/name column, so we return all matches and let the caller filter.
-        self.list_doc_summaries(Some(jacs_type), limit, 0)
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let Some(name) = logical_name else {
+            return self.list_doc_summaries(Some(jacs_type), limit, 0);
+        };
+
+        let mut matches = Vec::new();
+        let mut saw_candidate = false;
+        let mut saw_logical_metadata = false;
+        let mut offset = 0usize;
+
+        loop {
+            let page = self.list_doc_summaries(Some(jacs_type), 100, offset)?;
+            if page.is_empty() {
+                break;
+            }
+            offset += page.len();
+
+            for summary in page {
+                saw_candidate = true;
+                if summary.logical_name.is_some() {
+                    saw_logical_metadata = true;
+                    if summary_matches_logical_name(&summary, name) {
+                        matches.push(summary);
+                    }
+                } else if let Ok(bytes) = self.get_record_bytes(&summary.key) {
+                    if let Some(enriched) = summary_from_document_bytes(
+                        Some(&summary.id),
+                        Some(&summary.key),
+                        &summary.content_type,
+                        &bytes,
+                    )? {
+                        if enriched.logical_name.is_some() {
+                            saw_logical_metadata = true;
+                        }
+                        if summary_matches_logical_name(&enriched, name) {
+                            matches.push(enriched);
+                        }
+                    }
+                }
+                if matches.len() >= limit {
+                    return Ok(matches);
+                }
+            }
+
+            if offset == 0 {
+                break;
+            }
+        }
+
+        if !matches.is_empty() || saw_logical_metadata || !saw_candidate {
+            return Ok(matches);
+        }
+
+        Err(HaiError::BackendUnsupported {
+            method: "find_document".to_string(),
+            detail: "logical_name lookup is not available for remote records without logical-name metadata; supply doc_id instead".to_string(),
+        })
     }
 
     // =========================================================================
@@ -992,13 +1090,13 @@ fn extract_summaries_from_list(resp: &Value) -> Vec<DocSummary> {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    // logical_name is not stored server-side (v1); always None.
+                    let logical_name = logical_name_from_metadata(item);
                     Some(DocSummary {
                         id,
                         version,
                         key,
                         jacs_type,
-                        logical_name: None,
+                        logical_name,
                         content_type,
                         created_at,
                     })
@@ -2359,6 +2457,61 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn list_doc_summaries_honors_offset_with_cursor() {
+        let server = MockServer::start_async().await;
+        let _page1 = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("type", "memory")
+                    .query_param("latest_only", "true")
+                    .query_param("limit", "5")
+                    .is_true(|req| !req.query_params().iter().any(|(k, _)| k == "cursor"));
+                then.status(200).json_body(json!({
+                    "items": (0..5)
+                        .map(|i| json!({
+                            "jacs_id": format!("mem-{i}"),
+                            "jacs_version": "v1",
+                            "jacs_type": "memory"
+                        }))
+                        .collect::<Vec<_>>(),
+                    "next_cursor": "page-2",
+                    "has_more": true
+                }));
+            })
+            .await;
+        let _page2 = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("type", "memory")
+                    .query_param("latest_only", "true")
+                    .query_param("limit", "5")
+                    .query_param("cursor", "page-2");
+                then.status(200).json_body(json!({
+                    "items": (5..10)
+                        .map(|i| json!({
+                            "jacs_id": format!("mem-{i}"),
+                            "jacs_version": "v1",
+                            "jacs_type": "memory"
+                        }))
+                        .collect::<Vec<_>>(),
+                    "next_cursor": null,
+                    "has_more": false
+                }));
+            })
+            .await;
+
+        let provider = make_provider(server.base_url());
+        let summaries = provider
+            .list_doc_summaries(Some("memory"), 5, 5)
+            .expect("list with offset");
+        assert_eq!(summaries.len(), 5);
+        assert_eq!(summaries[0].id, "mem-5");
+        assert_eq!(summaries[4].id, "mem-9");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn find_document_returns_soul_singleton() {
         let server = MockServer::start_async().await;
         let mock = server
@@ -2388,6 +2541,76 @@ mod tests {
         assert_eq!(summaries[0].jacs_type, "soul");
         assert_eq!(summaries[0].key, "soul-001:v2");
         mock.assert_async().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_document_filters_logical_name_when_metadata_is_present() {
+        let server = MockServer::start_async().await;
+        let _mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("type", "note")
+                    .query_param("latest_only", "true");
+                then.status(200).json_body(json!({
+                    "items": [
+                        {
+                            "jacs_id": "note-other",
+                            "jacs_version": "v1",
+                            "jacs_type": "note",
+                            "logical_name": "OTHER.md"
+                        },
+                        {
+                            "jacs_id": "note-readme",
+                            "jacs_version": "v3",
+                            "jacs_type": "note",
+                            "logical_name": "README.md"
+                        }
+                    ],
+                    "next_cursor": null,
+                    "has_more": false
+                }));
+            })
+            .await;
+
+        let provider = make_provider(server.base_url());
+        let summaries = provider
+            .find_document("note", Some("README.md"), 1)
+            .expect("find by logical name");
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].key, "note-readme:v3");
+        assert_eq!(summaries[0].logical_name.as_deref(), Some("README.md"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_document_logical_name_without_metadata_errors_loudly() {
+        let server = MockServer::start_async().await;
+        let _mock = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET)
+                    .path("/api/v1/records")
+                    .query_param("type", "note")
+                    .query_param("latest_only", "true");
+                then.status(200).json_body(json!({
+                    "items": [{
+                        "jacs_id": "note-no-name",
+                        "jacs_version": "v1",
+                        "jacs_type": "note"
+                    }],
+                    "next_cursor": null,
+                    "has_more": false
+                }));
+            })
+            .await;
+
+        let provider = make_provider(server.base_url());
+        let err = provider
+            .find_document("note", Some("README.md"), 1)
+            .expect_err("logical-name lookup without metadata must not pick first doc");
+        assert!(
+            err.to_string().contains("logical_name lookup"),
+            "unexpected error: {err}"
+        );
     }
 
     // =========================================================================
