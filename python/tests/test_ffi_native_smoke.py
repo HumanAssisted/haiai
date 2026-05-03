@@ -1,9 +1,25 @@
-"""Real-FFI smoke test for haiipy.
+"""Real-FFI smoke tests for haiipy.
 
-Loads the real haiipy native binding (PyO3 cdylib) and round-trips
-`save_memory("smoke")` against a local stdlib HTTP server. This is the one
-test that would have caught the regression where the FFI surface declared
-methods that the native binding never exposed.
+Two tests, one per backend, both loading the real haiipy native binding
+(PyO3 cdylib) and exercising `save_memory("...")` end-to-end:
+
+1. **Remote** (`test_save_memory_round_trips_through_native_binding`) —
+   hosted production path. Sets ``JACS_DEFAULT_STORAGE=remote`` so the FFI
+   builds a `RemoteJacsProvider`, signs locally, POSTs to a stdlib
+   `http.server.HTTPServer` mock, and reads the server-issued key from the
+   response. Verifies the mock saw exactly one `POST /api/v1/records` with
+   `application/json` and a `"jacsType":"memory"` body.
+
+2. **Local** (`test_save_memory_local_path_through_native_binding`) — dev
+   default path (`haiai init` writes ``default_storage: "fs"``). Sets
+   ``JACS_DEFAULT_STORAGE=fs`` (or leaves it unset on a fs-config) so the
+   FFI builds a `LocalJacsProvider`, signs locally, writes to disk, and
+   returns a client-side ``{jacsId}:{jacsVersion}`` key. Verifies the doc
+   round-trips via `get_record_bytes(key)`.
+
+Together these two tests cover the only two backends production and dev
+users actually exercise — and would have caught a regression in either
+the remote routing path OR the local FS routing path.
 
 Skipped cleanly when:
 - haiipy is not built / installable (`importorskip`).
@@ -23,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -34,6 +51,32 @@ haiipy = pytest.importorskip("haiipy", reason="haiipy native binding not built")
 
 
 pytestmark = pytest.mark.native_smoke
+
+
+# ``LocalJacsProvider::store_signed_text`` returns the key as
+# ``{jacsId}:{jacsVersion}`` where both halves are JACS UUIDs. This regex
+# matches that exact shape so the local-path test asserts on the key
+# *structure* (not a specific value, which would change every run).
+_LOCAL_KEY_PATTERN = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    r":[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+
+
+def _restore_smoke_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Restore the password the agent was created with.
+
+    The conftest's autouse `password_env` fixture sets
+    ``JACS_PRIVATE_KEY_PASSWORD`` to a generic test value. Smoke tests need
+    the *real* password the pre-baked agent was created with (CI sets
+    ``_HAISDK_SMOKE_PASSWORD=smoke-password`` end-to-end).
+    """
+    pre_conftest_password = (
+        os.environ.get("_HAISDK_SMOKE_PASSWORD")
+        or os.environ.get("JACS_PRIVATE_KEY_PASSWORD")
+    )
+    if pre_conftest_password:
+        monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", pre_conftest_password)
 
 
 class _RecordsHandler(BaseHTTPRequestHandler):
@@ -137,24 +180,25 @@ def _bootstrap_jacs_agent(workdir: str) -> str:
 def test_save_memory_round_trips_through_native_binding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """End-to-end smoke: haiipy.HaiClient.save_memory_sync hits a real socket.
+    """End-to-end smoke (REMOTE backend): haiipy.HaiClient.save_memory_sync
+    hits a real HTTP socket.
 
-    The smoke test must use the password the agent was actually created
-    with — which is either the value of `JACS_PRIVATE_KEY_PASSWORD` in the
-    parent process (CI: set by the smoke-tests workflow lane), OR the
-    default `"test-private-key-password"` set by `conftest::password_env`
-    when the agent was bootstrapped in-process for local dev. Read whatever
-    the parent environment had BEFORE conftest's autouse fixture clobbered
-    it, and re-export so the haiipy native binding's call into JACS picks it
-    up. CI sets `JACS_PRIVATE_KEY_PASSWORD=smoke-password` end-to-end so the
-    pre-baked agent's keys decrypt correctly.
+    Mirrors hosted production: ``JACS_DEFAULT_STORAGE=remote`` causes the
+    FFI to build a `RemoteJacsProvider`, sign locally, POST to
+    ``base_url/api/v1/records``, and return the server-issued key.
+
+    The agent's bootstrapped key is decrypted with the password the agent
+    was actually created with — either ``_HAISDK_SMOKE_PASSWORD`` /
+    ``JACS_PRIVATE_KEY_PASSWORD`` in the parent process (CI:
+    ``smoke-password``), or the conftest's
+    ``"test-private-key-password"`` for local in-process bootstrap.
     """
-    pre_conftest_password = (
-        os.environ.get("_HAISDK_SMOKE_PASSWORD")
-        or os.environ.get("JACS_PRIVATE_KEY_PASSWORD")
-    )
-    if pre_conftest_password:
-        monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", pre_conftest_password)
+    _restore_smoke_password(monkeypatch)
+    # Force remote routing for THIS test only. Without this, the FFI's
+    # `build_document_provider` falls through to ``default_storage: "fs"``
+    # in jacs.config.json (set by `haiai init`), routes to LocalJacsProvider,
+    # and never makes the HTTP call this test was written to verify.
+    monkeypatch.setenv("JACS_DEFAULT_STORAGE", "remote")
 
     server = HTTPServer(("127.0.0.1", 0), _RecordsHandler)
     server.captured = []  # type: ignore[attr-defined]
@@ -196,3 +240,58 @@ def test_save_memory_round_trips_through_native_binding(
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_save_memory_local_path_through_native_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end smoke (LOCAL backend): haiipy.HaiClient.save_memory_sync
+    signs and writes to disk without any HTTP traffic.
+
+    Mirrors the dev default — ``haiai init`` writes
+    ``default_storage: "fs"`` to ``jacs.config.json``, so most local users
+    never make a network call when calling `save_memory`. We force ``fs``
+    here even though the pre-baked smoke agent already defaults to it,
+    so this test is hermetic against future changes to the bootstrap
+    defaults or to ``JACS_DEFAULT_STORAGE`` leaking in from a parent shell.
+
+    Asserts the returned key has the local ``{jacsId}:{jacsVersion}`` UUID
+    shape (not a server-issued string), and that the just-stored document
+    round-trips back via `get_record_bytes(key)`.
+    """
+    _restore_smoke_password(monkeypatch)
+    monkeypatch.setenv("JACS_DEFAULT_STORAGE", "fs")
+
+    with tempfile.TemporaryDirectory() as workdir:
+        config_path = _bootstrap_jacs_agent(workdir)
+
+        # No mock HTTP server: the local path must not make any network
+        # calls, and binding the FFI to an unreachable URL surfaces that
+        # invariant if the routing decision ever regresses.
+        ffi_config = json.dumps(
+            {
+                "base_url": "http://127.0.0.1:1",  # unreachable on purpose
+                "jacs_config_path": config_path,
+                "client_type": "python",
+                "timeout_secs": 5,
+                "max_retries": 0,
+            }
+        )
+
+        client = haiipy.HaiClient(ffi_config)
+        key = client.save_memory_sync("local-smoke-content")
+
+        assert _LOCAL_KEY_PATTERN.match(key), (
+            f"expected local key to match `{{jacsId}}:{{jacsVersion}}` UUID "
+            f"shape, got {key!r}"
+        )
+
+        # Round-trip: fetch the just-stored document by key. The FFI returns
+        # the raw bytes of the signed text artifact. The original plaintext
+        # we passed in must be present in those bytes.
+        record_bytes = client.get_record_bytes_sync(key)
+        assert isinstance(record_bytes, (bytes, bytearray))
+        assert b"local-smoke-content" in bytes(record_bytes), (
+            "expected the stored signed-text artifact to contain the "
+            "original plaintext we just saved"
+        )
