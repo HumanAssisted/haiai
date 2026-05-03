@@ -26,6 +26,12 @@ fn haiai_bin() -> PathBuf {
     candidate
 }
 
+fn canonical_tempdir() -> (tempfile::TempDir, PathBuf) {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let base = temp.path().canonicalize().expect("canonical tempdir");
+    (temp, base)
+}
+
 // ── CLI basics ──────────────────────────────────────────────────
 
 #[test]
@@ -102,10 +108,10 @@ fn init_missing_key_when_register_true() {
 
 #[test]
 fn init_creates_config_keys_and_prints_agent_id() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let config_path = temp.path().join("jacs.config.json");
-    let key_dir = temp.path().join("keys");
-    let data_dir = temp.path().join("data");
+    let (_temp, base) = canonical_tempdir();
+    let config_path = base.join("jacs.config.json");
+    let key_dir = base.join("keys");
+    let data_dir = base.join("data");
 
     let output = Command::new(haiai_bin())
         .args([
@@ -179,7 +185,7 @@ fn init_creates_config_keys_and_prints_agent_id() {
 
 #[test]
 fn init_without_password_env_fails_gracefully() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let (_temp, base) = canonical_tempdir();
 
     let output = Command::new(haiai_bin())
         .args([
@@ -190,11 +196,11 @@ fn init_without_password_env_fails_gracefully() {
             "test.example.com",
             "--register=false",
             "--config-path",
-            &temp.path().join("jacs.config.json").to_string_lossy(),
+            &base.join("jacs.config.json").to_string_lossy(),
             "--key-dir",
-            &temp.path().join("keys").to_string_lossy(),
+            &base.join("keys").to_string_lossy(),
             "--data-dir",
-            &temp.path().join("data").to_string_lossy(),
+            &base.join("data").to_string_lossy(),
         ])
         .env_remove("JACS_PRIVATE_KEY_PASSWORD")
         .output()
@@ -210,7 +216,7 @@ fn init_without_password_env_fails_gracefully() {
 
 #[test]
 fn init_with_domain_shows_dns_record() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let (_temp, base) = canonical_tempdir();
 
     let output = Command::new(haiai_bin())
         .args([
@@ -223,11 +229,11 @@ fn init_with_domain_shows_dns_record() {
             "--algorithm",
             "ring-Ed25519",
             "--config-path",
-            &temp.path().join("jacs.config.json").to_string_lossy(),
+            &base.join("jacs.config.json").to_string_lossy(),
             "--key-dir",
-            &temp.path().join("keys").to_string_lossy(),
+            &base.join("keys").to_string_lossy(),
             "--data-dir",
-            &temp.path().join("data").to_string_lossy(),
+            &base.join("data").to_string_lossy(),
         ])
         .env("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123")
         .output()
@@ -429,7 +435,7 @@ fn mcp_serves_hai_and_jacs_tools() {
 /// This test documents the issue: init succeeds but mcp can't load the key.
 #[test]
 fn init_then_mcp_fails_due_to_raw_key_format() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let (_temp, base) = canonical_tempdir();
 
     let init_output = Command::new(haiai_bin())
         .args([
@@ -448,7 +454,7 @@ fn init_then_mcp_fails_due_to_raw_key_format() {
             "--data-dir",
             "./jacs",
         ])
-        .current_dir(temp.path())
+        .current_dir(&base)
         .env("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123")
         .output()
         .expect("run init");
@@ -457,10 +463,10 @@ fn init_then_mcp_fails_due_to_raw_key_format() {
     // MCP should fail because the public key is raw bytes, not PEM
     let mcp_output = Command::new(haiai_bin())
         .arg("mcp")
-        .env("JACS_CONFIG", temp.path().join("jacs.config.json"))
+        .env("JACS_CONFIG", base.join("jacs.config.json"))
         .env("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123")
         .env("RUST_LOG", "warn")
-        .current_dir(temp.path())
+        .current_dir(&base)
         .stdin(Stdio::null())
         .output()
         .expect("run mcp");
@@ -493,11 +499,11 @@ fn prepare_jacs_fixture() -> (tempfile::TempDir, PathBuf) {
         serde_json::from_str(&std::fs::read_to_string(&source).expect("read config"))
             .expect("parse config");
 
-    let temp = tempfile::tempdir().expect("tempdir");
+    let (temp, base) = canonical_tempdir();
 
     // Copy keys
     let src_key_dir = source_dir.join(value["jacs_key_directory"].as_str().unwrap_or("keys"));
-    let tmp_key_dir = temp.path().join("keys");
+    let tmp_key_dir = base.join("keys");
     std::fs::create_dir_all(&tmp_key_dir).expect("mkdir keys");
     for entry in std::fs::read_dir(&src_key_dir).expect("read keys") {
         let entry = entry.expect("entry");
@@ -506,7 +512,7 @@ fn prepare_jacs_fixture() -> (tempfile::TempDir, PathBuf) {
 
     // Copy data with underscore→colon conversion
     let src_data_dir = source_dir.join(value["jacs_data_directory"].as_str().unwrap_or("."));
-    let tmp_data_dir = temp.path().join("data");
+    let tmp_data_dir = base.join("data");
     copy_fixture_dir(&src_data_dir, &tmp_data_dir);
 
     value["jacs_data_directory"] =
@@ -514,7 +520,7 @@ fn prepare_jacs_fixture() -> (tempfile::TempDir, PathBuf) {
     value["jacs_key_directory"] =
         serde_json::Value::String(tmp_key_dir.to_string_lossy().into_owned());
 
-    let config_path = temp.path().join("jacs.config.json");
+    let config_path = base.join("jacs.config.json");
     std::fs::write(
         &config_path,
         serde_json::to_vec_pretty(&value).expect("encode"),
@@ -598,10 +604,10 @@ fn self_knowledge_limit() {
 
 #[test]
 fn mcp_without_jacs_config_fails() {
-    let temp = tempfile::tempdir().expect("temp dir");
+    let (_temp, base) = canonical_tempdir();
     let output = Command::new(haiai_bin())
         .arg("mcp")
-        .current_dir(temp.path())
+        .current_dir(&base)
         .env_remove("JACS_CONFIG")
         .env_remove("JACS_CONFIG_PATH")
         .env("RUST_LOG", "warn")

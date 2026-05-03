@@ -577,6 +577,7 @@ pub(crate) fn summary_from_document_bytes(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
+    let logical_name = logical_name_from_metadata(&value);
     let content_type = if text.contains("-----BEGIN JACS SIGNATURE-----") {
         fallback_content_type.to_string()
     } else {
@@ -592,10 +593,33 @@ pub(crate) fn summary_from_document_bytes(
         version,
         key,
         jacs_type,
-        logical_name: None,
+        logical_name,
         content_type,
         created_at,
     }))
+}
+
+pub(crate) fn logical_name_from_metadata(value: &Value) -> Option<String> {
+    [
+        "/logicalName",
+        "/logical_name",
+        "/fileName",
+        "/filename",
+        "/jacsLogicalName",
+        "/content/logicalName",
+        "/content/logical_name",
+        "/content/fileName",
+        "/content/filename",
+    ]
+    .iter()
+    .filter_map(|pointer| value.pointer(pointer).and_then(Value::as_str))
+    .map(str::trim)
+    .find(|name| !name.is_empty())
+    .map(str::to_string)
+}
+
+pub(crate) fn summary_matches_logical_name(summary: &DocSummary, logical_name: &str) -> bool {
+    summary.logical_name.as_deref() == Some(logical_name)
 }
 
 fn is_document_not_found_error(err: &HaiError) -> bool {

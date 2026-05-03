@@ -689,7 +689,8 @@ mod tests {
     /// agent's lifetime (dropping it deletes the key files).
     fn create_test_agent(name: &str) -> (SimpleAgent, tempfile::TempDir) {
         let tmp = tempfile::tempdir().expect("create temp dir");
-        let tmp_path = tmp.path().to_string_lossy().to_string();
+        let tmp_base = tmp.path().canonicalize().expect("canonical temp dir");
+        let tmp_path = tmp_base.to_string_lossy().to_string();
 
         let params = CreateAgentParams::builder()
             .name(name)
