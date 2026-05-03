@@ -82,13 +82,9 @@ pub fn build_document_provider_for_backend(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
     use jacs::simple::CreateAgentParams;
 
     use super::*;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn create_test_agent() -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -113,7 +109,7 @@ mod tests {
 
     #[test]
     fn remote_backend_loads_local_signer_when_env_selects_remote() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let (_dir, config_path) = create_test_agent();
         let saved = std::env::var("JACS_DEFAULT_STORAGE").ok();
         std::env::set_var("JACS_DEFAULT_STORAGE", "remote");
@@ -131,7 +127,7 @@ mod tests {
 
     #[test]
     fn local_backend_can_save_memory_through_default_d5_path() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let (_dir, config_path) = create_test_agent();
         let provider =
             build_document_provider(Some(&config_path), Some("fs"), None).expect("local provider");
@@ -160,7 +156,7 @@ mod tests {
 
     #[test]
     fn local_backend_save_memory_twice_versions_same_document() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let (_dir, config_path) = create_test_agent();
         let provider =
             build_document_provider(Some(&config_path), Some("fs"), None).expect("local provider");
@@ -191,7 +187,7 @@ mod tests {
 
     #[test]
     fn local_backend_explicit_doc_id_update_uses_real_latest_key() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let (_dir, config_path) = create_test_agent();
         let provider =
             build_document_provider(Some(&config_path), Some("fs"), None).expect("local provider");
@@ -220,7 +216,7 @@ mod tests {
 
     #[test]
     fn local_backend_create_intent_rejects_existing_singleton() {
-        let _guard = ENV_LOCK.lock().expect("env lock");
+        let _guard = crate::test_support::env_lock();
         let (_dir, config_path) = create_test_agent();
         let provider =
             build_document_provider(Some(&config_path), Some("fs"), None).expect("local provider");

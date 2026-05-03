@@ -683,11 +683,51 @@ mod tests {
 
     use super::{CreateAgentParams, SimpleAgent};
 
+    struct EmailEnvGuard {
+        _guard: std::sync::MutexGuard<'static, ()>,
+        saved_password: Option<String>,
+        saved_key_directory: Option<String>,
+        saved_private_key_filename: Option<String>,
+    }
+
+    impl EmailEnvGuard {
+        fn new() -> Self {
+            Self {
+                _guard: crate::test_support::env_lock(),
+                saved_password: std::env::var("JACS_PRIVATE_KEY_PASSWORD").ok(),
+                saved_key_directory: std::env::var("JACS_KEY_DIRECTORY").ok(),
+                saved_private_key_filename: std::env::var("JACS_AGENT_PRIVATE_KEY_FILENAME").ok(),
+            }
+        }
+    }
+
+    impl Drop for EmailEnvGuard {
+        fn drop(&mut self) {
+            restore_env("JACS_PRIVATE_KEY_PASSWORD", self.saved_password.take());
+            restore_env("JACS_KEY_DIRECTORY", self.saved_key_directory.take());
+            restore_env(
+                "JACS_AGENT_PRIVATE_KEY_FILENAME",
+                self.saved_private_key_filename.take(),
+            );
+        }
+    }
+
+    fn restore_env(key: &str, saved: Option<String>) {
+        unsafe {
+            if let Some(value) = saved {
+                std::env::set_var(key, value);
+            } else {
+                std::env::remove_var(key);
+            }
+        }
+    }
+
     /// Create a test SimpleAgent for email signing/verification tests.
     ///
     /// Returns the agent and a TempDir that must be kept alive for the
     /// agent's lifetime (dropping it deletes the key files).
-    fn create_test_agent(name: &str) -> (SimpleAgent, tempfile::TempDir) {
+    fn create_test_agent(name: &str) -> (SimpleAgent, tempfile::TempDir, EmailEnvGuard) {
+        let guard = EmailEnvGuard::new();
         let tmp = tempfile::tempdir().expect("create temp dir");
         let tmp_base = tmp.path().canonicalize().expect("canonical temp dir");
         let tmp_path = tmp_base.to_string_lossy().to_string();
@@ -704,21 +744,21 @@ mod tests {
         let (agent, _info) = SimpleAgent::create_with_params(params).expect("create test agent");
 
         // Set env vars needed by the keystore at signing time.
-        // SAFETY: tests that sign emails must not run in parallel
-        // or they will stomp on each other's env vars.
+        // SAFETY: `EmailEnvGuard` holds the shared test env lock and restores
+        // these process-global variables before releasing it.
         unsafe {
             std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "TestHaiSdk!2026");
             std::env::set_var("JACS_KEY_DIRECTORY", format!("{}/jacs_keys", tmp_path));
             std::env::set_var("JACS_AGENT_PRIVATE_KEY_FILENAME", "jacs.private.pem.enc");
         }
 
-        (agent, tmp)
+        (agent, tmp, guard)
     }
 
     #[test]
     fn sign_email_and_extract_doc() {
         let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
-        let (agent, _tmp) = create_test_agent("test-agent");
+        let (agent, _tmp, _env_guard) = create_test_agent("test-agent");
         let signed = sign_email(email, &agent).unwrap();
 
         // The JACS attachment is a JACS envelope, not a JacsEmailSignatureDocument.
@@ -763,7 +803,7 @@ mod tests {
     #[tokio::test]
     async fn verify_email_registry_unreachable() {
         let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
-        let (agent, _tmp) = create_test_agent("test-agent");
+        let (agent, _tmp, _env_guard) = create_test_agent("test-agent");
         let signed = sign_email(email, &agent).unwrap();
 
         let result = verify_email(&signed, "http://127.0.0.1:1").await;
@@ -777,7 +817,7 @@ mod tests {
 
     #[tokio::test]
     async fn verify_email_with_mock_registry_identity_mismatch() {
-        let (agent, _tmp) = create_test_agent("test-agent");
+        let (agent, _tmp, _env_guard) = create_test_agent("test-agent");
 
         // Get the agent's JACS ID so we can set up a mismatching registry
         let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
@@ -811,7 +851,7 @@ mod tests {
 
     #[tokio::test]
     async fn verify_email_with_mock_registry_email_mismatch() {
-        let (agent, _tmp) = create_test_agent("test-agent");
+        let (agent, _tmp, _env_guard) = create_test_agent("test-agent");
 
         let email = b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\nDate: Fri, 28 Feb 2026 12:00:00 +0000\r\nMessage-ID: <test@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello World\r\n";
         let signed = sign_email(email, &agent).unwrap();
