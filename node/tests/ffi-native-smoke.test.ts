@@ -143,6 +143,17 @@ describeWhenAvailable('haiinpm native FFI smoke test', () => {
             headers: req.headers as Record<string, string | string[] | undefined>,
             body: buffer,
           });
+
+          // The FFI's `save_memory(singleton: true)` first issues a GET
+          // to /api/v1/records to check for an existing singleton. Reply
+          // with an empty `items` list so the caller takes the
+          // "no existing → create" branch and proceeds to POST.
+          if (req.method === 'GET' && req.url?.startsWith('/api/v1/records')) {
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ items: [], next_cursor: null }));
+            return;
+          }
           if (req.url === '/api/v1/records' && req.method === 'POST') {
             const payload = JSON.stringify({
               key: 'smoke:v1',
@@ -191,11 +202,14 @@ describeWhenAvailable('haiinpm native FFI smoke test', () => {
         const key = await client.saveMemory('smoke-content');
         expect(key).toBe('smoke:v1');
 
-        expect(captured).toHaveLength(1);
-        expect(captured[0].url).toBe('/api/v1/records');
-        expect(captured[0].method).toBe('POST');
-        expect(String(captured[0].headers['content-type'])).toContain('application/json');
-        expect(captured[0].body).toContain('"jacsType":"memory"');
+        // The FFI does at least: 1 GET (find_document singleton check)
+        // + 1 POST (sign+store). Assert the POST is what we expect; the
+        // GET count can vary with future routing tweaks.
+        const posts = captured.filter((r) => r.method === 'POST');
+        expect(posts).toHaveLength(1);
+        expect(posts[0].url).toBe('/api/v1/records');
+        expect(String(posts[0].headers['content-type'])).toContain('application/json');
+        expect(posts[0].body).toContain('"jacsType":"memory"');
       } finally {
         server.close();
         rmSync(workdir, { recursive: true, force: true });
