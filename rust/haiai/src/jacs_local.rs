@@ -421,6 +421,14 @@ impl LocalJacsProvider {
                 {
                     continue;
                 }
+                // JACS inline signing persists the footer's signed JSON document
+                // locally. That internal claim is not the editable memory/soul
+                // markdown record unless the paired signed-text file exists.
+                if is_inline_signature_claim_document(&doc.value)
+                    && !self.signed_text_path_for_key(&key).exists()
+                {
+                    continue;
+                }
                 let created_at = doc
                     .value
                     .get("jacsVersionDate")
@@ -431,8 +439,7 @@ impl LocalJacsProvider {
                 continue;
             }
             // Fallback: try reading the .md file and extracting metadata from footer.
-            let filename = format!("{}.md", key.replace(':', "_"));
-            let path = self.document_dir.join(&filename);
+            let path = self.signed_text_path_for_key(&key);
             if let Ok(text) = std::fs::read_to_string(&path) {
                 let Some(summary) = extract_summary_from_signed_text(&text, &key) else {
                     continue;
@@ -466,8 +473,7 @@ impl LocalJacsProvider {
             if id != doc_id {
                 continue;
             }
-            let filename = format!("{}.md", key.replace(':', "_"));
-            let path = self.document_dir.join(&filename);
+            let path = self.signed_text_path_for_key(&key);
             if let Ok(text) = std::fs::read_to_string(&path) {
                 if let Some(summary) = extract_summary_from_signed_text(&text, &key) {
                     matches.push((summary.created_at, summary.version, key));
@@ -476,6 +482,11 @@ impl LocalJacsProvider {
         }
         matches.sort_by(|left, right| right.cmp(left));
         Ok(matches.into_iter().next().map(|(_, _, key)| key))
+    }
+
+    fn signed_text_path_for_key(&self, key: &str) -> std::path::PathBuf {
+        let filename = format!("{}.md", key.replace(':', "_"));
+        self.document_dir.join(filename)
     }
 }
 
@@ -504,6 +515,11 @@ fn extract_summary_from_signed_text(text: &str, key: &str) -> Option<DocSummary>
     )
     .ok()
     .flatten()
+}
+
+fn is_inline_signature_claim_document(value: &Value) -> bool {
+    value.pointer("/content/inlineSignatureVersion").is_some()
+        && value.pointer("/content/signedContentHash").is_some()
 }
 
 /// Validate routed backend labels for DocumentService-backed operations.
@@ -1014,8 +1030,7 @@ impl JacsDocumentProvider for LocalJacsProvider {
         // Prefer signed-text .md file when it exists (TASK_005 path stores the full
         // plaintext + JACS footer here, whereas the document service only keeps the
         // JSON metadata envelope).
-        let filename = format!("{}.md", key.replace(':', "_"));
-        let path = self.document_dir.join(&filename);
+        let path = self.signed_text_path_for_key(key);
         if path.exists() {
             return std::fs::read_to_string(&path).map_err(|e| {
                 HaiError::Provider(format!("get_document: read {}: {e}", path.display()))
@@ -1261,6 +1276,11 @@ impl JacsDocumentProvider for LocalJacsProvider {
             if let Ok(doc_content) = self.get_document(&key) {
                 // Try JSON first (legacy path).
                 if let Ok(value) = serde_json::from_str::<Value>(&doc_content) {
+                    // Bare inline-claim JSON documents are signer side effects,
+                    // not stored editable text records.
+                    if is_inline_signature_claim_document(&value) {
+                        continue;
+                    }
                     let id = value
                         .get("jacsId")
                         .and_then(|v| v.as_str())
@@ -1341,8 +1361,7 @@ impl JacsDocumentProvider for LocalJacsProvider {
             }
         }
         // Try to read from the documents directory as a signed-text file first.
-        let filename = format!("{}.md", key.replace(':', "_"));
-        let path = self.document_dir.join(&filename);
+        let path = self.signed_text_path_for_key(key);
         if path.exists() {
             return std::fs::read(&path).map_err(|e| {
                 HaiError::Provider(format!("get_record_bytes: read {}: {e}", path.display()))
@@ -1392,8 +1411,7 @@ impl JacsDocumentProvider for LocalJacsProvider {
                 doc_dir.display()
             ))
         })?;
-        let filename = format!("{}.md", key.replace(':', "_"));
-        let path = doc_dir.join(&filename);
+        let path = self.signed_text_path_for_key(&key);
         std::fs::write(&path, &signed_bytes).map_err(|e| {
             HaiError::Provider(format!("store_signed_text: write {}: {e}", path.display()))
         })?;

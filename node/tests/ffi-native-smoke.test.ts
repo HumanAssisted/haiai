@@ -8,15 +8,14 @@
  *    — hosted production path. Sets `JACS_DEFAULT_STORAGE=remote` so the
  *    FFI builds a `RemoteJacsProvider`, signs locally, POSTs to a
  *    `node:http.createServer` mock, and reads the server-issued key from
- *    the response. Verifies the mock saw exactly one `POST /api/v1/records`
- *    with `application/json` and a `"jacsType":"memory"` body.
+ *    the response. Verifies the mock saw a `POST /api/v1/records` with
+ *    signed markdown bytes (plaintext plus the JACS signature footer).
  *
  * 2. **Local** (`saveMemory persists locally without HTTP traffic`) — dev
- *    default path (`haiai init` writes `default_storage: "fs"`). Sets
- *    `JACS_DEFAULT_STORAGE=fs` so the FFI builds a `LocalJacsProvider`,
- *    signs locally, writes to disk, and returns a client-side
- *    `{jacsId}:{jacsVersion}` key. Verifies the doc round-trips via
- *    `getRecordBytes(key)`.
+ *    default path (`haiai init` writes `default_storage: "fs"`). Bootstraps
+ *    a fresh agent, sets `JACS_DEFAULT_STORAGE=fs`, signs locally, writes to
+ *    disk, and returns a client-side `{jacsId}:{jacsVersion}` key. Verifies
+ *    the doc round-trips via `getRecordBytes(key)`.
  *
  * Together these cover the only two backends production and dev users
  * actually exercise.
@@ -33,9 +32,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, type TaskContext } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { accessSync, constants, existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 const dynamicRequire = createRequire(import.meta.url);
@@ -92,6 +93,89 @@ function resolveJacsAgentConfig(workdir: string): string | null {
   } catch {
     return null;
   }
+}
+
+function canExecute(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function locateHaiaiCli(): string | null {
+  const explicit = process.env.HAIAI_CLI;
+  if (explicit && canExecute(explicit)) return resolve(explicit);
+
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const candidate = join(
+      dir,
+      'rust',
+      'target',
+      'release',
+      process.platform === 'win32' ? 'haiai.exe' : 'haiai',
+    );
+    if (canExecute(candidate)) return candidate;
+    if (existsSync(join(dir, '.git'))) break;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+
+  const result = spawnSync('haiai', ['--help'], { stdio: 'ignore' });
+  return result.status === 0 ? 'haiai' : null;
+}
+
+function resolveFreshJacsAgentConfig(
+  workdir: string,
+): { configPath?: string; skipReason?: string } {
+  workdir = realpathSync(workdir);
+  const cli = locateHaiaiCli();
+  if (!cli) {
+    return { skipReason: 'haiai CLI binary not found; cannot bootstrap a fresh JACS agent' };
+  }
+
+  const password =
+    process.env._HAISDK_SMOKE_PASSWORD ?? process.env.JACS_PRIVATE_KEY_PASSWORD ?? 'smoke-password';
+  process.env.JACS_PRIVATE_KEY_PASSWORD = password;
+
+  const configPath = join(workdir, 'jacs.config.json');
+  const result = spawnSync(
+    cli,
+    [
+      'init',
+      '--quiet',
+      '--name',
+      'local-smoke-agent',
+      '--register',
+      'false',
+      '--data-dir',
+      join(workdir, 'data'),
+      '--key-dir',
+      join(workdir, 'keys'),
+      '--config-path',
+      configPath,
+    ],
+    {
+      env: { ...process.env, JACS_PRIVATE_KEY_PASSWORD: password },
+      encoding: 'utf8',
+    },
+  );
+
+  if (result.status !== 0) {
+    return {
+      skipReason:
+        `haiai init failed (status=${String(result.status)}): ` +
+        `stdout=${result.stdout} stderr=${result.stderr}`,
+    };
+  }
+  if (!existsSync(configPath)) {
+    return { skipReason: `haiai init succeeded but ${configPath} was not written` };
+  }
+
+  return { configPath };
 }
 
 describeWhenAvailable('haiinpm native FFI smoke test', () => {
@@ -190,6 +274,7 @@ describeWhenAvailable('haiinpm native FFI smoke test', () => {
         const ffiConfig = JSON.stringify({
           base_url: baseUrl,
           jacs_config_path: configPath,
+          jacs_storage_backend: 'remote',
           client_type: 'node',
           timeout_secs: 5,
           max_retries: 0,
@@ -208,8 +293,9 @@ describeWhenAvailable('haiinpm native FFI smoke test', () => {
         const posts = captured.filter((r) => r.method === 'POST');
         expect(posts).toHaveLength(1);
         expect(posts[0].url).toBe('/api/v1/records');
-        expect(String(posts[0].headers['content-type'])).toContain('application/json');
-        expect(posts[0].body).toContain('"jacsType":"memory"');
+        expect(String(posts[0].headers['content-type'])).toContain('text/markdown');
+        expect(posts[0].body).toContain('smoke-content');
+        expect(posts[0].body).toContain('-----BEGIN JACS SIGNATURE-----');
       } finally {
         server.close();
         rmSync(workdir, { recursive: true, force: true });
@@ -230,10 +316,10 @@ describeWhenAvailable('haiinpm native FFI smoke test', () => {
 
       const workdir = mkdtempSync(join(tmpdir(), 'haisdk-smoke-local-'));
       try {
-        const configPath = resolveJacsAgentConfig(workdir);
-        if (!configPath) {
+        const fresh = resolveFreshJacsAgentConfig(workdir);
+        if (!fresh.configPath) {
           // eslint-disable-next-line no-console
-          console.warn('local smoke test skipped: cannot resolve JACS agent config');
+          console.warn(`local smoke test skipped: ${fresh.skipReason}`);
           ctx.skip();
           return;
         }
@@ -243,7 +329,8 @@ describeWhenAvailable('haiinpm native FFI smoke test', () => {
         // invariant if the routing decision ever regresses.
         const ffiConfig = JSON.stringify({
           base_url: 'http://127.0.0.1:1', // unreachable on purpose
-          jacs_config_path: configPath,
+          jacs_config_path: fresh.configPath,
+          jacs_storage_backend: 'fs',
           client_type: 'node',
           timeout_secs: 5,
           max_retries: 0,

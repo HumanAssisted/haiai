@@ -11,7 +11,7 @@ import (
 // TestFFISmokeNewClient verifies that the FFI binding can create a client.
 // With StaticJacsProvider (no jacs_config_path), construction should succeed.
 func TestFFISmokeNewClient(t *testing.T) {
-	client, err := NewClient(`{"base_url":"https://beta.hai.ai","jacs_id":"test-agent:1"}`)
+	client, err := NewClient(`{"base_url":"https://hai.ai","jacs_id":"test-agent:1"}`)
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
@@ -21,7 +21,7 @@ func TestFFISmokeNewClient(t *testing.T) {
 
 // TestClientDoubleClose verifies that Close() is safe to call multiple times.
 func TestClientDoubleClose(t *testing.T) {
-	client, err := NewClient(`{"base_url":"https://beta.hai.ai","jacs_id":"test-close:1"}`)
+	client, err := NewClient(`{"base_url":"https://hai.ai","jacs_id":"test-close:1"}`)
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestClientDoubleClose(t *testing.T) {
 
 // TestClientMethodAfterClose verifies that methods return an error after Close().
 func TestClientMethodAfterClose(t *testing.T) {
-	client, err := NewClient(`{"base_url":"https://beta.hai.ai","jacs_id":"test-after-close:1"}`)
+	client, err := NewClient(`{"base_url":"https://hai.ai","jacs_id":"test-after-close:1"}`)
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}

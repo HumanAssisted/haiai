@@ -75,7 +75,7 @@ from haiai.signing import is_signed_event, sign_response, unwrap_signed_event
 logger = logging.getLogger("haiai.client")
 
 # Default HAI API base URL. Override with HAI_URL or HAI_API_URL env vars.
-DEFAULT_BASE_URL = "https://beta.hai.ai"
+DEFAULT_BASE_URL = "https://hai.ai"
 
 # Verify link constants (HAI / public verification URLs)
 MAX_VERIFY_URL_LEN = 2048
@@ -205,8 +205,8 @@ class HaiClient:
 
         config.load("./jacs.config.json")
         client = HaiClient()
-        if client.testconnection("https://beta.hai.ai"):
-            result = client.hello_world("https://beta.hai.ai")
+        if client.testconnection("https://hai.ai"):
+            result = client.hello_world("https://hai.ai")
             print(result.message)
     """
 

@@ -186,6 +186,41 @@ mod tests {
     }
 
     #[test]
+    fn local_backend_ignores_inline_signing_side_effect_without_signed_text() {
+        let _guard = crate::test_support::env_lock();
+        let (_dir, config_path) = create_test_agent();
+        let provider =
+            build_document_provider(Some(&config_path), Some("fs"), None).expect("local provider");
+
+        provider
+            .sign_text_document_create(
+                "memory",
+                "MEMORY.md",
+                "text/markdown; profile=jacs-text-v1",
+                b"remote-signed memory",
+            )
+            .expect("inline signing should create footer bytes");
+
+        let summaries = provider
+            .find_document("memory", None, 1)
+            .expect("find memory after inline signing");
+        assert!(
+            summaries.is_empty(),
+            "bare inline footer JSON should not be treated as an editable memory record"
+        );
+
+        let key = provider
+            .save_memory(Some("local memory after remote signing"))
+            .expect("local save should create signed text, not update the inline claim JSON");
+        let saved = provider
+            .get_record_bytes(&key)
+            .expect("get newly saved memory");
+        let saved_text = String::from_utf8(saved).expect("signed markdown is UTF-8");
+        assert!(saved_text.contains("local memory after remote signing"));
+        assert!(saved_text.contains("-----BEGIN JACS SIGNATURE-----"));
+    }
+
+    #[test]
     fn local_backend_explicit_doc_id_update_uses_real_latest_key() {
         let _guard = crate::test_support::env_lock();
         let (_dir, config_path) = create_test_agent();
