@@ -5,7 +5,7 @@ describe('generateVerifyLink', () => {
   it('generates a verify URL with default baseUrl', () => {
     const doc = '{"jacsId":"test-agent","version":"1.0"}';
     const url = generateVerifyLink(doc);
-    expect(url).toMatch(/^https:\/\/beta\.hai\.ai\/jacs\/verify\?s=/);
+    expect(url).toMatch(/^https:\/\/hai\.ai\/jacs\/verify\?s=/);
   });
 
   it('generates a verify URL with custom baseUrl', () => {

@@ -23,6 +23,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   statSync,
   copyFileSync,
   writeFileSync,
@@ -106,7 +107,7 @@ interface StagedAgent {
 function stageFixtureAgent(): StagedAgent {
   process.env.JACS_PRIVATE_KEY_PASSWORD = FIXTURE_AGENT_PASSWORD;
 
-  const tmpDir = mkdtempSync(join(tmpdir(), 'haiai-sign-image-'));
+  const tmpDir = realpathSync(mkdtempSync(join(tmpdir(), 'haiai-sign-image-')));
   const cfg = JSON.parse(
     readFileSync(join(JACS_AGENT_DIR, 'jacs.config.json'), 'utf-8'),
   ) as Record<string, unknown>;
@@ -173,7 +174,7 @@ describeMaybe('Node SDK signing-side parity (sign_image)', () => {
     const built = buildFFIClient();
     ffiClient = built.client;
     agentTmpDir = built.tmpDir;
-    stageTmpDir = mkdtempSync(join(tmpdir(), 'haiai-sign-image-stage-'));
+    stageTmpDir = realpathSync(mkdtempSync(join(tmpdir(), 'haiai-sign-image-stage-')));
   });
 
   afterAll(() => {
