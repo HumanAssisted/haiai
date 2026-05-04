@@ -68,9 +68,12 @@ const LOCAL_KEY_PATTERN =
  *    assertions, which a bare `return` produces in vitest).
  */
 function resolveJacsAgentConfig(workdir: string): string | null {
+  workdir = realpathSync(workdir);
+
   const prebakedDir = process.env.JACS_SMOKE_AGENT_DIR;
   if (prebakedDir) {
-    const prebaked = join(prebakedDir, 'jacs.config.json');
+    if (!existsSync(prebakedDir)) return null;
+    const prebaked = join(realpathSync(prebakedDir), 'jacs.config.json');
     if (existsSync(prebaked)) return prebaked;
     return null;
   }
@@ -261,7 +264,7 @@ describeWhenAvailable('haiinpm native FFI smoke test', () => {
       if (!address || typeof address === 'string') throw new Error('no address');
       const baseUrl = `http://127.0.0.1:${address.port}`;
 
-      const workdir = mkdtempSync(join(tmpdir(), 'haisdk-smoke-remote-'));
+      const workdir = realpathSync(mkdtempSync(join(tmpdir(), 'haisdk-smoke-remote-')));
       try {
         const configPath = resolveJacsAgentConfig(workdir);
         if (!configPath) {
@@ -314,7 +317,7 @@ describeWhenAvailable('haiinpm native FFI smoke test', () => {
       // future bootstrap changes or a leaking parent-shell env var.
       process.env.JACS_DEFAULT_STORAGE = 'fs';
 
-      const workdir = mkdtempSync(join(tmpdir(), 'haisdk-smoke-local-'));
+      const workdir = realpathSync(mkdtempSync(join(tmpdir(), 'haisdk-smoke-local-')));
       try {
         const fresh = resolveFreshJacsAgentConfig(workdir);
         if (!fresh.configPath) {

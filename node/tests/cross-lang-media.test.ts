@@ -20,7 +20,7 @@
 
 import { afterAll, beforeAll, describe, it, expect } from 'vitest';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, statSync, copyFileSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, copyFileSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -150,7 +150,7 @@ interface StagedAgent {
 function stageFixtureAgent(): StagedAgent {
   process.env.JACS_PRIVATE_KEY_PASSWORD = FIXTURE_AGENT_PASSWORD;
 
-  const tmpDir = mkdtempSync(join(tmpdir(), 'haiai-media-parity-'));
+  const tmpDir = realpathSync(mkdtempSync(join(tmpdir(), 'haiai-media-parity-')));
   const cfg = JSON.parse(readFileSync(join(JACS_AGENT_DIR, 'jacs.config.json'), 'utf-8')) as Record<
     string,
     unknown
@@ -257,7 +257,7 @@ describeMaybe('cross-language media verify-parity (node)', () => {
     const built = buildFFIClient();
     ffiClient = built.client;
     parityTmpDir = built.tmpDir;
-    stageTmpDir = mkdtempSync(join(tmpdir(), 'haiai-media-stage-'));
+    stageTmpDir = realpathSync(mkdtempSync(join(tmpdir(), 'haiai-media-stage-')));
   });
 
   afterAll(() => {

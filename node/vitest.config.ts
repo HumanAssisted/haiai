@@ -15,6 +15,7 @@ export default defineConfig({
     // `forks` pool. Add to this glob list when adding more native FFI tests.
     poolMatchGlobs: [
       ['**/tests/cross-lang-media.test.ts', 'forks'],
+      ['**/tests/ffi-native-smoke.test.ts', 'forks'],
       ['**/tests/sign-image.test.ts', 'forks'],
       ['**/tests/sign-text.test.ts', 'forks'],
     ],
