@@ -9,15 +9,14 @@
 //     hosted production path. Sets `JACS_DEFAULT_STORAGE=remote` so the FFI
 //     builds a `RemoteJacsProvider`, signs locally, POSTs to a real
 //     `httptest.NewServer`, and reads the server-issued key from the
-//     response. Verifies the mock saw exactly one `POST /api/v1/records`
-//     with `application/json` and a `"jacsType":"memory"` body.
+//     response. Verifies the mock saw a `POST /api/v1/records` with
+//     signed markdown bytes (plaintext plus the JACS signature footer).
 //
 //  2. `TestNativeSmokeSaveMemoryLocalPath` (LOCAL) — dev default path
-//     (`haiai init` writes `default_storage: "fs"`). Sets
-//     `JACS_DEFAULT_STORAGE=fs` so the FFI builds a `LocalJacsProvider`,
-//     signs locally, writes to disk, and returns a client-side
-//     `{jacsId}:{jacsVersion}` key. Verifies the doc round-trips via
-//     `GetRecordBytes(key)`.
+//     (`haiai init` writes `default_storage: "fs"`). Bootstraps a fresh
+//     agent, sets `JACS_DEFAULT_STORAGE=fs`, signs locally, writes to disk,
+//     and returns a client-side `{jacsId}:{jacsVersion}` key. Verifies the
+//     doc round-trips via `GetRecordBytes(key)`.
 //
 // Together these cover the only two backends production and dev users
 // actually exercise.
@@ -39,8 +38,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -114,11 +115,12 @@ func TestNativeSmokeSaveMemoryRoundTripsThroughLibhaiigo(t *testing.T) {
 	configPath := bootstrapJacsAgentOrSkip(t, "haisdk-smoke-go-remote-")
 
 	cfg := map[string]any{
-		"base_url":         server.URL,
-		"jacs_config_path": configPath,
-		"client_type":      "go",
-		"timeout_secs":     5,
-		"max_retries":      0,
+		"base_url":             server.URL,
+		"jacs_config_path":     configPath,
+		"jacs_storage_backend": "remote",
+		"client_type":          "go",
+		"timeout_secs":         5,
+		"max_retries":          0,
 	}
 	cfgJSON, err := json.Marshal(cfg)
 	if err != nil {
@@ -158,11 +160,14 @@ func TestNativeSmokeSaveMemoryRoundTripsThroughLibhaiigo(t *testing.T) {
 	if req["path"] != "/api/v1/records" {
 		t.Errorf("expected /api/v1/records, got %v", req["path"])
 	}
-	if !strings.Contains(req["content"].(string), "application/json") {
-		t.Errorf("expected application/json content type, got %v", req["content"])
+	if !strings.Contains(req["content"].(string), "text/markdown") {
+		t.Errorf("expected text/markdown content type, got %v", req["content"])
 	}
-	if !strings.Contains(req["body"].(string), `"jacsType":"memory"`) {
-		t.Errorf("expected jacsType:memory in body, got %v", req["body"])
+	if !strings.Contains(req["body"].(string), "smoke-content") {
+		t.Errorf("expected original plaintext in signed markdown body, got %v", req["body"])
+	}
+	if !strings.Contains(req["body"].(string), "-----BEGIN JACS SIGNATURE-----") {
+		t.Errorf("expected JACS signature footer in signed markdown body, got %v", req["body"])
 	}
 }
 
@@ -182,17 +187,18 @@ func capturedMethods(reqs []map[string]any) []string {
 func TestNativeSmokeSaveMemoryLocalPath(t *testing.T) {
 	t.Setenv("JACS_DEFAULT_STORAGE", "fs")
 
-	configPath := bootstrapJacsAgentOrSkip(t, "haisdk-smoke-go-local-")
+	configPath := bootstrapFreshJacsAgentOrSkip(t, "haisdk-smoke-go-local-")
 
 	// No mock HTTP server: the local path must not make any network
 	// calls, and binding the FFI to an unreachable URL surfaces that
 	// invariant if the routing decision ever regresses.
 	cfg := map[string]any{
-		"base_url":         "http://127.0.0.1:1", // unreachable on purpose
-		"jacs_config_path": configPath,
-		"client_type":      "go",
-		"timeout_secs":     5,
-		"max_retries":      0,
+		"base_url":             "http://127.0.0.1:1", // unreachable on purpose
+		"jacs_config_path":     configPath,
+		"jacs_storage_backend": "fs",
+		"client_type":          "go",
+		"timeout_secs":         5,
+		"max_retries":          0,
 	}
 	cfgJSON, err := json.Marshal(cfg)
 	if err != nil {
@@ -226,15 +232,129 @@ func TestNativeSmokeSaveMemoryLocalPath(t *testing.T) {
 	}
 }
 
-// bootstrapJacsAgentOrSkip prepares a JACS agent for the smoke test or
-// calls `t.Skip`. When `JACS_SMOKE_AGENT_DIR` is set (CI lane), the
-// pre-baked config is copied into a fresh tempdir so each test gets its
-// own data dir. Without that env var, the toolchain to mint an agent
-// inline isn't available from haiigo, and we skip cleanly.
+func locateHaiaiCLI() (string, bool) {
+	if explicit := os.Getenv("HAIAI_CLI"); explicit != "" && isExecutable(explicit) {
+		return explicit, true
+	}
+	if _, file, _, ok := runtime.Caller(0); ok {
+		if cli, ok := walkForHaiaiCLI(filepath.Dir(file)); ok {
+			return cli, true
+		}
+	}
+	if wd, err := os.Getwd(); err == nil {
+		if cli, ok := walkForHaiaiCLI(wd); ok {
+			return cli, true
+		}
+	}
+	if cli, err := exec.LookPath("haiai"); err == nil {
+		return cli, true
+	}
+	return "", false
+}
+
+func walkForHaiaiCLI(start string) (string, bool) {
+	for dir := start; ; dir = filepath.Dir(dir) {
+		candidate := filepath.Join(dir, "rust", "target", "release", haiaiBinaryName())
+		if isExecutable(candidate) {
+			return candidate, true
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return "", false
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", false
+		}
+	}
+}
+
+func haiaiBinaryName() string {
+	if runtime.GOOS == "windows" {
+		return "haiai.exe"
+	}
+	return "haiai"
+}
+
+func isExecutable(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
+}
+
+func bootstrapFreshJacsAgentOrSkip(t *testing.T, tempPrefix string) string {
+	t.Helper()
+
+	cli, ok := locateHaiaiCLI()
+	if !ok {
+		t.Skipf("smoke test skipped: haiai CLI binary not found")
+	}
+
+	workdir, err := os.MkdirTemp("", tempPrefix)
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
+	}
+	if realWorkdir, err := filepath.EvalSymlinks(workdir); err == nil {
+		workdir = realWorkdir
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(workdir)
+	})
+
+	password := os.Getenv("_HAISDK_SMOKE_PASSWORD")
+	if password == "" {
+		password = os.Getenv("JACS_PRIVATE_KEY_PASSWORD")
+	}
+	if password == "" {
+		password = "smoke-password"
+		t.Setenv("JACS_PRIVATE_KEY_PASSWORD", password)
+	}
+
+	configPath := filepath.Join(workdir, "jacs.config.json")
+	cmd := exec.Command(
+		cli,
+		"init",
+		"--quiet",
+		"--name",
+		"local-smoke-agent",
+		"--register",
+		"false",
+		"--data-dir",
+		filepath.Join(workdir, "data"),
+		"--key-dir",
+		filepath.Join(workdir, "keys"),
+		"--config-path",
+		configPath,
+	)
+	cmd.Env = upsertEnv(os.Environ(), "JACS_PRIVATE_KEY_PASSWORD", password)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Skipf("smoke test skipped: haiai init failed: %v; output=%s", err, string(output))
+	}
+	if _, err := os.Stat(configPath); err != nil {
+		t.Skipf("smoke test skipped: haiai init did not write %s: %v", configPath, err)
+	}
+	return configPath
+}
+
+func upsertEnv(env []string, key string, value string) []string {
+	prefix := key + "="
+	for i, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			env[i] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
+}
+
+// bootstrapJacsAgentOrSkip prepares the shared CI JACS agent for the remote
+// smoke test or calls `t.Skip`. Local-path smoke tests use
+// bootstrapFreshJacsAgentOrSkip so singleton lookups cannot observe state
+// written by the remote signer.
 //
-// Returns the absolute path to the copied jacs.config.json.
+// Returns the absolute path to jacs.config.json.
 func bootstrapJacsAgentOrSkip(t *testing.T, tempPrefix string) string {
 	t.Helper()
+	_ = tempPrefix
 
 	src := os.Getenv("JACS_SMOKE_AGENT_DIR")
 	if src == "" {
@@ -244,22 +364,8 @@ func bootstrapJacsAgentOrSkip(t *testing.T, tempPrefix string) string {
 	if _, err := os.Stat(srcConfig); err != nil {
 		t.Skipf("smoke test skipped: %s missing or unreadable: %v", srcConfig, err)
 	}
-
-	workdir, err := os.MkdirTemp("", tempPrefix)
-	if err != nil {
-		t.Fatalf("mkdtemp: %v", err)
+	if realConfig, err := filepath.EvalSymlinks(srcConfig); err == nil {
+		return realConfig
 	}
-	t.Cleanup(func() {
-		_ = os.RemoveAll(workdir)
-	})
-
-	configPath := filepath.Join(workdir, "jacs.config.json")
-	data, err := os.ReadFile(srcConfig)
-	if err != nil {
-		t.Fatalf("read pre-baked config %s: %v", srcConfig, err)
-	}
-	if err := os.WriteFile(configPath, data, 0o600); err != nil {
-		t.Fatalf("write %s: %v", configPath, err)
-	}
-	return configPath
+	return srcConfig
 }

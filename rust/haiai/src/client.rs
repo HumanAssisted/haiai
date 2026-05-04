@@ -26,7 +26,7 @@ use crate::types::{
     VerifyAgentResult,
 };
 
-pub const DEFAULT_BASE_URL: &str = "https://beta.hai.ai";
+pub const DEFAULT_BASE_URL: &str = "https://hai.ai";
 
 pub struct SseConnection {
     events: mpsc::Receiver<HaiEvent>,
@@ -2443,7 +2443,7 @@ mod tests {
         let result = HaiClient::new(
             provider,
             HaiClientOptions {
-                base_url: "https://beta.hai.ai".to_string(),
+                base_url: "https://hai.ai".to_string(),
                 ..HaiClientOptions::default()
             },
         );
@@ -2456,12 +2456,12 @@ mod tests {
         let client = HaiClient::new(
             provider,
             HaiClientOptions {
-                base_url: "https://beta.hai.ai/".to_string(),
+                base_url: "https://hai.ai/".to_string(),
                 ..HaiClientOptions::default()
             },
         )
         .expect("should accept URL with trailing slash");
-        assert_eq!(client.base_url(), "https://beta.hai.ai");
+        assert_eq!(client.base_url(), "https://hai.ai");
     }
 
     // ── Issue #4: retry wrapper ───────────────────────────────────────

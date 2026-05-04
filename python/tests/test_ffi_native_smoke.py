@@ -7,15 +7,14 @@ Two tests, one per backend, both loading the real haiipy native binding
    hosted production path. Sets ``JACS_DEFAULT_STORAGE=remote`` so the FFI
    builds a `RemoteJacsProvider`, signs locally, POSTs to a stdlib
    `http.server.HTTPServer` mock, and reads the server-issued key from the
-   response. Verifies the mock saw exactly one `POST /api/v1/records` with
-   `application/json` and a `"jacsType":"memory"` body.
+   response. Verifies the mock saw a `POST /api/v1/records` with signed
+   markdown bytes (plaintext plus the JACS signature footer).
 
 2. **Local** (`test_save_memory_local_path_through_native_binding`) — dev
-   default path (`haiai init` writes ``default_storage: "fs"``). Sets
-   ``JACS_DEFAULT_STORAGE=fs`` (or leaves it unset on a fs-config) so the
-   FFI builds a `LocalJacsProvider`, signs locally, writes to disk, and
-   returns a client-side ``{jacsId}:{jacsVersion}`` key. Verifies the doc
-   round-trips via `get_record_bytes(key)`.
+   default path (`haiai init` writes ``default_storage: "fs"``). Bootstraps
+   a fresh agent, sets ``JACS_DEFAULT_STORAGE=fs``, signs locally, writes to
+   disk, and returns a client-side ``{jacsId}:{jacsVersion}`` key. Verifies
+   the doc round-trips via `get_record_bytes(key)`.
 
 Together these two tests cover the only two backends production and dev
 users actually exercise — and would have caught a regression in either
@@ -40,9 +39,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import subprocess
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -61,6 +63,106 @@ _LOCAL_KEY_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
     r":[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
+
+
+def _locate_haiai_cli() -> str | None:
+    """Return the path to the haiai CLI binary built by the smoke-tests
+    workflow, or ``None`` when it isn't available.
+
+    Search order:
+    1. ``HAIAI_CLI`` env var (explicit override).
+    2. ``rust/target/release/haiai`` at the repo root (the smoke-tests
+       workflow's `Build haiai CLI` step writes here). Resolved by walking
+       up from this test file.
+    3. ``haiai`` on ``PATH`` (local dev with the cli installed).
+    """
+    explicit = os.environ.get("HAIAI_CLI")
+    if explicit and os.access(explicit, os.X_OK):
+        return explicit
+
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "rust" / "target" / "release" / "haiai"
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+        if (parent / ".git").exists():
+            break  # don't walk past the repo root
+
+    on_path = shutil.which("haiai")
+    return on_path
+
+
+def _bootstrap_fresh_jacs_agent(workdir: str) -> str:
+    """Create a brand-new JACS agent in ``workdir`` via the ``haiai init``
+    subprocess. Returns the absolute path to the freshly-written
+    ``jacs.config.json``.
+
+    This is the hermetic alternative to ``_bootstrap_jacs_agent`` for tests
+    that must NOT share a ``data_directory`` with sibling tests in the same
+    pytest session — most importantly the local-path smoke test, whose
+    ``find_document(jacs_type="memory", singleton)`` would otherwise pick
+    up state written by an earlier test in the shared smoke-agent dir.
+
+    Skips cleanly when the ``haiai`` CLI isn't on disk (e.g. local dev
+    without a release build).
+    """
+    cli = _locate_haiai_cli()
+    if not cli:
+        pytest.skip(
+            "haiai CLI binary not found; cannot bootstrap a fresh JACS "
+            "agent for the local-path smoke test"
+        )
+
+    workdir = os.path.realpath(workdir)
+    config_path = os.path.join(workdir, "jacs.config.json")
+    data_dir = os.path.join(workdir, "data")
+    key_dir = os.path.join(workdir, "keys")
+
+    # Use the same password the rest of the smoke-tests lane uses so the
+    # parent process's `JACS_PRIVATE_KEY_PASSWORD` (which the FFI reads at
+    # signing time) decrypts the agent's freshly-minted private key.
+    password = (
+        os.environ.get("_HAISDK_SMOKE_PASSWORD")
+        or os.environ.get("JACS_PRIVATE_KEY_PASSWORD")
+        or "smoke-password"
+    )
+
+    env = os.environ.copy()
+    env["JACS_PRIVATE_KEY_PASSWORD"] = password
+
+    result = subprocess.run(
+        [
+            cli,
+            "init",
+            "--quiet",
+            "--name",
+            "local-smoke-agent",
+            "--register",
+            "false",
+            "--data-dir",
+            data_dir,
+            "--key-dir",
+            key_dir,
+            "--config-path",
+            config_path,
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        pytest.skip(
+            f"haiai init failed (rc={result.returncode}): "
+            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        )
+
+    if not os.path.exists(config_path):
+        pytest.skip(
+            f"haiai init succeeded but {config_path} was not written"
+        )
+
+    return config_path
 
 
 def _restore_smoke_password(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -239,11 +341,12 @@ def test_save_memory_round_trips_through_native_binding(
         with tempfile.TemporaryDirectory() as workdir:
             config_path = _bootstrap_jacs_agent(workdir)
             ffi_config = json.dumps(
-                {
-                    "base_url": f"http://127.0.0.1:{port}",
-                    "jacs_config_path": config_path,
-                    "client_type": "python",
-                    "timeout_secs": 5,
+                    {
+                        "base_url": f"http://127.0.0.1:{port}",
+                        "jacs_config_path": config_path,
+                        "jacs_storage_backend": "remote",
+                        "client_type": "python",
+                        "timeout_secs": 5,
                     "max_retries": 0,
                 }
             )
@@ -270,8 +373,24 @@ def test_save_memory_round_trips_through_native_binding(
                 if hk.lower() == "content-type":
                     ct = hv
                     break
-            assert "application/json" in ct, f"expected application/json in {ct!r}"
-            assert b'"jacsType":"memory"' in req["body"]
+            # save_memory POSTs the SIGNED MARKDOWN body (plaintext + JACS
+            # footer), not a JSON envelope — see jacs.rs::save_memory which
+            # passes ``content_type: "text/markdown; profile=jacs-text-v1"``.
+            assert "text/markdown" in ct, (
+                f"expected text/markdown content-type for signed-text POST, got {ct!r}"
+            )
+            # Body shape: original plaintext + JACS signature footer block.
+            # The footer is YAML, not JSON, so search for the canonical
+            # marker line + the original plaintext rather than for a JSON
+            # `"jacsType":"memory"` substring (which would never appear).
+            assert b"smoke-content" in req["body"], (
+                "expected the original plaintext to be present in the signed-markdown body"
+            )
+            assert b"-----BEGIN JACS SIGNATURE-----" in req["body"], (
+                "expected the JACS inline-text footer marker in the POST body — the "
+                "signed bytes must include the signature block per the inline-text "
+                "signing format"
+            )
     finally:
         server.shutdown()
         server.server_close()
@@ -291,6 +410,13 @@ def test_save_memory_local_path_through_native_binding(
     so this test is hermetic against future changes to the bootstrap
     defaults or to ``JACS_DEFAULT_STORAGE`` leaking in from a parent shell.
 
+    Bootstraps a brand-new JACS agent in a per-test ``data_directory``
+    rather than reusing the smoke-tests lane's pre-baked agent. The local
+    path's ``find_document(jacs_type="memory", singleton)`` would otherwise
+    pick up state written by an earlier test (or by JACS init internals)
+    in the shared smoke-agent dir, sending ``save_memory`` down the
+    update branch and tripping ``sign_text_update``.
+
     Asserts the returned key has the local ``{jacsId}:{jacsVersion}`` UUID
     shape (not a server-issued string), and that the just-stored document
     round-trips back via `get_record_bytes(key)`.
@@ -299,17 +425,18 @@ def test_save_memory_local_path_through_native_binding(
     monkeypatch.setenv("JACS_DEFAULT_STORAGE", "fs")
 
     with tempfile.TemporaryDirectory() as workdir:
-        config_path = _bootstrap_jacs_agent(workdir)
+        config_path = _bootstrap_fresh_jacs_agent(workdir)
 
         # No mock HTTP server: the local path must not make any network
         # calls, and binding the FFI to an unreachable URL surfaces that
         # invariant if the routing decision ever regresses.
         ffi_config = json.dumps(
-            {
-                "base_url": "http://127.0.0.1:1",  # unreachable on purpose
-                "jacs_config_path": config_path,
-                "client_type": "python",
-                "timeout_secs": 5,
+                {
+                    "base_url": "http://127.0.0.1:1",  # unreachable on purpose
+                    "jacs_config_path": config_path,
+                    "jacs_storage_backend": "fs",
+                    "client_type": "python",
+                    "timeout_secs": 5,
                 "max_retries": 0,
             }
         )

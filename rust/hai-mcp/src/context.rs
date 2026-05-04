@@ -262,7 +262,7 @@ mod tests {
     use haiai::HaiClient;
 
     fn build_context(default_config_path: Option<&str>) -> HaiServerContext {
-        build_context_with_base_url("https://beta.hai.ai", default_config_path)
+        build_context_with_base_url("https://hai.ai", default_config_path)
     }
 
     fn build_context_with_base_url(

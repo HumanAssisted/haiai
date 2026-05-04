@@ -48,7 +48,7 @@ describe('generateVerifyLink', () => {
   });
 
   it('succeeds for document exactly at the byte limit', () => {
-    // A short baseUrl + path = "https://beta.hai.ai/jacs/verify?s=" = 34 chars
+    // A short baseUrl + path = "https://hai.ai/jacs/verify?s=" = 29 chars
     // Max URL = 2048, so max encoded = 2048 - 34 = 2014 chars
     // base64 expands by ~4/3, so max source bytes ~ 2019 * 3/4 = 1514.25
     // The constant MAX_VERIFY_DOCUMENT_BYTES = 1515

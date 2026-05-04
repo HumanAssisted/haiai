@@ -260,6 +260,10 @@ pub struct HaiClientWrapper {
     /// owns it as a `Box<dyn JacsMediaProvider>`), we rebuild a fresh routed
     /// provider per call from the cached path.
     jacs_config_path: Option<PathBuf>,
+    /// Optional explicit routed document storage backend for doc-store methods.
+    /// When absent, `build_document_provider` falls back to env/config/default
+    /// resolution.
+    jacs_storage_backend: Option<String>,
     /// Base URL passed to the inner `HaiClient` and reused when constructing
     /// the per-call remote provider for doc-store operations. Stored because
     /// `HaiClient` does not re-expose this through its public API.
@@ -288,6 +292,7 @@ impl HaiClientWrapper {
             inner: Arc::new(RwLock::new(client)),
             client_identifier: resolved_id,
             jacs_config_path: None,
+            jacs_storage_backend: None,
             base_url,
         })
     }
@@ -297,7 +302,7 @@ impl HaiClientWrapper {
     /// Expected JSON format:
     /// ```json
     /// {
-    ///   "base_url": "https://beta.hai.ai",
+    ///   "base_url": "https://hai.ai",
     ///   "jacs_id": "...",
     ///   "timeout_secs": 30,
     ///   "max_retries": 3
@@ -316,7 +321,7 @@ impl HaiClientWrapper {
         let base_url = config
             .get("base_url")
             .and_then(|v| v.as_str())
-            .unwrap_or("https://beta.hai.ai")
+            .unwrap_or("https://hai.ai")
             .to_string();
 
         let timeout_secs = config
@@ -334,6 +339,14 @@ impl HaiClientWrapper {
             .and_then(|v| v.as_str())
             .map(|ct| format!("haiai-{}/{}", ct, env!("CARGO_PKG_VERSION")));
 
+        let jacs_storage_backend = config
+            .get("jacs_storage_backend")
+            .or_else(|| config.get("storage_backend"))
+            .or_else(|| config.get("storage"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+
         let options = HaiClientOptions {
             base_url,
             timeout: std::time::Duration::from_secs(timeout_secs),
@@ -341,10 +354,12 @@ impl HaiClientWrapper {
             client_identifier,
         };
 
-        // `Self::new` records `options.base_url` and a default
-        // `jacs_config_path` of `None`. The auto variant overrides that
-        // field after construction when a `jacs_config_path` is present.
-        Self::new(jacs, options)
+        // `Self::new` records `options.base_url` and default doc-store routing
+        // fields. The auto variant overrides `jacs_config_path` after
+        // construction when a `jacs_config_path` is present.
+        let mut wrapper = Self::new(jacs, options)?;
+        wrapper.jacs_storage_backend = jacs_storage_backend;
+        Ok(wrapper)
     }
 
     /// Create a new `HaiClientWrapper` from a JSON config string, automatically
@@ -360,7 +375,7 @@ impl HaiClientWrapper {
     /// Expected JSON format:
     /// ```json
     /// {
-    ///   "base_url": "https://beta.hai.ai",
+    ///   "base_url": "https://hai.ai",
     ///   "jacs_id": "...",
     ///   "jacs_config_path": "/path/to/jacs.config.json",
     ///   "timeout_secs": 30,
@@ -1413,7 +1428,12 @@ impl HaiClientWrapper {
                 "jacs_config_path required for document-store operations",
             )
         })?;
-        build_document_provider(Some(path), None, Some(self.base_url.clone())).map_err(|e| {
+        build_document_provider(
+            Some(path),
+            self.jacs_storage_backend.as_deref(),
+            Some(self.base_url.clone()),
+        )
+        .map_err(|e| {
             HaiBindingError::new(
                 ErrorKind::ConfigFailed,
                 format!(
@@ -2246,14 +2266,14 @@ mod tests {
         use haiai::jacs::StaticJacsProvider;
 
         let provider = StaticJacsProvider::new("test-id");
-        let config = r#"{"base_url": "https://beta.hai.ai", "timeout_secs": 10, "max_retries": 2}"#;
+        let config = r#"{"base_url": "https://hai.ai", "timeout_secs": 10, "max_retries": 2}"#;
 
         let wrapper = HaiClientWrapper::from_config_json(config, Box::new(provider));
         assert!(wrapper.is_ok());
 
         let wrapper = wrapper.unwrap();
         assert_eq!(wrapper.jacs_id().await, "test-id");
-        assert_eq!(wrapper.base_url().await, "https://beta.hai.ai");
+        assert_eq!(wrapper.base_url().await, "https://hai.ai");
     }
 
     #[tokio::test]
@@ -2261,7 +2281,7 @@ mod tests {
         use haiai::jacs::StaticJacsProvider;
 
         let provider = StaticJacsProvider::new("test-id");
-        let config = r#"{"base_url": "https://beta.hai.ai", "client_type": "python"}"#;
+        let config = r#"{"base_url": "https://hai.ai", "client_type": "python"}"#;
 
         let wrapper = HaiClientWrapper::from_config_json(config, Box::new(provider));
         assert!(
@@ -2284,7 +2304,7 @@ mod tests {
         use haiai::jacs::StaticJacsProvider;
 
         let provider = StaticJacsProvider::new("test-id");
-        let config = r#"{"base_url": "https://beta.hai.ai"}"#;
+        let config = r#"{"base_url": "https://hai.ai"}"#;
 
         let wrapper = HaiClientWrapper::from_config_json(config, Box::new(provider))
             .expect("from_config_json without client_type should succeed");
@@ -2448,7 +2468,7 @@ mod tests {
 
     #[tokio::test]
     async fn auto_config_without_jacs_path_uses_static_provider() {
-        let config = r#"{"base_url": "https://beta.hai.ai", "jacs_id": "auto-test-id"}"#;
+        let config = r#"{"base_url": "https://hai.ai", "jacs_id": "auto-test-id"}"#;
         let wrapper = HaiClientWrapper::from_config_json_auto(config);
         assert!(
             wrapper.is_ok(),
@@ -2554,6 +2574,30 @@ mod tests {
         assert!(key.contains(':'));
     }
 
+    #[test]
+    fn doc_store_honors_config_storage_without_process_env() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let (_temp, config_path) = write_temp_media_fixture_config();
+        let saved_storage = std::env::var("JACS_DEFAULT_STORAGE").ok();
+        std::env::remove_var("JACS_DEFAULT_STORAGE");
+
+        let config = format!(
+            r#"{{"base_url": "http://127.0.0.1:9", "jacs_config_path": "{}", "jacs_id": "fixture", "jacs_storage_backend": "fs"}}"#,
+            config_path.display()
+        );
+        let wrapper =
+            HaiClientWrapper::from_config_json_auto(&config).expect("wrapper with fixture config");
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let key = runtime
+            .block_on(wrapper.save_memory(Some(
+                "binding-core should honor explicit fs storage".to_string(),
+            )))
+            .expect("explicit storage=fs should not require process env");
+
+        restore_env("JACS_DEFAULT_STORAGE", saved_storage);
+        assert!(key.contains(':'));
+    }
+
     fn restore_env(key: &str, saved: Option<String>) {
         if let Some(value) = saved {
             std::env::set_var(key, value);
@@ -2565,7 +2609,7 @@ mod tests {
     #[test]
     fn auto_config_missing_both_jacs_path_and_jacs_id_uses_empty_id() {
         // No jacs_config_path and no jacs_id -- should still create with empty static ID
-        let config = r#"{"base_url": "https://beta.hai.ai"}"#;
+        let config = r#"{"base_url": "https://hai.ai"}"#;
         let result = HaiClientWrapper::from_config_json_auto(config);
         assert!(
             result.is_ok(),
@@ -2577,7 +2621,7 @@ mod tests {
     async fn auto_config_defaults_base_url() {
         let config = r#"{"jacs_id": "default-test"}"#;
         let wrapper = HaiClientWrapper::from_config_json_auto(config).unwrap();
-        assert_eq!(wrapper.base_url().await, "https://beta.hai.ai");
+        assert_eq!(wrapper.base_url().await, "https://hai.ai");
     }
 
     // =========================================================================
@@ -3132,7 +3176,7 @@ mod tests {
 
     fn build_media_wrapper(config_path: &std::path::Path) -> HaiClientWrapper {
         let json = format!(
-            r#"{{"base_url":"https://beta.hai.ai","jacs_config_path":"{}","jacs_id":"media-binding-test"}}"#,
+            r#"{{"base_url":"https://hai.ai","jacs_config_path":"{}","jacs_id":"media-binding-test"}}"#,
             config_path.display()
         );
         HaiClientWrapper::from_config_json_auto(&json).expect("build wrapper")

@@ -82,7 +82,7 @@ import { FFIClientAdapter } from './ffi-client.js';
  */
 
 /** Default HAI API base URL. Override with the `url` option or `HAI_URL` env var. */
-export const DEFAULT_BASE_URL = 'https://beta.hai.ai';
+export const DEFAULT_BASE_URL = 'https://hai.ai';
 
 type OpaqueTransportState = {
   close: (handle: number) => Promise<void>;
@@ -2262,7 +2262,7 @@ function printRegistrationGuidance(
  *
  * const result = await registerNewAgent('my-agent', {
  *   ownerEmail: 'dev@example.com',
- *   haiUrl: 'https://beta.hai.ai',
+ *   haiUrl: 'https://hai.ai',
  *   password: 'hunter2',
  * });
  * console.log(result.agentId, result.jacsId);

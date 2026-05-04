@@ -33,7 +33,7 @@ const (
 
 const (
 	// DefaultEndpoint is the default HAI API endpoint.
-	DefaultEndpoint = "https://beta.hai.ai"
+	DefaultEndpoint = "https://hai.ai"
 )
 
 // Client is the HAI SDK client. It authenticates using JACS agent identity.

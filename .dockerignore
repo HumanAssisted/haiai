@@ -1,0 +1,29 @@
+# Rust build artifacts (mirrors .gitignore)
+rust/target/
+rust/haiai/target/
+target/
+
+# Node
+node_modules/
+node/node_modules/
+node/dist/
+jacsnpm/node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Go
+go/vendor/
+
+# Misc
+.git/
+.DS_Store
+.vscode/
+.idea/
