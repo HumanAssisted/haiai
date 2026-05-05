@@ -97,30 +97,67 @@ def canonicalize_json(obj: dict) -> str:
 
 
 def _extract_raw_key_from_pem(pem_str: str) -> bytes:
-    """Extract raw key bytes from a PEM-encoded public key.
+    """Decode a public-key PEM to raw bytes.
 
-    Delegates ASN.1 parsing to JACS binding-core.  Raises
-    :class:`~haiai.errors.HaiError` if JACS is unavailable.
+    Handles both JACS-style PEMs (body = raw bytes base64-encoded) and
+    standard X.509 SubjectPublicKeyInfo PEMs (body = ASN.1 DER). The two
+    are distinguished by the leading byte: ``0x30`` (SEQUENCE) marks DER.
+
+    For SubjectPublicKeyInfo we walk the minimal structure
+    ``SEQUENCE { AlgorithmIdentifier, BIT STRING(rawkey) }`` and return
+    the raw key. This is encoding parsing, not crypto.
+
+    Raises :class:`~haiai.errors.HaiError` on malformed input.
     """
+    import base64
+
     from haiai.errors import HaiError
 
+    body_lines = [ln for ln in pem_str.splitlines() if ln and not ln.startswith("-----")]
+    if not body_lines:
+        raise HaiError(
+            "PEM body is empty",
+            code="INVALID_PUBLIC_KEY",
+            action="Pass a PEM-encoded public key",
+        )
     try:
-        from jacs.jacs import extract_public_key_bytes as _jacs_extract
-        return _jacs_extract(pem_str)
-    except ImportError:
-        pass
+        body = base64.b64decode("".join(body_lines))
+    except Exception as exc:
+        raise HaiError(
+            f"PEM base64 decode failed: {exc}",
+            code="INVALID_PUBLIC_KEY",
+            action="Pass a valid PEM-encoded public key",
+        ) from exc
+
+    # JACS-style: raw bytes, no DER wrapper.
+    if not body or body[0] != 0x30:
+        return body
+
+    # Standard SubjectPublicKeyInfo: SEQUENCE { AlgorithmId, BIT STRING(key) }
+    def _read_len(buf: bytes, off: int) -> tuple[int, int]:
+        first = buf[off]
+        if first < 0x80:
+            return first, off + 1
+        n = first & 0x7F
+        return int.from_bytes(buf[off + 1 : off + 1 + n], "big"), off + 1 + n
 
     try:
-        import jacs as _jacs_module
-        return _jacs_module.extract_public_key_bytes(pem_str)
-    except (ImportError, AttributeError):
-        pass
-
-    raise HaiError(
-        "_extract_raw_key_from_pem requires JACS binding-core",
-        code="JACS_NOT_LOADED",
-        action="Install JACS: pip install jacs",
-    )
+        _, off = _read_len(body, 1)  # outer SEQUENCE length, body starts at off
+        if body[off] != 0x30:
+            raise ValueError("expected AlgorithmIdentifier SEQUENCE")
+        alg_len, alg_body_off = _read_len(body, off + 1)
+        off = alg_body_off + alg_len
+        if body[off] != 0x03:
+            raise ValueError("expected BIT STRING")
+        bs_len, bs_body_off = _read_len(body, off + 1)
+        # First content byte of BIT STRING = unused-bits count (0 for whole bytes).
+        return body[bs_body_off + 1 : bs_body_off + bs_len]
+    except (IndexError, ValueError) as exc:
+        raise HaiError(
+            f"Failed to parse SubjectPublicKeyInfo DER: {exc}",
+            code="INVALID_PUBLIC_KEY",
+            action="Pass a valid PEM-encoded public key (JACS or X.509)",
+        ) from exc
 
 
 def verify_string(
@@ -148,28 +185,36 @@ def verify_string(
     """
     from haiai.errors import HaiError
 
+    # Use the JacsAgent instance method (the legacy module-level
+    # `jacs.jacs.verify_string` shim is a deprecated stub in jacs 0.10.1
+    # that only accepts one positional argument and always errors).
     try:
-        from jacs.jacs import verify_string as _jacs_verify_string
-    except ImportError:
-        try:
-            import jacs as _jacs_module
-            _jacs_verify_string = _jacs_module.verify_string
-        except (ImportError, AttributeError):
-            raise HaiError(
-                "verify_string requires JACS binding-core",
-                code="JACS_NOT_LOADED",
-                action="Install JACS: pip install jacs",
-            )
+        from jacs import JacsAgent
+    except ImportError as exc:
+        raise HaiError(
+            "verify_string requires JACS binding-core",
+            code="JACS_NOT_LOADED",
+            action="Install JACS: pip install jacs",
+        ) from exc
 
     try:
         key_bytes = _extract_raw_key_from_pem(public_key_pem)
-        return _jacs_verify_string(data, signature_b64, key_bytes, algorithm)
     except HaiError:
         raise
+
+    try:
+        return JacsAgent().verify_string(data, signature_b64, key_bytes, algorithm)
     except Exception as exc:
+        # JACS raises RuntimeError("Signature verification failed: ...") for
+        # tampered messages or wrong keys — that's the standalone API's False
+        # case, not an exception. Anything else (unknown algorithm, bad key
+        # length, missing binding) is a real configuration error.
+        msg = str(exc)
+        if "Signature verification failed" in msg or "Verification failed" in msg:
+            return False
         raise HaiError(
-            f"Signature verification failed: {exc}",
-            code="VERIFICATION_FAILED",
+            f"verify_string failed: {exc}",
+            code="VERIFICATION_ERROR",
             action="Verify the public key and algorithm match the signer",
         ) from exc
 

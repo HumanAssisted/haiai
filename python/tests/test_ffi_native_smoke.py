@@ -28,7 +28,7 @@ Marker: `@pytest.mark.native_smoke`. Run with:
 
     pytest -m native_smoke python/tests/
 
-Per PRD docs/haisdk/JACS_DOCUMENT_STORE_FFI_PRD.md §5.5: stdlib
+Per PRD docs/haiai/JACS_DOCUMENT_STORE_FFI_PRD.md §5.5: stdlib
 `http.server.HTTPServer` (no `respx`/`httpx`-level mock). The traffic is
 Rust `reqwest` running INSIDE the haiipy native binding, which only a real
 listening socket can intercept.

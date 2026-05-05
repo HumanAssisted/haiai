@@ -9,7 +9,7 @@
  * (argument names, return types, error mapping) at the adapter boundary.
  *
  * Mock-only: these tests do NOT load the haiinpm native library. The full
- * HTTP round-trip is exercised by `haisdk/rust/haiai/tests/jacs_remote_integration.rs`
+ * HTTP round-trip is exercised by `haiai/rust/haiai/tests/jacs_remote_integration.rs`
  * (`--ignored` against a live hosted stack).
  */
 
