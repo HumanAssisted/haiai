@@ -6,7 +6,7 @@
 #
 # Usage: ./scripts/generate_knowledge.sh
 #
-# Run from the haisdk repo root. Requires sibling ../JACS repo for jacsbook source.
+# Run from the haiai repo root. Requires sibling ../JACS repo for jacsbook source.
 
 set -euo pipefail
 
@@ -100,7 +100,7 @@ declare -a GUIDE_SRCS=(
     "$REPO_ROOT/AGENTS.md"
     "$REPO_ROOT/CLAUDE.md"
     "$REPO_ROOT/docs/HAIAI_LANGUAGE_SYNC_GUIDE.md"
-    "$REPO_ROOT/docs/haisdk/PARITY_MAP.md"
+    "$REPO_ROOT/docs/haiai/PARITY_MAP.md"
     "$REPO_ROOT/docs/adr/0001-crypto-delegation-to-jacs.md"
     "$REPO_ROOT/docs/A2A_INTEGRATION_ROADMAP.md"
     "$REPO_ROOT/docs/CLI_PARITY_AUDIT.md"

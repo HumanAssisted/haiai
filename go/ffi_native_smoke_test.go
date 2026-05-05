@@ -26,7 +26,7 @@
 //
 //	go test -tags cgo_smoke -run NativeSmoke ./go/...
 //
-// Per PRD docs/haisdk/JACS_DOCUMENT_STORE_FFI_PRD.md §5.5: real listener,
+// Per PRD docs/haiai/JACS_DOCUMENT_STORE_FFI_PRD.md §5.5: real listener,
 // no HTTP-level mock. The traffic is Rust `reqwest` inside libhaiigo,
 // which only a real socket can intercept.
 
@@ -112,7 +112,7 @@ func TestNativeSmokeSaveMemoryRoundTripsThroughLibhaiigo(t *testing.T) {
 	}))
 	defer server.Close()
 
-	configPath := bootstrapJacsAgentOrSkip(t, "haisdk-smoke-go-remote-")
+	configPath := bootstrapJacsAgentOrSkip(t, "haiai-smoke-go-remote-")
 
 	cfg := map[string]any{
 		"base_url":             server.URL,
@@ -187,7 +187,7 @@ func capturedMethods(reqs []map[string]any) []string {
 func TestNativeSmokeSaveMemoryLocalPath(t *testing.T) {
 	t.Setenv("JACS_DEFAULT_STORAGE", "fs")
 
-	configPath := bootstrapFreshJacsAgentOrSkip(t, "haisdk-smoke-go-local-")
+	configPath := bootstrapFreshJacsAgentOrSkip(t, "haiai-smoke-go-local-")
 
 	// No mock HTTP server: the local path must not make any network
 	// calls, and binding the FFI to an unreachable URL surfaces that

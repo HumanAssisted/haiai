@@ -24,7 +24,7 @@
  * - haiinpm is not built / installable (try-import + describe.skip).
  * - The JACS toolchain isn't available to bootstrap a test agent.
  *
- * Per PRD docs/haisdk/JACS_DOCUMENT_STORE_FFI_PRD.md §5.5: real
+ * Per PRD docs/haiai/JACS_DOCUMENT_STORE_FFI_PRD.md §5.5: real
  * `node:http.createServer` (no fetch-level mock). The traffic is Rust
  * `reqwest` running INSIDE the haiinpm native binding, which only a real
  * listening socket can intercept.
@@ -264,7 +264,7 @@ describeWhenAvailable('haiinpm native FFI smoke test', () => {
       if (!address || typeof address === 'string') throw new Error('no address');
       const baseUrl = `http://127.0.0.1:${address.port}`;
 
-      const workdir = realpathSync(mkdtempSync(join(tmpdir(), 'haisdk-smoke-remote-')));
+      const workdir = realpathSync(mkdtempSync(join(tmpdir(), 'haiai-smoke-remote-')));
       try {
         const configPath = resolveJacsAgentConfig(workdir);
         if (!configPath) {
@@ -317,7 +317,7 @@ describeWhenAvailable('haiinpm native FFI smoke test', () => {
       // future bootstrap changes or a leaking parent-shell env var.
       process.env.JACS_DEFAULT_STORAGE = 'fs';
 
-      const workdir = realpathSync(mkdtempSync(join(tmpdir(), 'haisdk-smoke-local-')));
+      const workdir = realpathSync(mkdtempSync(join(tmpdir(), 'haiai-smoke-local-')));
       try {
         const fresh = resolveFreshJacsAgentConfig(workdir);
         if (!fresh.configPath) {

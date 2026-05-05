@@ -55,7 +55,7 @@ fn build_provider() -> Result<RemoteJacsProvider<LocalJacsProvider>, HaiError> {
         Err(_) => {
             return Err(HaiError::Provider(
                 "Issue 041: hosted-stack URL env not set. Run \
-                 `scripts/hosted-stack-up.sh` from the haisdk repo to bring up the local \
+                 `scripts/hosted-stack-up.sh` from the haiai repo to bring up the local \
                  stack, then re-run the test. The script exports HAI_URL automatically. \
                  Manual bring-up: cd ~/personal/hai/api && docker compose --profile jacsdb \
                  up -d, register an agent via HaiClient::register, set \
@@ -249,7 +249,7 @@ fn save_memory_appears_in_query_by_type_memory() {
 // `sign_image` so the bytes carry a real JACS signature the server will
 // accept. The hosted-stack test rig must register the test agent's public
 // key via `HaiClient::register` — pre-condition documented in
-// `~/personal/haisdk/.../docs/HOSTED_STACK_LOCAL.md`.
+// `~/personal/haiai/.../docs/HOSTED_STACK_LOCAL.md`.
 // =============================================================================
 
 #[test]

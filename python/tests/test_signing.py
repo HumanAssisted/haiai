@@ -18,6 +18,7 @@ from haiai.signing import (
     is_signed_event,
     sign_response,
     unwrap_signed_event,
+    verify_string,
 )
 
 
@@ -32,6 +33,70 @@ class TestSignString:
         sig1 = jacs_agent.sign_string("hello")
         sig2 = jacs_agent.sign_string("world")
         assert sig1 != sig2
+
+
+class TestVerifyStringStandalone:
+    """Standalone verify_string is the symmetric primitive used by external
+    callers (hai API, cross-language tests) to check signatures without
+    instantiating an agent. Coverage gap: prior to 2026-05-05, no test
+    exercised this path, and the implementation broke against jacs 0.10.1
+    (called the removed jacs.jacs.extract_public_key_bytes).
+    """
+
+    def test_roundtrip_ed25519(self) -> None:
+        pytest.importorskip("jacs")
+        from jacs import SimpleAgent
+
+        agent, info = SimpleAgent.ephemeral("ed25519")
+        msg = "hello world"
+        sig = agent.sign_string(msg)
+        pub_pem = agent.get_public_key_pem()
+        assert verify_string(msg, sig, pub_pem, algorithm=info["algorithm"]) is True
+
+    def test_tampered_message_returns_false(self) -> None:
+        pytest.importorskip("jacs")
+        from jacs import SimpleAgent
+
+        agent, info = SimpleAgent.ephemeral("ed25519")
+        sig = agent.sign_string("original")
+        pub_pem = agent.get_public_key_pem()
+        assert verify_string("tampered", sig, pub_pem, algorithm=info["algorithm"]) is False
+
+    def test_wrong_key_returns_false(self) -> None:
+        pytest.importorskip("jacs")
+        from jacs import SimpleAgent
+
+        agent_a, info = SimpleAgent.ephemeral("ed25519")
+        agent_b, _ = SimpleAgent.ephemeral("ed25519")
+        msg = "hello"
+        sig = agent_a.sign_string(msg)
+        wrong_pem = agent_b.get_public_key_pem()
+        assert verify_string(msg, sig, wrong_pem, algorithm=info["algorithm"]) is False
+
+    def test_accepts_standard_x509_subjectpublickeyinfo_pem(self) -> None:
+        """verify_string accepts both JACS-style raw PEMs AND standard X.509
+        SubjectPublicKeyInfo PEMs (e.g., produced by the cryptography library
+        in tests). Regression guard: hai-side test fixtures generate Ed25519
+        keys via cryptography.hazmat which emits SubjectPublicKeyInfo, not
+        the JACS bare-bytes shape.
+        """
+        pytest.importorskip("jacs")
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey,
+        )
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding,
+            PublicFormat,
+        )
+        import base64
+
+        priv = Ed25519PrivateKey.generate()
+        pub_pem = priv.public_key().public_bytes(
+            Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
+        ).decode()
+        msg = "x509 round-trip"
+        sig_b64 = base64.b64encode(priv.sign(msg.encode())).decode()
+        assert verify_string(msg, sig_b64, pub_pem, algorithm="ring-Ed25519") is True
 
 
 class TestCanonicalizeJson:
