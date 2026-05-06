@@ -423,6 +423,10 @@ export interface EmailMessage {
   readAt: string | null;
   /** Whether the JACS signature on this message was verified. */
   jacsVerified: boolean;
+  /** JACS signer id extracted from the inbound signature, when present. */
+  jacsSignerId?: string;
+  /** True only when HAI attested that the signer key belongs to the owner. */
+  jacsKeyIsOwner?: boolean;
   /** CC recipient addresses. */
   ccAddresses: string[];
   /** Labels/tags on the message. */

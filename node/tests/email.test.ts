@@ -67,6 +67,8 @@ describe('getMessage', () => {
         created_at: '2026-02-24T00:00:00Z',
         read_at: null,
         jacs_verified: true,
+        jacs_signer_id: 'owner-agent-jacs-id',
+        jacs_key_is_owner: true,
       };
     });
     client._setFFIAdapter(createMockFFI({ getMessage: getMessageMock }));
@@ -83,6 +85,8 @@ describe('getMessage', () => {
     expect(msg.deliveryStatus).toBe('delivered');
     expect(msg.readAt).toBeNull();
     expect(msg.jacsVerified).toBe(true);
+    expect(msg.jacsSignerId).toBe('owner-agent-jacs-id');
+    expect(msg.jacsKeyIsOwner).toBe(true);
   });
 });
 

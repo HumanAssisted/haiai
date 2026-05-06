@@ -289,12 +289,12 @@ type RegisterResult struct {
 	DNSRecord      string `json:"dns_record"`
 
 	// From RegistrationResult
-	Success      bool                `json:"success"`
-	JacsID       string              `json:"jacs_id"`
-	DNSVerified  bool                `json:"dns_verified"`
+	Success       bool                `json:"success"`
+	JacsID        string              `json:"jacs_id"`
+	DNSVerified   bool                `json:"dns_verified"`
 	Registrations []RegistrationEntry `json:"registrations"`
-	RegisteredAt string              `json:"registered_at"`
-	Message      string              `json:"message,omitempty"`
+	RegisteredAt  string              `json:"registered_at"`
+	Message       string              `json:"message,omitempty"`
 }
 
 // RegistrationEntry is an individual registration record returned by the server.
@@ -310,8 +310,8 @@ type RegistrationEntry struct {
 type EmailAttachment struct {
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type"`
-	Data        []byte `json:"-"`                          // Raw bytes (not sent in JSON)
-	DataBase64  string `json:"data_base64,omitempty"`       // Base64-encoded data for API
+	Data        []byte `json:"-"`                     // Raw bytes (not sent in JSON)
+	DataBase64  string `json:"data_base64,omitempty"` // Base64-encoded data for API
 }
 
 type SendEmailOptions struct {
@@ -368,6 +368,8 @@ type EmailMessage struct {
 	CreatedAt      string   `json:"created_at"`
 	ReadAt         *string  `json:"read_at"`
 	JacsVerified   *bool    `json:"jacs_verified"`
+	JacsSignerID   string   `json:"jacs_signer_id,omitempty"`
+	JacsKeyIsOwner bool     `json:"jacs_key_is_owner"`
 	CcAddresses    []string `json:"cc_addresses,omitempty"`
 	Labels         []string `json:"labels,omitempty"`
 	TrustScore     *float64 `json:"trust_score,omitempty"`

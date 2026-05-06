@@ -422,6 +422,14 @@ pub struct EmailMessage {
     pub read_at: Option<String>,
     #[serde(default)]
     pub jacs_verified: Option<bool>,
+    /// Verified JACS signer id for inbound messages, when the API exposes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jacs_signer_id: Option<String>,
+    /// TRUE only when HAI verified that the signer key belongs to the
+    /// recipient agent's owner. This is stricter than `jacs_verified`; peer
+    /// agents can be verified without being authorized to edit owner state.
+    #[serde(default)]
+    pub jacs_key_is_owner: bool,
     /// CC recipients on this message
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cc_addresses: Vec<String>,

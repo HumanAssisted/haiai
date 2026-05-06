@@ -106,6 +106,8 @@ class TestDeserializeEmailMessage:
         assert msg.delivery_status == "delivered"
         assert msg.created_at == "2026-02-24T12:00:00Z"
         assert msg.jacs_verified is True
+        assert msg.jacs_signer_id == "owner-agent-jacs-id"
+        assert msg.jacs_key_is_owner is True
         assert msg.trust_score == 92.4
 
 
@@ -134,6 +136,8 @@ class TestDeserializeListMessagesResponse:
         assert msg.delivery_status == "delivered"
         assert msg.created_at == "2026-02-24T12:00:00Z"
         assert msg.jacs_verified is True
+        assert msg.jacs_signer_id == "owner-agent-jacs-id"
+        assert msg.jacs_key_is_owner is True
         assert msg.trust_score == 92.4
 
         # Outbound message omits trust_score

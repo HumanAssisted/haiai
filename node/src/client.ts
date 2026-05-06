@@ -1047,6 +1047,8 @@ export class HaiClient {
       createdAt: (m.created_at as string) || '',
       readAt: (m.read_at as string | null) ?? null,
       jacsVerified: (m.jacs_verified as boolean) ?? false,
+      jacsSignerId: (m.jacs_signer_id as string) ?? undefined,
+      jacsKeyIsOwner: (m.jacs_key_is_owner as boolean) ?? false,
       ccAddresses: (m.cc_addresses as string[]) || [],
       labels: (m.labels as string[]) || [],
       trustScore: (m.trust_score as number) ?? undefined,
