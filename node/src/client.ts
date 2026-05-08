@@ -1216,6 +1216,7 @@ export class HaiClient {
       to: options.to,
       subject: options.subject,
       body: options.body,
+      generation_type: options.generationType ?? 'html_inline_jacs',
     };
     if (options.inReplyTo) emailOptions.in_reply_to = options.inReplyTo;
     if (options.attachments?.length) {
@@ -1228,7 +1229,6 @@ export class HaiClient {
     if (options.cc?.length) emailOptions.cc = options.cc;
     if (options.bcc?.length) emailOptions.bcc = options.bcc;
     if (options.labels?.length) emailOptions.labels = options.labels;
-    if (options.generationType) emailOptions.generation_type = options.generationType;
 
     const data = await this.ffi.sendSignedEmail(emailOptions);
 

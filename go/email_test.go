@@ -828,6 +828,39 @@ func TestVerifyEmailWithErrorField(t *testing.T) {
 // SendSignedEmail tests
 // ---------------------------------------------------------------
 
+func TestSendSignedEmailDefaultsToHtmlInlineJacs(t *testing.T) {
+	var gotBody map[string]interface{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body: %v", err)
+		}
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("failed to decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message_id":"msg-inline-1","status":"sent"}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	result, err := cl.SendSignedEmail(context.Background(), SendEmailOptions{
+		To:      "bob@hai.ai",
+		Subject: "Hello Signed",
+		Body:    "Signed body",
+	})
+	if err != nil {
+		t.Fatalf("SendSignedEmail: %v", err)
+	}
+	if result.MessageID != "msg-inline-1" {
+		t.Fatalf("unexpected message_id: %s", result.MessageID)
+	}
+	if gotBody["generation_type"] != string(EmailGenerationTypeHtmlInlineJacs) {
+		t.Fatalf("expected generation_type html_inline_jacs, got: %#v", gotBody["generation_type"])
+	}
+}
+
 func TestSendSignedEmailDelegatesToSendEndpoint(t *testing.T) {
 	callCount := 0
 	var sendContentType string

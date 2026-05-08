@@ -752,6 +752,9 @@ func (c *Client) SendSignedEmail(ctx context.Context, opts SendEmailOptions) (*S
 			opts.Attachments[i].DataBase64 = base64.StdEncoding.EncodeToString(opts.Attachments[i].Data)
 		}
 	}
+	if opts.GenerationType == "" {
+		opts.GenerationType = EmailGenerationTypeHtmlInlineJacs
+	}
 
 	optsJSON, err := json.Marshal(opts)
 	if err != nil {

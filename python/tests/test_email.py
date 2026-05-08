@@ -803,6 +803,24 @@ class TestHaiErrorFromResponseErrorCode:
 class TestSendSignedEmail:
     """Verify send_signed_email delegates to send_email (deprecated)."""
 
+    def test_send_signed_email_defaults_to_html_inline_jacs(
+        self,
+        loaded_config: None,
+    ) -> None:
+        """send_signed_email requests the Rust core HTML-inline default."""
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
+
+        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-inline-1", "status": "sent"}
+
+        result = client.send_signed_email(BASE_URL, "bob@hai.ai", "Hello Signed", "Signed body")
+
+        assert result.message_id == "msg-inline-1"
+        assert result.status == "sent"
+        assert mock_ffi.calls[0][0] == "send_signed_email"
+        options = mock_ffi.calls[0][1][0]
+        assert options["generation_type"] == "html_inline_jacs"
+
     def test_send_signed_email_delegates_to_send_email(
         self,
         loaded_config: None,

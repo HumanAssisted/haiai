@@ -424,6 +424,27 @@ describe('sendSignedEmail', () => {
     vi.restoreAllMocks();
   });
 
+  it('defaults signed email generation to html_inline_jacs', async () => {
+    const client = await makeClient();
+    let capturedOptions: Record<string, unknown> | null = null;
+
+    const sendSignedEmailMock = vi.fn(async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return { message_id: 'msg-inline-1', status: 'sent' };
+    });
+    client._setFFIAdapter(createMockFFI({ sendSignedEmail: sendSignedEmailMock }));
+
+    const result = await client.sendSignedEmail({
+      to: 'bob@hai.ai',
+      subject: 'Hello Signed',
+      body: 'Signed body',
+    });
+
+    expect(result.messageId).toBe('msg-inline-1');
+    expect(result.status).toBe('sent');
+    expect(capturedOptions!.generation_type).toBe('html_inline_jacs');
+  });
+
   it('calls FFI sendSignedEmail for client-side JACS signing', async () => {
     const client = await makeClient();
     let capturedOptions: Record<string, unknown> | null = null;
