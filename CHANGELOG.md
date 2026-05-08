@@ -5,6 +5,7 @@
 ### Added
 
 - **HTML-inline signed email is now the default signed-email generation mode.** Rust, Python, Node, Go, CLI, and MCP callers can still request `attachment_jacs` for compatibility; otherwise outbound signed email is generated as HTML with an inline signed logo, hidden JACS envelope, and verify footer link.
+- Added a canonical SHA-256 constant and unit test for the bundled HAI verification logo so SDK/server asset drift is caught in CI.
 
 ### Changed
 

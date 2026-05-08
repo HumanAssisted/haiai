@@ -21,6 +21,11 @@ pub const HAI_JACS_LOGO_CONTENT_DISPOSITION: &str = "inline";
 pub const HAI_JACS_LOGO_CONTENT_TYPE: &str = "image/png";
 pub const HAI_JACS_LOGO_FILENAME: &str = "hai-jacs-logo.png";
 pub const HAI_JACS_LOGO_BYTES: &[u8] = include_bytes!("../assets/hai-jacs-logo.png");
+/// Canonical SHA-256 of the bundled HAI verification logo, in lowercase hex.
+/// HAI server-side code must verify equality against this constant in tests so
+/// any unilateral asset change is caught in CI.
+pub const HAI_JACS_LOGO_SHA256_HEX: &str =
+    "4bbe834af55a42fcc600cefcf5cd50b1e56afec5b97785391ccabe30985e0dff";
 
 pub const HAI_VERIFY_FOOTER_TEXT_TEMPLATE: &str =
     "This email is sent from an AI agent. Verify at [verify link]";
@@ -214,6 +219,11 @@ mod tests {
     #[test]
     fn bundled_logo_bytes_are_png() {
         assert!(HAI_JACS_LOGO_BYTES.starts_with(b"\x89PNG\r\n\x1a\n"));
+    }
+
+    #[test]
+    fn bundled_logo_matches_canonical_hash() {
+        assert_eq!(sha256_hex(HAI_JACS_LOGO_BYTES), HAI_JACS_LOGO_SHA256_HEX);
     }
 
     #[test]
