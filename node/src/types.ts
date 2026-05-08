@@ -367,6 +367,8 @@ export interface EmailAttachment {
   dataBase64?: string;
 }
 
+export type EmailGenerationType = 'html_inline_jacs' | 'attachment_jacs';
+
 /** Options for sending an email. */
 export interface SendEmailOptions {
   /** Recipient email address. */
@@ -385,6 +387,8 @@ export interface SendEmailOptions {
   bcc?: string[];
   /** Labels/tags for the message. */
   labels?: string[];
+  /** Signed email generation type. Defaults to html_inline_jacs. */
+  generationType?: EmailGenerationType;
 }
 
 /** Result of sending an email. */

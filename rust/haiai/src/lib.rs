@@ -42,6 +42,7 @@ pub mod config;
 pub mod document_store;
 #[cfg(feature = "jacs-crate")]
 pub mod email;
+pub mod email_inline;
 pub mod error;
 pub mod jacs;
 #[cfg(feature = "jacs-crate")]
@@ -107,6 +108,7 @@ pub use email::{
     ParsedEmailParts,
     SignedHeaderEntry,
 };
+pub use email_inline::*;
 pub use error::{HaiError, Result};
 #[cfg(feature = "agreements")]
 pub use jacs::JacsAgreementProvider;

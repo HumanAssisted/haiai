@@ -58,6 +58,7 @@
         "bcc": "array",
         "labels": "array",
         "in_reply_to": "string",
+        "generation_type": "string",
         "agent_id": "string",
         "config_path": "string"
       },

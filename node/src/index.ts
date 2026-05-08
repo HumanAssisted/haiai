@@ -126,6 +126,7 @@ export type {
   DnsCertifiedRunOptions,
   FreeChaoticRunOptions,
   EmailAttachment,
+  EmailGenerationType,
   SendEmailOptions,
   SendEmailResult,
   EmailMessage,

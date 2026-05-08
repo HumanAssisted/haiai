@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **HTML-inline signed email is now the default signed-email generation mode.** Rust, Python, Node, Go, CLI, and MCP callers can still request `attachment_jacs` for compatibility; otherwise outbound signed email is generated as HTML with an inline signed logo, hidden JACS envelope, and verify footer link.
+
+### Changed
+
+- **Signed-email inputs are strict in HTML-inline mode.** The SDK owns HTML rendering for now: callers pass plain text, and the SDK rejects user HTML tokens plus reserved HAI/JACS inline markers before signing so generated signature artifacts cannot be injected or confused with user content.
+
 ## 0.4.0 (2026-04-28)
 
 ### Breaking

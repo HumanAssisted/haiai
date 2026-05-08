@@ -3,7 +3,11 @@
 //! Validates email addresses, header values, attachment constraints, and
 //! other user-provided inputs before they reach MIME construction or the API.
 
+use crate::email_inline::HAI_RESERVED_INLINE_EMAIL_MARKERS;
 use crate::error::{HaiError, Result};
+use html5ever::tendril::StrTendril;
+use html5ever::tokenizer::{BufferQueue, TagKind, Token, TokenSink, TokenSinkResult, Tokenizer};
+use std::cell::Cell;
 
 /// Maximum attachment size in bytes (10 MB).
 pub const MAX_ATTACHMENT_SIZE: usize = 10 * 1024 * 1024;
@@ -22,6 +26,20 @@ pub fn validate_no_crlf(field_name: &str, value: &str) -> Result<()> {
                 "Invalid characters in '{}': must not contain CR or LF",
                 field_name
             ),
+        });
+    }
+    Ok(())
+}
+
+/// Validate that caller-controlled input does not contain reserved inline markers.
+pub fn validate_no_reserved_inline_email_markers(field_name: &str, value: &str) -> Result<()> {
+    if HAI_RESERVED_INLINE_EMAIL_MARKERS
+        .iter()
+        .any(|marker| value.contains(marker))
+    {
+        return Err(HaiError::Validation {
+            field: field_name.to_string(),
+            message: "reserved_marker_in_user_input".to_string(),
         });
     }
     Ok(())
@@ -118,6 +136,8 @@ pub fn validate_attachments(attachments: &[crate::types::EmailAttachment]) -> Re
 
         // Validate filename for path traversal
         validate_filename(&att.filename)?;
+        validate_no_crlf("attachment_content_type", &att.content_type)?;
+        validate_no_reserved_inline_email_markers("attachment_content_type", &att.content_type)?;
     }
 
     Ok(())
@@ -135,7 +155,45 @@ pub fn validate_filename(filename: &str) -> Result<()> {
         });
     }
     validate_no_crlf("filename", filename)?;
+    validate_no_reserved_inline_email_markers("filename", filename)?;
     Ok(())
+}
+
+/// Validate that a plain-text email body does not contain HTML element tokens.
+pub fn validate_text_body_has_no_html_tokens(field_name: &str, value: &str) -> Result<()> {
+    let input = BufferQueue::default();
+    input.push_back(StrTendril::from(value));
+
+    let tokenizer = Tokenizer::new(HtmlTokenRejectSink::default(), Default::default());
+    let _ = tokenizer.feed(&input);
+    tokenizer.end();
+
+    if tokenizer.sink.has_start_tag.get() {
+        return Err(HaiError::Validation {
+            field: field_name.to_string(),
+            message: "html_in_text_body".to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+#[derive(Default)]
+struct HtmlTokenRejectSink {
+    has_start_tag: Cell<bool>,
+}
+
+impl TokenSink for HtmlTokenRejectSink {
+    type Handle = ();
+
+    fn process_token(&self, token: Token, _line_number: u64) -> TokenSinkResult<Self::Handle> {
+        if let Token::TagToken(tag) = token {
+            if tag.kind == TagKind::StartTag {
+                self.has_start_tag.set(true);
+            }
+        }
+        TokenSinkResult::Continue
+    }
 }
 
 /// Validate all fields of a SendEmailOptions before constructing MIME.
@@ -148,9 +206,17 @@ pub fn validate_send_email(options: &crate::types::SendEmailOptions) -> Result<(
         validate_email_address(bcc_addr)?;
     }
     validate_no_crlf("subject", &options.subject)?;
+    validate_no_reserved_inline_email_markers("subject", &options.subject)?;
     validate_no_crlf("body", &options.body)?;
+    validate_no_reserved_inline_email_markers("body", &options.body)?;
+    validate_text_body_has_no_html_tokens("body", &options.body)?;
     if let Some(ref reply_to) = options.in_reply_to {
         validate_no_crlf("in_reply_to", reply_to)?;
+        validate_no_reserved_inline_email_markers("in_reply_to", reply_to)?;
+    }
+    for label in &options.labels {
+        validate_no_crlf("label", label)?;
+        validate_no_reserved_inline_email_markers("label", label)?;
     }
     validate_attachments(&options.attachments)?;
     Ok(())
@@ -160,6 +226,20 @@ pub fn validate_send_email(options: &crate::types::SendEmailOptions) -> Result<(
 mod tests {
     use super::*;
     use crate::types::{EmailAttachment, SendEmailOptions};
+
+    fn valid_send_options() -> SendEmailOptions {
+        SendEmailOptions {
+            to: "agent@hai.ai".into(),
+            subject: "Test".into(),
+            body: "Hello".into(),
+            cc: vec![],
+            bcc: vec![],
+            in_reply_to: None,
+            attachments: vec![],
+            labels: vec![],
+            append_footer: None,
+        }
+    }
 
     #[test]
     fn valid_email_address() {
@@ -254,17 +334,86 @@ mod tests {
     }
 
     #[test]
+    fn html_token_in_text_body_rejected() {
+        let err =
+            validate_text_body_has_no_html_tokens("body", r#"<a href="x">bad</a>"#).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "validation error on 'body': html_in_text_body"
+        );
+    }
+
+    #[test]
+    fn mathematical_angle_brackets_remain_valid_text() {
+        assert!(validate_text_body_has_no_html_tokens("body", "2 < 3 and 5 > 4").is_ok());
+    }
+
+    #[test]
+    fn validate_send_email_rejects_html_body_tokens() {
+        let opts = SendEmailOptions {
+            body: "<div>bad</div>".into(),
+            ..valid_send_options()
+        };
+        let err = validate_send_email(&opts).unwrap_err();
+        assert!(err.to_string().contains("html_in_text_body"));
+    }
+
+    #[test]
+    fn reserved_inline_markers_rejected_in_caller_controlled_fields() {
+        let marker = "data-hai-jacs-envelope";
+
+        let mut subject = valid_send_options();
+        subject.subject = marker.into();
+
+        let mut body = valid_send_options();
+        body.body = marker.into();
+
+        let mut reply_header = valid_send_options();
+        reply_header.in_reply_to = Some(format!("<{}>", marker));
+
+        let mut filename = valid_send_options();
+        filename.attachments = vec![EmailAttachment::new(
+            marker.into(),
+            "text/plain".into(),
+            b"hello".to_vec(),
+        )];
+
+        let mut content_type = valid_send_options();
+        content_type.attachments = vec![EmailAttachment::new(
+            "note.txt".into(),
+            marker.into(),
+            b"hello".to_vec(),
+        )];
+
+        let mut label = valid_send_options();
+        label.labels = vec![marker.into()];
+
+        for opts in [subject, body, reply_header, filename, content_type, label] {
+            let err = validate_send_email(&opts).unwrap_err();
+            assert!(err.to_string().contains("reserved_marker_in_user_input"));
+        }
+    }
+
+    #[test]
+    fn all_reserved_inline_markers_rejected_in_body() {
+        for marker in crate::email_inline::HAI_RESERVED_INLINE_EMAIL_MARKERS {
+            let opts = SendEmailOptions {
+                body: format!("hello {marker}"),
+                ..valid_send_options()
+            };
+            let err = validate_send_email(&opts).unwrap_err();
+            assert!(
+                err.to_string().contains("reserved_marker_in_user_input"),
+                "marker should be rejected: {marker}"
+            );
+        }
+    }
+
+    #[test]
     fn validate_send_email_invalid_to() {
         let opts = SendEmailOptions {
             to: "not-an-email".into(),
-            subject: "Test".into(),
-            body: "Hello".into(),
-            cc: vec![],
-            bcc: vec![],
-            in_reply_to: None,
-            attachments: vec![],
-            labels: vec![],
-            append_footer: None,
+            ..valid_send_options()
         };
         assert!(validate_send_email(&opts).is_err());
     }

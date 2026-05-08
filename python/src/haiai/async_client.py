@@ -549,6 +549,7 @@ class AsyncHaiClient:
         cc: Optional[list[str]] = None,
         bcc: Optional[list[str]] = None,
         labels: Optional[list[str]] = None,
+        generation_type: str = "html_inline_jacs",
     ) -> SendEmailResult:
         """Send an agent-signed email (async).
 
@@ -566,6 +567,7 @@ class AsyncHaiClient:
             "to": to,
             "subject": subject,
             "body": body,
+            "generation_type": generation_type,
         }
         if in_reply_to is not None:
             options["in_reply_to"] = in_reply_to

@@ -438,12 +438,14 @@ describe('sendSignedEmail', () => {
       to: 'bob@hai.ai',
       subject: 'Hello Signed',
       body: 'Signed body',
+      generationType: 'attachment_jacs',
     });
 
     expect(result.messageId).toBe('msg-signed-1');
     expect(result.status).toBe('sent');
     expect(capturedOptions!.to).toBe('bob@hai.ai');
     expect(capturedOptions!.subject).toBe('Hello Signed');
+    expect(capturedOptions!.generation_type).toBe('attachment_jacs');
   });
 
   it('throws when agentEmail not set', async () => {

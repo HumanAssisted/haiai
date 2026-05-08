@@ -769,9 +769,19 @@ impl HaiClientWrapper {
 
     /// Send a signed email (locally signed with agent JACS key).
     pub async fn send_signed_email(&self, options_json: &str) -> HaiBindingResult<String> {
-        let options: haiai::types::SendEmailOptions = serde_json::from_str(options_json)?;
+        #[derive(serde::Deserialize)]
+        struct SendSignedEmailOptions {
+            #[serde(flatten)]
+            options: haiai::types::SendEmailOptions,
+            #[serde(default)]
+            generation_type: haiai::types::EmailGenerationType,
+        }
+
+        let options: SendSignedEmailOptions = serde_json::from_str(options_json)?;
         let client = self.inner.read().await;
-        let result = client.send_signed_email(&options).await?;
+        let result = client
+            .send_signed_email_with_generation_type(&options.options, options.generation_type)
+            .await?;
         Ok(serde_json::to_string(&result)?)
     }
 

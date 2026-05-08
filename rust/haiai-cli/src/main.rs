@@ -1,9 +1,9 @@
 use anyhow::Context as _;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use hai_mcp::{HaiMcpServer, HaiServerContext, LoadedSharedAgent};
 use haiai::{
-    build_document_provider, CreateAgentOptions, CreateEmailTemplateOptions, HaiClient,
-    HaiClientOptions, JacsAgentLifecycle, JacsDocumentProvider, JacsProvider,
+    build_document_provider, CreateAgentOptions, CreateEmailTemplateOptions, EmailGenerationType,
+    HaiClient, HaiClientOptions, JacsAgentLifecycle, JacsDocumentProvider, JacsProvider,
     ListEmailTemplatesOptions, ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions,
     SaveDocumentRequest, SaveIntent, SearchOptions, SendEmailOptions, UpdateEmailTemplateOptions,
 };
@@ -42,6 +42,23 @@ const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b']');
 
 const JACS_MARKDOWN_CONTENT_TYPE: &str = "text/markdown; profile=jacs-text-v1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliEmailGenerationType {
+    #[value(name = "html_inline_jacs")]
+    HtmlInlineJacs,
+    #[value(name = "attachment_jacs")]
+    AttachmentJacs,
+}
+
+impl From<CliEmailGenerationType> for EmailGenerationType {
+    fn from(value: CliEmailGenerationType) -> Self {
+        match value {
+            CliEmailGenerationType::HtmlInlineJacs => EmailGenerationType::HtmlInlineJacs,
+            CliEmailGenerationType::AttachmentJacs => EmailGenerationType::AttachmentJacs,
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "haiai", version, about = "HAIAI CLI")]
@@ -144,6 +161,10 @@ enum Commands {
         /// Labels/tags to apply (repeatable)
         #[arg(long)]
         labels: Vec<String>,
+
+        /// Signed email generation type. Default: html_inline_jacs; use attachment_jacs for compatibility.
+        #[arg(long, value_enum, default_value = "html_inline_jacs")]
+        generation_type: CliEmailGenerationType,
 
         /// Emit machine-readable JSON instead of the default two-line summary
         #[arg(long, default_value_t = false)]
@@ -1585,6 +1606,7 @@ async fn main() -> anyhow::Result<()> {
             cc,
             bcc,
             labels,
+            generation_type,
             json,
         } => {
             let client = load_client_with_email().await?;
@@ -1600,7 +1622,7 @@ async fn main() -> anyhow::Result<()> {
                 append_footer: None,
             };
             let result = client
-                .send_signed_email(&options)
+                .send_signed_email_with_generation_type(&options, generation_type.into())
                 .await
                 .context("send email failed")?;
             if json {
@@ -3254,6 +3276,7 @@ mod tests {
                 cc,
                 bcc,
                 labels,
+                generation_type,
                 json,
             } => {
                 assert_eq!(to, "friend@hai.ai");
@@ -3262,6 +3285,7 @@ mod tests {
                 assert!(cc.is_empty());
                 assert!(bcc.is_empty());
                 assert!(labels.is_empty());
+                assert_eq!(generation_type, CliEmailGenerationType::HtmlInlineJacs);
                 assert!(!json);
             }
             _ => panic!("expected SendEmail command"),
@@ -3309,6 +3333,28 @@ mod tests {
             result.is_err(),
             "send-email without --subject and --body should fail"
         );
+    }
+
+    #[test]
+    fn parse_send_email_generation_type() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "send-email",
+            "--to",
+            "friend@hai.ai",
+            "--subject",
+            "Hello",
+            "--body",
+            "Hi",
+            "--generation-type",
+            "attachment_jacs",
+        ]);
+        match cli.command {
+            Commands::SendEmail {
+                generation_type, ..
+            } => assert_eq!(generation_type, CliEmailGenerationType::AttachmentJacs),
+            _ => panic!("expected SendEmail command"),
+        }
     }
 
     // -------------------------------------------------------------------------

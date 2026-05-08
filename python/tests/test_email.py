@@ -815,6 +815,7 @@ class TestSendSignedEmail:
 
         result = client.send_signed_email(
             BASE_URL, "bob@hai.ai", "Hello Signed", "Signed body",
+            generation_type="attachment_jacs",
         )
 
         assert result.message_id == "msg-signed-1"
@@ -824,6 +825,7 @@ class TestSendSignedEmail:
         options = mock_ffi.calls[0][1][0]
         assert options["to"] == "bob@hai.ai"
         assert options["subject"] == "Hello Signed"
+        assert options["generation_type"] == "attachment_jacs"
 
     def test_send_signed_email_fails_without_agent_email(
         self,

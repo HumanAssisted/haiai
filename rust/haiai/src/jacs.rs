@@ -234,6 +234,36 @@ pub trait JacsProvider: Send + Sync {
         ))
     }
 
+    /// Sign the canonical HTML-inline email pre-image as a hidden JACS envelope.
+    fn sign_html_inline_email_envelope(
+        &self,
+        raw_email: &[u8],
+    ) -> Result<crate::email_inline::HtmlInlineJacsEnvelope> {
+        #[cfg(feature = "jacs-crate")]
+        let content = {
+            let payload = jacs::email::build_html_inline_email_signature_payload(raw_email)
+                .map_err(|e| {
+                    HaiError::Provider(format!("JACS inline email payload failed: {e}"))
+                })?;
+            serde_json::to_value(payload)?
+        };
+
+        #[cfg(not(feature = "jacs-crate"))]
+        let content = {
+            use sha2::Digest as _;
+            let digest = sha2::Sha256::digest(raw_email);
+            let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+            serde_json::json!({ "raw_email_sha256": format!("sha256:{hash}") })
+        };
+
+        let signed = self.sign_envelope(&serde_json::json!({
+            "jacsType": "email_inline_signature",
+            "jacsLevel": "raw",
+            "content": content,
+        }))?;
+        crate::email_inline::build_hidden_jacs_envelope(&signed)
+    }
+
     /// Sign a file as a JACS file envelope (JACS attachment pipeline).
     ///
     /// The returned [`SignedDocument`]'s `json` MUST carry the JACS file shape
@@ -1165,6 +1195,15 @@ pub trait JacsEmailProvider: JacsProvider {
 
     /// Verify a signed email with the given public key.
     fn verify_email(&self, raw: &[u8], key: Vec<u8>) -> Result<Value>;
+
+    /// Verify either attachment or HTML-inline signed email through JACS.
+    #[cfg(feature = "jacs-crate")]
+    fn verify_signed_email_transport(
+        &self,
+        raw: &[u8],
+        key: Vec<u8>,
+        mode: jacs::email::VerificationMode,
+    ) -> Result<jacs::email::SignedEmailVerificationResult>;
 
     /// Add a JACS attachment to an email.
     fn add_jacs_attachment(&self, email: &[u8], doc: &[u8]) -> Result<Vec<u8>>;

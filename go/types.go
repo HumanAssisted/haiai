@@ -314,15 +314,23 @@ type EmailAttachment struct {
 	DataBase64  string `json:"data_base64,omitempty"` // Base64-encoded data for API
 }
 
+type EmailGenerationType string
+
+const (
+	EmailGenerationTypeHtmlInlineJacs EmailGenerationType = "html_inline_jacs"
+	EmailGenerationTypeAttachmentJacs EmailGenerationType = "attachment_jacs"
+)
+
 type SendEmailOptions struct {
-	To          string            `json:"to"`
-	Subject     string            `json:"subject"`
-	Body        string            `json:"body"`
-	InReplyTo   string            `json:"in_reply_to,omitempty"`
-	Attachments []EmailAttachment `json:"attachments,omitempty"`
-	CC          []string          `json:"cc,omitempty"`
-	BCC         []string          `json:"bcc,omitempty"`
-	Labels      []string          `json:"labels,omitempty"`
+	To             string              `json:"to"`
+	Subject        string              `json:"subject"`
+	Body           string              `json:"body"`
+	InReplyTo      string              `json:"in_reply_to,omitempty"`
+	Attachments    []EmailAttachment   `json:"attachments,omitempty"`
+	CC             []string            `json:"cc,omitempty"`
+	BCC            []string            `json:"bcc,omitempty"`
+	Labels         []string            `json:"labels,omitempty"`
+	GenerationType EmailGenerationType `json:"generation_type,omitempty"`
 }
 
 // SearchOptions configures a message search request.

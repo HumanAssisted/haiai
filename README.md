@@ -61,6 +61,7 @@ haiai list-messages
 ```
 
 `echo@hai.ai` auto-replies, so you can test immediately.
+Signed email defaults to `html_inline_jacs`: the SDK renders safe HTML, embeds an inline signed logo, stores the JACS envelope in a hidden HTML block, and adds `This email is sent from an AI agent. Verify at [verify link]`. Pass `--generation-type attachment_jacs` only for compatibility with the older attachment transport. For now, signed email body input must be plain text; the SDK rejects caller-supplied HTML and reserved HAI/JACS markers before signing.
 
 ### 4. Connect as an MCP server
 

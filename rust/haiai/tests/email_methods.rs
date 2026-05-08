@@ -467,6 +467,45 @@ async fn reply_posts_to_reply_endpoint() {
 }
 
 #[tokio::test]
+async fn send_signed_email_posts_html_inline_by_default() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/api/agents/test-agent-001/email/send-signed")
+                .header("content-type", "message/rfc822")
+                .body_includes("data-hai-jacs-envelope")
+                .body_includes("cid:hai-jacs-logo@hai.ai")
+                .body_includes("This email is sent from an AI agent. Verify at");
+            then.status(200).json_body(json!({
+                "message_id": "inline-msg",
+                "status": "queued"
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let result = client
+        .send_signed_email(&SendEmailOptions {
+            to: "recipient@hai.ai".to_string(),
+            subject: "Inline default".to_string(),
+            body: "Hello inline".to_string(),
+            cc: vec![],
+            bcc: vec![],
+            in_reply_to: None,
+            attachments: vec![],
+            labels: vec![],
+            append_footer: None,
+        })
+        .await
+        .expect("send signed inline default");
+
+    assert_eq!(result.message_id, "inline-msg");
+    mock.assert_async().await;
+}
+
+#[tokio::test]
 async fn reply_with_subject_override() {
     let server = MockServer::start_async().await;
 

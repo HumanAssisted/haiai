@@ -832,11 +832,19 @@ func TestSendSignedEmailDelegatesToSendEndpoint(t *testing.T) {
 	callCount := 0
 	var sendContentType string
 	var sendPath string
+	var gotBody map[string]interface{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		sendPath = r.URL.Path
 		sendContentType = r.Header.Get("Content-Type")
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body: %v", err)
+		}
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("failed to decode body: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"message_id":"msg-signed-1","status":"sent"}`))
 	}))
@@ -844,9 +852,10 @@ func TestSendSignedEmailDelegatesToSendEndpoint(t *testing.T) {
 
 	cl, _ := newTestClient(t, srv.URL)
 	result, err := cl.SendSignedEmail(context.Background(), SendEmailOptions{
-		To:      "bob@hai.ai",
-		Subject: "Hello Signed",
-		Body:    "Signed body",
+		To:             "bob@hai.ai",
+		Subject:        "Hello Signed",
+		Body:           "Signed body",
+		GenerationType: EmailGenerationTypeAttachmentJacs,
 	})
 	if err != nil {
 		t.Fatalf("SendSignedEmail: %v", err)
@@ -866,6 +875,9 @@ func TestSendSignedEmailDelegatesToSendEndpoint(t *testing.T) {
 	}
 	if sendContentType != "application/json" {
 		t.Fatalf("expected Content-Type application/json, got: %s", sendContentType)
+	}
+	if gotBody["generation_type"] != string(EmailGenerationTypeAttachmentJacs) {
+		t.Fatalf("expected generation_type attachment_jacs, got: %#v", gotBody["generation_type"])
 	}
 }
 

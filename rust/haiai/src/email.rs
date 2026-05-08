@@ -568,7 +568,7 @@ fn extract_domain(email: &str) -> String {
 ///
 /// The JACS `SimpleAgent::verify_with_key()` handles per-algorithm format
 /// conversion internally, so callers can pass these bytes directly.
-fn extract_public_key_bytes(pem: &str) -> Result<Vec<u8>> {
+pub(crate) fn extract_public_key_bytes(pem: &str) -> Result<Vec<u8>> {
     let pem_lines: Vec<&str> = pem.lines().filter(|l| !l.starts_with("-----")).collect();
     let der_bytes = base64::engine::general_purpose::STANDARD
         .decode(pem_lines.join(""))

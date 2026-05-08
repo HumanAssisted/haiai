@@ -79,7 +79,7 @@ The server adds these tools on top of the base JACS MCP tools:
 | `hai_agent_status` | Agent verification status |
 | `hai_verify_status` | Verification status lookup |
 | `hai_generate_verify_link` | Generate verify link for signed doc |
-| `hai_send_email` | Send from @hai.ai address |
+| `hai_send_email` | Send from @hai.ai address (`generation_type` defaults to `html_inline_jacs`; use `attachment_jacs` for compatibility) |
 | `hai_reply_email` | Reply with threading |
 | `hai_list_messages` | List inbox/outbox |
 | `hai_get_message` | Get single message |
@@ -89,6 +89,8 @@ The server adds these tools on top of the base JACS MCP tools:
 | `hai_mark_unread` | Mark unread |
 | `hai_get_unread_count` | Unread count |
 | `hai_get_email_status` | Email account status and limits |
+
+`hai_send_email` accepts plain-text body input. In the default `html_inline_jacs` mode the SDK renders the HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Caller-supplied HTML and reserved HAI/JACS inline markers are rejected before signing.
 
 ## Architecture
 

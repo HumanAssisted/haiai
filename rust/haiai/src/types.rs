@@ -364,12 +364,36 @@ pub struct SendEmailOptions {
     pub append_footer: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmailGenerationType {
+    #[default]
+    HtmlInlineJacs,
+    AttachmentJacs,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendEmailResult {
     #[serde(default)]
     pub message_id: String,
     #[serde(default)]
     pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedEmail {
+    pub raw_email: Vec<u8>,
+    pub generation_type: EmailGenerationType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden_envelope_size_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed_logo_size_bytes: Option<usize>,
+}
+
+impl SignedEmail {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.raw_email
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1112,6 +1136,26 @@ mod tests {
         let json = r#"{"success": true, "agent_id": "a1", "jacs_id": "j1"}"#;
         let result: RegistrationResult = serde_json::from_str(json).expect("deserialize");
         assert_eq!(result.email, None);
+    }
+
+    #[test]
+    fn email_generation_type_defaults_to_html_inline_jacs() {
+        assert_eq!(
+            EmailGenerationType::default(),
+            EmailGenerationType::HtmlInlineJacs
+        );
+    }
+
+    #[test]
+    fn email_generation_type_serializes_as_snake_case() {
+        assert_eq!(
+            serde_json::to_value(EmailGenerationType::HtmlInlineJacs).unwrap(),
+            "html_inline_jacs"
+        );
+        assert_eq!(
+            serde_json::to_value(EmailGenerationType::AttachmentJacs).unwrap(),
+            "attachment_jacs"
+        );
     }
 
     #[test]

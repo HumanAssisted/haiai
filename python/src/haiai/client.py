@@ -1453,6 +1453,7 @@ class HaiClient:
         cc: Optional[list[str]] = None,
         bcc: Optional[list[str]] = None,
         labels: Optional[list[str]] = None,
+        generation_type: str = "html_inline_jacs",
     ) -> SendEmailResult:
         """Send an agent-signed email.
 
@@ -1474,6 +1475,7 @@ class HaiClient:
             "to": to,
             "subject": subject,
             "body": body,
+            "generation_type": generation_type,
         }
         if in_reply_to is not None:
             options["in_reply_to"] = in_reply_to
@@ -2439,11 +2441,13 @@ def send_signed_email(
     cc: Optional[list[str]] = None,
     bcc: Optional[list[str]] = None,
     labels: Optional[list[str]] = None,
+    generation_type: str = "html_inline_jacs",
 ) -> SendEmailResult:
     """Send an agent-signed email (builds MIME, signs, and sends)."""
     return _get_client().send_signed_email(
         hai_url, to, subject, body, in_reply_to,
         attachments=attachments, cc=cc, bcc=bcc, labels=labels,
+        generation_type=generation_type,
     )
 
 
