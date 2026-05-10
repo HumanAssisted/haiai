@@ -1721,21 +1721,15 @@ async fn call_delete_email_template(context: &HaiServerContext, args: &Value) ->
 }
 
 fn success_tool_result(text: String, structured: Value) -> CallToolResult {
-    CallToolResult {
-        content: vec![Content::text(text)],
-        structured_content: Some(structured),
-        is_error: Some(false),
-        meta: None,
-    }
+    let mut result = CallToolResult::success(vec![Content::text(text)]);
+    result.structured_content = Some(structured);
+    result
 }
 
 fn error_tool_result(message: String) -> CallToolResult {
-    CallToolResult {
-        content: vec![Content::text(message.clone())],
-        structured_content: Some(json!({ "error": message })),
-        is_error: Some(true),
-        meta: None,
-    }
+    let mut result = CallToolResult::error(vec![Content::text(message.clone())]);
+    result.structured_content = Some(json!({ "error": message }));
+    result
 }
 
 fn required_string<'a>(args: &'a Value, key: &str) -> Result<&'a str, ToolError> {

@@ -2410,6 +2410,7 @@ mod tests {
     #[cfg(feature = "jacs-crate")]
     #[test]
     fn attachment_jacs_generation_uses_jacs_attachment_transport() {
+        let _guard = crate::test_support::env_lock();
         let tmp = tempfile::Builder::new()
             .prefix("haiai-attachment-mode-")
             .tempdir_in("/private/tmp")

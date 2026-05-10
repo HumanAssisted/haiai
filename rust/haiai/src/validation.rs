@@ -207,7 +207,6 @@ pub fn validate_send_email(options: &crate::types::SendEmailOptions) -> Result<(
     }
     validate_no_crlf("subject", &options.subject)?;
     validate_no_reserved_inline_email_markers("subject", &options.subject)?;
-    validate_no_crlf("body", &options.body)?;
     validate_no_reserved_inline_email_markers("body", &options.body)?;
     validate_text_body_has_no_html_tokens("body", &options.body)?;
     if let Some(ref reply_to) = options.in_reply_to {
@@ -356,6 +355,15 @@ mod tests {
         };
         let err = validate_send_email(&opts).unwrap_err();
         assert!(err.to_string().contains("html_in_text_body"));
+    }
+
+    #[test]
+    fn validate_send_email_allows_multiline_text_body() {
+        let opts = SendEmailOptions {
+            body: "Hello,\n\nPlease review this.\r\nThanks.".into(),
+            ..valid_send_options()
+        };
+        assert!(validate_send_email(&opts).is_ok());
     }
 
     #[test]
