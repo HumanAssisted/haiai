@@ -2413,7 +2413,7 @@ mod tests {
         let _guard = crate::test_support::env_lock();
         let tmp = tempfile::Builder::new()
             .prefix("haiai-attachment-mode-")
-            .tempdir_in("/private/tmp")
+            .tempdir()
             .expect("create temp dir");
         let key_dir = tmp.path().join("keys");
         let data_dir = tmp.path().join("data");
