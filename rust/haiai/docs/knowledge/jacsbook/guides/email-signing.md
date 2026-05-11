@@ -6,52 +6,53 @@ RFC 5322 `.eml` file and the result is the same email with a
 verifies the cryptographic signature, and compares content hashes to detect
 tampering.
 
+JACS also exposes migration helpers for HAI's HTML-inline signed email
+transport. In that mode, the signature material travels in the HTML body and
+inline logo instead of as user-visible signature attachments. Core signing and
+verification still stay in JACS; SDKs and servers should call these helpers
+rather than reimplementing email hashing, MIME parsing, or media extraction.
+
 There are only two functions you need:
 
 | Action     | Function                       | What you supply                                     | What you get back                           |
 |------------|--------------------------------|-----------------------------------------------------|---------------------------------------------|
-| **Sign**   | `jacs::email::sign_email()`    | raw `.eml` bytes + your `EmailSigner`               | `.eml` bytes with `jacs-signature.json`     |
+| **Sign**   | `jacs::email::sign_email()`    | raw `.eml` bytes + a `JacsSigner`                   | `.eml` bytes with `jacs-signature.json`     |
 | **Verify** | `jacs::email::verify_email()`  | signed `.eml` bytes + sender's public key + verifier | `ContentVerificationResult` (pass/fail per field) |
 
 ## Signing an email
 
 ```rust
-use jacs::email::{sign_email, EmailSigner};
+use jacs::email::sign_email;
 
 // 1. Load raw email bytes (RFC 5322 format)
 let raw_eml = std::fs::read("outgoing.eml")?;
 
-// 2. Sign — your agent implements EmailSigner (see below)
+// 2. Sign — SimpleAgent implements JacsSigner
 let signed_eml = sign_email(&raw_eml, &my_agent)?;
 
 // 3. Send signed_eml — it is a valid .eml with the JACS attachment
 std::fs::write("outgoing_signed.eml", &signed_eml)?;
 ```
 
-### The `EmailSigner` trait
+### The `JacsSigner` trait
 
-Your agent must implement four methods:
+`sign_email` accepts any type that implements `JacsSigner`. `SimpleAgent` implements it out of the box.
 
 ```rust
-pub trait EmailSigner {
-    /// Sign raw bytes. Return the signature bytes.
-    fn sign_bytes(&self, data: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
+pub trait JacsSigner {
+    /// Create a signed JACS document from the email hash payload.
+    fn sign_message(&self, data: &serde_json::Value) -> Result<SignedDocument, JacsError>;
 
-    /// Your agent's JACS ID (e.g. "abc123:v1").
-    fn jacs_id(&self) -> &str;
-
-    /// The key identifier used for signing.
-    fn key_id(&self) -> &str;
-
-    /// The signing algorithm name. This comes from your JACS agent's
-    /// key configuration — never hardcode it.
-    fn algorithm(&self) -> &str;
+    /// Verify a signed JACS document using the sender's public key.
+    fn verify_with_key(
+        &self,
+        signed_document: &str,
+        public_key: Vec<u8>,
+    ) -> Result<VerificationResult, JacsError>;
 }
 ```
 
-The algorithm value (e.g. `"ed25519"`, `"pq2025"`, or legacy `"rsa-pss"` when verifying older mail signatures) is read from
-your JACS agent's key metadata at runtime. `sign_email` records it in the
-`jacs-signature.json` document so the verifier knows which algorithm to use.
+The signing algorithm is read from your JACS agent at runtime and recorded in the `jacs-signature.json` document. Do not hardcode it in email code.
 
 ### What `sign_email` does internally
 
@@ -59,7 +60,7 @@ your JACS agent's key metadata at runtime. `sign_email` records it in the
 2. Computes SHA-256 hashes for each header, body part, and attachment
 3. Builds the JACS email signature payload
 4. Canonicalizes the payload via RFC 8785 (JCS)
-5. Calls your `sign_bytes()` to produce the cryptographic signature
+5. Calls `sign_message()` to create a real signed JACS document
 6. Attaches the result as `jacs-signature.json`
 
 You do not need to know any of this to use it — it is a single function call.
@@ -84,7 +85,7 @@ use jacs::email::verify_email;
 use jacs::simple::SimpleAgent;
 
 let signed_eml = std::fs::read("incoming_signed.eml")?;
-let sender_public_key: Vec<u8> = /* fetch from HAI registry or local store */;
+let sender_public_key: Vec<u8> = /* fetch from local trust, DNS, or another trusted source */;
 
 // Any agent can verify — the sender's public key is passed explicitly
 let (agent, _) = SimpleAgent::ephemeral(Some("ed25519"))?;
@@ -150,6 +151,46 @@ entry per field:
 Fields checked: `from`, `to`, `cc`, `subject`, `date`, `message_id`,
 `in_reply_to`, `references`, `body_plain`, `body_html`, and all attachments.
 
+## HTML-inline signed email migration helpers
+
+The HTML-inline transport is being added for HAI email while attachment mode
+remains compatible. Use `verify_signed_email` when a caller may receive either
+transport:
+
+```rust
+use jacs::email::{verify_signed_email, VerificationMode};
+
+let result = verify_signed_email(
+    &raw_eml,
+    &verifier_agent,
+    &sender_public_key,
+    VerificationMode::Strict,
+)?;
+```
+
+The verifier detects `SignedEmailTransport::AttachmentJacs` or
+`SignedEmailTransport::HtmlInline` and returns `SignedEmailVerificationResult`
+with `Verified`, `PartiallyVerified`, or `Failed`.
+
+HTML-inline helpers include:
+
+- `build_html_inline_email_signature_payload` for the inline signed pre-image.
+  It signs the existing email header scope, the text body, and user
+  attachments. Generated HTML and signature artifacts are excluded.
+- `embed_jacs_header_in_logo_png` and `extract_jacs_header_from_logo_png` for
+  the signed inline PNG logo transport.
+- `extract_topmost_inline_jacs_envelope` for reply-safe hidden envelope
+  selection.
+- `remove_inline_signature_artifacts`,
+  `strip_inline_signature_artifacts_from_html`, and
+  `html_bodies_equivalent` for parser-based artifact removal and HTML
+  presentation checks.
+- `verify_html_inline_email_content` for content-hash verification after
+  removing inline transport artifacts while keeping user attachments signed.
+
+Attachment mode remains available through `sign_email`, `verify_email`, and
+the `verify_email_*` compatibility APIs.
+
 ## The JACS signature document
 
 The `jacs-signature.json` attachment has this structure:
@@ -198,17 +239,23 @@ All items are re-exported from `jacs::email`:
 
 ```rust
 // Signing
-jacs::email::sign_email(raw_email: &[u8], signer: &dyn EmailSigner) -> Result<Vec<u8>, EmailError>
-jacs::email::EmailSigner                  // trait your agent implements
+jacs::email::sign_email(raw_email: &[u8], signer: &impl JacsSigner) -> Result<Vec<u8>, EmailError>
+jacs::email::build_html_inline_email_signature_payload(raw_email: &[u8])
+jacs::email::JacsSigner                   // trait implemented by SimpleAgent
 
 // Verification
 jacs::email::verify_email(raw, &agent, pubkey)       // one-call: crypto + content check
+jacs::email::verify_signed_email(raw, &agent, pubkey, mode)
 jacs::email::verify_email_document(raw, &agent, pk)  // step 1: crypto only
 jacs::email::verify_email_content(&doc, &parts)      // step 2: content hash comparison
+jacs::email::verify_html_inline_email_content(&doc, &parts)
 jacs::email::normalize_algorithm(...)                 // algorithm name normalization
 
 // Types
 jacs::email::ContentVerificationResult    // overall result with field_results
+jacs::email::SignedEmailVerificationResult
+jacs::email::SignedEmailTransport         // AttachmentJacs | HtmlInline
+jacs::email::VerificationMode             // Strict | Degraded
 jacs::email::FieldResult                  // per-field status
 jacs::email::FieldStatus                  // Pass | Modified | Fail | Unverifiable
 jacs::email::JacsEmailSignatureDocument   // the full signature document

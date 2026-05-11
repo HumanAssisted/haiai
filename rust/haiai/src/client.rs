@@ -2415,11 +2415,12 @@ mod tests {
             .prefix("haiai-attachment-mode-")
             .tempdir()
             .expect("create temp dir");
-        let key_dir = tmp.path().join("keys");
-        let data_dir = tmp.path().join("data");
+        let base_dir = tmp.path().canonicalize().expect("canonical temp dir");
+        let key_dir = base_dir.join("keys");
+        let data_dir = base_dir.join("data");
         std::fs::create_dir_all(&key_dir).unwrap();
         std::fs::create_dir_all(&data_dir).unwrap();
-        let config_path = tmp.path().join("jacs.config.json");
+        let config_path = base_dir.join("jacs.config.json");
 
         LocalJacsProvider::create_agent_with_options(&CreateAgentOptions {
             name: "attachment-mode-agent".to_string(),

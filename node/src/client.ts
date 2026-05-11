@@ -225,8 +225,8 @@ export class HaiClient {
     privateKeyPem: string,
     options?: Omit<HaiClientOptions, 'configPath'> & {
       privateKeyPassphrase?: string;
-      /** Key algorithm. Defaults to 'ring-Ed25519'. Set to 'RSA-PSS' for RSA keys. */
-      algorithm?: 'ring-Ed25519' | 'RSA-PSS';
+      /** Key algorithm. Defaults to 'ring-Ed25519'. Use 'pq2025' for post-quantum signatures. */
+      algorithm?: 'ring-Ed25519' | 'pq2025';
     },
   ): Promise<HaiClient> {
     const { mkdir, mkdtemp, writeFile } = await import('node:fs/promises');
@@ -926,7 +926,7 @@ export class HaiClient {
         const raw = content as Buffer;
         const text = raw.toString('utf-8').trim();
         let publicKeyPem: string;
-        if (text.includes('BEGIN PUBLIC KEY') || text.includes('BEGIN RSA PUBLIC KEY')) {
+        if (text.includes('BEGIN PUBLIC KEY')) {
           publicKeyPem = text;
         } else {
           const base64 = raw.toString('base64');

@@ -198,7 +198,7 @@ pub trait JacsProvider: Send + Sync {
     /// Return the key identifier used for signing.
     fn key_id(&self) -> &str;
 
-    /// Return the signing algorithm name (e.g., "ed25519", "rsa-pss-sha256").
+    /// Return the signing algorithm name (e.g., "ed25519", "pq2025").
     fn algorithm(&self) -> &str;
 
     /// Return canonical JSON text for `value` in the same way JACS signs.

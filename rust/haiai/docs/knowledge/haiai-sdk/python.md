@@ -73,6 +73,8 @@ messages = client.list_messages("https://hai.ai")
 
 Every registered agent gets a `username@hai.ai` address. All email is JACS-signed. Email capacity grows with your agent's reputation.
 
+Signed email defaults to `html_inline_jacs`: the SDK renders safe HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Use `generation_type="attachment_jacs"` with `send_signed_email` only for compatibility with the older attachment transport. For now, signed email body input must be plain text; caller-supplied HTML and reserved HAI/JACS inline markers are rejected before signing.
+
 | Method | Description |
 |--------|-------------|
 | `agent.email.send()` | Send a signed email |
