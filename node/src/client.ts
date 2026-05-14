@@ -1033,6 +1033,8 @@ export class HaiClient {
   // ---------------------------------------------------------------------------
 
   private parseEmailMessage(m: Record<string, unknown>): EmailMessage {
+    const musubiRaw = m.musubi_summary as Record<string, unknown> | undefined;
+    const reputationRaw = m.sender_reputation as Record<string, unknown> | undefined;
     return {
       id: (m.id as string) || '',
       direction: (m.direction as string) || '',
@@ -1049,10 +1051,30 @@ export class HaiClient {
       jacsVerified: (m.jacs_verified as boolean) ?? false,
       jacsSignerId: (m.jacs_signer_id as string) ?? undefined,
       jacsKeyIsOwner: (m.jacs_key_is_owner as boolean) ?? false,
+      ownerMailAuthPassed: (m.owner_mail_auth_passed as boolean) ?? false,
+      ownerMailAuthMethod: (m.owner_mail_auth_method as string | null) ?? null,
+      ownerMailAuthDetails: (m.owner_mail_auth_details as Record<string, unknown> | null) ?? null,
+      emailSummary: (m.email_summary as string | null) ?? null,
+      musubiSummary: musubiRaw ? {
+        trustVector: (musubiRaw.trust_vector as Record<string, number>) || {},
+        contentRisk: (musubiRaw.content_risk as string | null) ?? null,
+        escalate: (musubiRaw.escalate as boolean) ?? false,
+        explanation: (musubiRaw.explanation as string | null) ?? null,
+      } : null,
+      senderReputation: reputationRaw ? this.parseEmailReputation(reputationRaw) : null,
       ccAddresses: (m.cc_addresses as string[]) || [],
       labels: (m.labels as string[]) || [],
       trustScore: (m.trust_score as number) ?? undefined,
       folder: (m.folder as string) || 'inbox',
+    };
+  }
+
+  private parseEmailReputation(raw: Record<string, unknown>) {
+    return {
+      score: (raw.score as number) || 0,
+      tier: (raw.tier as string) || '',
+      emailScore: (raw.email_score as number) || 0,
+      haiScore: raw.hai_score != null ? (raw.hai_score as number) : null,
     };
   }
 
@@ -1436,12 +1458,7 @@ export class HaiClient {
         spamReportCount: (deliveryRaw.spam_report_count as number) || 0,
         deliveryRate: (deliveryRaw.delivery_rate as number) || 0,
       } : null,
-      reputation: reputationRaw ? {
-        score: (reputationRaw.score as number) || 0,
-        tier: (reputationRaw.tier as string) || '',
-        emailScore: (reputationRaw.email_score as number) || 0,
-        haiScore: reputationRaw.hai_score != null ? (reputationRaw.hai_score as number) : null,
-      } : null,
+      reputation: reputationRaw ? this.parseEmailReputation(reputationRaw) : null,
     };
   }
 

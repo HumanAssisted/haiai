@@ -365,16 +365,7 @@ class HaiClient:
 
         reputation_data = data.get("reputation")
         reputation = (
-            EmailReputationInfo(
-                score=float(reputation_data.get("score", 0.0)),
-                tier=reputation_data.get("tier", ""),
-                email_score=float(reputation_data.get("email_score", 0.0)),
-                hai_score=(
-                    float(reputation_data["hai_score"])
-                    if reputation_data.get("hai_score") is not None
-                    else None
-                ),
-            )
+            EmailReputationInfo.from_dict(reputation_data)
             if reputation_data
             else None
         )

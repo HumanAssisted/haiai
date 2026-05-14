@@ -69,6 +69,22 @@ describe('getMessage', () => {
         jacs_verified: true,
         jacs_signer_id: 'owner-agent-jacs-id',
         jacs_key_is_owner: true,
+        owner_mail_auth_passed: true,
+        owner_mail_auth_method: 'dkim_spf',
+        owner_mail_auth_details: { dkim: 'pass', spf: 'pass' },
+        email_summary: 'Owner asked for recent bounces.',
+        musubi_summary: {
+          trust_vector: { phishing: 0.05, prompt_injection: 0.1 },
+          content_risk: 'low',
+          escalate: false,
+          explanation: 'Authenticated owner mail with low content risk.',
+        },
+        sender_reputation: {
+          score: 91.5,
+          tier: 'established',
+          email_score: 89.0,
+          hai_score: 94.0,
+        },
       };
     });
     client._setFFIAdapter(createMockFFI({ getMessage: getMessageMock }));
@@ -87,6 +103,69 @@ describe('getMessage', () => {
     expect(msg.jacsVerified).toBe(true);
     expect(msg.jacsSignerId).toBe('owner-agent-jacs-id');
     expect(msg.jacsKeyIsOwner).toBe(true);
+    expect(msg.ownerMailAuthPassed).toBe(true);
+    expect(msg.ownerMailAuthMethod).toBe('dkim_spf');
+    expect(msg.ownerMailAuthDetails).toEqual({ dkim: 'pass', spf: 'pass' });
+    expect(msg.emailSummary).toBe('Owner asked for recent bounces.');
+    expect(msg.musubiSummary).toEqual({
+      trustVector: { phishing: 0.05, prompt_injection: 0.1 },
+      contentRisk: 'low',
+      escalate: false,
+      explanation: 'Authenticated owner mail with low content risk.',
+    });
+    expect(msg.senderReputation).toEqual({
+      score: 91.5,
+      tier: 'established',
+      emailScore: 89.0,
+      haiScore: 94.0,
+    });
+  });
+});
+
+describe('listMessages', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns parsed hosted evidence fields from FFI', async () => {
+    const client = await makeClient();
+    const listMessagesMock = vi.fn(async () => ([{
+      id: 'msg-list',
+      direction: 'inbound',
+      from_address: 'owner@example.com',
+      to_address: 'agent@hai.ai',
+      subject: 'Status',
+      body_text: 'Show bounces',
+      is_read: false,
+      delivery_status: 'delivered',
+      created_at: '2026-05-14T10:00:00Z',
+      owner_mail_auth_passed: true,
+      owner_mail_auth_method: 'dkim_spf',
+      owner_mail_auth_details: { dkim: 'pass', spf: 'pass' },
+      email_summary: 'Owner asked for recent bounces.',
+      musubi_summary: {
+        trust_vector: { phishing: 0.05 },
+        content_risk: 'low',
+        escalate: false,
+        explanation: 'Authenticated owner mail with low content risk.',
+      },
+      sender_reputation: {
+        score: 91.5,
+        tier: 'established',
+        email_score: 89.0,
+        hai_score: 94.0,
+      },
+    }]));
+    client._setFFIAdapter(createMockFFI({ listMessages: listMessagesMock }));
+
+    const messages = await client.listMessages();
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].ownerMailAuthPassed).toBe(true);
+    expect(messages[0].ownerMailAuthMethod).toBe('dkim_spf');
+    expect(messages[0].emailSummary).toBe('Owner asked for recent bounces.');
+    expect(messages[0].musubiSummary?.trustVector).toEqual({ phishing: 0.05 });
+    expect(messages[0].senderReputation?.tier).toBe('established');
   });
 });
 

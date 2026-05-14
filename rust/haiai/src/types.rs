@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use base64::Engine;
@@ -454,6 +455,25 @@ pub struct EmailMessage {
     /// agents can be verified without being authorized to edit owner state.
     #[serde(default)]
     pub jacs_key_is_owner: bool,
+    /// TRUE only when HAI verified ordinary email authentication for the
+    /// registered owner address on this inbound message.
+    #[serde(default)]
+    pub owner_mail_auth_passed: bool,
+    /// Server-side owner ordinary-mail auth method, such as `dkim_spf`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_mail_auth_method: Option<String>,
+    /// Redacted DKIM/SPF/DMARC decision details for ordinary owner-mail auth.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_mail_auth_details: Option<Value>,
+    /// Deterministic one-line gist from the API, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email_summary: Option<String>,
+    /// Compact Musubi safety summary for this message, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub musubi_summary: Option<MusubiSummary>,
+    /// Sender reputation snapshot using the same shape as email status.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_reputation: Option<EmailReputationInfo>,
     /// CC recipients on this message
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cc_addresses: Vec<String>,
@@ -472,6 +492,18 @@ pub struct EmailMessage {
     /// Thread context: other messages in the same conversation (populated on get_message)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread: Option<Vec<EmailMessage>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct MusubiSummary {
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub trust_vector: HashMap<String, f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_risk: Option<String>,
+    #[serde(default)]
+    pub escalate: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1156,6 +1188,80 @@ mod tests {
             serde_json::to_value(EmailGenerationType::AttachmentJacs).unwrap(),
             "attachment_jacs"
         );
+    }
+
+    #[test]
+    fn email_message_deserializes_hosted_evidence_fields() {
+        let json = serde_json::json!({
+            "id": "m-1",
+            "from_address": "owner@example.com",
+            "to_address": "agent@hai.ai",
+            "subject": "Status",
+            "body_text": "Show me bounces",
+            "created_at": "2026-05-14T10:00:00Z",
+            "owner_mail_auth_passed": true,
+            "owner_mail_auth_method": "dkim_spf",
+            "owner_mail_auth_details": {"dkim": "pass", "spf": "pass"},
+            "email_summary": "Owner asked for recent bounces.",
+            "musubi_summary": {
+                "trust_vector": {"phishing": 0.05, "prompt_injection": 0.1},
+                "content_risk": "low",
+                "escalate": false,
+                "explanation": "Authenticated owner mail with low content risk."
+            },
+            "sender_reputation": {
+                "score": 91.5,
+                "tier": "established",
+                "email_score": 89.0,
+                "hai_score": 94.0
+            }
+        });
+
+        let message: EmailMessage = serde_json::from_value(json).expect("deserialize");
+
+        assert!(message.owner_mail_auth_passed);
+        assert_eq!(message.owner_mail_auth_method.as_deref(), Some("dkim_spf"));
+        assert_eq!(
+            message.owner_mail_auth_details.as_ref().unwrap()["dkim"],
+            "pass"
+        );
+        assert_eq!(
+            message.email_summary.as_deref(),
+            Some("Owner asked for recent bounces.")
+        );
+        let musubi = message.musubi_summary.expect("musubi summary");
+        assert_eq!(musubi.content_risk.as_deref(), Some("low"));
+        assert!(!musubi.escalate);
+        assert_eq!(musubi.trust_vector.get("prompt_injection"), Some(&0.1_f64));
+        assert_eq!(
+            musubi.explanation.as_deref(),
+            Some("Authenticated owner mail with low content risk.")
+        );
+        let reputation = message.sender_reputation.expect("sender reputation");
+        assert_eq!(reputation.tier, "established");
+        assert_eq!(reputation.score, 91.5);
+        assert_eq!(reputation.hai_score, Some(94.0));
+    }
+
+    #[test]
+    fn email_message_defaults_hosted_evidence_fields_for_old_responses() {
+        let json = serde_json::json!({
+            "id": "m-2",
+            "from_address": "alice@example.com",
+            "to_address": "agent@hai.ai",
+            "subject": "Old response",
+            "body_text": "No hosted evidence yet.",
+            "created_at": "2026-05-14T10:00:00Z"
+        });
+
+        let message: EmailMessage = serde_json::from_value(json).expect("deserialize");
+
+        assert!(!message.owner_mail_auth_passed);
+        assert!(message.owner_mail_auth_method.is_none());
+        assert!(message.owner_mail_auth_details.is_none());
+        assert!(message.email_summary.is_none());
+        assert!(message.musubi_summary.is_none());
+        assert!(message.sender_reputation.is_none());
     }
 
     #[test]

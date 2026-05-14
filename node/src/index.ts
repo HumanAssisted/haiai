@@ -130,6 +130,7 @@ export type {
   SendEmailOptions,
   SendEmailResult,
   EmailMessage,
+  MusubiSummary,
   RawEmailResult,
   ListMessagesOptions,
   SearchOptions,

@@ -361,27 +361,41 @@ type SendEmailResult struct {
 	Status    string `json:"status"`
 }
 
+// MusubiSummary contains compact Musubi safety evidence for an email message.
+type MusubiSummary struct {
+	TrustVector map[string]float64 `json:"trust_vector,omitempty"`
+	ContentRisk *string            `json:"content_risk,omitempty"`
+	Escalate    bool               `json:"escalate"`
+	Explanation *string            `json:"explanation,omitempty"`
+}
+
 // EmailMessage represents an email message in the agent's mailbox.
 type EmailMessage struct {
-	ID             string   `json:"id"`
-	Direction      string   `json:"direction"`
-	FromAddress    string   `json:"from_address"`
-	ToAddress      string   `json:"to_address"`
-	Subject        string   `json:"subject"`
-	BodyText       string   `json:"body_text"`
-	MessageID      string   `json:"message_id,omitempty"`
-	InReplyTo      string   `json:"in_reply_to,omitempty"`
-	IsRead         bool     `json:"is_read"`
-	DeliveryStatus string   `json:"delivery_status"`
-	CreatedAt      string   `json:"created_at"`
-	ReadAt         *string  `json:"read_at"`
-	JacsVerified   *bool    `json:"jacs_verified"`
-	JacsSignerID   string   `json:"jacs_signer_id,omitempty"`
-	JacsKeyIsOwner bool     `json:"jacs_key_is_owner"`
-	CcAddresses    []string `json:"cc_addresses,omitempty"`
-	Labels         []string `json:"labels,omitempty"`
-	TrustScore     *float64 `json:"trust_score,omitempty"`
-	Folder         string   `json:"folder,omitempty"`
+	ID                   string                 `json:"id"`
+	Direction            string                 `json:"direction"`
+	FromAddress          string                 `json:"from_address"`
+	ToAddress            string                 `json:"to_address"`
+	Subject              string                 `json:"subject"`
+	BodyText             string                 `json:"body_text"`
+	MessageID            string                 `json:"message_id,omitempty"`
+	InReplyTo            string                 `json:"in_reply_to,omitempty"`
+	IsRead               bool                   `json:"is_read"`
+	DeliveryStatus       string                 `json:"delivery_status"`
+	CreatedAt            string                 `json:"created_at"`
+	ReadAt               *string                `json:"read_at"`
+	JacsVerified         *bool                  `json:"jacs_verified"`
+	JacsSignerID         string                 `json:"jacs_signer_id,omitempty"`
+	JacsKeyIsOwner       bool                   `json:"jacs_key_is_owner"`
+	OwnerMailAuthPassed  bool                   `json:"owner_mail_auth_passed"`
+	OwnerMailAuthMethod  *string                `json:"owner_mail_auth_method,omitempty"`
+	OwnerMailAuthDetails map[string]interface{} `json:"owner_mail_auth_details,omitempty"`
+	EmailSummary         *string                `json:"email_summary,omitempty"`
+	MusubiSummary        *MusubiSummary         `json:"musubi_summary,omitempty"`
+	SenderReputation     *EmailReputationInfo   `json:"sender_reputation,omitempty"`
+	CcAddresses          []string               `json:"cc_addresses,omitempty"`
+	Labels               []string               `json:"labels,omitempty"`
+	TrustScore           *float64               `json:"trust_score,omitempty"`
+	Folder               string                 `json:"folder,omitempty"`
 }
 
 // ListMessagesResponse is the wrapper returned by the list messages API.

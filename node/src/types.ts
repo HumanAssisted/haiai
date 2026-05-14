@@ -399,6 +399,18 @@ export interface SendEmailResult {
   status: string;
 }
 
+/** Compact Musubi safety summary attached to an email message. */
+export interface MusubiSummary {
+  /** Per-risk Musubi trust vector values. */
+  trustVector: Record<string, number>;
+  /** Content risk label, if the scorer provided one. */
+  contentRisk?: string | null;
+  /** Whether the message should be escalated for owner attention. */
+  escalate: boolean;
+  /** Short scorer explanation, if available. */
+  explanation?: string | null;
+}
+
 /** An email message. */
 export interface EmailMessage {
   /** Unique message ID. */
@@ -431,6 +443,18 @@ export interface EmailMessage {
   jacsSignerId?: string;
   /** True only when HAI attested that the signer key belongs to the owner. */
   jacsKeyIsOwner?: boolean;
+  /** True only when ordinary owner email authentication passed. */
+  ownerMailAuthPassed: boolean;
+  /** Server-side owner ordinary-mail auth method, such as dkim_spf. */
+  ownerMailAuthMethod?: string | null;
+  /** Redacted DKIM/SPF/DMARC evidence for owner ordinary-mail auth. */
+  ownerMailAuthDetails?: Record<string, unknown> | null;
+  /** Deterministic one-line gist from the API, when available. */
+  emailSummary?: string | null;
+  /** Compact Musubi safety summary for this message, when available. */
+  musubiSummary?: MusubiSummary | null;
+  /** Sender reputation snapshot using the same shape as email status. */
+  senderReputation?: EmailReputationInfo | null;
   /** CC recipient addresses. */
   ccAddresses: string[];
   /** Labels/tags on the message. */

@@ -8,6 +8,7 @@ from haiai.models import (
     BaselineRunResult,
     BenchmarkResult,
     EmailMessage,
+    EmailReputationInfo,
     FreeChaoticResult,
     HaiEvent,
     HaiRegistrationPreview,
@@ -15,6 +16,7 @@ from haiai.models import (
     HaiStatusResult,
     HelloWorldResult,
     JobResponseResult,
+    MusubiSummary,
     RegistrationResult,
     TranscriptMessage,
 )
@@ -165,6 +167,54 @@ class TestEmailMessageFromDict:
         assert m.cc_addresses == []
         assert m.labels == []
         assert m.folder == "inbox"
+        assert m.owner_mail_auth_passed is False
+        assert m.owner_mail_auth_method is None
+        assert m.owner_mail_auth_details is None
+        assert m.email_summary is None
+        assert m.musubi_summary is None
+        assert m.sender_reputation is None
+
+    def test_from_dict_with_hosted_evidence_fields(self) -> None:
+        """from_dict parses hosted owner-auth, Musubi, and reputation fields."""
+        m = EmailMessage.from_dict({
+            "id": "m1",
+            "from_address": "owner@example.com",
+            "to_address": "agent@hai.ai",
+            "subject": "Status",
+            "body_text": "Show bounces",
+            "created_at": "2026-05-14T10:00:00Z",
+            "owner_mail_auth_passed": True,
+            "owner_mail_auth_method": "dkim_spf",
+            "owner_mail_auth_details": {"dkim": "pass", "spf": "pass"},
+            "email_summary": "Owner asked for recent bounces.",
+            "musubi_summary": {
+                "trust_vector": {"phishing": 0.05, "prompt_injection": 0.1},
+                "content_risk": "low",
+                "escalate": False,
+                "explanation": "Authenticated owner mail with low content risk.",
+            },
+            "sender_reputation": {
+                "score": 91.5,
+                "tier": "established",
+                "email_score": 89.0,
+                "hai_score": 94.0,
+            },
+        })
+
+        assert m.owner_mail_auth_passed is True
+        assert m.owner_mail_auth_method == "dkim_spf"
+        assert m.owner_mail_auth_details == {"dkim": "pass", "spf": "pass"}
+        assert m.email_summary == "Owner asked for recent bounces."
+        assert isinstance(m.musubi_summary, MusubiSummary)
+        assert m.musubi_summary.trust_vector == {"phishing": 0.05, "prompt_injection": 0.1}
+        assert m.musubi_summary.content_risk == "low"
+        assert m.musubi_summary.escalate is False
+        assert m.musubi_summary.explanation == "Authenticated owner mail with low content risk."
+        assert isinstance(m.sender_reputation, EmailReputationInfo)
+        assert m.sender_reputation.score == 91.5
+        assert m.sender_reputation.tier == "established"
+        assert m.sender_reputation.email_score == 89.0
+        assert m.sender_reputation.hai_score == 94.0
 
     def test_from_dict_with_reply_text(self) -> None:
         """from_dict parses body_text_clean and quoted_text."""

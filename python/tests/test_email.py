@@ -301,6 +301,22 @@ class TestGetMessage:
             "delivery_status": "delivered",
             "read_at": None,
             "jacs_verified": True,
+            "owner_mail_auth_passed": True,
+            "owner_mail_auth_method": "dkim_spf",
+            "owner_mail_auth_details": {"dkim": "pass", "spf": "pass"},
+            "email_summary": "Owner asked for recent bounces.",
+            "musubi_summary": {
+                "trust_vector": {"phishing": 0.05, "prompt_injection": 0.1},
+                "content_risk": "low",
+                "escalate": False,
+                "explanation": "Authenticated owner mail with low content risk.",
+            },
+            "sender_reputation": {
+                "score": 91.5,
+                "tier": "established",
+                "email_score": 89.0,
+                "hai_score": 94.0,
+            },
         }
 
         client = HaiClient()
@@ -318,6 +334,17 @@ class TestGetMessage:
         assert result.direction == "inbound"
         assert result.delivery_status == "delivered"
         assert result.jacs_verified is True
+        assert result.owner_mail_auth_passed is True
+        assert result.owner_mail_auth_method == "dkim_spf"
+        assert result.owner_mail_auth_details == {"dkim": "pass", "spf": "pass"}
+        assert result.email_summary == "Owner asked for recent bounces."
+        assert result.musubi_summary is not None
+        assert result.musubi_summary.trust_vector == {"phishing": 0.05, "prompt_injection": 0.1}
+        assert result.musubi_summary.content_risk == "low"
+        assert result.musubi_summary.escalate is False
+        assert result.sender_reputation is not None
+        assert result.sender_reputation.tier == "established"
+        assert result.sender_reputation.hai_score == 94.0
 
     def test_get_message_404(
         self,
@@ -1043,6 +1070,22 @@ class TestEmailMessageNewFields:
             "cc_addresses": ["c@hai.ai", "d@hai.ai"],
             "labels": ["important"],
             "folder": "archive",
+            "owner_mail_auth_passed": True,
+            "owner_mail_auth_method": "dkim_spf",
+            "owner_mail_auth_details": {"dkim": "pass", "spf": "pass"},
+            "email_summary": "Owner asked for recent bounces.",
+            "musubi_summary": {
+                "trust_vector": {"phishing": 0.05},
+                "content_risk": "low",
+                "escalate": False,
+                "explanation": "Authenticated owner mail with low content risk.",
+            },
+            "sender_reputation": {
+                "score": 91.5,
+                "tier": "established",
+                "email_score": 89.0,
+                "hai_score": 94.0,
+            },
         }]
 
         client = HaiClient()
@@ -1055,6 +1098,13 @@ class TestEmailMessageNewFields:
         assert result[0].cc_addresses == ["c@hai.ai", "d@hai.ai"]
         assert result[0].labels == ["important"]
         assert result[0].folder == "archive"
+        assert result[0].owner_mail_auth_passed is True
+        assert result[0].owner_mail_auth_method == "dkim_spf"
+        assert result[0].email_summary == "Owner asked for recent bounces."
+        assert result[0].musubi_summary is not None
+        assert result[0].musubi_summary.trust_vector == {"phishing": 0.05}
+        assert result[0].sender_reputation is not None
+        assert result[0].sender_reputation.tier == "established"
 
 
 # ---------------------------------------------------------------
