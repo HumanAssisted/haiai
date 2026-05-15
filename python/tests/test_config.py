@@ -39,7 +39,9 @@ class TestLoad:
         with pytest.raises(ValueError, match="neither canonical nor legacy fields"):
             load(str(p))
 
-    def test_load_valid_config_with_jacs(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_load_valid_config_with_jacs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test load() with real JACS bindings."""
         reset()
         try:

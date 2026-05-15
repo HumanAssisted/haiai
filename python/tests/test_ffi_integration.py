@@ -16,7 +16,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
 
 from haiai._ffi_adapter import FFIAdapter, AsyncFFIAdapter, map_ffi_error
 from haiai.errors import (
@@ -43,6 +42,7 @@ def _load_parity_fixture() -> dict[str, Any]:
 def _snake_case(name: str) -> str:
     """Convert camelCase/PascalCase to snake_case."""
     import re
+
     s1 = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
     return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
 
@@ -117,7 +117,6 @@ class TestFFIMethodParity:
     def test_mock_ffi_adapter_has_all_fixture_methods(self) -> None:
         """MockFFIAdapter (from conftest) must match the parity fixture too."""
         # Import from the conftest in the tests directory
-        import sys
         import importlib.util
 
         conftest_path = Path(__file__).parent / "conftest.py"
@@ -179,9 +178,7 @@ class TestAsyncAdapterCoroutines:
 class TestClientDelegatesToFFI:
     """Verify HaiClient uses FFI adapter for core API calls."""
 
-    def test_hello_world_delegates_to_ffi(
-        self, loaded_config: None
-    ) -> None:
+    def test_hello_world_delegates_to_ffi(self, loaded_config: None) -> None:
         from haiai.client import HaiClient
 
         client = HaiClient()
@@ -199,9 +196,7 @@ class TestClientDelegatesToFFI:
         assert mock_ffi.calls[0][0] == "hello"
         assert result.message == "ok"
 
-    def test_register_delegates_to_ffi(
-        self, loaded_config: None
-    ) -> None:
+    def test_register_delegates_to_ffi(self, loaded_config: None) -> None:
         from haiai.client import HaiClient
 
         client = HaiClient()
@@ -213,13 +208,11 @@ class TestClientDelegatesToFFI:
             "message": "ok",
         }
 
-        result = client.register("https://api.hai.ai")
+        client.register("https://api.hai.ai")
 
         assert mock_ffi.calls[0][0] == "register"
 
-    def test_send_email_delegates_to_ffi(
-        self, loaded_config: None
-    ) -> None:
+    def test_send_email_delegates_to_ffi(self, loaded_config: None) -> None:
         from haiai.client import HaiClient
 
         client = HaiClient()
@@ -241,9 +234,7 @@ class TestClientDelegatesToFFI:
         assert mock_ffi.calls[0][0] == "send_email"
         assert result.message_id == "msg-1"
 
-    def test_list_messages_delegates_to_ffi(
-        self, loaded_config: None
-    ) -> None:
+    def test_list_messages_delegates_to_ffi(self, loaded_config: None) -> None:
         from haiai.client import HaiClient
 
         client = HaiClient()
@@ -255,9 +246,7 @@ class TestClientDelegatesToFFI:
         assert mock_ffi.calls[0][0] == "list_messages"
         assert result == []
 
-    def test_verify_document_delegates_to_ffi(
-        self, loaded_config: None
-    ) -> None:
+    def test_verify_document_delegates_to_ffi(self, loaded_config: None) -> None:
         from haiai.client import HaiClient
 
         client = HaiClient()
@@ -267,13 +256,11 @@ class TestClientDelegatesToFFI:
             "verified_at": "2026-01-01T00:00:00Z",
         }
 
-        result = client.verify_document("https://api.hai.ai", '{"jacsId":"a"}')
+        client.verify_document("https://api.hai.ai", '{"jacsId":"a"}')
 
         assert mock_ffi.calls[0][0] == "verify_document"
 
-    def test_fetch_remote_key_delegates_to_ffi(
-        self, loaded_config: None
-    ) -> None:
+    def test_fetch_remote_key_delegates_to_ffi(self, loaded_config: None) -> None:
         from haiai.client import HaiClient
 
         client = HaiClient()
@@ -290,7 +277,7 @@ class TestClientDelegatesToFFI:
             "created_at": "2026-01-01T00:00:00Z",
         }
 
-        result = client.fetch_remote_key("https://api.hai.ai", "agent-1")
+        client.fetch_remote_key("https://api.hai.ai", "agent-1")
 
         assert mock_ffi.calls[0][0] == "fetch_remote_key"
 
@@ -351,49 +338,64 @@ class TestNoOldHTTPCode:
     def test_client_imports_ffi_adapter(self) -> None:
         """client.py must import FFIAdapter."""
         import haiai.client as client_mod
+
         source = inspect.getsource(client_mod)
         assert "from haiai._ffi_adapter import FFIAdapter" in source
 
     def test_hello_world_does_not_use_httpx(self) -> None:
         """hello_world method should not contain httpx references."""
         from haiai.client import HaiClient
+
         source = inspect.getsource(HaiClient.hello_world)
         assert "httpx" not in source, "hello_world should delegate to FFI, not httpx"
 
     def test_register_does_not_use_httpx(self) -> None:
         from haiai.client import HaiClient
+
         source = inspect.getsource(HaiClient.register)
         assert "httpx" not in source, "register should delegate to FFI, not httpx"
 
     def test_send_email_does_not_use_httpx(self) -> None:
         from haiai.client import HaiClient
+
         source = inspect.getsource(HaiClient.send_email)
         assert "httpx" not in source, "send_email should delegate to FFI, not httpx"
 
     def test_list_messages_does_not_use_httpx(self) -> None:
         from haiai.client import HaiClient
+
         source = inspect.getsource(HaiClient.list_messages)
         assert "httpx" not in source, "list_messages should delegate to FFI, not httpx"
 
     def test_verify_document_does_not_use_httpx(self) -> None:
         from haiai.client import HaiClient
+
         source = inspect.getsource(HaiClient.verify_document)
-        assert "httpx" not in source, "verify_document should delegate to FFI, not httpx"
+        assert "httpx" not in source, (
+            "verify_document should delegate to FFI, not httpx"
+        )
 
     def test_benchmark_does_not_use_httpx(self) -> None:
         from haiai.client import HaiClient
+
         source = inspect.getsource(HaiClient.benchmark)
         assert "httpx" not in source, "benchmark should delegate to FFI, not httpx"
 
     def test_fetch_remote_key_does_not_use_httpx(self) -> None:
         from haiai.client import HaiClient
+
         source = inspect.getsource(HaiClient.fetch_remote_key)
-        assert "httpx" not in source, "fetch_remote_key should delegate to FFI, not httpx"
+        assert "httpx" not in source, (
+            "fetch_remote_key should delegate to FFI, not httpx"
+        )
 
     def test_get_email_status_does_not_use_httpx(self) -> None:
         from haiai.client import HaiClient
+
         source = inspect.getsource(HaiClient.get_email_status)
-        assert "httpx" not in source, "get_email_status should delegate to FFI, not httpx"
+        assert "httpx" not in source, (
+            "get_email_status should delegate to FFI, not httpx"
+        )
 
     def test_phase2_methods_are_documented(self) -> None:
         """Methods that still use httpx must document why (Phase 2, native, etc.)."""
@@ -412,8 +414,14 @@ class TestNoOldHTTPCode:
 
         # Acceptable justification markers in source comments
         justification_markers = [
-            "PHASE2", "phase2", "TODO", "native", "keep native",
-            "stays native", "still uses", "not yet",
+            "PHASE2",
+            "phase2",
+            "TODO",
+            "native",
+            "keep native",
+            "stays native",
+            "still uses",
+            "not yet",
         ]
 
         for method_name in phase2_methods:

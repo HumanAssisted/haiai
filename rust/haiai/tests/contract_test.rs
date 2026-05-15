@@ -125,7 +125,7 @@ fn contract_deserialize_email_status() {
     assert_eq!(status.daily_used, 5);
     assert_eq!(status.resets_at, "2026-02-25T00:00:00Z");
     assert_eq!(status.messages_sent_total, 42);
-    assert_eq!(status.external_enabled, false);
+    assert!(!status.external_enabled);
     assert_eq!(status.external_sends_today, 0);
     assert!(status.last_tier_change.is_none());
 }

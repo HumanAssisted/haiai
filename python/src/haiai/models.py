@@ -493,9 +493,7 @@ class EmailReputationInfo:
             tier=data.get("tier", ""),
             email_score=float(data.get("email_score", 0.0)),
             hai_score=(
-                float(data["hai_score"])
-                if data.get("hai_score") is not None
-                else None
+                float(data["hai_score"]) if data.get("hai_score") is not None else None
             ),
         )
 

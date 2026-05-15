@@ -11,7 +11,9 @@ from haiai.signing import canonicalize_json
 
 
 def _load_fixture() -> dict[str, object]:
-    fixture_path = Path(__file__).resolve().parents[2] / "fixtures" / "cross_lang_test.json"
+    fixture_path = (
+        Path(__file__).resolve().parents[2] / "fixtures" / "cross_lang_test.json"
+    )
     return json.loads(fixture_path.read_text())
 
 

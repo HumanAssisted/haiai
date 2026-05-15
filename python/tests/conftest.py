@@ -7,10 +7,8 @@ Test fixtures create ephemeral JACS agents for signing/verification.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any, Generator
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -60,9 +58,11 @@ def _try_get_real_agent() -> Any | None:
     """Try to create a real ephemeral JACS agent. Returns None if bindings unavailable."""
     try:
         from jacs import SimpleAgent
+
         agent, info = SimpleAgent.ephemeral("ring-Ed25519")
         # Wrap in EphemeralAgentAdapter for JacsAgent-compatible API
         from jacs.simple import _EphemeralAgentAdapter
+
         return _EphemeralAgentAdapter(agent)
     except Exception:
         return None
@@ -151,6 +151,7 @@ def loaded_config(
 
     # Load config metadata (name, version, key_dir, jacs_id)
     import json
+
     raw = json.loads(jacs_config_path.read_text())
     config_mod._config = config_mod.AgentConfig(
         name=raw["jacsAgentName"],
@@ -727,24 +728,30 @@ def mock_async_ffi() -> MockAsyncFFIAdapter:
 
 
 @pytest.fixture()
-def ffi_client(loaded_config: None, mock_ffi: MockFFIAdapter) -> tuple[Any, MockFFIAdapter]:
+def ffi_client(
+    loaded_config: None, mock_ffi: MockFFIAdapter
+) -> tuple[Any, MockFFIAdapter]:
     """Provide a HaiClient with a mock FFI adapter pre-injected.
 
     Returns (client, mock_ffi) so tests can set up responses and verify calls.
     """
     from haiai.client import HaiClient
+
     client = HaiClient()
     client._ffi = mock_ffi  # type: ignore[assignment]
     return client, mock_ffi
 
 
 @pytest.fixture()
-def async_ffi_client(loaded_config: None, mock_async_ffi: MockAsyncFFIAdapter) -> tuple[Any, MockAsyncFFIAdapter]:
+def async_ffi_client(
+    loaded_config: None, mock_async_ffi: MockAsyncFFIAdapter
+) -> tuple[Any, MockAsyncFFIAdapter]:
     """Provide an AsyncHaiClient with a mock FFI adapter pre-injected.
 
     Returns (client, mock_ffi) so tests can set up responses and verify calls.
     """
     from haiai.async_client import AsyncHaiClient
+
     client = AsyncHaiClient()
     client._ffi = mock_async_ffi  # type: ignore[assignment]
     return client, mock_async_ffi
@@ -764,9 +771,6 @@ def _auto_mock_ffi(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, Non
     """
     from haiai.client import HaiClient
     from haiai.async_client import AsyncHaiClient
-
-    original_sync = HaiClient._get_ffi
-    original_async = AsyncHaiClient._get_ffi
 
     def _patched_sync_get_ffi(self: Any) -> Any:
         if self._ffi is None:

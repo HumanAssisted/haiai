@@ -1936,7 +1936,7 @@ mod tests {
             intent: SaveIntent::Upsert,
         };
         assert_eq!(req.jacs_type, "soul");
-        assert_eq!(req.singleton, true);
+        assert!(req.singleton);
         assert!(matches!(req.intent, SaveIntent::Upsert));
         assert_eq!(req.logical_name, Some("SOUL.md".into()));
         assert_eq!(req.content_type, "text/markdown; profile=jacs-text-v1");

@@ -2420,7 +2420,7 @@ mod tests {
         let venv = structured_of(&verified);
         assert_eq!(venv["success"].as_bool(), Some(true));
         assert_eq!(venv["status"].as_str(), Some("signed"));
-        assert!(venv["signatures"].as_array().unwrap().len() >= 1);
+        assert!(!venv["signatures"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

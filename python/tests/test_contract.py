@@ -13,7 +13,12 @@ import hashlib
 import json
 from pathlib import Path
 
-from haiai.models import EmailMessage, EmailStatus, KeyRegistryResponse, EmailVerificationResult
+from haiai.models import (
+    EmailMessage,
+    EmailStatus,
+    KeyRegistryResponse,
+    EmailVerificationResult,
+)
 
 # ---------------------------------------------------------------------------
 # Fixture directory -- two levels up from tests/, then into contract/
@@ -175,9 +180,10 @@ class TestContentHashComputation:
         expected_hash = data["expected_hash"]
 
         # Same code path as HaiClient.send_email
-        content_hash = "sha256:" + hashlib.sha256(
-            (subject + "\n" + body).encode("utf-8")
-        ).hexdigest()
+        content_hash = (
+            "sha256:"
+            + hashlib.sha256((subject + "\n" + body).encode("utf-8")).hexdigest()
+        )
 
         assert content_hash == expected_hash
 
@@ -194,9 +200,10 @@ class TestSignInputFormat:
         timestamp = data["timestamp"]
         expected_sign_input = data["sign_input_example"]
 
-        content_hash = "sha256:" + hashlib.sha256(
-            (subject + "\n" + body).encode("utf-8")
-        ).hexdigest()
+        content_hash = (
+            "sha256:"
+            + hashlib.sha256((subject + "\n" + body).encode("utf-8")).hexdigest()
+        )
 
         # Same v2 format as HaiClient.send_email
         sign_input = f"{content_hash}:{from_email}:{timestamp}"
@@ -213,7 +220,10 @@ class TestDeserializeKeyRegistryResponse:
 
         assert resp.email == "testbot@hai.ai"
         assert resp.jacs_id == "test-agent-jacs-id"
-        assert resp.public_key == "MCowBQYDK2VwAyEAExampleBase64PublicKeyData1234567890ABCDEF"
+        assert (
+            resp.public_key
+            == "MCowBQYDK2VwAyEAExampleBase64PublicKeyData1234567890ABCDEF"
+        )
         assert resp.algorithm == "ed25519"
         assert resp.reputation_tier == "new"
         assert resp.registered_at == "2026-01-15T00:00:00Z"

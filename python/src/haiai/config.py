@@ -61,14 +61,10 @@ def _read_password_file_strict(file_path: Path) -> bytes:
         ) from exc
 
     if file_path.is_symlink():
-        raise ValueError(
-            f"JACS_PASSWORD_FILE must not be a symlink: {file_path}"
-        )
+        raise ValueError(f"JACS_PASSWORD_FILE must not be a symlink: {file_path}")
 
     if not file_path.is_file():
-        raise ValueError(
-            f"JACS_PASSWORD_FILE must be a regular file: {file_path}"
-        )
+        raise ValueError(f"JACS_PASSWORD_FILE must be a regular file: {file_path}")
 
     if os.name != "nt":
         mode = stat_result.st_mode & 0o777
@@ -195,7 +191,9 @@ def _create_jacs_config(
     if agent_doc_dir.is_dir():
         # First try matching by jacsId prefix
         if jacs_id:
-            for f in sorted(agent_doc_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+            for f in sorted(
+                agent_doc_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
+            ):
                 if f.name.startswith(jacs_id + ":") and f.suffix == ".json":
                     agent_id_and_version = f.stem
                     break
@@ -241,9 +239,7 @@ def _parse_agent_id_and_version(value: str) -> tuple[str, str]:
         )
     agent_id, version = value.split(":", 1)
     if not agent_id or not version:
-        raise ValueError(
-            f"jacs_agent_id_and_version has empty component: {value!r}"
-        )
+        raise ValueError(f"jacs_agent_id_and_version has empty component: {value!r}")
     return agent_id, version
 
 
@@ -273,9 +269,7 @@ def _read_agent_name_from_doc(data_dir: Path, id_and_version: str) -> str:
         doc = json.load(f)
     name = doc.get("name")
     if not isinstance(name, str) or not name:
-        raise ValueError(
-            f"Agent document at {doc_path} has no `name` field"
-        )
+        raise ValueError(f"Agent document at {doc_path} has no `name` field")
     return name
 
 
@@ -377,11 +371,14 @@ def load(config_path: str | None = None) -> None:
     # Wrap in adapter for JacsAgent API compatibility
     try:
         from jacs.simple import _EphemeralAgentAdapter
+
         _agent = _EphemeralAgentAdapter(native_agent)
     except ImportError:
         _agent = native_agent
 
-    logger.info("JACS agent '%s' v%s loaded via binding-core", _config.name, _config.version)
+    logger.info(
+        "JACS agent '%s' v%s loaded via binding-core", _config.name, _config.version
+    )
 
 
 def get_config() -> AgentConfig:

@@ -36,7 +36,9 @@ def _get_binary_version(binary: Path) -> str | None:
     try:
         out = subprocess.run(
             [str(binary), "--version"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         m = _VERSION_RE.search(out.stdout)
         return m.group(1) if m else None
@@ -60,9 +62,7 @@ def _walk_up_for_cargo_local(bin_name: str) -> Path | None:
 
 def find_binary() -> Path | None:
     """Find the haiai binary, returning its path or None."""
-    bin_name = _PLATFORM_BINARY.get(
-        (platform.system(), platform.machine()), "haiai"
-    )
+    bin_name = _PLATFORM_BINARY.get((platform.system(), platform.machine()), "haiai")
 
     # 1. Environment override (trusted -- skip version check)
     env_path = os.environ.get("HAIAI_BINARY_PATH")

@@ -42,20 +42,20 @@ def map_ffi_error(err: Exception) -> HaiError:
     message = str(err)
 
     if message.startswith("AuthFailed:"):
-        return HaiAuthError(message[len("AuthFailed:"):].strip(), status_code=401)
+        return HaiAuthError(message[len("AuthFailed:") :].strip(), status_code=401)
     if message.startswith("RateLimited:"):
-        return RateLimited(message[len("RateLimited:"):].strip(), status_code=429)
+        return RateLimited(message[len("RateLimited:") :].strip(), status_code=429)
     if message.startswith("NotFound:"):
-        msg = message[len("NotFound:"):].strip()
+        msg = message[len("NotFound:") :].strip()
         if "email not active" in msg.lower():
             return EmailNotActive(msg, status_code=403)
         if "recipient" in msg.lower():
             return RecipientNotFound(msg, status_code=400)
         return HaiApiError(msg, status_code=404)
     if message.startswith("NetworkFailed:"):
-        return HaiConnectionError(message[len("NetworkFailed:"):].strip())
+        return HaiConnectionError(message[len("NetworkFailed:") :].strip())
     if message.startswith("ApiError:"):
-        msg = message[len("ApiError:"):].strip()
+        msg = message[len("ApiError:") :].strip()
         # Try to extract status code
         match = re.search(r"status (\d+)", msg)
         status = int(match.group(1)) if match else None
@@ -65,13 +65,13 @@ def map_ffi_error(err: Exception) -> HaiError:
             return RecipientNotFound(msg, status_code=status or 400)
         return HaiApiError(msg, status_code=status or 0)
     if message.startswith("ConfigFailed:"):
-        return HaiError(message[len("ConfigFailed:"):].strip())
+        return HaiError(message[len("ConfigFailed:") :].strip())
     if message.startswith("SerializationFailed:"):
-        return HaiError(message[len("SerializationFailed:"):].strip())
+        return HaiError(message[len("SerializationFailed:") :].strip())
     if message.startswith("InvalidArgument:"):
-        return HaiError(message[len("InvalidArgument:"):].strip())
+        return HaiError(message[len("InvalidArgument:") :].strip())
     if message.startswith("ProviderError:"):
-        return HaiAuthError(message[len("ProviderError:"):].strip())
+        return HaiAuthError(message[len("ProviderError:") :].strip())
 
     return HaiError(message)
 
@@ -335,7 +335,9 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    def sign_image(self, in_path: str, out_path: str, opts: dict[str, Any]) -> dict[str, Any]:
+    def sign_image(
+        self, in_path: str, out_path: str, opts: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
             raw = self._native.sign_image_sync(in_path, out_path, json.dumps(opts))
             return json.loads(raw)
@@ -349,7 +351,9 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    def extract_media_signature(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+    def extract_media_signature(
+        self, path: str, opts: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
             raw = self._native.extract_media_signature_sync(path, json.dumps(opts))
             return json.loads(raw)
@@ -409,9 +413,13 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    def update_email_template(self, template_id: str, options: dict[str, Any]) -> dict[str, Any]:
+    def update_email_template(
+        self, template_id: str, options: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
-            raw = self._native.update_email_template_sync(template_id, json.dumps(options))
+            raw = self._native.update_email_template_sync(
+                template_id, json.dumps(options)
+            )
             return json.loads(raw)
         except RuntimeError as err:
             raise map_ffi_error(err) from err
@@ -484,7 +492,9 @@ class FFIAdapter:
 
     # --- Benchmarks ---
 
-    def benchmark(self, name: Optional[str] = None, tier: Optional[str] = None) -> dict[str, Any]:
+    def benchmark(
+        self, name: Optional[str] = None, tier: Optional[str] = None
+    ) -> dict[str, Any]:
         try:
             raw = self._native.benchmark_sync(name, tier)
             return json.loads(raw)
@@ -1051,7 +1061,9 @@ class AsyncFFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    async def sign_image(self, in_path: str, out_path: str, opts: dict[str, Any]) -> dict[str, Any]:
+    async def sign_image(
+        self, in_path: str, out_path: str, opts: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
             raw = await self._native.sign_image(in_path, out_path, json.dumps(opts))
             return json.loads(raw)
@@ -1065,7 +1077,9 @@ class AsyncFFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    async def extract_media_signature(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+    async def extract_media_signature(
+        self, path: str, opts: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
             raw = await self._native.extract_media_signature(path, json.dumps(opts))
             return json.loads(raw)
@@ -1125,9 +1139,13 @@ class AsyncFFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    async def update_email_template(self, template_id: str, options: dict[str, Any]) -> dict[str, Any]:
+    async def update_email_template(
+        self, template_id: str, options: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
-            raw = await self._native.update_email_template(template_id, json.dumps(options))
+            raw = await self._native.update_email_template(
+                template_id, json.dumps(options)
+            )
             return json.loads(raw)
         except RuntimeError as err:
             raise map_ffi_error(err) from err
@@ -1140,7 +1158,9 @@ class AsyncFFIAdapter:
 
     # --- Key Operations ---
 
-    async def fetch_remote_key(self, jacs_id: str, version: str = "latest") -> dict[str, Any]:
+    async def fetch_remote_key(
+        self, jacs_id: str, version: str = "latest"
+    ) -> dict[str, Any]:
         try:
             raw = await self._native.fetch_remote_key(jacs_id, version)
             return json.loads(raw)
@@ -1200,7 +1220,9 @@ class AsyncFFIAdapter:
 
     # --- Benchmarks ---
 
-    async def benchmark(self, name: Optional[str] = None, tier: Optional[str] = None) -> dict[str, Any]:
+    async def benchmark(
+        self, name: Optional[str] = None, tier: Optional[str] = None
+    ) -> dict[str, Any]:
         try:
             raw = await self._native.benchmark(name, tier)
             return json.loads(raw)
@@ -1333,9 +1355,7 @@ class AsyncFFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    async def query_by_type(
-        self, doc_type: str, limit: int, offset: int
-    ) -> list[str]:
+    async def query_by_type(self, doc_type: str, limit: int, offset: int) -> list[str]:
         # Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
         try:
             raw = await self._native.query_by_type(doc_type, limit, offset)
@@ -1353,9 +1373,7 @@ class AsyncFFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    async def query_by_agent(
-        self, agent_id: str, limit: int, offset: int
-    ) -> list[str]:
+    async def query_by_agent(self, agent_id: str, limit: int, offset: int) -> list[str]:
         # Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
         try:
             raw = await self._native.query_by_agent(agent_id, limit, offset)

@@ -60,7 +60,10 @@ class TestVerifyStringStandalone:
         agent, info = SimpleAgent.ephemeral("ed25519")
         sig = agent.sign_string("original")
         pub_pem = agent.get_public_key_pem()
-        assert verify_string("tampered", sig, pub_pem, algorithm=info["algorithm"]) is False
+        assert (
+            verify_string("tampered", sig, pub_pem, algorithm=info["algorithm"])
+            is False
+        )
 
     def test_wrong_key_returns_false(self) -> None:
         pytest.importorskip("jacs")
@@ -91,9 +94,11 @@ class TestVerifyStringStandalone:
         import base64
 
         priv = Ed25519PrivateKey.generate()
-        pub_pem = priv.public_key().public_bytes(
-            Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
-        ).decode()
+        pub_pem = (
+            priv.public_key()
+            .public_bytes(Encoding.PEM, PublicFormat.SubjectPublicKeyInfo)
+            .decode()
+        )
         msg = "x509 round-trip"
         sig_b64 = base64.b64encode(priv.sign(msg.encode())).decode()
         assert verify_string(msg, sig_b64, pub_pem, algorithm="ring-Ed25519") is True
@@ -125,9 +130,7 @@ class TestCanonicalizeJson:
 
 
 class TestCreateAgentDocument:
-    def test_creates_valid_doc(
-        self, jacs_agent: Any, loaded_config: None
-    ) -> None:
+    def test_creates_valid_doc(self, jacs_agent: Any, loaded_config: None) -> None:
         doc = create_agent_document(
             agent=jacs_agent,
             name="TestBot",
@@ -137,9 +140,7 @@ class TestCreateAgentDocument:
         assert "jacsSignature" in doc
         assert "jacsId" in doc
 
-    def test_signature_is_present(
-        self, jacs_agent: Any, loaded_config: None
-    ) -> None:
+    def test_signature_is_present(self, jacs_agent: Any, loaded_config: None) -> None:
         doc = create_agent_document(
             agent=jacs_agent,
             name="Bot",
@@ -150,9 +151,7 @@ class TestCreateAgentDocument:
         assert "signature" in jacs_sig
         assert jacs_sig["signature"]  # non-empty
 
-    def test_custom_jacs_id(
-        self, jacs_agent: Any, loaded_config: None
-    ) -> None:
+    def test_custom_jacs_id(self, jacs_agent: Any, loaded_config: None) -> None:
         doc = create_agent_document(
             agent=jacs_agent,
             name="B",
@@ -227,9 +226,7 @@ class TestSignResponse:
         assert "jacsSignature" in doc
         assert doc["jacsSignature"]["agentID"] == "a1"
 
-    def test_signature_is_present(
-        self, jacs_agent: Any, loaded_config: None
-    ) -> None:
+    def test_signature_is_present(self, jacs_agent: Any, loaded_config: None) -> None:
         payload = {"response": {"message": "test"}}
         result = sign_response(payload, jacs_agent, "id-1")
         doc = json.loads(result["signed_document"])
@@ -295,7 +292,9 @@ class TestErrorContract:
 
         config_mod.reset()
         pattern = contract["error_codes"]["JACS_NOT_LOADED"]["message_pattern"]
-        action_pattern = contract["error_codes"]["JACS_NOT_LOADED"]["action_hint_pattern"]
+        action_pattern = contract["error_codes"]["JACS_NOT_LOADED"][
+            "action_hint_pattern"
+        ]
         with pytest.raises(HaiError) as exc_info:
             canonicalize_json({"a": 1})
         err = exc_info.value

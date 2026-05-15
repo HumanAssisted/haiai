@@ -70,7 +70,10 @@ class TestHaiRegistrationResult:
 class TestHaiRegistrationPreview:
     def test_fields(self) -> None:
         p = HaiRegistrationPreview(
-            agent_id="a", agent_name="n", payload_json="{}", endpoint="/r",
+            agent_id="a",
+            agent_name="n",
+            payload_json="{}",
+            endpoint="/r",
             headers={"Content-Type": "application/json"},
         )
         assert p.endpoint == "/r"
@@ -121,7 +124,9 @@ class TestBaselineRunResult:
 
 class TestBenchmarkResult:
     def test_fields(self) -> None:
-        r = BenchmarkResult(success=True, suite="mediator", score=72.0, passed=8, total=10)
+        r = BenchmarkResult(
+            success=True, suite="mediator", score=72.0, passed=8, total=10
+        )
         assert r.failed == 0
         assert r.duration_ms == 0
 
@@ -135,7 +140,10 @@ class TestJobResponseResult:
 class TestAgentVerificationResult:
     def test_level_1(self) -> None:
         v = AgentVerificationResult(
-            valid=True, level=1, level_name="basic", agent_id="a1",
+            valid=True,
+            level=1,
+            level_name="basic",
+            agent_id="a1",
             jacs_valid=True,
         )
         assert v.valid
@@ -144,8 +152,13 @@ class TestAgentVerificationResult:
 
     def test_level_3(self) -> None:
         v = AgentVerificationResult(
-            valid=True, level=3, level_name="attested", agent_id="a2",
-            jacs_valid=True, dns_valid=True, hai_attested=True,
+            valid=True,
+            level=3,
+            level_name="attested",
+            agent_id="a2",
+            jacs_valid=True,
+            dns_valid=True,
+            hai_attested=True,
             hai_signatures=["ed25519"],
         )
         assert v.hai_signatures == ["ed25519"]
@@ -156,10 +169,16 @@ class TestEmailMessageFromDict:
 
     def test_from_dict_minimal(self) -> None:
         """Minimal dict produces valid EmailMessage with None for optional fields."""
-        m = EmailMessage.from_dict({
-            "id": "m1", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
-            "subject": "Hi", "body_text": "Body", "created_at": "2026-01-01T00:00:00Z",
-        })
+        m = EmailMessage.from_dict(
+            {
+                "id": "m1",
+                "from_address": "a@hai.ai",
+                "to_address": "b@hai.ai",
+                "subject": "Hi",
+                "body_text": "Body",
+                "created_at": "2026-01-01T00:00:00Z",
+            }
+        )
         assert m.id == "m1"
         assert m.body_text_clean is None
         assert m.quoted_text is None
@@ -176,40 +195,48 @@ class TestEmailMessageFromDict:
 
     def test_from_dict_with_hosted_evidence_fields(self) -> None:
         """from_dict parses hosted owner-auth, Musubi, and reputation fields."""
-        m = EmailMessage.from_dict({
-            "id": "m1",
-            "from_address": "owner@example.com",
-            "to_address": "agent@hai.ai",
-            "subject": "Status",
-            "body_text": "Show bounces",
-            "created_at": "2026-05-14T10:00:00Z",
-            "owner_mail_auth_passed": True,
-            "owner_mail_auth_method": "dkim_spf",
-            "owner_mail_auth_details": {"dkim": "pass", "spf": "pass"},
-            "email_summary": "Owner asked for recent bounces.",
-            "musubi_summary": {
-                "trust_vector": {"phishing": 0.05, "prompt_injection": 0.1},
-                "content_risk": "low",
-                "escalate": False,
-                "explanation": "Authenticated owner mail with low content risk.",
-            },
-            "sender_reputation": {
-                "score": 91.5,
-                "tier": "established",
-                "email_score": 89.0,
-                "hai_score": 94.0,
-            },
-        })
+        m = EmailMessage.from_dict(
+            {
+                "id": "m1",
+                "from_address": "owner@example.com",
+                "to_address": "agent@hai.ai",
+                "subject": "Status",
+                "body_text": "Show bounces",
+                "created_at": "2026-05-14T10:00:00Z",
+                "owner_mail_auth_passed": True,
+                "owner_mail_auth_method": "dkim_spf",
+                "owner_mail_auth_details": {"dkim": "pass", "spf": "pass"},
+                "email_summary": "Owner asked for recent bounces.",
+                "musubi_summary": {
+                    "trust_vector": {"phishing": 0.05, "prompt_injection": 0.1},
+                    "content_risk": "low",
+                    "escalate": False,
+                    "explanation": "Authenticated owner mail with low content risk.",
+                },
+                "sender_reputation": {
+                    "score": 91.5,
+                    "tier": "established",
+                    "email_score": 89.0,
+                    "hai_score": 94.0,
+                },
+            }
+        )
 
         assert m.owner_mail_auth_passed is True
         assert m.owner_mail_auth_method == "dkim_spf"
         assert m.owner_mail_auth_details == {"dkim": "pass", "spf": "pass"}
         assert m.email_summary == "Owner asked for recent bounces."
         assert isinstance(m.musubi_summary, MusubiSummary)
-        assert m.musubi_summary.trust_vector == {"phishing": 0.05, "prompt_injection": 0.1}
+        assert m.musubi_summary.trust_vector == {
+            "phishing": 0.05,
+            "prompt_injection": 0.1,
+        }
         assert m.musubi_summary.content_risk == "low"
         assert m.musubi_summary.escalate is False
-        assert m.musubi_summary.explanation == "Authenticated owner mail with low content risk."
+        assert (
+            m.musubi_summary.explanation
+            == "Authenticated owner mail with low content risk."
+        )
         assert isinstance(m.sender_reputation, EmailReputationInfo)
         assert m.sender_reputation.score == 91.5
         assert m.sender_reputation.tier == "established"
@@ -218,32 +245,45 @@ class TestEmailMessageFromDict:
 
     def test_from_dict_with_reply_text(self) -> None:
         """from_dict parses body_text_clean and quoted_text."""
-        m = EmailMessage.from_dict({
-            "id": "m1", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
-            "subject": "Re: Hi", "body_text": "New\n\n> Old",
-            "created_at": "2026-01-01T00:00:00Z",
-            "body_text_clean": "New",
-            "quoted_text": "Old",
-        })
+        m = EmailMessage.from_dict(
+            {
+                "id": "m1",
+                "from_address": "a@hai.ai",
+                "to_address": "b@hai.ai",
+                "subject": "Re: Hi",
+                "body_text": "New\n\n> Old",
+                "created_at": "2026-01-01T00:00:00Z",
+                "body_text_clean": "New",
+                "quoted_text": "Old",
+            }
+        )
         assert m.body_text_clean == "New"
         assert m.quoted_text == "Old"
 
     def test_from_dict_with_recursive_thread(self) -> None:
         """from_dict recursively parses thread entries as EmailMessage."""
-        m = EmailMessage.from_dict({
-            "id": "m2", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
-            "subject": "Re: Hi", "body_text": "Reply",
-            "created_at": "2026-01-01T01:00:00Z",
-            "body_text_clean": "Reply",
-            "thread": [
-                {
-                    "id": "m1", "from_address": "b@hai.ai", "to_address": "a@hai.ai",
-                    "subject": "Hi", "body_text": "Original",
-                    "created_at": "2026-01-01T00:00:00Z",
-                    "body_text_clean": "Original",
-                },
-            ],
-        })
+        m = EmailMessage.from_dict(
+            {
+                "id": "m2",
+                "from_address": "a@hai.ai",
+                "to_address": "b@hai.ai",
+                "subject": "Re: Hi",
+                "body_text": "Reply",
+                "created_at": "2026-01-01T01:00:00Z",
+                "body_text_clean": "Reply",
+                "thread": [
+                    {
+                        "id": "m1",
+                        "from_address": "b@hai.ai",
+                        "to_address": "a@hai.ai",
+                        "subject": "Hi",
+                        "body_text": "Original",
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "body_text_clean": "Original",
+                    },
+                ],
+            }
+        )
         assert m.thread is not None
         assert len(m.thread) == 1
         assert isinstance(m.thread[0], EmailMessage)
@@ -253,8 +293,14 @@ class TestEmailMessageFromDict:
 
     def test_from_dict_from_fallback(self) -> None:
         """from_dict falls back to 'from' key when 'from_address' is missing."""
-        m = EmailMessage.from_dict({
-            "id": "m1", "from": "sender@hai.ai", "to": "rcpt@hai.ai",
-            "subject": "X", "body_text": "Y", "created_at": "2026-01-01T00:00:00Z",
-        })
+        m = EmailMessage.from_dict(
+            {
+                "id": "m1",
+                "from": "sender@hai.ai",
+                "to": "rcpt@hai.ai",
+                "subject": "X",
+                "body_text": "Y",
+                "created_at": "2026-01-01T00:00:00Z",
+            }
+        )
         assert m.from_address == "sender@hai.ai"

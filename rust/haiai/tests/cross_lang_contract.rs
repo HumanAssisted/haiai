@@ -240,7 +240,7 @@ fn tamper_after(bytes: &mut [u8], marker: &[u8], offset: usize) {
 /// For a signed markdown file, mutate one body byte BEFORE the
 /// `-----BEGIN JACS SIGNATURE-----` block so verify reports HashMismatch
 /// rather than Malformed.
-fn tamper_text_body(bytes: &mut Vec<u8>) {
+fn tamper_text_body(bytes: &mut [u8]) {
     const MARKER: &[u8] = b"-----BEGIN JACS SIGNATURE-----";
     let body_end = bytes
         .windows(MARKER.len())

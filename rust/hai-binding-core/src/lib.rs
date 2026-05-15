@@ -3323,7 +3323,7 @@ mod tests {
         let (temp_dir, config_path) = write_temp_media_fixture_config();
         let wrapper = build_media_wrapper(&config_path);
         let in_path = temp_dir.path().join("in.png");
-        std::fs::write(&in_path, &make_media_test_png(32, 32)).expect("write");
+        std::fs::write(&in_path, make_media_test_png(32, 32)).expect("write");
         let out_path = temp_dir.path().join("out.png");
 
         let signed_json = wrapper
@@ -3348,7 +3348,7 @@ mod tests {
         let (temp_dir, config_path) = write_temp_media_fixture_config();
         let wrapper = build_media_wrapper(&config_path);
         let in_path = temp_dir.path().join("in.png");
-        std::fs::write(&in_path, &make_media_test_png(32, 32)).expect("write");
+        std::fs::write(&in_path, make_media_test_png(32, 32)).expect("write");
         let out_path = temp_dir.path().join("out.png");
         wrapper
             .sign_image(in_path.to_str().unwrap(), out_path.to_str().unwrap(), "{}")
@@ -3385,7 +3385,7 @@ mod tests {
         let (temp_dir, config_path) = write_temp_media_fixture_config();
         let wrapper = build_media_wrapper(&config_path);
         let in_path = temp_dir.path().join("in.png");
-        std::fs::write(&in_path, &make_media_test_png(32, 32)).expect("write");
+        std::fs::write(&in_path, make_media_test_png(32, 32)).expect("write");
         let out_path = temp_dir.path().join("out.png");
         wrapper
             .sign_image(in_path.to_str().unwrap(), out_path.to_str().unwrap(), "{}")
@@ -3422,7 +3422,7 @@ mod tests {
             HaiClientWrapper::from_config_json_auto(r#"{"jacs_id":"static-only"}"#).expect("ok");
         let dir = tempfile::tempdir().unwrap();
         let in_path = dir.path().join("a.png");
-        std::fs::write(&in_path, &make_media_test_png(32, 32)).unwrap();
+        std::fs::write(&in_path, make_media_test_png(32, 32)).unwrap();
         let result = wrapper
             .sign_image(
                 in_path.to_str().unwrap(),

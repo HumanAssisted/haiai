@@ -102,9 +102,7 @@ def parse_transcript(raw_messages: list[dict[str, Any]]) -> list[TranscriptMessa
     ]
 
 
-def parse_public_key_info(
-    data: dict[str, Any], **defaults: Any
-) -> PublicKeyInfo:
+def parse_public_key_info(data: dict[str, Any], **defaults: Any) -> PublicKeyInfo:
     """Parse a PublicKeyInfo from an FFI response dict."""
     return PublicKeyInfo(
         jacs_id=data.get("jacs_id", defaults.get("jacs_id", "")),

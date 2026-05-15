@@ -79,7 +79,7 @@ pub fn build_hidden_jacs_envelope(
 pub fn validate_hidden_jacs_envelope_size(
     hidden_jacs_envelope: &str,
 ) -> crate::error::Result<usize> {
-    let size_bytes = hidden_jacs_envelope.as_bytes().len();
+    let size_bytes = hidden_jacs_envelope.len();
     if size_bytes >= HAI_HIDDEN_ENVELOPE_MAX_BYTES {
         return Err(crate::error::HaiError::Validation {
             field: "hidden_jacs_envelope".to_string(),

@@ -27,21 +27,12 @@ from haiai import _client_shared
 from haiai._ffi_adapter import AsyncFFIAdapter
 from haiai.signing import canonicalize_json, create_agent_document  # noqa: F401
 from haiai.errors import (
-    BenchmarkError,
-    BodyTooLarge,
-    EmailNotActive,
-    HaiApiError,
     HaiAuthError,
     HaiConnectionError,
     HaiError,
-    RateLimited,
-    RecipientNotFound,
-    RegistrationError,
-    SubjectTooLong,
 )
 from haiai._retry import RETRY_MAX_ATTEMPTS, backoff
 from haiai.models import (
-    BaselineRunResult,
     BenchmarkResult,
     ChainEntry,
     Contact,
@@ -105,6 +96,7 @@ class AsyncHaiClient:
         """Lazily create the async FFI adapter."""
         if self._ffi is None:
             from haiai.client import _build_ffi_config
+
             self._ffi = AsyncFFIAdapter(_build_ffi_config())
         return self._ffi
 
@@ -153,7 +145,9 @@ class AsyncHaiClient:
         return _client_shared.build_auth_headers()
 
     @staticmethod
-    def _parse_transcript(raw_messages: list[dict[str, Any]]) -> list[TranscriptMessage]:
+    def _parse_transcript(
+        raw_messages: list[dict[str, Any]],
+    ) -> list[TranscriptMessage]:
         return _client_shared.parse_transcript(raw_messages)
 
     @staticmethod
@@ -252,7 +246,9 @@ class AsyncHaiClient:
             agent = get_agent()
             pub_pem = _read_public_key_pem(cfg)
             agent_doc = create_agent_document(
-                agent=agent, name=cfg.name, version=cfg.version,
+                agent=agent,
+                name=cfg.name,
+                version=cfg.version,
             )
             agent_json = json.dumps(agent_doc, indent=2)
             if public_key is None:
@@ -260,9 +256,9 @@ class AsyncHaiClient:
 
         payload: dict[str, Any] = {"agent_json": agent_json}
         if public_key is not None:
-            payload["public_key"] = base64.b64encode(
-                public_key.encode("utf-8")
-            ).decode("utf-8")
+            payload["public_key"] = base64.b64encode(public_key.encode("utf-8")).decode(
+                "utf-8"
+            )
         if owner_email is not None:
             payload["owner_email"] = owner_email
 
@@ -274,7 +270,10 @@ class AsyncHaiClient:
                 agent_name=cfg.name,
                 payload_json=json.dumps(payload, indent=2),
                 endpoint=url,
-                headers={"Content-Type": "application/json", "Authorization": "JACS ***"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": "JACS ***",
+                },
             )
 
         ffi = self._get_ffi()
@@ -426,9 +425,7 @@ class AsyncHaiClient:
             success=True,
             run_id=data.get("run_id", data.get("runId", "")),
             transcript=transcript,
-            upsell_message=data.get(
-                "upsell_message", data.get("upsellMessage", "")
-            ),
+            upsell_message=data.get("upsell_message", data.get("upsellMessage", "")),
             raw_response=data,
         )
 
@@ -447,10 +444,12 @@ class AsyncHaiClient:
             response_body["metadata"] = metadata
         response_body["processing_time_ms"] = processing_time_ms
 
-        data = await ffi.submit_response({
-            "job_id": job_id,
-            "response": response_body,
-        })
+        data = await ffi.submit_response(
+            {
+                "job_id": job_id,
+                "response": response_body,
+            }
+        )
 
         return JobResponseResult(
             success=data.get("success", True),
@@ -478,8 +477,8 @@ class AsyncHaiClient:
             timeout=self._timeout,
             verify_server_signatures=self._verify_server_signatures,
         )
-        sync_client._hai_url = self._hai_url or hai_url or ''
-        sync_client._hai_agent_id = self._hai_agent_id or ''
+        sync_client._hai_url = self._hai_url or hai_url or ""
+        sync_client._hai_agent_id = self._hai_agent_id or ""
 
         return await asyncio.to_thread(
             sync_client.rotate_keys,
@@ -536,7 +535,9 @@ class AsyncHaiClient:
             options["labels"] = labels
 
         data = await ffi.send_email(options)
-        return SendEmailResult(message_id=data.get("message_id", ""), status=data.get("status", "sent"))
+        return SendEmailResult(
+            message_id=data.get("message_id", ""), status=data.get("status", "sent")
+        )
 
     async def send_signed_email(
         self,
@@ -596,6 +597,7 @@ class AsyncHaiClient:
     async def sign_email(self, hai_url: str, raw_email: bytes) -> bytes:
         """Sign a raw RFC 5822 email via the HAI server."""
         import email.message
+
         if isinstance(raw_email, email.message.EmailMessage):
             raw_email = raw_email.as_bytes()
 
@@ -734,9 +736,12 @@ class AsyncHaiClient:
             payload=data.get("payload"),
         )
 
-    async def verify_email(self, hai_url: str, raw_email: bytes) -> EmailVerificationResultV2:
+    async def verify_email(
+        self, hai_url: str, raw_email: bytes
+    ) -> EmailVerificationResultV2:
         """Verify a JACS-signed email via the HAI API."""
         import email.message
+
         if isinstance(raw_email, email.message.EmailMessage):
             raw_email = raw_email.as_bytes()
 
@@ -1012,11 +1017,13 @@ class AsyncHaiClient:
     ) -> list[str]:
         """Update labels on an email message."""
         ffi = self._get_ffi()
-        data = await ffi.update_labels({
-            "message_id": message_id,
-            "add": add or [],
-            "remove": remove or [],
-        })
+        data = await ffi.update_labels(
+            {
+                "message_id": message_id,
+                "add": add or [],
+                "remove": remove or [],
+            }
+        )
         return data.get("labels", [])
 
     async def contacts(self, hai_url: str) -> list[Contact]:
@@ -1115,14 +1122,19 @@ class AsyncHaiClient:
     # ------------------------------------------------------------------
 
     async def fetch_remote_key(
-        self, hai_url: str, jacs_id: str, version: str = "latest",
+        self,
+        hai_url: str,
+        jacs_id: str,
+        version: str = "latest",
     ) -> PublicKeyInfo:
         """Fetch another agent's public key from HAI."""
         ffi = self._get_ffi()
         data = await ffi.fetch_remote_key(jacs_id, version)
         return self._parse_public_key_info(data, jacs_id=jacs_id, version=version)
 
-    async def fetch_key_by_hash(self, hai_url: str, public_key_hash: str) -> PublicKeyInfo:
+    async def fetch_key_by_hash(
+        self, hai_url: str, public_key_hash: str
+    ) -> PublicKeyInfo:
         """Fetch an agent's public key by its SHA-256 hash."""
         ffi = self._get_ffi()
         data = await ffi.fetch_key_by_hash(public_key_hash)
@@ -1169,7 +1181,9 @@ class AsyncHaiClient:
         """Verify an agent document via HAI's advanced verification endpoint."""
         ffi = self._get_ffi()
         request: dict[str, Any] = {
-            "agent_json": agent_json if isinstance(agent_json, str) else json.dumps(agent_json),
+            "agent_json": agent_json
+            if isinstance(agent_json, str)
+            else json.dumps(agent_json),
         }
         if public_key is not None:
             request["public_key"] = public_key
@@ -1182,7 +1196,10 @@ class AsyncHaiClient:
     # ------------------------------------------------------------------
 
     async def connect(
-        self, hai_url: str, *, transport: str = "sse",
+        self,
+        hai_url: str,
+        *,
+        transport: str = "sse",
     ) -> AsyncIterator[HaiEvent]:
         """Connect to HAI and yield events asynchronously via FFI."""
         if transport not in ("sse", "ws"):
@@ -1291,9 +1308,7 @@ class AsyncHaiClient:
         """Tombstone a document."""
         await self._get_ffi().remove_document(key)
 
-    async def update_document(
-        self, doc_id: str, signed_json: str
-    ) -> dict[str, Any]:
+    async def update_document(self, doc_id: str, signed_json: str) -> dict[str, Any]:
         """Update a document, creating a new signed version."""
         return await self._get_ffi().update_document(doc_id, signed_json)
 

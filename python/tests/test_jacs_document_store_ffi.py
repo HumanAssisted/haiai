@@ -40,11 +40,17 @@ class TestD5MemorySoulWrappers:
     """Each D5 method round-trips through MockFFIAdapter and records the
     expected call signature."""
 
-    def test_save_memory_records_call_with_content(self, mock_ffi: MockFFIAdapter) -> None:
+    def test_save_memory_records_call_with_content(
+        self, mock_ffi: MockFFIAdapter
+    ) -> None:
         mock_ffi.responses["save_memory"] = "mem-id:v1"
         key = mock_ffi.save_memory("# MEMORY.md\n\nproject: foo")
         assert key == "mem-id:v1"
-        assert mock_ffi.calls[-1] == ("save_memory", ("# MEMORY.md\n\nproject: foo",), {})
+        assert mock_ffi.calls[-1] == (
+            "save_memory",
+            ("# MEMORY.md\n\nproject: foo",),
+            {},
+        )
 
     def test_save_memory_records_call_with_none_content(
         self, mock_ffi: MockFFIAdapter
@@ -56,7 +62,9 @@ class TestD5MemorySoulWrappers:
         assert key == "mem-id:v2"
         assert mock_ffi.calls[-1] == ("save_memory", (None,), {})
 
-    def test_save_soul_records_call_with_content(self, mock_ffi: MockFFIAdapter) -> None:
+    def test_save_soul_records_call_with_content(
+        self, mock_ffi: MockFFIAdapter
+    ) -> None:
         mock_ffi.responses["save_soul"] = "soul-id:v1"
         key = mock_ffi.save_soul("# SOUL.md\n\nvoice: terse")
         assert key == "soul-id:v1"
@@ -112,9 +120,7 @@ class TestD9TypedContentHelpers:
         assert mock_ffi.calls[-1] == ("store_image_file", ("/tmp/signed.png",), {})
 
     def test_get_record_bytes_returns_bytes(self, mock_ffi: MockFFIAdapter) -> None:
-        png_magic = bytes(
-            [0x89, ord("P"), ord("N"), ord("G"), 0x0D, 0x0A, 0x1A, 0x0A]
-        )
+        png_magic = bytes([0x89, ord("P"), ord("N"), ord("G"), 0x0D, 0x0A, 0x1A, 0x0A])
         mock_ffi.responses["get_record_bytes"] = png_magic
         out = mock_ffi.get_record_bytes("png-id:v1")
         assert out == png_magic
@@ -228,13 +234,13 @@ class TestD5D9MethodsAreInParityFixture:
     def test_all_d5_methods_appear_in_parity(self) -> None:
         parity = self._load_parity_methods()
         for name in self.EXPECTED_D5_METHODS:
-            assert (
-                name in parity
-            ), f"D5 method {name!r} missing from ffi_method_parity.json"
+            assert name in parity, (
+                f"D5 method {name!r} missing from ffi_method_parity.json"
+            )
 
     def test_all_d9_methods_appear_in_parity(self) -> None:
         parity = self._load_parity_methods()
         for name in self.EXPECTED_D9_METHODS:
-            assert (
-                name in parity
-            ), f"D9 method {name!r} missing from ffi_method_parity.json"
+            assert name in parity, (
+                f"D9 method {name!r} missing from ffi_method_parity.json"
+            )

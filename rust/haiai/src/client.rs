@@ -2259,13 +2259,6 @@ impl EmptyFallback for String {
     }
 }
 
-/// Compute the v2 content hash for an email (subject + body + sorted attachment hashes).
-///
-/// **DEPRECATED**: This function supports the legacy v2 header-based signing flow
-/// used by `send_email`. It will be removed when `send_email` is updated to use
-/// JACS attachment-based signing (TASK_014).
-///
-/// Formula:
 // =============================================================================
 // HaiClient<P> passthroughs for JacsMediaProvider (Layer 8)
 // =============================================================================

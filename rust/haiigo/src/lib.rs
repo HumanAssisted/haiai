@@ -1,3 +1,4 @@
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 //! Go C FFI binding for HAI SDK.
 //!
 //! Produces a cdylib (`libhaiigo.dylib`/`.so`) loaded by Go via CGo or purego.
@@ -956,10 +957,7 @@ pub extern "C" fn hai_connect_sse(handle: HaiClientHandle) -> u64 {
             let r = client.connect_sse().await;
             let _ = tx.send(r);
         });
-        match rx.recv().unwrap() {
-            Ok(h) => h,
-            Err(_) => 0,
-        }
+        rx.recv().unwrap().unwrap_or_default()
     }));
     result.unwrap_or(0)
 }
@@ -1009,10 +1007,7 @@ pub extern "C" fn hai_connect_ws(handle: HaiClientHandle) -> u64 {
             let r = client.connect_ws().await;
             let _ = tx.send(r);
         });
-        match rx.recv().unwrap() {
-            Ok(h) => h,
-            Err(_) => 0,
-        }
+        rx.recv().unwrap().unwrap_or_default()
     }));
     result.unwrap_or(0)
 }
@@ -1521,7 +1516,7 @@ pub extern "C" fn hai_free_bytes(ptr: *mut u8, len: usize) {
         return;
     }
     let _ = std::panic::catch_unwind(|| unsafe {
-        let _ = Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
+        let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len));
     });
 }
 
