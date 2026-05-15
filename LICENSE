@@ -1,6 +1,84 @@
-This project is dual-licensed under Apache-2.0 OR MIT, at your option.
+SPDX-License-Identifier: BUSL-1.1
 
-- Apache License, Version 2.0: see LICENSE-APACHE or https://www.apache.org/licenses/LICENSE-2.0
-- MIT License: see LICENSE-MIT or https://opensource.org/licenses/MIT
+Business Source License 1.1
 
-Copyright 2024, 2025, 2026 Human Assisted Intelligence, PBC
+Parameters
+
+Licensor:             Human Assisted Intelligence, Inc.
+
+Licensed Work:        haiai
+
+                      The Licensed Work includes all source code,
+                      documentation, examples, tools, SDKs, configuration
+                      files, and other materials distributed by Licensor as
+                      part of haiai, except for any file or component that
+                      expressly states that it is governed by a different
+                      license.
+
+                      The Licensed Work is Copyright (c) 2026
+                      Human Assisted Intelligence, Inc.
+
+Additional Use Grant: You may make production use of the Licensed Work,
+                      provided that your use does not include offering the
+                      Licensed Work, or any modified, derivative, reconfigured,
+                      hosted, embedded, or managed version of the Licensed Work,
+                      to third parties as part of a Competing Offering.
+
+                      A "Competing Offering" means a commercial product or
+                      service whose primary purpose is to provide dialogue
+                      progress measurement, conflict resolution benchmarking,
+                      mediator evaluation, or substantially similar
+                      functionality that competes with Licensor's commercial
+                      products or services.
+
+                      For clarity, the following uses are permitted and do not
+                      constitute a Competing Offering:
+
+                      (a) using the Licensed Work as a client to access
+                          Licensor's commercial services;
+
+                      (b) internal use within your organization, including
+                          research, development, evaluation, testing,
+                          analytics, and production workflows, so long as the
+                          use is not part of a Competing Offering;
+
+                      (c) personal, educational, academic, or non-commercial
+                          research use;
+
+                      (d) incorporating the Licensed Work into an application,
+                          product, or service whose primary purpose is distinct
+                          from a Competing Offering, even if that application,
+                          product, or service is offered commercially;
+
+                      (e) modifying the Licensed Work and contributing those
+                          modifications back to Licensor.
+
+                      A product or service may be a Competing Offering even if
+                      the Licensed Work has been modified, reconfigured, or
+                      connected to a backend, API, model, database, or service
+                      other than one operated by Licensor.
+
+                      A product or service that is not a Competing Offering
+                      when first made generally available will not become a
+                      Competing Offering solely because Licensor later releases
+                      new products, services, or features.
+
+Change Date:          Four years from the date the applicable version of the
+                      Licensed Work is first made publicly available by
+                      Licensor under this License.
+
+Change License:       GNU Affero General Public License, Version 3.0 or later
+                      (AGPL-3.0-or-later)
+
+Alternative Licensing: For commercial licenses, private licensing terms, or
+                      other licensing arrangements, contact:
+
+                      licensing@hai.ai
+
+
+Notice
+
+This software is source-available under the Business Source License 1.1.
+It is not Open Source before the Change Date. On the Change Date, the
+applicable version of the Licensed Work will become available under the
+Change License listed above.
