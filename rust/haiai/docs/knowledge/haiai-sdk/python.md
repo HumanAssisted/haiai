@@ -155,4 +155,4 @@ Working example: `examples/a2a_quickstart.py`.
 
 ## License
 
-Apache-2.0 OR MIT
+BUSL-1.1 — see [LICENSE](../LICENSE) for details.

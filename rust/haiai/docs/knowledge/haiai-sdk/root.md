@@ -138,4 +138,4 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for SDK usage, Rust library integration, an
 
 ## License
 
-Apache-2.0 OR MIT — see [LICENSE](LICENSE) for details.
+BUSL-1.1 — see [LICENSE](LICENSE) for details.

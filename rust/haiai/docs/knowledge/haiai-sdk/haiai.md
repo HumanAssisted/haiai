@@ -143,4 +143,4 @@ haiai = { version = "0.1.2", features = ["agreements", "attestation"] }
 
 ## License
 
-Apache-2.0 OR MIT
+BUSL-1.1 — see [LICENSE](../../LICENSE) for details.

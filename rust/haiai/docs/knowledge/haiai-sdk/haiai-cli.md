@@ -169,4 +169,4 @@ Plus all JACS tools from [jacs-mcp](https://crates.io/crates/jacs-mcp) (signing,
 
 ## License
 
-Apache-2.0 OR MIT
+BUSL-1.1 — see [LICENSE](../../LICENSE) for details.

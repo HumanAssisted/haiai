@@ -1,3 +1,10 @@
+# Copyright (c) 2026 Human Assisted Intelligence, Inc.
+#
+# Use of this software is governed by the Business Source License 1.1
+# included in the LICENSE file.
+#
+# SPDX-License-Identifier: BUSL-1.1
+
 """HaiClient -- full-featured client for the HAI benchmark platform.
 
 All HTTP-based API calls delegate to the FFI adapter (haiipy binding-core).

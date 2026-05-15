@@ -138,4 +138,4 @@ Both backends produce compatible Ed25519 signatures.
 
 ## License
 
-Apache-2.0 OR MIT
+BUSL-1.1 — see [LICENSE](../LICENSE) for details.
