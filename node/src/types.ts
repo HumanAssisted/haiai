@@ -387,6 +387,8 @@ export interface SendEmailOptions {
   bcc?: string[];
   /** Labels/tags for the message. */
   labels?: string[];
+  /** Stable key for one logical send; reused by Rust core across retries. */
+  idempotencyKey?: string;
   /** Signed email generation type. Defaults to html_inline_jacs. */
   generationType?: EmailGenerationType;
 }

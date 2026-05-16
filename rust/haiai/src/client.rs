@@ -89,6 +89,7 @@ pub const DEFAULT_DNS_RESOLVER: &str = "https://dns.google/resolve";
 /// Header name for SDK client identification. The API repo defines its own
 /// matching constant -- keep them in sync.
 pub const HAI_CLIENT_HEADER: &str = "x-hai-client";
+const IDEMPOTENCY_KEY_HEADER: &str = "Idempotency-Key";
 
 #[derive(Debug, Clone)]
 pub struct HaiClientOptions {
@@ -241,20 +242,20 @@ impl<P: JacsProvider> HaiClient<P> {
         }
 
         let url = self.url("/api/v1/agents/hello");
-        let auth = self.build_auth_header()?;
         let response = self
             .request_with_retry(|| {
                 let http = &self.http;
                 let url = &url;
-                let auth = &auth;
                 let payload = &payload;
                 async move {
+                    let auth = self.build_auth_header()?;
                     http.post(url.as_str())
                         .header("Authorization", auth.as_str())
                         .header("Content-Type", "application/json")
                         .json(payload)
                         .send()
                         .await
+                        .map_err(HaiError::from)
                 }
             })
             .await?;
@@ -321,6 +322,7 @@ impl<P: JacsProvider> HaiClient<P> {
                         .json(body)
                         .send()
                         .await
+                        .map_err(HaiError::from)
                 }
             })
             .await?;
@@ -541,76 +543,7 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     pub async fn send_email(&self, options: &SendEmailOptions) -> Result<SendEmailResult> {
-        // Validate agent_email is set before sending.
-        let _ = self.agent_email.as_deref().ok_or_else(|| {
-            HaiError::Message("agent email not set — register with a username first".into())
-        })?;
-        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
-        let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/send"));
-
-        // Defensive: strip CR/LF from subject to prevent header injection
-        // (e.g. from email header folding in stored inbound subjects).
-        let safe_subject = crate::mime::sanitize_header(&options.subject);
-
-        // Server handles JACS signing — client only sends content fields.
-        let mut payload = json!({
-            "to": options.to,
-            "subject": safe_subject,
-            "body": options.body,
-        });
-        if !options.cc.is_empty() {
-            payload["cc"] = json!(options.cc);
-        }
-        if !options.bcc.is_empty() {
-            payload["bcc"] = json!(options.bcc);
-        }
-        if !options.labels.is_empty() {
-            payload["labels"] = json!(options.labels);
-        }
-        if let Some(ref in_reply_to) = options.in_reply_to {
-            payload["in_reply_to"] = Value::String(in_reply_to.clone());
-        }
-        if !options.attachments.is_empty() {
-            use base64::Engine;
-            let att_json: Vec<Value> = options
-                .attachments
-                .iter()
-                .map(|att| {
-                    json!({
-                        "filename": att.filename,
-                        "content_type": att.content_type,
-                        "data_base64": att.data_base64.clone().unwrap_or_else(|| {
-                            base64::engine::general_purpose::STANDARD.encode(&att.data)
-                        }),
-                    })
-                })
-                .collect();
-            payload["attachments"] = Value::Array(att_json);
-        }
-
-        let auth = self.build_auth_header()?;
-        let response = self
-            .request_with_retry(|| {
-                let http = &self.http;
-                let url = &url;
-                let auth = &auth;
-                let payload = &payload;
-                async move {
-                    http.post(url.as_str())
-                        .header("Authorization", auth.as_str())
-                        .header("Content-Type", "application/json")
-                        .json(payload)
-                        .send()
-                        .await
-                }
-            })
-            .await?;
-
-        let data = response_json(response).await?;
-        Ok(SendEmailResult {
-            message_id: value_string(&data, &["message_id"]),
-            status: value_string(&data, &["status"]),
-        })
+        self.send_signed_email(options).await
     }
 
     /// Send an agent-signed email.
@@ -642,18 +575,31 @@ impl<P: JacsProvider> HaiClient<P> {
         generation_type: EmailGenerationType,
     ) -> Result<SendEmailResult> {
         let signed_email = self.create_signed_email(options, generation_type)?;
+        let idempotency_key = send_idempotency_key(options);
 
         // Step 3: POST to the send-signed endpoint
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/send-signed"));
+        let raw_email = signed_email.raw_email;
 
         let response = self
-            .http
-            .post(url)
-            .header("Authorization", self.build_auth_header()?)
-            .header("Content-Type", "message/rfc822")
-            .body(signed_email.raw_email)
-            .send()
+            .request_with_retry(|| {
+                let http = &self.http;
+                let url = &url;
+                let raw_email = &raw_email;
+                let idempotency_key = &idempotency_key;
+                async move {
+                    let auth = self.build_auth_header()?;
+                    http.post(url.as_str())
+                        .header("Authorization", auth.as_str())
+                        .header(IDEMPOTENCY_KEY_HEADER, idempotency_key.as_str())
+                        .header("Content-Type", "message/rfc822")
+                        .body(raw_email.clone())
+                        .send()
+                        .await
+                        .map_err(HaiError::from)
+                }
+            })
             .await?;
 
         let data = response_json(response).await?;
@@ -1605,20 +1551,20 @@ impl<P: JacsProvider> HaiClient<P> {
             "tier": tier.unwrap_or("free"),
         });
         let url = self.url("/api/benchmark/run");
-        let auth = self.build_auth_header()?;
         let response = self
             .request_with_retry(|| {
                 let http = &self.http;
                 let url = &url;
-                let auth = &auth;
                 let payload = &payload;
                 async move {
+                    let auth = self.build_auth_header()?;
                     http.post(url.as_str())
                         .header("Authorization", auth.as_str())
                         .header("Content-Type", "application/json")
                         .json(payload)
                         .send()
                         .await
+                        .map_err(HaiError::from)
                 }
             })
             .await?;
@@ -2035,13 +1981,10 @@ impl<P: JacsProvider> HaiClient<P> {
     /// The closure must build and send a request, returning a `reqwest::Response`.
     /// On success or non-retryable error the response is returned immediately.
     /// Transport-level errors (e.g. DNS, connection refused) are NOT retried.
-    async fn request_with_retry<F, Fut>(
-        &self,
-        mut make_request: F,
-    ) -> std::result::Result<Response, reqwest::Error>
+    async fn request_with_retry<F, Fut>(&self, mut make_request: F) -> Result<Response>
     where
         F: FnMut() -> Fut,
-        Fut: Future<Output = std::result::Result<Response, reqwest::Error>>,
+        Fut: Future<Output = Result<Response>>,
     {
         for attempt in 0..self.max_retries {
             let response = make_request().await?;
@@ -2064,6 +2007,15 @@ impl<P: JacsProvider> HaiClient<P> {
         // max_retries is always >= 1 (enforced in new()), so this is unreachable
         unreachable!("max_retries is always >= 1")
     }
+}
+
+fn send_idempotency_key(options: &SendEmailOptions) -> String {
+    options
+        .idempotency_key
+        .as_deref()
+        .filter(|key| !key.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
 }
 
 fn normalize_path(path: &str) -> String {
@@ -2391,6 +2343,7 @@ mod tests {
                     attachments: vec![],
                     labels: vec![],
                     append_footer: None,
+                    idempotency_key: None,
                 },
                 EmailGenerationType::AttachmentJacs,
             )
@@ -2460,6 +2413,7 @@ mod tests {
                     attachments: vec![],
                     labels: vec![],
                     append_footer: None,
+                    idempotency_key: None,
                 },
                 EmailGenerationType::AttachmentJacs,
             )

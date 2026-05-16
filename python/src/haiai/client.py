@@ -1234,6 +1234,7 @@ class HaiClient:
         cc: Optional[list[str]] = None,
         bcc: Optional[list[str]] = None,
         labels: Optional[list[str]] = None,
+        idempotency_key: Optional[str] = None,
     ) -> SendEmailResult:
         """Send an email from this agent's @hai.ai address."""
         if not to:
@@ -1259,6 +1260,8 @@ class HaiClient:
             options["bcc"] = bcc
         if labels:
             options["labels"] = labels
+        if idempotency_key is not None:
+            options["idempotency_key"] = idempotency_key
         if attachments:
             options["attachments"] = [
                 {
@@ -1454,6 +1457,7 @@ class HaiClient:
         bcc: Optional[list[str]] = None,
         labels: Optional[list[str]] = None,
         generation_type: str = "html_inline_jacs",
+        idempotency_key: Optional[str] = None,
     ) -> SendEmailResult:
         """Send an agent-signed email.
 
@@ -1485,6 +1489,8 @@ class HaiClient:
             options["bcc"] = bcc
         if labels:
             options["labels"] = labels
+        if idempotency_key is not None:
+            options["idempotency_key"] = idempotency_key
         if attachments:
             options["attachments"] = [
                 {

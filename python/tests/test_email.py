@@ -99,6 +99,26 @@ class TestSendEmailServerSideSigning:
         assert "jacs_signature" not in options
         assert "jacs_timestamp" not in options
 
+    def test_send_email_passes_idempotency_key(
+        self,
+        loaded_config: None,
+    ) -> None:
+        """send_email forwards idempotency_key to Rust core."""
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["send_email"] = {"message_id": "msg-idem", "status": "sent"}
+
+        client.send_email(
+            BASE_URL,
+            "bob@hai.ai",
+            "Hello",
+            "World",
+            idempotency_key="send-key-123",
+        )
+
+        options = mock_ffi.calls[0][1][0]
+        assert options["idempotency_key"] == "send-key-123"
+
     def test_send_email_passes_in_reply_to(
         self,
         loaded_config: None,
@@ -871,6 +891,29 @@ class TestSendSignedEmail:
         assert mock_ffi.calls[0][0] == "send_signed_email"
         options = mock_ffi.calls[0][1][0]
         assert options["generation_type"] == "html_inline_jacs"
+
+    def test_send_signed_email_passes_idempotency_key(
+        self,
+        loaded_config: None,
+    ) -> None:
+        """send_signed_email forwards idempotency_key to Rust core."""
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["send_signed_email"] = {
+            "message_id": "msg-idem-signed",
+            "status": "sent",
+        }
+
+        client.send_signed_email(
+            BASE_URL,
+            "bob@hai.ai",
+            "Hello Signed",
+            "Signed body",
+            idempotency_key="signed-key-123",
+        )
+
+        options = mock_ffi.calls[0][1][0]
+        assert options["idempotency_key"] == "signed-key-123"
 
     def test_send_signed_email_delegates_to_send_email(
         self,

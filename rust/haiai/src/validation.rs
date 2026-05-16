@@ -237,6 +237,7 @@ mod tests {
             attachments: vec![],
             labels: vec![],
             append_footer: None,
+            idempotency_key: None,
         }
     }
 
@@ -328,6 +329,7 @@ mod tests {
             attachments: vec![],
             labels: vec![],
             append_footer: None,
+            idempotency_key: None,
         };
         assert!(validate_send_email(&opts).is_ok());
     }

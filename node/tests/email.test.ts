@@ -42,6 +42,26 @@ describe('sendEmail server-side signing', () => {
     expect(capturedOptions!.jacs_signature).toBeUndefined();
     expect(capturedOptions!.jacs_timestamp).toBeUndefined();
   });
+
+  it('passes idempotencyKey to Rust core as idempotency_key', async () => {
+    const client = await makeClient();
+    let capturedOptions: Record<string, unknown> | null = null;
+
+    const sendEmailMock = vi.fn(async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return { message_id: 'msg-idem', status: 'queued' };
+    });
+    client._setFFIAdapter(createMockFFI({ sendEmail: sendEmailMock }));
+
+    await client.sendEmail({
+      to: 'bob@hai.ai',
+      subject: 'Hello',
+      body: 'World',
+      idempotencyKey: 'send-key-123',
+    });
+
+    expect(capturedOptions!.idempotency_key).toBe('send-key-123');
+  });
 });
 
 describe('getMessage', () => {
@@ -522,6 +542,26 @@ describe('sendSignedEmail', () => {
     expect(result.messageId).toBe('msg-inline-1');
     expect(result.status).toBe('sent');
     expect(capturedOptions!.generation_type).toBe('html_inline_jacs');
+  });
+
+  it('passes idempotencyKey to Rust core for signed sends', async () => {
+    const client = await makeClient();
+    let capturedOptions: Record<string, unknown> | null = null;
+
+    const sendSignedEmailMock = vi.fn(async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return { message_id: 'msg-idem-signed', status: 'sent' };
+    });
+    client._setFFIAdapter(createMockFFI({ sendSignedEmail: sendSignedEmailMock }));
+
+    await client.sendSignedEmail({
+      to: 'bob@hai.ai',
+      subject: 'Hello Signed',
+      body: 'Signed body',
+      idempotencyKey: 'signed-key-123',
+    });
+
+    expect(capturedOptions!.idempotency_key).toBe('signed-key-123');
   });
 
   it('calls FFI sendSignedEmail for client-side JACS signing', async () => {

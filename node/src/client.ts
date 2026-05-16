@@ -1205,6 +1205,7 @@ export class HaiClient {
     if (options.cc?.length) emailOptions.cc = options.cc;
     if (options.bcc?.length) emailOptions.bcc = options.bcc;
     if (options.labels?.length) emailOptions.labels = options.labels;
+    if (options.idempotencyKey) emailOptions.idempotency_key = options.idempotencyKey;
 
     const data = await this.ffi.sendEmail(emailOptions);
 
@@ -1260,6 +1261,7 @@ export class HaiClient {
     if (options.cc?.length) emailOptions.cc = options.cc;
     if (options.bcc?.length) emailOptions.bcc = options.bcc;
     if (options.labels?.length) emailOptions.labels = options.labels;
+    if (options.idempotencyKey) emailOptions.idempotency_key = options.idempotencyKey;
 
     const data = await this.ffi.sendSignedEmail(emailOptions);
 

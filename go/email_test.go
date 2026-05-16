@@ -36,9 +36,10 @@ func TestSendEmailWithOptionsServerSideSigning(t *testing.T) {
 
 	cl, _ := newTestClient(t, srv.URL)
 	result, err := cl.SendEmailWithOptions(context.Background(), SendEmailOptions{
-		To:      "bob@hai.ai",
-		Subject: "Hello",
-		Body:    "World",
+		To:             "bob@hai.ai",
+		Subject:        "Hello",
+		Body:           "World",
+		IdempotencyKey: "send-key-123",
 	})
 	if err != nil {
 		t.Fatalf("SendEmailWithOptions: %v", err)
@@ -64,6 +65,9 @@ func TestSendEmailWithOptionsServerSideSigning(t *testing.T) {
 	}
 	if gotBody["body"] != "World" {
 		t.Fatalf("unexpected body: %v", gotBody["body"])
+	}
+	if gotBody["idempotency_key"] != "send-key-123" {
+		t.Fatalf("unexpected idempotency_key: %v", gotBody["idempotency_key"])
 	}
 }
 
@@ -877,9 +881,10 @@ func TestSendSignedEmailDefaultsToHtmlInlineJacs(t *testing.T) {
 
 	cl, _ := newTestClient(t, srv.URL)
 	result, err := cl.SendSignedEmail(context.Background(), SendEmailOptions{
-		To:      "bob@hai.ai",
-		Subject: "Hello Signed",
-		Body:    "Signed body",
+		To:             "bob@hai.ai",
+		Subject:        "Hello Signed",
+		Body:           "Signed body",
+		IdempotencyKey: "signed-key-123",
 	})
 	if err != nil {
 		t.Fatalf("SendSignedEmail: %v", err)
@@ -889,6 +894,9 @@ func TestSendSignedEmailDefaultsToHtmlInlineJacs(t *testing.T) {
 	}
 	if gotBody["generation_type"] != string(EmailGenerationTypeHtmlInlineJacs) {
 		t.Fatalf("expected generation_type html_inline_jacs, got: %#v", gotBody["generation_type"])
+	}
+	if gotBody["idempotency_key"] != "signed-key-123" {
+		t.Fatalf("unexpected idempotency_key: %v", gotBody["idempotency_key"])
 	}
 }
 

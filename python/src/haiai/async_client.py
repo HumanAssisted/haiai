@@ -503,6 +503,7 @@ class AsyncHaiClient:
         cc: Optional[list[str]] = None,
         bcc: Optional[list[str]] = None,
         labels: Optional[list[str]] = None,
+        idempotency_key: Optional[str] = None,
     ) -> SendEmailResult:
         """Send an email from this agent's @hai.ai address."""
         if self._agent_email is None:
@@ -533,6 +534,8 @@ class AsyncHaiClient:
             options["bcc"] = bcc
         if labels:
             options["labels"] = labels
+        if idempotency_key is not None:
+            options["idempotency_key"] = idempotency_key
 
         data = await ffi.send_email(options)
         return SendEmailResult(
@@ -551,6 +554,7 @@ class AsyncHaiClient:
         bcc: Optional[list[str]] = None,
         labels: Optional[list[str]] = None,
         generation_type: str = "html_inline_jacs",
+        idempotency_key: Optional[str] = None,
     ) -> SendEmailResult:
         """Send an agent-signed email (async).
 
@@ -587,6 +591,8 @@ class AsyncHaiClient:
             options["bcc"] = bcc
         if labels:
             options["labels"] = labels
+        if idempotency_key is not None:
+            options["idempotency_key"] = idempotency_key
 
         data = await ffi.send_signed_email(options)
         return SendEmailResult(

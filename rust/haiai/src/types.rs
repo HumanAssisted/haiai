@@ -363,6 +363,10 @@ pub struct SendEmailOptions {
     /// Set to Some(false) to suppress the footer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub append_footer: Option<bool>,
+    /// Stable key for one logical send. Reused across SDK retries so the API
+    /// can dedupe delivery while each retry still gets fresh JACS auth.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

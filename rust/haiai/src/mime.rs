@@ -370,6 +370,7 @@ mod tests {
             attachments: vec![],
             labels: vec![],
             append_footer: None,
+            idempotency_key: None,
         }
     }
 
@@ -532,6 +533,7 @@ mod tests {
             ],
             labels: vec![],
             append_footer: None,
+            idempotency_key: None,
         };
 
         let raw = build_rfc5322_email(&opts, "sender@hai.ai").unwrap();
@@ -556,6 +558,7 @@ mod tests {
             attachments: vec![],
             labels: vec![],
             append_footer: None,
+            idempotency_key: None,
         };
 
         let raw = build_rfc5322_email(&opts, "sender@hai.ai").unwrap();
@@ -577,6 +580,7 @@ mod tests {
             attachments: vec![],
             labels: vec![],
             append_footer: None,
+            idempotency_key: None,
         };
 
         let raw = build_rfc5322_email(&opts, "sender@hai.ai").unwrap();
@@ -625,6 +629,7 @@ mod tests {
             )],
             labels: vec![],
             append_footer: None,
+            idempotency_key: None,
         };
 
         let raw = build_rfc5322_email(&opts, "sender@hai.ai").unwrap();

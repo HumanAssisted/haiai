@@ -543,6 +543,7 @@ impl<'a, P: JacsProvider> A2AIntegration<'a, P> {
                 attachments: Vec::new(),
                 labels: Vec::new(),
                 append_footer: None,
+                idempotency_key: None,
             })
             .await
     }

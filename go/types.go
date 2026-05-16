@@ -330,6 +330,7 @@ type SendEmailOptions struct {
 	CC             []string            `json:"cc,omitempty"`
 	BCC            []string            `json:"bcc,omitempty"`
 	Labels         []string            `json:"labels,omitempty"`
+	IdempotencyKey string              `json:"idempotency_key,omitempty"`
 	GenerationType EmailGenerationType `json:"generation_type,omitempty"`
 }
 
