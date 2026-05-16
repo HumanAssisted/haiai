@@ -31,6 +31,7 @@ struct AuthHeaderFixture {
 struct AuthHeaderExample {
     jacs_id: String,
     timestamp: i64,
+    nonce: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,31 +74,39 @@ fn auth_header_matches_shared_shape() {
 
     let header = client.build_auth_header().expect("auth header");
     let token = header.strip_prefix("JACS ").expect("auth header prefix");
-    let parts: Vec<&str> = token.splitn(3, ':').collect();
+    let parts: Vec<&str> = token.splitn(4, ':').collect();
 
     assert_eq!(fixture.auth_header.scheme, "JACS");
     assert_eq!(
         fixture.auth_header.parts,
-        vec!["jacs_id", "timestamp", "signature_base64"]
+        vec!["jacs_id", "timestamp", "nonce", "signature_base64"]
     );
-    assert_eq!(parts.len(), 3);
+    assert_eq!(parts.len(), 4);
     assert_eq!(parts[0], fixture.auth_header.example.jacs_id);
     assert_eq!(
         fixture.auth_header.signed_message_template,
-        "{jacs_id}:{timestamp}"
+        "{jacs_id}:{timestamp}:{nonce}"
     );
 
     let decoded = base64::engine::general_purpose::STANDARD
-        .decode(parts[2])
+        .decode(parts[3])
         .expect("decode static provider signature");
     let signed_message = String::from_utf8(decoded).expect("utf8 signature payload");
-    assert_eq!(signed_message, format!("sig:{}:{}", parts[0], parts[1]));
+    assert_eq!(
+        signed_message,
+        format!("sig:{}:{}:{}", parts[0], parts[1], parts[2])
+    );
 
     let parsed_timestamp = parts[1].parse::<i64>().expect("timestamp");
     assert!(
         parsed_timestamp >= fixture.auth_header.example.timestamp,
         "timestamp should be unix seconds"
     );
+    assert!(
+        !fixture.auth_header.example.nonce.is_empty(),
+        "fixture should include an example nonce"
+    );
+    assert!(!parts[2].is_empty(), "nonce should be present");
 }
 
 // ===========================================================================

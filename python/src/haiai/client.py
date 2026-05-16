@@ -294,7 +294,7 @@ class HaiClient:
         return _client_shared.get_hai_agent_id(self._hai_agent_id)
 
     def _build_jacs_auth_header(self) -> str:
-        """Build ``Authorization: JACS {jacsId}:{timestamp}:{signature}``.
+        """Build ``Authorization: JACS {jacsId}:{timestamp}:{nonce}:{signature}``.
 
         Delegates to JACS binding-core ``build_auth_header`` when available.
         Otherwise constructs the header locally using JACS ``sign_string``.
@@ -314,7 +314,7 @@ class HaiClient:
     ) -> str:
         """Build a 4-part JACS auth header signed by an explicit agent.
 
-        Returns ``JACS {jacsId}:{version}:{timestamp}:{signature}``.
+        Returns ``JACS {jacsId}:{version}:{timestamp}:{nonce}:{signature}``.
         Used during key rotation to authenticate re-registration with
         the OLD agent's key (chain of trust).
         Signing delegates to JACS binding-core.

@@ -62,6 +62,7 @@ import type {
   ExtractMediaSignatureOptions,
   ExtractMediaSignatureResult,
 } from './types.js';
+import * as nodeCrypto from 'node:crypto';
 import {
   HaiError,
   AuthenticationError,
@@ -363,9 +364,10 @@ export class HaiClient {
     }
     // Fallback: local construction using JACS signStringSync
     const timestamp = Math.floor(Date.now() / 1000).toString();
-    const message = `${this.jacsId}:${timestamp}`;
+    const nonce = nodeCrypto.randomUUID().replace(/-/g, '');
+    const message = `${this.jacsId}:${timestamp}:${nonce}`;
     const signature = this.agent.signStringSync(message);
-    return `JACS ${this.jacsId}:${timestamp}:${signature}`;
+    return `JACS ${this.jacsId}:${timestamp}:${nonce}:${signature}`;
   }
 
   // ---------------------------------------------------------------------------

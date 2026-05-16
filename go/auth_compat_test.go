@@ -13,27 +13,29 @@ import (
 // ed25519 private key. This is a test-only helper retained for backward
 // compatibility with unit tests.
 //
-// Format: "JACS {jacsId}:{timestamp}:{signature_base64}"
+// Format: "JACS {jacsId}:{timestamp}:{nonce}:{signature_base64}"
 func BuildAuthHeader(jacsID string, key ed25519.PrivateKey) string {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	message := fmt.Sprintf("%s:%s", jacsID, timestamp)
+	nonce := authHeaderNonce()
+	message := authHeaderMessage(jacsID, timestamp, nonce)
 	sig := ed25519.Sign(key, []byte(message))
 	sigB64 := base64.StdEncoding.EncodeToString(sig)
 
-	return fmt.Sprintf("JACS %s:%s:%s", jacsID, timestamp, sigB64)
+	return authHeaderValue(jacsID, timestamp, nonce, sigB64)
 }
 
-// Build4PartAuthHeader constructs a 4-part JACS authentication header value
+// Build4PartAuthHeader constructs a versioned JACS authentication header value
 // using a raw ed25519 private key. Test-only helper.
 //
-// Format: "JACS {jacsId}:{version}:{timestamp}:{signature_base64}"
+// Format: "JACS {jacsId}:{version}:{timestamp}:{nonce}:{signature_base64}"
 func Build4PartAuthHeader(jacsID, version string, key ed25519.PrivateKey) string {
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	message := fmt.Sprintf("%s:%s:%s", jacsID, version, timestamp)
+	nonce := authHeaderNonce()
+	message := fmt.Sprintf("%s:%s:%s:%s", jacsID, version, timestamp, nonce)
 	sig := ed25519.Sign(key, []byte(message))
 	sigB64 := base64.StdEncoding.EncodeToString(sig)
 
-	return fmt.Sprintf("JACS %s:%s:%s:%s", jacsID, version, timestamp, sigB64)
+	return fmt.Sprintf("JACS %s:%s:%s:%s:%s", jacsID, version, timestamp, nonce, sigB64)
 }
 
 // SetAuthHeaders sets the JACS Authorization and Content-Type headers on an

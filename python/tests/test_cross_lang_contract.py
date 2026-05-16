@@ -39,16 +39,22 @@ def test_cross_lang_auth_header_contract(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr("haiai.config.get_config", lambda: _Config())
     monkeypatch.setattr("haiai.config.get_agent", lambda: _Agent())
-    monkeypatch.setattr("haiai.client.time.time", lambda: example["timestamp"])
+    monkeypatch.setattr("haiai._client_shared.time.time", lambda: example["timestamp"])
+    monkeypatch.setattr(
+        "haiai._client_shared.uuid.uuid4",
+        lambda: type("_Uuid", (), {"hex": example["nonce"]})(),
+    )
 
     header = HaiClient()._build_jacs_auth_header()
 
     assert auth["scheme"] == "JACS"
-    assert auth["parts"] == ["jacs_id", "timestamp", "signature_base64"]
+    assert auth["parts"] == ["jacs_id", "timestamp", "nonce", "signature_base64"]
     assert header == example["expected_header"]
     assert seen["message"] == auth["signed_message_template"].replace(
         "{jacs_id}", example["jacs_id"]
-    ).replace("{timestamp}", str(example["timestamp"]))
+    ).replace("{timestamp}", str(example["timestamp"])).replace(
+        "{nonce}", example["nonce"]
+    )
 
 
 def test_async_cross_lang_auth_header_contract(
@@ -70,12 +76,18 @@ def test_async_cross_lang_auth_header_contract(
     monkeypatch.setattr("haiai.config.get_config", lambda: _Config())
     monkeypatch.setattr("haiai.config.get_agent", lambda: _Agent())
     monkeypatch.setattr("haiai._client_shared.time.time", lambda: example["timestamp"])
+    monkeypatch.setattr(
+        "haiai._client_shared.uuid.uuid4",
+        lambda: type("_Uuid", (), {"hex": example["nonce"]})(),
+    )
 
     header = AsyncHaiClient()._build_jacs_auth_header()
 
     assert auth["scheme"] == "JACS"
-    assert auth["parts"] == ["jacs_id", "timestamp", "signature_base64"]
+    assert auth["parts"] == ["jacs_id", "timestamp", "nonce", "signature_base64"]
     assert header == example["expected_header"]
     assert seen["message"] == auth["signed_message_template"].replace(
         "{jacs_id}", example["jacs_id"]
-    ).replace("{timestamp}", str(example["timestamp"]))
+    ).replace("{timestamp}", str(example["timestamp"])).replace(
+        "{nonce}", example["nonce"]
+    )

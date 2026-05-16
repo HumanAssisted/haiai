@@ -209,9 +209,13 @@ impl<P: JacsProvider> HaiClient<P> {
 
     pub fn build_auth_header(&self) -> Result<String> {
         let ts = OffsetDateTime::now_utc().unix_timestamp();
-        let message = format!("{}:{ts}", self.jacs.jacs_id());
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let message = format!("{}:{ts}:{nonce}", self.jacs.jacs_id());
         let signature = self.jacs.sign_string(&message)?;
-        Ok(format!("JACS {}:{ts}:{signature}", self.jacs.jacs_id()))
+        Ok(format!(
+            "JACS {}:{ts}:{nonce}:{signature}",
+            self.jacs.jacs_id()
+        ))
     }
 
     pub fn sign_message(&self, message: &str) -> Result<String> {
