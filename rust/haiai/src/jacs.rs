@@ -1339,6 +1339,21 @@ impl JacsProvider for Box<dyn JacsProvider> {
         (**self).canonical_json(value)
     }
 
+    fn sign_envelope(&self, value: &Value) -> Result<String> {
+        (**self).sign_envelope(value)
+    }
+
+    fn sign_html_inline_email_envelope(
+        &self,
+        raw_email: &[u8],
+    ) -> Result<crate::email_inline::HtmlInlineJacsEnvelope> {
+        (**self).sign_html_inline_email_envelope(raw_email)
+    }
+
+    fn sign_file_envelope(&self, path: &str, embed: bool) -> Result<SignedDocument> {
+        (**self).sign_file_envelope(path, embed)
+    }
+
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
         (**self).sign_response(payload)
     }
@@ -1416,6 +1431,21 @@ impl JacsProvider for Box<dyn JacsMediaProvider> {
 
     fn canonical_json(&self, value: &Value) -> Result<String> {
         (**self).canonical_json(value)
+    }
+
+    fn sign_envelope(&self, value: &Value) -> Result<String> {
+        (**self).sign_envelope(value)
+    }
+
+    fn sign_html_inline_email_envelope(
+        &self,
+        raw_email: &[u8],
+    ) -> Result<crate::email_inline::HtmlInlineJacsEnvelope> {
+        (**self).sign_html_inline_email_envelope(raw_email)
+    }
+
+    fn sign_file_envelope(&self, path: &str, embed: bool) -> Result<SignedDocument> {
+        (**self).sign_file_envelope(path, embed)
     }
 
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {

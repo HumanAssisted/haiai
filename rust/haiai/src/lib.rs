@@ -30,12 +30,7 @@
 //!     to: "other@hai.ai".into(),
 //!     subject: "Hello".into(),
 //!     body: "World".into(),
-//!     cc: vec![],
-//!     bcc: vec![],
-//!     in_reply_to: None,
-//!     attachments: vec![],
-//!     labels: vec![],
-//!     append_footer: None,
+//!     ..Default::default()
 //! }).await?;
 //! # Ok(())
 //! # }
