@@ -2077,8 +2077,13 @@ fn parse_transcript(data: &Value) -> Vec<TranscriptMessage> {
         .unwrap_or_default()
 }
 
+/// Streaming SSE parser used by [`HaiClient::connect_sse`].
+///
+/// Exposed as `pub` so the wasm-compat fixture tests
+/// (`tests/wasm_compat_fixtures.rs`) can byte-lock the parse output before the
+/// shared `sse_parse` module is extracted (Task 013, Wave 6 of `HAIAI_WASM_PRD`).
 #[derive(Default)]
-struct SseParser {
+pub struct SseParser {
     buffer: Vec<u8>,
     event_type: String,
     event_id: Option<String>,
@@ -2086,7 +2091,10 @@ struct SseParser {
 }
 
 impl SseParser {
-    fn push_chunk(&mut self, chunk: &[u8]) -> Vec<HaiEvent> {
+    /// Push a chunk of SSE bytes into the parser and return any events that
+    /// completed on this chunk. See [`SseParser`] doc-comment for visibility
+    /// rationale.
+    pub fn push_chunk(&mut self, chunk: &[u8]) -> Vec<HaiEvent> {
         self.buffer.extend_from_slice(chunk);
         let mut events = Vec::new();
 
@@ -2129,7 +2137,9 @@ impl SseParser {
     }
 }
 
-fn parse_sse_event_payload(event_type: &str, id: Option<String>, raw: &str) -> HaiEvent {
+/// Parse a single complete SSE event payload into a [`HaiEvent`]. Exposed
+/// `pub` for the wasm-compat fixture test described on [`SseParser`].
+pub fn parse_sse_event_payload(event_type: &str, id: Option<String>, raw: &str) -> HaiEvent {
     let data =
         serde_json::from_str::<Value>(raw).unwrap_or_else(|_| Value::String(raw.to_string()));
     let inferred = data

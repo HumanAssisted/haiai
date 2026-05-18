@@ -1,0 +1,1 @@
+{"agent_json":"{\"$schema\":\"https://hai.ai/schemas/agent/v1\",\"id\":\"agent-alpha-fixture-2026\"}","description":"Pinned RegisterAgentOptions fixture for wasm cross-compat","domain":"hai.ai","is_mediator":false,"owner_email":"alpha@hai.ai","registration_key":"REGKEY-WASM-FIXTURE"}

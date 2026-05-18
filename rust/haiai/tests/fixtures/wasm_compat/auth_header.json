@@ -1,0 +1,8 @@
+{
+  "expected_authorization": "JACS agent-alpha-fixture-2026:1747500000:0a1b2c3d4e5f607182939495a6b7c8d9:ZKTC6eFvWbp7sfbGTMa1e1AEZ8DAtaMbUKmqlB4ENonGJakBPwzutFsI/jh6/oJ2h4LEs+8v+Y0TE/i7zGLNCg==",
+  "expected_signature_b64": "ZKTC6eFvWbp7sfbGTMa1e1AEZ8DAtaMbUKmqlB4ENonGJakBPwzutFsI/jh6/oJ2h4LEs+8v+Y0TE/i7zGLNCg==",
+  "jacs_id": "agent-alpha-fixture-2026",
+  "message_signed": "agent-alpha-fixture-2026:1747500000:0a1b2c3d4e5f607182939495a6b7c8d9",
+  "nonce": "0a1b2c3d4e5f607182939495a6b7c8d9",
+  "ts": 1747500000
+}

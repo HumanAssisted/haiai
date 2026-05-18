@@ -1,0 +1,8 @@
+{
+  "available": true,
+  "message_id": "msg-wasm-fixture-2026",
+  "omitted_reason": null,
+  "raw_email_b64": "RnJvbTogYWxwaGFAaGFpLmFpDQpUbzogYmV0YUBoYWkuYWkNClN1YmplY3Q6IHdhc20tZml4dHVyZQ0KTWVzc2FnZS1JRDogPGZpeHR1cmVAaGFpLmFpPg0KQ29udGVudC1UeXBlOiB0ZXh0L3BsYWluOyBjaGFyc2V0PXV0Zi04DQoNCkhlbGxvIHdhc20uDQo=",
+  "rfc_message_id": "<fixture@hai.ai>",
+  "size_bytes": 146
+}
