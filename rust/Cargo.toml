@@ -24,11 +24,15 @@ uuid = { version = "1", features = ["v4", "serde"] }
 sha2 = "0.10"
 
 # Local development: point at the JACS WASM-branch workspace so haiai builds
-# against the same jacs / jacs-binding-core / jacs-mcp / jacs-media versions
-# that ship the browser primitives the wasm feature depends on.
+# against the same jacs / jacs-binding-core / jacs-mcp / jacs-media /
+# jacs-core / jacs-wasm versions that ship the browser primitives the wasm
+# feature depends on.
 # Path is relative to rust/Cargo.toml: ../../../wasm/jacs == /conductor/workspaces/jacs/wasm/jacs.
+# jacs-core and jacs-wasm are NOT (yet) on crates.io — local paths only.
 [patch.crates-io]
 jacs = { path = "../../../wasm/jacs" }
 jacs-binding-core = { path = "../../../wasm/binding-core" }
 jacs-mcp = { path = "../../../wasm/jacs-mcp" }
 jacs-media = { path = "../../../wasm/jacs-media" }
+jacs-core = { path = "../../../wasm/jacs-core" }
+jacs-wasm = { path = "../../../wasm/jacs-wasm" }
