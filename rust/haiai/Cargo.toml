@@ -18,12 +18,21 @@ native-tls = ["reqwest/native-tls"]
 jacs-crate = ["dep:jacs"]
 agreements = ["jacs-crate", "jacs/agreements"]
 attestation = ["jacs-crate", "jacs/attestation"]
+# Browser-side build profile (HAIAI_WASM_PRD.md §4.2). Mutually exclusive
+# with `jacs-crate` — enforced by a `compile_error!` in `src/lib.rs`.
+# Today this only pulls `serde_json_canonicalizer` so the existing canonical
+# JSON helper in `src/jacs.rs` has a working impl when `jacs-crate` is off.
+# Task 008 wires the rest of the wasm-only deps (wasm-bindgen-futures,
+# web-sys, js-sys, gloo-timers, jacs-core, jacs-wasm) under this feature.
+# Activated via
+#   cargo check -p haiai --no-default-features --features wasm \
+#                        --target wasm32-unknown-unknown
+wasm = ["serde_json_canonicalizer"]
 
 [dependencies]
 async-trait.workspace = true
 base64.workspace = true
 percent-encoding.workspace = true
-reqwest = { workspace = true, features = ["stream"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_json_canonicalizer = { version = "0.3", optional = true }
@@ -46,6 +55,17 @@ jacs = { version = "=0.10.2", optional = true, features = ["a2a"] }
 # maintenance footgun (SDK accepts what server rejects). The real extractor
 # is the single source of truth for "does this image carry a JACS signature".
 jacs-media = "=0.10.2"
+
+# reqwest is target-split per HAIAI_WASM_PRD.md §4.2 / §4.8. The native
+# build keeps the workspace entry's full feature set (json, http2, query,
+# multipart) plus `stream` for SSE / get_raw_email. The wasm32 build is
+# restricted to `["json"]` (default-features off) — reqwest's wasm shim
+# uses `fetch()` and supports nothing else from the native feature list.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { workspace = true, features = ["stream"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+reqwest = { version = "0.13.2", default-features = false, features = ["json"] }
 
 [dev-dependencies]
 httpmock = "0.8"
