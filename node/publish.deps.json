@@ -1,3 +1,4 @@
 {
-  "@hai.ai/jacs": "0.10.0"
+  "@hai.ai/jacs": "0.10.0",
+  "@jacs/wasm": "0.10.2"
 }
