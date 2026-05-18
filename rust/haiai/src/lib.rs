@@ -41,6 +41,15 @@
 //! # }
 //! ```
 
+// HAIAI_WASM_PRD.md §4.2 mutual-exclusivity gate. The `wasm` feature swaps
+// jacs (full native crate) for jacs-core / jacs-wasm and target-conditional
+// HTTP / WebSocket transports. Mixing the two features cannot produce a
+// coherent build, so we fail fast at compile time with a clear message.
+#[cfg(all(feature = "wasm", feature = "jacs-crate"))]
+compile_error!(
+    "the `wasm` and `jacs-crate` features are mutually exclusive: use `--no-default-features --features wasm`"
+);
+
 pub mod a2a;
 pub mod agent;
 pub mod client;
