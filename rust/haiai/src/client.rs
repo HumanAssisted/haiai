@@ -2152,87 +2152,11 @@ fn parse_transcript(data: &Value) -> Vec<TranscriptMessage> {
         .unwrap_or_default()
 }
 
-/// Streaming SSE parser used by [`HaiClient::connect_sse`].
-///
-/// Exposed as `pub` so the wasm-compat fixture tests
-/// (`tests/wasm_compat_fixtures.rs`) can byte-lock the parse output before the
-/// shared `sse_parse` module is extracted (Task 013, Wave 6 of `HAIAI_WASM_PRD`).
-#[derive(Default)]
-pub struct SseParser {
-    buffer: Vec<u8>,
-    event_type: String,
-    event_id: Option<String>,
-    data_lines: Vec<String>,
-}
-
-impl SseParser {
-    /// Push a chunk of SSE bytes into the parser and return any events that
-    /// completed on this chunk. See [`SseParser`] doc-comment for visibility
-    /// rationale.
-    pub fn push_chunk(&mut self, chunk: &[u8]) -> Vec<HaiEvent> {
-        self.buffer.extend_from_slice(chunk);
-        let mut events = Vec::new();
-
-        while let Some(idx) = self.buffer.iter().position(|b| *b == b'\n') {
-            let mut line_bytes = self.buffer.drain(..=idx).collect::<Vec<_>>();
-            line_bytes.pop();
-            if line_bytes.ends_with(b"\r") {
-                line_bytes.pop();
-            }
-
-            let Ok(line) = String::from_utf8(line_bytes) else {
-                continue;
-            };
-
-            if line.is_empty() {
-                if !self.data_lines.is_empty() {
-                    let raw = self.data_lines.join("\n");
-                    events.push(parse_sse_event_payload(
-                        &self.event_type,
-                        self.event_id.clone(),
-                        &raw,
-                    ));
-                }
-                self.event_type.clear();
-                self.event_id = None;
-                self.data_lines.clear();
-                continue;
-            }
-
-            if let Some(rest) = line.strip_prefix("event:") {
-                self.event_type = rest.trim().to_string();
-            } else if let Some(rest) = line.strip_prefix("id:") {
-                self.event_id = Some(rest.trim().to_string());
-            } else if let Some(rest) = line.strip_prefix("data:") {
-                self.data_lines.push(rest.trim().to_string());
-            }
-        }
-
-        events
-    }
-}
-
-/// Parse a single complete SSE event payload into a [`HaiEvent`]. Exposed
-/// `pub` for the wasm-compat fixture test described on [`SseParser`].
-pub fn parse_sse_event_payload(event_type: &str, id: Option<String>, raw: &str) -> HaiEvent {
-    let data =
-        serde_json::from_str::<Value>(raw).unwrap_or_else(|_| Value::String(raw.to_string()));
-    let inferred = data
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or(event_type)
-        .to_string();
-    HaiEvent {
-        event_type: if inferred.is_empty() {
-            "message".to_string()
-        } else {
-            inferred
-        },
-        data,
-        id,
-        raw: raw.to_string(),
-    }
-}
+// SSE parser extracted to the target-agnostic `sse_parse` module (Task 013).
+// Re-exports keep the historical `client::SseParser` /
+// `client::parse_sse_event_payload` paths working for the existing
+// `tests/wasm_compat_fixtures.rs` import + any downstream caller.
+pub use crate::sse_parse::{parse_sse_event_payload, SseParser};
 
 fn build_ws_url(base_url: &str, path: &str) -> String {
     let base = base_url.trim_end_matches('/');

@@ -71,6 +71,10 @@ pub mod jacs_local;
 pub mod jacs_remote;
 pub mod key_format;
 pub mod mime;
+// `sse_parse` is the target-agnostic SSE line/event parser shared by
+// the native `HaiClient::connect_sse` consumer and the wasm
+// `WasmSseConnection` consumer (HAIAI_WASM_PRD §4.6 / Task 013).
+pub mod sse_parse;
 // `self_knowledge` pulls `bm25` (a search runtime) and is only ever used
 // from the CLI / MCP tool surface. Browsers neither expose a knowledge-query
 // API nor have a search runtime; gated out of the wasm build per
