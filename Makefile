@@ -36,7 +36,8 @@ JACS_RUST_CLI := $(shell grep '^jacs ' rust/haiai-cli/Cargo.toml | sed 's/.*"\(=
 JACS_RUST_MCP := $(shell grep '^jacs ' rust/hai-mcp/Cargo.toml | sed 's/.*"\(=*[0-9][^"]*\)".*/\1/' | sed 's/^=//')
 JACS_PYTHON := $(shell grep 'jacs==' python/pyproject.toml | sed 's/.*jacs==\([^"]*\)".*/\1/')
 JACS_NODE := $(shell grep '@hai.ai/jacs' node/package.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
-JACS_CI_REF := $(shell grep '^  JACS_REF:' .github/workflows/test.yml | head -1 | sed 's/.*v\([0-9][^ ]*\).*/\1/')
+JACS_CI_REF := $(shell grep '^  JACS_REF:' .github/workflows/test.yml | head -1 | sed 's/^  JACS_REF:[[:space:]]*//')
+JACS_CI_VERSION := $(shell printf '%s\n' '$(JACS_CI_REF)' | awk '/^v[0-9]/{sub(/^v/,""); print; next} /^[0-9]/{print}')
 
 # ============================================================================
 # TEST
@@ -203,8 +204,10 @@ check-jacs-versions:
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != hai-mcp ($(JACS_RUST_MCP))"; exit 1; fi
 	@if [ "$(JACS_RUST)" != "$(JACS_PYTHON)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != python ($(JACS_PYTHON))"; exit 1; fi
-	@if [ "$(JACS_RUST)" != "$(JACS_CI_REF)" ]; then \
-		echo "ERROR: jacs in haiai ($(JACS_RUST)) != CI JACS_REF ($(JACS_CI_REF))"; exit 1; fi
+	@if [ -n "$(JACS_CI_VERSION)" ] && [ "$(JACS_RUST)" != "$(JACS_CI_VERSION)" ]; then \
+		echo "ERROR: jacs in haiai ($(JACS_RUST)) != CI JACS_REF version ($(JACS_CI_VERSION))"; exit 1; fi
+	@if [ -z "$(JACS_CI_VERSION)" ]; then \
+		echo "  ci JACS_REF     $(JACS_CI_REF) (branch ref, skipping tag-version match)"; fi
 	@case "$(JACS_NODE)" in \
 		file:*) echo "  node            $(JACS_NODE) (local path, skipping match check)" ;; \
 		*) if [ "$(JACS_RUST)" != "$(JACS_NODE)" ]; then \
