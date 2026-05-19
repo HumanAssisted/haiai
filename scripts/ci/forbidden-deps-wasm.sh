@@ -86,6 +86,16 @@ for crate in "${FORBIDDEN[@]}"; do
 done
 
 if [[ "${status}" -ne 0 ]]; then
+  if [[ -z "${WASM_TREE_FIXTURE:-}" ]]; then
+    echo "" >&2
+    echo "Reverse dependency paths for offenders:" >&2
+    for crate in ${seen}; do
+      echo "--- ${crate} ---" >&2
+      cargo tree -p "${CRATE}" --target "${WASM_TARGET}" --edges normal -i "${crate}" \
+        ${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"} >&2 || true
+    done
+  fi
+
   cat >&2 <<MSG
 
 Policy violation: the listed crate(s) are not wasm-portable and must not
