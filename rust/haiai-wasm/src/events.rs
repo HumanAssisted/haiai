@@ -56,7 +56,10 @@ impl EventStreamHandle {
         base_ws_url: &str,
         auth_header: &str,
     ) -> Result<EventStreamHandle, JsValue> {
-        let url = build_authenticated_ws_url(base_ws_url, auth_header);
+        // build_authenticated_ws_url enforces wss:// (refuses ws://) — see
+        // ws_wasm.rs module docs. ConfigInvalid bubbles through map_hai_error.
+        let url = build_authenticated_ws_url(base_ws_url, auth_header)
+            .map_err(|e| JsValue::from(map_hai_error(e)))?;
         let ws = WasmWebSocket::connect(&url)
             .map_err(|e| JsValue::from(map_hai_error(e)))?;
         Ok(EventStreamHandle {

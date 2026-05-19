@@ -10,13 +10,50 @@
 //! channel so the same `next_message` / `send_message` / `close` API is
 //! exposed.
 //!
-//! Auth header: WebSocket spec forbids custom headers on the initial
-//! handshake from the browser. HAIAI_WASM_PRD §4.6 documents the
-//! decision: the wasm path uses a `?auth=<token>` query-string token
-//! (the same auth header value the native path sends in the
-//! `Authorization` header). Callers MUST build the URL via
-//! [`build_authenticated_ws_url`] so the encoded shape matches what
-//! hai/api expects.
+//! ## Auth header (interim — see "Future protocol" below)
+//!
+//! WebSocket spec forbids custom headers on the initial handshake from
+//! the browser. The wasm path currently uses a `?auth=<token>`
+//! query-string token carrying the same JACS auth header value the
+//! native path sends in the `Authorization` header. Callers MUST build
+//! the URL via [`build_authenticated_ws_url`], which:
+//!
+//! 1. Refuses non-`wss://` URLs — `ws://` would put the auth token
+//!    in cleartext on the wire and into proxy logs. Returns
+//!    `HaiError::Configuration` rather than silently downgrading.
+//! 2. Percent-encodes the auth header value with `NON_ALPHANUMERIC`
+//!    so the JACS `Authorization` payload (which contains `:` and
+//!    base64 chars) is URL-safe.
+//!
+//! ### Known leak surface
+//!
+//! Even with `wss://` enforced, the auth token shows up in:
+//! - The server's HTTP access logs (URL query string).
+//! - Any reverse proxy / WAF logs in front of hai/api.
+//! - Browser DevTools' Network tab (always visible to the user, but
+//!   also visible to any other JS on the page that opens DevTools
+//!   programmatically — rare in practice).
+//!
+//! It does NOT show up in browser history (WS connections don't
+//! populate history) or in cross-origin scripts (same-origin policy
+//! protects the URL).
+//!
+//! ### Future protocol (Option C — recommended)
+//!
+//! The clean fix is a first-frame auth message:
+//!
+//! 1. Browser opens unauthed `wss://hai.ai/ws/...`.
+//! 2. hai/api accepts the connection but holds it in an unauthenticated
+//!    state, accepting no subscriptions or sends.
+//! 3. Client sends `{"type":"auth","token":"<JACS auth header value>"}`
+//!    as the first text frame.
+//! 4. hai/api validates and either flips the connection into
+//!    authenticated state or closes with code 4401.
+//!
+//! No URL leak, no proxy log exposure, no custom-header limitation.
+//! Requires the matching backend change documented in
+//! `docs/HAIAI_WASM_BACKEND_ASSUMPTIONS.md`; until that ships,
+//! `build_authenticated_ws_url` is the supported path.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -26,7 +63,6 @@ use std::rc::Rc;
 use async_trait::async_trait;
 use futures_channel::mpsc::{unbounded, UnboundedReceiver};
 use futures_util::StreamExt;
-use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use web_sys::{BinaryType, CloseEvent, ErrorEvent, MessageEvent, WebSocket};
@@ -34,21 +70,11 @@ use web_sys::{BinaryType, CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 use crate::error::{HaiError, Result};
 use crate::ws_protocol::{WebSocketTransport, WsMessage};
 
-/// Build an authenticated WS URL by appending `?auth=<percent-encoded-header>`.
-///
-/// Browsers can't set `Authorization` on the WebSocket handshake (the
-/// spec only allows `Sec-WebSocket-Protocol`), so we move the same JACS
-/// auth header into a query parameter. hai/api inspects either header
-/// or query token (per `docs/HAIAI_WASM_BACKEND_ASSUMPTIONS.md` —
-/// Task 002).
-pub fn build_authenticated_ws_url(base_ws_url: &str, auth_header: &str) -> String {
-    let encoded = utf8_percent_encode(auth_header, NON_ALPHANUMERIC).to_string();
-    if base_ws_url.contains('?') {
-        format!("{base_ws_url}&auth={encoded}")
-    } else {
-        format!("{base_ws_url}?auth={encoded}")
-    }
-}
+// `build_authenticated_ws_url` was moved to `ws_protocol::build_authenticated_ws_url`
+// so its scheme-guard tests can run on native CI (this file is `cfg(target_arch =
+// "wasm32")`). Re-export for callers that still import from `ws_wasm`.
+pub use crate::ws_protocol::build_authenticated_ws_url;
+
 
 /// Wasm `WebSocketTransport` impl. Owns the underlying browser
 /// `WebSocket` plus the closures that forward JS events into a
@@ -158,3 +184,4 @@ impl WebSocketTransport for WasmWebSocket {
         Ok(())
     }
 }
+

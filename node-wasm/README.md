@@ -157,7 +157,7 @@ Every rejection is a `HaiaiWasmError` with a stable `.code`:
 - **No streaming bodies on wasm.** Reqwest's wasm shim collapses the body to bytes — attachments must be base64-encoded in JSON.
 - **localStorage only.** No IndexedDB / file system. Encrypted-agent persistence goes through `@jacs/wasm`'s `localStore`.
 - **CORS dependency.** HAI API must allow your origin (`Access-Control-Allow-Origin`) and the `Authorization` header.
-- **WebSocket auth.** Browsers can't set custom headers on WS handshake; the wasm layer encodes the JACS auth header as `?auth=<encoded>` query parameter. See `docs/HAIAI_WASM_BACKEND_ASSUMPTIONS.md`.
+- **WebSocket auth (interim).** Browsers can't set custom headers on WS handshake, so the wasm layer encodes the JACS auth header as a `?auth=<encoded>` query parameter. `build_authenticated_ws_url` refuses non-`wss://` URLs (returns `ConfigInvalid`) so the token never goes on the wire in cleartext, but it does end up in server access logs / reverse-proxy logs and the browser's DevTools Network tab. The clean fix is a first-frame auth message (Option C) — the client opens an unauthed `wss://` connection, then sends `{"type":"auth","token":"<header>"}` as the first text frame; hai/api validates and either flips the connection authenticated or closes with code 4401. Tracked alongside the other backend assumptions in `docs/HAIAI_WASM_BACKEND_ASSUMPTIONS.md`.
 
 ## Build & test
 

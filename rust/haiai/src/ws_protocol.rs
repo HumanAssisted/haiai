@@ -23,10 +23,11 @@
 //!    `EventStreamHandle` reconnect path in haiai-wasm.
 
 use async_trait::async_trait;
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use serde_json::{json, Value};
 use time::OffsetDateTime;
 
-use crate::error::Result;
+use crate::error::{HaiError, Result};
 use crate::types::HaiEvent;
 
 // ── Reconnect backoff constants ──────────────────────────────────────────
@@ -144,6 +145,46 @@ pub fn parse_frame_text(raw: &str) -> ParsedFrame {
     ParsedFrame { event, reply }
 }
 
+// ── Authenticated WS URL builder (browser-only auth path) ───────────────
+//
+// Lives in this target-agnostic module — not in `ws_wasm.rs` — so the
+// scheme-guard tests can run on native CI. The function itself is pure
+// string manipulation, no web_sys dependency. See `ws_wasm.rs` module
+// docs for the full background on why browsers route auth via query
+// param instead of the `Authorization` header, the known leak surface,
+// and the recommended Option C (first-frame auth message) migration.
+
+/// Build an authenticated WS URL by appending `?auth=<percent-encoded-header>`.
+///
+/// Refuses any base URL that is not `wss://` (including `ws://` and
+/// non-WebSocket schemes). Returning the auth token over an unencrypted
+/// `ws://` connection would put a usable JACS auth credential on the
+/// wire in cleartext, even before reaching the first proxy log. The
+/// crypto policy treats this as an unrecoverable configuration error
+/// rather than a runtime downgrade.
+///
+/// Errors with [`HaiError::ConfigInvalid`] if the scheme check fails;
+/// returns the constructed URL otherwise.
+pub fn build_authenticated_ws_url(base_ws_url: &str, auth_header: &str) -> Result<String> {
+    let lower = base_ws_url.to_ascii_lowercase();
+    if !lower.starts_with("wss://") {
+        return Err(HaiError::ConfigInvalid {
+            message: format!(
+                "build_authenticated_ws_url: refusing to encode JACS auth token \
+                 into a non-wss:// URL ({base_ws_url:?}); use wss:// or migrate \
+                 to the first-frame auth protocol (see ws_wasm.rs module docs)"
+            ),
+        });
+    }
+
+    let encoded = utf8_percent_encode(auth_header, NON_ALPHANUMERIC).to_string();
+    Ok(if base_ws_url.contains('?') {
+        format!("{base_ws_url}&auth={encoded}")
+    } else {
+        format!("{base_ws_url}?auth={encoded}")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,5 +226,58 @@ mod tests {
         assert_eq!(parsed.event.event_type, "message");
         assert_eq!(parsed.event.data, Value::String("hello world".to_string()));
         assert!(parsed.reply.is_none());
+    }
+
+    // ── build_authenticated_ws_url scheme guard ─────────────────────────
+
+    #[test]
+    fn build_authenticated_ws_url_refuses_ws_scheme() {
+        let err = build_authenticated_ws_url("ws://hai.ai/ws/foo", "JACS abc:1:n:s")
+            .expect_err("ws:// must be rejected");
+        match err {
+            HaiError::ConfigInvalid { message } => {
+                assert!(
+                    message.contains("non-wss://"),
+                    "error message should explain the scheme requirement: {message}"
+                );
+            }
+            other => panic!("expected ConfigInvalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_authenticated_ws_url_refuses_https_scheme() {
+        assert!(build_authenticated_ws_url("https://hai.ai/ws/foo", "x").is_err());
+    }
+
+    #[test]
+    fn build_authenticated_ws_url_accepts_wss_scheme_case_insensitive() {
+        // RFC 3986 schemes are case-insensitive.
+        assert!(build_authenticated_ws_url("WSS://hai.ai/ws/foo", "x").is_ok());
+        assert!(build_authenticated_ws_url("wss://hai.ai/ws/foo", "x").is_ok());
+    }
+
+    #[test]
+    fn build_authenticated_ws_url_appends_query_when_url_has_no_query() {
+        let url =
+            build_authenticated_ws_url("wss://hai.ai/ws/foo", "JACS abc:1:n:s").expect("wss ok");
+        assert!(url.contains("?auth="), "first query param uses ? — got {url}");
+    }
+
+    #[test]
+    fn build_authenticated_ws_url_extends_query_when_url_already_has_one() {
+        let url = build_authenticated_ws_url("wss://hai.ai/ws/foo?room=42", "JACS abc:1:n:s")
+            .expect("wss ok");
+        assert!(url.contains("&auth="), "additional query param uses & — got {url}");
+    }
+
+    #[test]
+    fn build_authenticated_ws_url_percent_encodes_auth_header() {
+        // The JACS auth header contains ':' and base64-alphabet chars
+        // ('+', '/', '=') that must be percent-encoded.
+        let url = build_authenticated_ws_url("wss://hai.ai/ws/foo", "JACS abc:123:n:sig+/=")
+            .expect("wss ok");
+        assert!(!url.contains(' '), "spaces must be encoded — got {url}");
+        assert!(!url.contains("sig+"), "+ must be encoded — got {url}");
     }
 }
