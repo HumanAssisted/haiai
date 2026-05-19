@@ -73,10 +73,13 @@ while IFS='|' read -r JS_NAME RUST_FN KIND; do
     fi
   fi
 
-  # 2) TS wrapper check — only when node-wasm/index.ts exists. Tasks
-  # 031-034 land the TS wrapper; until then this is silently skipped
-  # so the enforcer can run green during the Rust-only landing waves.
-  if [[ -f "${NODE_WASM_INDEX}" ]]; then
+  # 2) TS wrapper check — only when node-wasm/index.ts exists AND is
+  # not still the Task 031 skeleton. Tasks 031-034 stage the TS
+  # wrapper in waves; the skeleton intentionally ships only
+  # initHaiaiWasm/version/about, with BrowserAgent.* throwing
+  # NotImplemented. The skeleton self-identifies via the marker comment
+  # below so this enforcer can skip the TS check until Task 033 lands.
+  if [[ -f "${NODE_WASM_INDEX}" ]] && ! grep -q "Skeleton only — Tasks 032-034 land the" "${NODE_WASM_INDEX}"; then
     # Match `<js_name>(` or `<js_name>?(` (optional methods) anywhere
     # in the file. We're not parsing TS — a substring match catches
     # both `methodName(` declarations and `methodName({` calls; either
