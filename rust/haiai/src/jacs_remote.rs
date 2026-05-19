@@ -732,38 +732,66 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
 
     /// Read a signed-text file (markdown w/ appended `-----BEGIN JACS SIGNATURE-----` block)
     /// and POST it to `/api/v1/records` with `Content-Type: text/markdown; profile=jacs-text-v1`.
+    ///
+    /// File-path variant: not available on wasm (no filesystem). Wasm callers
+    /// can sign and post bytes directly via `store_document` (Task 009 audit).
     fn store_text_file(&self, path: &str) -> Result<String> {
-        let bytes =
-            std::fs::read(path).map_err(|e| HaiError::Provider(format!("read {}: {}", path, e)))?;
-        let text = std::str::from_utf8(&bytes)
-            .map_err(|_| HaiError::Provider("text file is not valid UTF-8".to_string()))?;
-        if !text.contains("-----BEGIN JACS SIGNATURE-----") {
-            return Err(HaiError::Provider(
-                "text file has no JACS signature block — sign with sign_text_file first"
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            return Err(HaiError::BackendUnsupported {
+                method: "store_text_file".to_string(),
+                detail: "wasm build cannot read from disk; sign in-memory and call store_document"
                     .to_string(),
-            ));
+            });
         }
-        // DRY: shared POST + key-extraction with `store_document` /
-        // `store_image_file`.
-        self.post_record_for_key(bytes, CT_TEXT_MD)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let bytes = std::fs::read(path)
+                .map_err(|e| HaiError::Provider(format!("read {}: {}", path, e)))?;
+            let text = std::str::from_utf8(&bytes)
+                .map_err(|_| HaiError::Provider("text file is not valid UTF-8".to_string()))?;
+            if !text.contains("-----BEGIN JACS SIGNATURE-----") {
+                return Err(HaiError::Provider(
+                    "text file has no JACS signature block — sign with sign_text_file first"
+                        .to_string(),
+                ));
+            }
+            // DRY: shared POST + key-extraction with `store_document` /
+            // `store_image_file`.
+            self.post_record_for_key(bytes, CT_TEXT_MD)
+        }
     }
 
     /// Detect a signed image's format from leading magic bytes and POST it with
-    /// `Content-Type: image/png|jpeg|webp`.
+    /// `Content-Type: image/png|jpeg|webp`. Wasm build: unsupported — sign and
+    /// post bytes via `store_document` instead.
     fn store_image_file(&self, path: &str) -> Result<String> {
-        let bytes =
-            std::fs::read(path).map_err(|e| HaiError::Provider(format!("read {}: {}", path, e)))?;
-        let ct = detect_image_content_type(&bytes)?;
-        // Sanity-check: the image carries an embedded JACS chunk. We don't verify here
-        // (server runs the real verifier); we just refuse to upload obviously-unsigned bytes.
-        if !contains_jacs_chunk(&bytes) {
-            return Err(HaiError::Provider(
-                "image has no JACS signature — sign with sign_image first".to_string(),
-            ));
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            return Err(HaiError::BackendUnsupported {
+                method: "store_image_file".to_string(),
+                detail: "wasm build cannot read from disk; sign in-memory and call store_document"
+                    .to_string(),
+            });
         }
-        // DRY: shared POST + key-extraction with `store_document` /
-        // `store_text_file`.
-        self.post_record_for_key(bytes, ct)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let bytes = std::fs::read(path)
+                .map_err(|e| HaiError::Provider(format!("read {}: {}", path, e)))?;
+            let ct = detect_image_content_type(&bytes)?;
+            // Sanity-check: the image carries an embedded JACS chunk. We don't verify here
+            // (server runs the real verifier); we just refuse to upload obviously-unsigned bytes.
+            if !contains_jacs_chunk(&bytes) {
+                return Err(HaiError::Provider(
+                    "image has no JACS signature — sign with sign_image first".to_string(),
+                ));
+            }
+            // DRY: shared POST + key-extraction with `store_document` /
+            // `store_text_file`.
+            self.post_record_for_key(bytes, ct)
+        }
     }
 
     /// Fetch the raw record bytes (any content type — no UTF-8 decode, no JSON parse).
@@ -1111,6 +1139,11 @@ fn extract_summaries_from_list(resp: &Value) -> Vec<DocSummary> {
         .unwrap_or_default()
 }
 
+// Native-only image helpers. The wasm build (HAIAI_WASM_PRD §4.2.1 + §4.8)
+// has no `jacs-media` dep and no filesystem path to images, so neither
+// `detect_image_content_type` nor `contains_jacs_chunk` (which calls
+// `jacs_media::extract_signature`) is reachable from the wasm-target HaiClient.
+#[cfg(not(target_arch = "wasm32"))]
 fn detect_image_content_type(bytes: &[u8]) -> Result<&'static str> {
     if bytes.starts_with(&[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']) {
         Ok("image/png")
@@ -1135,6 +1168,7 @@ fn detect_image_content_type(bytes: &[u8]) -> Result<&'static str> {
 /// `Ok(false)` when the bytes are an image but carry no JACS chunk. An
 /// unreadable image returns `Ok(false)` — the server will 400 it anyway and we
 /// don't want to mask the real error here.
+#[cfg(not(target_arch = "wasm32"))]
 fn contains_jacs_chunk(bytes: &[u8]) -> bool {
     matches!(jacs_media::extract_signature(bytes, false), Ok(Some(_)))
 }
@@ -1147,7 +1181,10 @@ fn b64_url_decode(s: &str) -> Result<Vec<u8>> {
         .map_err(|e| HaiError::Provider(format!("base64url decode: {e}")))
 }
 
-#[cfg(test)]
+// Native-only test module: uses tokio multi-thread runtime, tempfile,
+// httpmock, image, and jacs_media — none of which are available on the
+// wasm32 target (HAIAI_WASM_PRD §4.2.1, Task 009/010).
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use crate::jacs::StaticJacsProvider;

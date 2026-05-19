@@ -12,10 +12,15 @@ repository.workspace = true
 homepage.workspace = true
 
 [features]
-default = ["rustls-tls", "jacs-crate"]
+default = ["rustls-tls", "jacs-crate", "media"]
 rustls-tls = ["reqwest/rustls"]
 native-tls = ["reqwest/native-tls"]
 jacs-crate = ["dep:jacs"]
+# Image-signing / image-format detection (PNG/JPEG/WebP). Pulls
+# `jacs-media` which transitively pulls the `image` crate. On in `default`,
+# absent from `wasm` per HAIAI_WASM_PRD §4.2.1 (browser attachments are
+# base64-in-JSON, no file-path image upload path in V1).
+media = ["dep:jacs-media"]
 agreements = ["jacs-crate", "jacs/agreements"]
 attestation = ["jacs-crate", "jacs/attestation"]
 # Browser-side build profile (HAIAI_WASM_PRD.md §4.2). Mutually exclusive
@@ -59,7 +64,11 @@ jacs = { version = "=0.10.2", optional = true, features = ["a2a"] }
 # literal `jacsSignature` substring, leading to wasted round-trips and a
 # maintenance footgun (SDK accepts what server rejects). The real extractor
 # is the single source of truth for "does this image carry a JACS signature".
-jacs-media = "=0.10.2"
+#
+# Task 009: now optional behind the `media` feature (default-on for native,
+# off for wasm) so the wasm tree doesn't pull `image` (PNG/JPEG codecs)
+# transitively (HAIAI_WASM_PRD §4.2.1).
+jacs-media = { version = "=0.10.2", optional = true }
 
 # Wasm-only optional deps (HAIAI_WASM_PRD.md §4.2). Declared here so they
 # are part of the dep graph but `optional = true` keeps them out of the

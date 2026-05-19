@@ -804,11 +804,24 @@ pub trait JacsDocumentProvider: JacsProvider {
 
     /// Sign and store a MEMORY record. If `content` is `None` the implementation
     /// reads `MEMORY.md` from CWD. Returns the record key (`id:version`).
+    ///
+    /// Wasm build (`target_arch = "wasm32"`): `content = None` is unsupported
+    /// because the browser has no CWD / filesystem. Callers must pass explicit
+    /// bytes (HAIAI_WASM_PRD §4.7, Task 009 audit).
     fn save_memory(&self, content: Option<&str>) -> Result<String> {
         let plaintext = match content {
             Some(s) => s.as_bytes().to_vec(),
+            #[cfg(not(target_arch = "wasm32"))]
             None => std::fs::read("MEMORY.md")
                 .map_err(|e| HaiError::Provider(format!("read MEMORY.md: {e}")))?,
+            #[cfg(target_arch = "wasm32")]
+            None => {
+                return Err(HaiError::BackendUnsupported {
+                    method: "save_memory".to_string(),
+                    detail: "wasm build cannot read MEMORY.md from CWD; pass content explicitly"
+                        .to_string(),
+                });
+            }
         };
         let doc = self.save_document(SaveDocumentRequest {
             doc_id: None,
@@ -823,12 +836,22 @@ pub trait JacsDocumentProvider: JacsProvider {
         Ok(doc.key)
     }
 
-    /// Sign and store a SOUL record. Mirror of `save_memory`.
+    /// Sign and store a SOUL record. Mirror of `save_memory`. Wasm build:
+    /// see `save_memory` doc-comment for the same gating constraint.
     fn save_soul(&self, content: Option<&str>) -> Result<String> {
         let plaintext = match content {
             Some(s) => s.as_bytes().to_vec(),
+            #[cfg(not(target_arch = "wasm32"))]
             None => std::fs::read("SOUL.md")
                 .map_err(|e| HaiError::Provider(format!("read SOUL.md: {e}")))?,
+            #[cfg(target_arch = "wasm32")]
+            None => {
+                return Err(HaiError::BackendUnsupported {
+                    method: "save_soul".to_string(),
+                    detail: "wasm build cannot read SOUL.md from CWD; pass content explicitly"
+                        .to_string(),
+                });
+            }
         };
         let doc = self.save_document(SaveDocumentRequest {
             doc_id: None,

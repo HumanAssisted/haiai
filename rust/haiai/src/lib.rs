@@ -66,8 +66,19 @@ pub mod jacs_local;
 pub mod jacs_remote;
 pub mod key_format;
 pub mod mime;
+// `self_knowledge` pulls `bm25` (a search runtime) and is only ever used
+// from the CLI / MCP tool surface. Browsers neither expose a knowledge-query
+// API nor have a search runtime; gated out of the wasm build per
+// HAIAI_WASM_PRD §4.2.1 + Task 009 audit.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod self_knowledge;
 pub mod types;
+// `validation` pulls `html5ever` for HTML body validation in the email send
+// path. The wasm build's send path canonicalizes / signs in pure JSON; we
+// gate the html5ever-using module out of the wasm tree per HAIAI_WASM_PRD
+// §4.2.1 + Task 009 audit. Tasks downstream that need a wasm `validate_html`
+// can add a no-op stub at that time.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod validation;
 pub mod verify;
 
