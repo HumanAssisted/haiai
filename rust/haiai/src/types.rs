@@ -1079,7 +1079,7 @@ struct RawEmailWire {
 /// Byte-fidelity is mandatory: `raw_email`, when present, is the exact
 /// bytes that crossed the wire from the sender through the server into
 /// the recipient mailbox — no normalization, no re-encoding.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawEmailResponse {
     /// Internal DB id of the message (agent_email_messages.id).
     pub message_id: String,

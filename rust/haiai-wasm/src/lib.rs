@@ -37,9 +37,51 @@
 // crate to link wasm-bindgen (which fails outside a browser host).
 #[cfg(target_arch = "wasm32")]
 mod browser_agent;
+#[cfg(target_arch = "wasm32")]
+mod errors;
+#[cfg(target_arch = "wasm32")]
+mod events;
 
 #[cfg(target_arch = "wasm32")]
 pub use browser_agent::*;
+#[cfg(target_arch = "wasm32")]
+pub use events::*;
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+/// Initialize the wasm runtime. Idempotent.
+///
+/// HAIAI_WASM_PRD §4.3: `initHaiaiWasm()` calls `initJacsWasm()` under
+/// the hood (delegates via `jacs_core` indirectly through the haiai
+/// `JacsWasmProvider`). For the wrapper we install the panic hook so
+/// Rust panics surface in `console.error` rather than as bare
+/// `RuntimeError`s.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = initHaiaiWasm)]
+pub fn init_haiai_wasm() {
+    console_error_panic_hook::set_once();
+}
+
+/// Return the package version string. Used by the TS wrapper for
+/// telemetry and for the cross-package version-sync check
+/// (HAIAI_WASM_PRD §4.11 / Task 040).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = version)]
+pub fn version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// One-line build descriptor for diagnostics.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = about)]
+pub fn about() -> String {
+    format!(
+        "{} v{} (browser bindings for HAI API on JACS WASM; see https://hai.ai)",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION")
+    )
+}
 
 /// Native no-op stub. Lets `cargo check --workspace` and `cargo
 /// publish --dry-run` succeed when building haiai-wasm for the host

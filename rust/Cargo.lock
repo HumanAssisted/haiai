@@ -1446,6 +1446,7 @@ dependencies = [
  "base64",
  "console_error_panic_hook",
  "haiai",
+ "jacs-core",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",

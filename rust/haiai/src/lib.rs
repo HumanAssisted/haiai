@@ -83,6 +83,8 @@ pub mod jacs_remote;
 // run in the browser. HAIAI_WASM_PRD §4.1 + §4.2 + Task 017.
 #[cfg(target_arch = "wasm32")]
 pub mod jacs_wasm;
+#[cfg(target_arch = "wasm32")]
+pub use jacs_wasm::JacsWasmProvider;
 pub mod key_format;
 pub mod mime;
 // `sse_parse` is the target-agnostic SSE line/event parser shared by

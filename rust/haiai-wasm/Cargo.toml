@@ -25,6 +25,10 @@ crate-type = ["cdylib", "rlib"]
 # that fail outside a browser host).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 haiai = { path = "../haiai", default-features = false, features = ["wasm"] }
+# jacs-core for CoreAgent + SigningAlgorithm constructors (PRD §4.3 lifecycle
+# methods construct a CoreAgent directly because jacs-wasm::CoreAgentHandle
+# keeps its inner agent private).
+jacs-core = "=0.10.2"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"

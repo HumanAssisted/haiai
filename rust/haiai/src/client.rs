@@ -212,6 +212,13 @@ impl<P: JacsProvider> HaiClient<P> {
         self.jacs.jacs_id()
     }
 
+    /// Borrow the underlying JACS provider. Browser bindings reach
+    /// through this accessor to call provider-level signing / verify
+    /// operations (HAIAI_WASM_PRD §4.3 local-crypto block).
+    pub fn jacs(&self) -> &P {
+        &self.jacs
+    }
+
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
