@@ -920,7 +920,7 @@ pub struct VerifyAgentDocumentRequest {
     pub domain: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct HaiEvent {
     #[serde(default)]
     pub event_type: String,

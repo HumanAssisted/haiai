@@ -1627,6 +1627,7 @@ async fn main() -> anyhow::Result<()> {
                 attachments: vec![],
                 labels,
                 append_footer: None,
+                idempotency_key: None,
             };
             let result = client
                 .send_signed_email_with_generation_type(&options, generation_type.into())

@@ -240,14 +240,15 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     pub fn build_auth_header(&self) -> Result<String> {
+        // Wall-clock ts + random nonce supplied here; the canonical
+        // byte-shape comes from `transport::build_auth_header_with`, which
+        // is shared with the wasm transport for fixture parity
+        // (HAIAI_WASM_PRD §4.5 + tests/fixtures/wasm_compat/auth_header.json).
         let ts = OffsetDateTime::now_utc().unix_timestamp();
         let nonce = uuid::Uuid::new_v4().simple().to_string();
-        let message = format!("{}:{ts}:{nonce}", self.jacs.jacs_id());
-        let signature = self.jacs.sign_string(&message)?;
-        Ok(format!(
-            "JACS {}:{ts}:{nonce}:{signature}",
-            self.jacs.jacs_id()
-        ))
+        crate::transport::build_auth_header_with(self.jacs.jacs_id(), ts, &nonce, |msg| {
+            self.jacs.sign_string(msg)
+        })
     }
 
     pub fn sign_message(&self, message: &str) -> Result<String> {
@@ -1853,33 +1854,16 @@ impl<P: JacsProvider> HaiClient<P> {
                             continue;
                         };
 
-                        let data = serde_json::from_str::<Value>(&text)
-                            .unwrap_or_else(|_| Value::String(text.clone()));
-                        let event_type = data
-                            .get("type")
-                            .and_then(Value::as_str)
-                            .unwrap_or("message")
-                            .to_string();
-
-                        if event_type == "heartbeat" {
-                            let timestamp = data
-                                .get("timestamp")
-                                .cloned()
-                                .unwrap_or_else(|| Value::from(OffsetDateTime::now_utc().unix_timestamp()));
-                            let pong = json!({
-                                "type": "pong",
-                                "timestamp": timestamp
-                            });
-                            let _ = ws_sink.send(Message::Text(pong.to_string().into())).await;
+                        // Shared parser — same code path the wasm
+                        // `WasmWebSocket` impl uses (Task 014 +
+                        // HAIAI_WASM_PRD §4.6). Heartbeat reply is
+                        // produced by the parser and posted upstream
+                        // here.
+                        let parsed = crate::ws_protocol::parse_frame_text(&text);
+                        if let Some(crate::ws_protocol::WsMessage::Text(pong)) = parsed.reply {
+                            let _ = ws_sink.send(Message::Text(pong.into())).await;
                         }
-
-                        let event = HaiEvent {
-                            event_type,
-                            data,
-                            id: None,
-                            raw: text,
-                        };
-                        if events_tx.send(event).await.is_err() {
+                        if events_tx.send(parsed.event).await.is_err() {
                             break;
                         }
                     }

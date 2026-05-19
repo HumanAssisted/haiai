@@ -90,6 +90,12 @@ pub struct HaiResponseBytes {
 /// the wasm32 fetch shim. Each method drives ONE HTTP exchange. The
 /// retry / backoff loop stays in `HaiClient::request_with_retry` so
 /// transports don't have to duplicate it.
+///
+/// On wasm32 the trait is `?Send` because browser futures are not
+/// `Send`-bounded (single-threaded event loop). On native targets it is
+/// `Send + Sync + 'static` so HaiClient stays usable from
+/// `tokio::spawn`-ed tasks (HAIAI_WASM_PRD §4.2).
+#[cfg(not(target_arch = "wasm32"))]
 #[async_trait]
 pub trait HaiTransport: Send + Sync + 'static {
     /// Execute the request and parse the response body as JSON.
@@ -106,8 +112,46 @@ pub trait HaiTransport: Send + Sync + 'static {
     async fn request_no_content(&self, req: HaiRequest) -> Result<()>;
 }
 
+#[cfg(target_arch = "wasm32")]
+#[async_trait(?Send)]
+pub trait HaiTransport: 'static {
+    async fn request_json(&self, req: HaiRequest) -> Result<HaiResponseJson>;
+    async fn request_bytes(&self, req: HaiRequest) -> Result<HaiResponseBytes>;
+    async fn request_no_content(&self, req: HaiRequest) -> Result<()>;
+}
+
+/// Build the `Authorization: JACS <jacs_id>:<ts>:<nonce>:<signature>` header
+/// from explicit inputs (ts + nonce) instead of capturing the wall clock.
+///
+/// This is the canonical, byte-deterministic builder shared between the
+/// native and wasm transports. `HaiClient::build_auth_header` calls this
+/// with `now_utc_secs()` and `uuid::Uuid::new_v4()`; the wasm fixture test
+/// (HAIAI_WASM_PRD §4.5) calls it with the pinned fixture ts + nonce so
+/// the produced header is byte-identical across both targets.
+///
+/// `sign` is invoked with the canonical message string
+/// `"<jacs_id>:<ts>:<nonce>"`. The returned signature is appended verbatim.
+///
+/// Errors propagate from the supplied signing closure.
+pub fn build_auth_header_with<F>(
+    jacs_id: &str,
+    ts: i64,
+    nonce: &str,
+    sign: F,
+) -> crate::error::Result<String>
+where
+    F: FnOnce(&str) -> crate::error::Result<String>,
+{
+    let message = format!("{jacs_id}:{ts}:{nonce}");
+    let signature = sign(&message)?;
+    Ok(format!("JACS {jacs_id}:{ts}:{nonce}:{signature}"))
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub use self::native::NativeReqwestTransport;
+
+#[cfg(target_arch = "wasm32")]
+pub use self::wasm::WasmFetchTransport;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
@@ -205,9 +249,145 @@ mod native {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    //! Wasm-side `HaiTransport` impl backed by reqwest 0.13's wasm32 mode
+    //! (which delegates to the browser's `fetch()`).
+    //!
+    //! HAIAI_WASM_PRD §4.2 + §4.8: this impl ships ONE HTTP exchange per
+    //! `request_*` call. The retry / backoff loop stays in
+    //! `HaiClient::request_with_retry` so transports remain stateless.
+    //!
+    //! Auth header is built via `build_auth_header_with` (shared with the
+    //! native transport) so the produced `Authorization` value is
+    //! byte-identical across targets given the same `(jacs_id, ts, nonce)`
+    //! inputs — see HAIAI_WASM_PRD §4.5 + the
+    //! `tests/fixtures/wasm_compat/auth_header.json` golden.
+    //!
+    //! Reqwest's wasm shim does NOT support `RequestBuilder::timeout`
+    //! (the browser's fetch timeout is what's in effect); we silently
+    //! drop `req.timeout` on the wasm side.
+    use super::*;
+    use reqwest::Client;
+
+    /// Wasm `reqwest::Client` impl of `HaiTransport`. The transport itself
+    /// owns no key material — the caller (HaiClient) builds the
+    /// `Authorization` header via `build_auth_header_with` before invoking
+    /// the transport.
+    pub struct WasmFetchTransport {
+        pub(crate) client: Client,
+    }
+
+    impl WasmFetchTransport {
+        pub fn new(client: Client) -> Self {
+            Self { client }
+        }
+    }
+
+    #[async_trait(?Send)]
+    impl HaiTransport for WasmFetchTransport {
+        async fn request_json(&self, req: HaiRequest) -> Result<HaiResponseJson> {
+            let resp = send_request(&self.client, &req).await?;
+            let status = resp.status().as_u16();
+            let headers = collect_headers(resp.headers());
+            let body = resp.json::<Value>().await?;
+            Ok(HaiResponseJson {
+                status,
+                body,
+                headers,
+            })
+        }
+
+        async fn request_bytes(&self, req: HaiRequest) -> Result<HaiResponseBytes> {
+            let resp = send_request(&self.client, &req).await?;
+            let status = resp.status().as_u16();
+            let headers = collect_headers(resp.headers());
+            let content_type = headers.get("content-type").cloned();
+            let body = resp.bytes().await?.to_vec();
+            Ok(HaiResponseBytes {
+                status,
+                body,
+                headers,
+                content_type,
+            })
+        }
+
+        async fn request_no_content(&self, req: HaiRequest) -> Result<()> {
+            let resp = send_request(&self.client, &req).await?;
+            // Drain the body to release the connection even if the
+            // server returned data we don't care about.
+            let _ = resp.bytes().await?;
+            Ok(())
+        }
+    }
+
+    fn collect_headers(headers: &reqwest::header::HeaderMap) -> BTreeMap<String, String> {
+        headers
+            .iter()
+            .filter_map(|(k, v)| v.to_str().ok().map(|s| (k.as_str().to_string(), s.to_string())))
+            .collect()
+    }
+
+    async fn send_request(client: &Client, req: &HaiRequest) -> Result<reqwest::Response> {
+        let mut builder = match req.method {
+            HaiHttpMethod::Get => client.get(&req.url),
+            HaiHttpMethod::Post => client.post(&req.url),
+            HaiHttpMethod::Put => client.put(&req.url),
+            HaiHttpMethod::Patch => client.patch(&req.url),
+            HaiHttpMethod::Delete => client.delete(&req.url),
+        };
+        if let Some(auth) = &req.auth_header {
+            builder = builder.header("Authorization", auth);
+        }
+        for (k, v) in &req.headers {
+            builder = builder.header(k.as_str(), v.as_str());
+        }
+        if !req.query.is_empty() {
+            let pairs: Vec<(&str, &str)> =
+                req.query.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+            builder = builder.query(&pairs);
+        }
+        if let Some(body) = &req.json_body {
+            builder = builder.json(body);
+        }
+        // Note: req.timeout intentionally ignored on wasm — reqwest's
+        // wasm32 shim does not expose RequestBuilder::timeout (PRD §4.8).
+        let _ = req.timeout;
+        Ok(builder.send().await?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_auth_header_with_matches_fixture() {
+        // Golden test mirroring tests/fixtures/wasm_compat/auth_header.json
+        // (HAIAI_WASM_PRD §4.5). The signer here returns the fixture's
+        // pre-computed base64 signature; the builder MUST produce the
+        // fixture's `expected_authorization` byte-for-byte.
+        let header = build_auth_header_with(
+            "agent-alpha-fixture-2026",
+            1_747_500_000,
+            "0a1b2c3d4e5f607182939495a6b7c8d9",
+            |msg| {
+                assert_eq!(
+                    msg,
+                    "agent-alpha-fixture-2026:1747500000:0a1b2c3d4e5f607182939495a6b7c8d9"
+                );
+                Ok(
+                    "ZKTC6eFvWbp7sfbGTMa1e1AEZ8DAtaMbUKmqlB4ENonGJakBPwzutFsI/jh6/oJ2h4LEs+8v+Y0TE/i7zGLNCg=="
+                        .to_string(),
+                )
+            },
+        )
+        .expect("auth header builds");
+        assert_eq!(
+            header,
+            "JACS agent-alpha-fixture-2026:1747500000:0a1b2c3d4e5f607182939495a6b7c8d9:ZKTC6eFvWbp7sfbGTMa1e1AEZ8DAtaMbUKmqlB4ENonGJakBPwzutFsI/jh6/oJ2h4LEs+8v+Y0TE/i7zGLNCg=="
+        );
+    }
 
     #[test]
     fn hai_request_serializes_with_expected_shape() {

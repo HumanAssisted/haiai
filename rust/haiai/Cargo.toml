@@ -34,9 +34,11 @@ attestation = ["jacs-crate", "jacs/attestation"]
 #                        --target wasm32-unknown-unknown
 wasm = [
     "serde_json_canonicalizer",
+    "dep:wasm-bindgen",
     "dep:wasm-bindgen-futures",
     "dep:web-sys",
     "dep:js-sys",
+    "dep:futures-channel",
     "dep:gloo-timers",
     "dep:jacs-core",
     "dep:jacs-wasm",
@@ -79,15 +81,30 @@ jacs-media = { version = "=0.10.2", optional = true }
 # `web-sys` feature subset intentionally excludes `EventSource` — PRD
 # §4.6 keeps that path optional pending Task 002's backend confirmation.
 wasm-bindgen-futures = { version = "0.4", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
 web-sys = { version = "0.3", optional = true, features = [
+    # WebSocket transport (Task 018).
     "WebSocket",
     "MessageEvent",
     "BinaryType",
+    "CloseEvent",
+    "ErrorEvent",
+    # SSE (fetch + ReadableStream) transport (Task 019).
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
+    "Request",
+    "RequestInit",
+    "Response",
+    "Headers",
+    "TextDecoder",
+    "TextDecoderOptions",
+    # Diagnostics + metrics surface.
     "console",
     "Performance",
     "Window",
 ] }
 js-sys = { version = "0.3", optional = true }
+futures-channel = { version = "0.3", optional = true }
 gloo-timers = { version = "0.3", optional = true, features = ["futures"] }
 jacs-core = { version = "=0.10.2", optional = true }
 jacs-wasm = { version = "=0.10.2", optional = true }

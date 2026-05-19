@@ -1381,6 +1381,7 @@ dependencies = [
  "async-trait",
  "base64",
  "bm25",
+ "futures-channel",
  "futures-util",
  "gloo-timers",
  "html5ever",
@@ -1407,6 +1408,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
 ]

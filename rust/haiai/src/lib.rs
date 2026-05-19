@@ -78,6 +78,11 @@ pub mod jacs;
 #[cfg(feature = "jacs-crate")]
 pub mod jacs_local;
 pub mod jacs_remote;
+// `jacs_wasm::JacsWasmProvider` adapts JACS WASM (`jacs_core::CoreAgent`)
+// to HAIAI's `JacsProvider` trait so `HaiClient<JacsWasmProvider>` can
+// run in the browser. HAIAI_WASM_PRD §4.1 + §4.2 + Task 017.
+#[cfg(target_arch = "wasm32")]
+pub mod jacs_wasm;
 pub mod key_format;
 pub mod mime;
 // `sse_parse` is the target-agnostic SSE line/event parser shared by
@@ -91,9 +96,28 @@ pub mod sse_parse;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod self_knowledge;
 // `transport` declares the `HaiTransport` trait + native impl
-// (HAIAI_WASM_PRD §4.2 / Task 011). The wasm impl lands in Task 012;
-// the full HaiClient generic-over-T rewire lands when Task 012 lands.
+// (HAIAI_WASM_PRD §4.2 / Task 011). The wasm impl
+// (`transport::WasmFetchTransport`) lands alongside in Task 012; the
+// full HaiClient generic-over-T rewire is intentionally deferred — the
+// trait + impls are kept ready to plug in.
 pub mod transport;
+// `ws_protocol` lifts the WS frame-to-`HaiEvent` parser, the
+// heartbeat/pong pairing, and the reconnect backoff constants out of
+// `client.rs::connect_ws` so both the native `tokio_tungstenite` impl
+// and the wasm `web_sys::WebSocket` impl share exactly one parser
+// (HAIAI_WASM_PRD §4.6 / Task 014).
+pub mod ws_protocol;
+// `ws_wasm` provides the browser `WebSocketTransport` impl backed by
+// `web_sys::WebSocket` + JS callback bridging (HAIAI_WASM_PRD §4.6 /
+// Task 018). Gated to wasm32 — the module pulls `web-sys` /
+// `wasm-bindgen` features that don't compile on native targets.
+#[cfg(target_arch = "wasm32")]
+pub mod ws_wasm;
+// `sse_wasm` provides the browser SSE transport using fetch() +
+// ReadableStream + the shared `sse_parse` parser (HAIAI_WASM_PRD §4.6 /
+// Task 019).
+#[cfg(target_arch = "wasm32")]
+pub mod sse_wasm;
 pub mod types;
 // `validation` pulls `html5ever` for HTML body validation in the email send
 // path. The wasm build's send path canonicalizes / signs in pure JSON; we

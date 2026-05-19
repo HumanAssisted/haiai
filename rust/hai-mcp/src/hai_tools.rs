@@ -867,6 +867,7 @@ async fn call_send_email(context: &HaiServerContext, args: &Value) -> ToolResult
                 attachments: vec![],
                 labels: optional_string_array(args, "labels"),
                 append_footer: None,
+                idempotency_key: optional_string(args, "idempotency_key").map(ToString::to_string),
             },
             generation_type,
         )
