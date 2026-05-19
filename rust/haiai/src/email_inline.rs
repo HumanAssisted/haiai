@@ -114,11 +114,160 @@ pub fn embed_jacs_header_in_inline_logo(
 
 #[cfg(not(feature = "jacs-crate"))]
 pub fn embed_jacs_header_in_inline_logo(
-    _compact_jacs_header: &str,
+    compact_jacs_header: &str,
 ) -> crate::error::Result<SignedInlineLogo> {
-    Err(crate::error::HaiError::Provider(
-        "html inline logo signing requires the jacs-crate feature".to_string(),
-    ))
+    // Wasm builds intentionally do not pull `jacs-media` / `image`, but the
+    // inline-email transport only needs to add a small uncompressed PNG iTXt
+    // metadata chunk. The signed hidden envelope is still produced by the
+    // configured JACS provider; this helper only carries its compact header.
+    let bytes = embed_png_itxt_jacs_header(HAI_JACS_LOGO_BYTES, compact_jacs_header)?;
+    Ok(SignedInlineLogo {
+        size_bytes: bytes.len(),
+        bytes,
+    })
+}
+
+#[cfg(not(feature = "jacs-crate"))]
+const PNG_SIGNATURE_BYTES: &[u8] = b"\x89PNG\r\n\x1a\n";
+#[cfg(not(feature = "jacs-crate"))]
+const PNG_IEND_TYPE: &[u8; 4] = b"IEND";
+#[cfg(not(feature = "jacs-crate"))]
+const PNG_ITXT_TYPE: &[u8; 4] = b"iTXt";
+#[cfg(not(feature = "jacs-crate"))]
+const PNG_JACS_KEYWORD: &[u8] = b"JACS-Signature";
+
+#[cfg(not(feature = "jacs-crate"))]
+fn embed_png_itxt_jacs_header(
+    base_logo_png: &[u8],
+    compact_jacs_header: &str,
+) -> crate::error::Result<Vec<u8>> {
+    if !base_logo_png.starts_with(PNG_SIGNATURE_BYTES) {
+        return Err(crate::error::HaiError::Provider(
+            "bundled inline logo is not a PNG".to_string(),
+        ));
+    }
+
+    let new_chunk = build_png_chunk(PNG_ITXT_TYPE, &build_png_itxt_body(compact_jacs_header));
+    let mut out = Vec::with_capacity(base_logo_png.len() + new_chunk.len());
+    out.extend_from_slice(PNG_SIGNATURE_BYTES);
+
+    let mut pos = PNG_SIGNATURE_BYTES.len();
+    let mut inserted = false;
+    while pos + 12 <= base_logo_png.len() {
+        let body_len = u32::from_be_bytes([
+            base_logo_png[pos],
+            base_logo_png[pos + 1],
+            base_logo_png[pos + 2],
+            base_logo_png[pos + 3],
+        ]) as usize;
+        let type_start = pos + 4;
+        let type_end = type_start + 4;
+        let body_start = type_end;
+        let Some(body_end) = body_start.checked_add(body_len) else {
+            return Err(crate::error::HaiError::Provider(
+                "invalid PNG inline logo chunk length".to_string(),
+            ));
+        };
+        let Some(crc_end) = body_end.checked_add(4) else {
+            return Err(crate::error::HaiError::Provider(
+                "invalid PNG inline logo CRC length".to_string(),
+            ));
+        };
+        if crc_end > base_logo_png.len() {
+            return Err(crate::error::HaiError::Provider(
+                "truncated PNG inline logo chunk".to_string(),
+            ));
+        }
+
+        let chunk_type = &base_logo_png[type_start..type_end];
+        let body = &base_logo_png[body_start..body_end];
+        let full_chunk = &base_logo_png[pos..crc_end];
+
+        if chunk_type == PNG_ITXT_TYPE && png_itxt_is_jacs_header(body) {
+            pos = crc_end;
+            continue;
+        }
+
+        if chunk_type == PNG_IEND_TYPE {
+            out.extend_from_slice(&new_chunk);
+            out.extend_from_slice(full_chunk);
+            inserted = true;
+            break;
+        }
+
+        out.extend_from_slice(full_chunk);
+        pos = crc_end;
+    }
+
+    if !inserted {
+        return Err(crate::error::HaiError::Provider(
+            "PNG inline logo is missing IEND chunk".to_string(),
+        ));
+    }
+
+    Ok(out)
+}
+
+#[cfg(not(feature = "jacs-crate"))]
+fn build_png_itxt_body(payload: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(PNG_JACS_KEYWORD.len() + payload.len() + 6);
+    out.extend_from_slice(PNG_JACS_KEYWORD);
+    out.push(0);
+    out.push(0);
+    out.push(0);
+    out.extend_from_slice(b"en");
+    out.push(0);
+    out.push(0);
+    out.extend_from_slice(payload.as_bytes());
+    out
+}
+
+#[cfg(not(feature = "jacs-crate"))]
+fn png_itxt_is_jacs_header(body: &[u8]) -> bool {
+    let Some(keyword_end) = body.iter().position(|&b| b == 0) else {
+        return false;
+    };
+    if &body[..keyword_end] != PNG_JACS_KEYWORD {
+        return false;
+    }
+    let compression_flag = keyword_end + 1;
+    body.get(compression_flag) == Some(&0)
+}
+
+#[cfg(not(feature = "jacs-crate"))]
+fn build_png_chunk(type_bytes: &[u8; 4], body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(12 + body.len());
+    out.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    out.extend_from_slice(type_bytes);
+    out.extend_from_slice(body);
+    out.extend_from_slice(&png_crc32(type_bytes, body).to_be_bytes());
+    out
+}
+
+#[cfg(not(feature = "jacs-crate"))]
+fn png_crc32(type_bytes: &[u8], body: &[u8]) -> u32 {
+    static TABLE: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        let mut table = [0u32; 256];
+        for (n, entry) in table.iter_mut().enumerate() {
+            let mut c = n as u32;
+            for _ in 0..8 {
+                c = if c & 1 != 0 {
+                    0xedb88320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
+            }
+            *entry = c;
+        }
+        table
+    });
+
+    let mut crc = 0xffff_ffff;
+    for &byte in type_bytes.iter().chain(body.iter()) {
+        crc = table[((crc ^ u32::from(byte)) & 0xff) as usize] ^ (crc >> 8);
+    }
+    crc ^ 0xffff_ffff
 }
 
 pub fn render_html_inline_email_body(
