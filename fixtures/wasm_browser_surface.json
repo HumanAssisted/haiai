@@ -1,0 +1,82 @@
+{
+  "description": "Wasm browser surface contract — every method @haiai/wasm exposes. Drift between this fixture, rust/haiai/src/client.rs::HaiClient methods, and node-wasm/index.ts::BrowserHaiClient is rejected by scripts/ci/check_wasm_surface.sh. HAIAI_WASM_PRD §3.2 / §5.6 / §8.",
+  "version": "1.0.0",
+  "total_method_count": 47,
+  "kinds": {
+    "lifecycle": "BrowserAgentHandle lifecycle constructors/accessors. Lives in rust/haiai-wasm/src/browser_agent.rs only (Task 021); not a HaiClient method.",
+    "crypto": "Local crypto. Delegates to jacs_wasm::CoreAgentHandle (Task 022); not a HaiClient method.",
+    "http": "HTTP wrapper around a HaiClient public async fn (Tasks 023-028).",
+    "stream": "SSE/WS event-stream connector (Task 029). Maps to HaiClient connect_sse/connect_ws.",
+    "local": "Pure-CPU helper (Task 028). Maps to HaiClient sync method or local helper."
+  },
+  "methods": [
+    { "js_name": "initHaiaiWasm", "rust_fn": null, "kind": "lifecycle", "wasm_export": "init_haiai_wasm" },
+    { "js_name": "createEphemeral", "rust_fn": null, "kind": "lifecycle", "wasm_export": "create_ephemeral" },
+    { "js_name": "importEncrypted", "rust_fn": null, "kind": "lifecycle", "wasm_export": "import_encrypted" },
+    { "js_name": "publicOnly", "rust_fn": null, "kind": "lifecycle", "wasm_export": "public_only" },
+    { "js_name": "clearSecrets", "rust_fn": null, "kind": "lifecycle", "wasm_export": "clear_secrets" },
+    { "js_name": "isUnlocked", "rust_fn": null, "kind": "lifecycle", "wasm_export": "is_unlocked" },
+    { "js_name": "exportAgent", "rust_fn": null, "kind": "lifecycle", "wasm_export": "export_agent" },
+    { "js_name": "getPublicKeyBase64", "rust_fn": null, "kind": "lifecycle", "wasm_export": "get_public_key_base64" },
+
+    { "js_name": "signMessageJson", "rust_fn": null, "kind": "crypto", "wasm_export": "sign_message_json" },
+    { "js_name": "verifyJson", "rust_fn": null, "kind": "crypto", "wasm_export": "verify_json" },
+    { "js_name": "signAgreement", "rust_fn": null, "kind": "crypto", "wasm_export": "sign_agreement" },
+    { "js_name": "verifyAgreement", "rust_fn": null, "kind": "crypto", "wasm_export": "verify_agreement" },
+
+    { "js_name": "hello", "rust_fn": "hello", "kind": "http" },
+    { "js_name": "register", "rust_fn": "register", "kind": "http" },
+    { "js_name": "rotateKeys", "rust_fn": "rotate_keys", "kind": "http" },
+    { "js_name": "verifyStatus", "rust_fn": "verify_status", "kind": "http" },
+    { "js_name": "updateUsername", "rust_fn": "update_username", "kind": "http" },
+    { "js_name": "deleteUsername", "rust_fn": "delete_username", "kind": "http" },
+
+    { "js_name": "sendEmail", "rust_fn": "send_email", "kind": "http" },
+    { "js_name": "sendSignedEmail", "rust_fn": "send_signed_email", "kind": "http" },
+    { "js_name": "listMessages", "rust_fn": "list_messages", "kind": "http" },
+    { "js_name": "getMessage", "rust_fn": "get_message", "kind": "http" },
+    { "js_name": "getRawEmail", "rust_fn": "get_raw_email", "kind": "http" },
+    { "js_name": "markRead", "rust_fn": "mark_read", "kind": "http" },
+    { "js_name": "markUnread", "rust_fn": "mark_unread", "kind": "http" },
+    { "js_name": "deleteMessage", "rust_fn": "delete_message", "kind": "http" },
+    { "js_name": "archive", "rust_fn": "archive", "kind": "http" },
+    { "js_name": "unarchive", "rust_fn": "unarchive", "kind": "http" },
+    { "js_name": "reply", "rust_fn": "reply", "kind": "http" },
+    { "js_name": "forward", "rust_fn": "forward", "kind": "http" },
+    { "js_name": "searchMessages", "rust_fn": "search_messages", "kind": "http" },
+    { "js_name": "contacts", "rust_fn": "contacts", "kind": "http" },
+    { "js_name": "getUnreadCount", "rust_fn": "get_unread_count", "kind": "http" },
+    { "js_name": "getEmailStatus", "rust_fn": "get_email_status", "kind": "http" },
+
+    { "js_name": "createEmailTemplate", "rust_fn": "create_email_template", "kind": "http" },
+    { "js_name": "listEmailTemplates", "rust_fn": "list_email_templates", "kind": "http" },
+    { "js_name": "getEmailTemplate", "rust_fn": "get_email_template", "kind": "http" },
+    { "js_name": "updateEmailTemplate", "rust_fn": "update_email_template", "kind": "http" },
+    { "js_name": "deleteEmailTemplate", "rust_fn": "delete_email_template", "kind": "http" },
+    { "js_name": "signEmailRaw", "rust_fn": "sign_email_raw", "kind": "http" },
+    { "js_name": "verifyEmailRaw", "rust_fn": "verify_email_raw", "kind": "http" },
+
+    { "js_name": "fetchServerKeys", "rust_fn": "fetch_server_keys", "kind": "http" },
+    { "js_name": "fetchRemoteKey", "rust_fn": "fetch_remote_key", "kind": "http" },
+    { "js_name": "fetchKeyByHash", "rust_fn": "fetch_key_by_hash", "kind": "http" },
+    { "js_name": "fetchKeyByEmail", "rust_fn": "fetch_key_by_email", "kind": "http" },
+    { "js_name": "fetchKeyByDomain", "rust_fn": "fetch_key_by_domain", "kind": "http" },
+    { "js_name": "fetchAllKeys", "rust_fn": "fetch_all_keys", "kind": "http" },
+    { "js_name": "verifyDocument", "rust_fn": "verify_document", "kind": "http" },
+    { "js_name": "getVerification", "rust_fn": "get_verification", "kind": "http" },
+    { "js_name": "verifyAgentDocument", "rust_fn": "verify_agent_document", "kind": "http" },
+
+    { "js_name": "benchmark", "rust_fn": "benchmark", "kind": "http" },
+    { "js_name": "freeRun", "rust_fn": "free_run", "kind": "http" },
+    { "js_name": "proRun", "rust_fn": "pro_run", "kind": "http" },
+    { "js_name": "dnsCertifiedRun", "rust_fn": "dns_certified_run", "kind": "http" },
+    { "js_name": "submitResponse", "rust_fn": "submit_response", "kind": "http" },
+
+    { "js_name": "canonicalJson", "rust_fn": "canonical_json", "kind": "local" },
+    { "js_name": "buildAuthHeader", "rust_fn": "build_auth_header", "kind": "local" },
+    { "js_name": "generateVerifyLink", "rust_fn": null, "kind": "local", "rust_path": "haiai::verify::generate_verify_link" },
+
+    { "js_name": "connectSse", "rust_fn": "connect_sse", "kind": "stream" },
+    { "js_name": "connectWs", "rust_fn": "connect_ws", "kind": "stream" }
+  ]
+}
