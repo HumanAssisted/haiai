@@ -309,6 +309,8 @@ export interface BrowserHaiClient {
   submitResponse(jobId: string, message: string, metadata?: unknown, processingTimeMs?: number): Promise<unknown>;
 
   // Event streams
+  connectSse(url: string, authHeader: string): AsyncIterableIterator<HaiEvent>;
+  connectWs(url: string, authHeader: string): AsyncIterableIterator<HaiEvent>;
   eventStream(options: EventStreamOptions): AsyncIterableIterator<HaiEvent>;
 }
 
@@ -499,6 +501,24 @@ class BrowserHaiClientImpl implements BrowserHaiClient {
     return safe(() =>
       this.handle.submitResponse(jobId, message, metadataJson, processingTimeMs ?? 0),
     );
+  }
+
+  /**
+   * Convenience wrapper around `eventStream({ transport: "sse" })`.
+   * Matches the `connectSse` fixture entry (HAIAI_WASM_PRD §4.3 +
+   * fixtures/wasm_browser_surface.json) — the underlying call still
+   * routes through `EventStreamHandle.openSse`.
+   */
+  connectSse(url: string, authHeader: string): AsyncIterableIterator<HaiEvent> {
+    return this.eventStream({ transport: "sse", url, authHeader });
+  }
+
+  /**
+   * Convenience wrapper around `eventStream({ transport: "ws" })`.
+   * Matches the `connectWs` fixture entry.
+   */
+  connectWs(url: string, authHeader: string): AsyncIterableIterator<HaiEvent> {
+    return this.eventStream({ transport: "ws", url, authHeader });
   }
 
   /**
