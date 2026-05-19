@@ -1,3 +1,10 @@
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 //! Rust HAIAI.
 //!
 //! This crate is intentionally a thin HAI-platform wrapper around JACS.
@@ -29,45 +36,112 @@
 //!     attachments: vec![],
 //!     labels: vec![],
 //!     append_footer: None,
+//!     idempotency_key: None,
 //! }).await?;
 //! # Ok(())
 //! # }
 //! ```
 
+// HAIAI_WASM_PRD.md §4.2 mutual-exclusivity gate. The `wasm` feature swaps
+// jacs (full native crate) for jacs-core / jacs-wasm and target-conditional
+// HTTP / WebSocket transports. Mixing the two features cannot produce a
+// coherent build, so we fail fast at compile time with a clear message.
+#[cfg(all(feature = "wasm", feature = "jacs-crate"))]
+compile_error!(
+    "the `wasm` and `jacs-crate` features are mutually exclusive: use `--no-default-features --features wasm`"
+);
+
+// `a2a` pulls native-only dependencies (the full A2A mediator/job-loop
+// uses `tokio::sync::Mutex` + `tokio::spawn` + native HTTP), and the
+// browser-side A2A surface is not part of the HAIAI_WASM_PRD §3.2
+// public wasm contract. Gate it out of the wasm build entirely so we
+// don't have to scatter `#[cfg]` over hundreds of lines.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod a2a;
+// `backoff` is the target-agnostic exponential-backoff helper used by
+// reconnect / retry loops. Native uses `tokio::time::sleep` via
+// `TokioTimer`; wasm uses `gloo_timers::future::sleep` via `GlooTimer`.
+// HAIAI_WASM_PRD §4.6 / Task 015.
+pub mod backoff;
+// `agent::Agent` is built on `LocalJacsProvider` (which is `jacs-crate`-gated
+// and conflicts with the `wasm` feature) and on `crate::validation` (gated
+// out of wasm by Task 009). Browser callers use `BrowserAgentHandle` from
+// the `haiai-wasm` crate instead (HAIAI_WASM_PRD §4.3).
+#[cfg(not(target_arch = "wasm32"))]
 pub mod agent;
 pub mod client;
 pub mod config;
+// `config_browser` deserializes an in-memory JSON string into `AgentConfig`
+// for browser builds (no jacs.config.json on disk). HAIAI_WASM_PRD §4.7 /
+// Task 016. Compiles on both targets (pure logic).
+pub mod config_browser;
 #[cfg(feature = "jacs-crate")]
 pub mod document_store;
 #[cfg(feature = "jacs-crate")]
 pub mod email;
+pub mod email_inline;
 pub mod error;
 pub mod jacs;
 #[cfg(feature = "jacs-crate")]
 pub mod jacs_local;
+// `jacs_remote` is the native HAI remote document/storage provider. It
+// uses native `reqwest::Client` directly + native blocking helpers and
+// is not part of the browser surface. Gate out of wasm.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod jacs_remote;
+// `jacs_wasm::JacsWasmProvider` adapts JACS WASM (`jacs_core::CoreAgent`)
+// to HAIAI's `JacsProvider` trait so `HaiClient<JacsWasmProvider>` can
+// run in the browser. HAIAI_WASM_PRD §4.1 + §4.2 + Task 017.
+#[cfg(target_arch = "wasm32")]
+pub mod jacs_wasm;
+#[cfg(target_arch = "wasm32")]
+pub use jacs_wasm::JacsWasmProvider;
 pub mod key_format;
 pub mod mime;
+// `sse_parse` is the target-agnostic SSE line/event parser shared by
+// the native `HaiClient::connect_sse` consumer and the wasm
+// `WasmSseConnection` consumer (HAIAI_WASM_PRD §4.6 / Task 013).
+pub mod sse_parse;
+// `self_knowledge` pulls `bm25` (a search runtime) and is only ever used
+// from the CLI / MCP tool surface. Browsers neither expose a knowledge-query
+// API nor have a search runtime; gated out of the wasm build per
+// HAIAI_WASM_PRD §4.2.1 + Task 009 audit.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod self_knowledge;
+// `transport` declares the `HaiTransport` trait + native impl
+// (HAIAI_WASM_PRD §4.2 / Task 011). The wasm impl
+// (`transport::WasmFetchTransport`) lands alongside in Task 012; the
+// full HaiClient generic-over-T rewire is intentionally deferred — the
+// trait + impls are kept ready to plug in.
+pub mod transport;
+// `ws_protocol` lifts the WS frame-to-`HaiEvent` parser, the
+// heartbeat/pong pairing, and the reconnect backoff constants out of
+// `client.rs::connect_ws` so both the native `tokio_tungstenite` impl
+// and the wasm `web_sys::WebSocket` impl share exactly one parser
+// (HAIAI_WASM_PRD §4.6 / Task 014).
+pub mod ws_protocol;
+// `ws_wasm` provides the browser `WebSocketTransport` impl backed by
+// `web_sys::WebSocket` + JS callback bridging (HAIAI_WASM_PRD §4.6 /
+// Task 018). Gated to wasm32 — the module pulls `web-sys` /
+// `wasm-bindgen` features that don't compile on native targets.
+#[cfg(target_arch = "wasm32")]
+pub mod ws_wasm;
+// `sse_wasm` provides the browser SSE transport using fetch() +
+// ReadableStream + the shared `sse_parse` parser (HAIAI_WASM_PRD §4.6 /
+// Task 019).
+#[cfg(target_arch = "wasm32")]
+pub mod sse_wasm;
 pub mod types;
+// `validation` pulls `html5ever` for HTML body validation in the email send
+// path. The wasm build's send path canonicalizes / signs in pure JSON; we
+// gate the html5ever-using module out of the wasm tree per HAIAI_WASM_PRD
+// §4.2.1 + Task 009 audit. Tasks downstream that need a wasm `validate_html`
+// can add a no-op stub at that time.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod validation;
 pub mod verify;
 
-#[cfg(test)]
-pub(crate) mod test_support {
-    use std::sync::{Mutex, MutexGuard};
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
-        match ENV_LOCK.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        }
-    }
-}
-
+#[cfg(not(target_arch = "wasm32"))]
 pub use a2a::{
     A2AAgentCapabilities, A2AAgentCard, A2AAgentExtension, A2AAgentInterface, A2AAgentSkill,
     A2AArtifactSignature, A2AArtifactVerificationResult, A2AChainEntry, A2AChainOfCustody,
@@ -77,9 +151,14 @@ pub use a2a::{
 #[cfg(feature = "jacs-crate")]
 pub use agent::{Agent, EmailNamespace};
 pub use client::{
-    HaiClient, HaiClientOptions, SseConnection, WsConnection, DEFAULT_BASE_URL,
-    DEFAULT_DNS_RESOLVER, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_SECS,
+    HaiClient, HaiClientOptions, DEFAULT_BASE_URL, DEFAULT_DNS_RESOLVER, DEFAULT_MAX_RETRIES,
+    DEFAULT_TIMEOUT_SECS,
 };
+// SseConnection / WsConnection are native-only (tokio task handles); the
+// wasm build exposes streaming via `EventStreamHandle` in `haiai-wasm`
+// (Task 029). See HAIAI_WASM_PRD §4.6.
+#[cfg(not(target_arch = "wasm32"))]
+pub use client::{SseConnection, WsConnection};
 #[cfg(feature = "jacs-crate")]
 pub use config::resolve_log_filter;
 pub use config::{
@@ -107,6 +186,7 @@ pub use email::{
     ParsedEmailParts,
     SignedHeaderEntry,
 };
+pub use email_inline::*;
 pub use error::{HaiError, Result};
 #[cfg(feature = "agreements")]
 pub use jacs::JacsAgreementProvider;
@@ -126,9 +206,24 @@ pub use jacs::{
 };
 #[cfg(feature = "jacs-crate")]
 pub use jacs_local::LocalJacsProvider;
+#[cfg(not(target_arch = "wasm32"))]
 pub use jacs_remote::{RemoteJacsProvider, RemoteJacsProviderOptions};
 pub use types::*;
 pub use verify::{
     generate_verify_link, generate_verify_link_hosted, MAX_VERIFY_DOCUMENT_BYTES,
     MAX_VERIFY_URL_LEN,
 };
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
+        match ENV_LOCK.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+}

@@ -158,9 +158,7 @@ def _bootstrap_fresh_jacs_agent(workdir: str) -> str:
         )
 
     if not os.path.exists(config_path):
-        pytest.skip(
-            f"haiai init succeeded but {config_path} was not written"
-        )
+        pytest.skip(f"haiai init succeeded but {config_path} was not written")
 
     return config_path
 
@@ -173,9 +171,8 @@ def _restore_smoke_password(monkeypatch: pytest.MonkeyPatch) -> None:
     the *real* password the pre-baked agent was created with (CI sets
     ``_HAISDK_SMOKE_PASSWORD=smoke-password`` end-to-end).
     """
-    pre_conftest_password = (
-        os.environ.get("_HAISDK_SMOKE_PASSWORD")
-        or os.environ.get("JACS_PRIVATE_KEY_PASSWORD")
+    pre_conftest_password = os.environ.get("_HAISDK_SMOKE_PASSWORD") or os.environ.get(
+        "JACS_PRIVATE_KEY_PASSWORD"
     )
     if pre_conftest_password:
         monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", pre_conftest_password)
@@ -274,15 +271,15 @@ def _bootstrap_jacs_agent(workdir: str) -> str:
         prebaked = os.path.join(agent_dir, "jacs.config.json")
         if os.path.exists(prebaked):
             return prebaked
-        pytest.skip(
-            f"JACS_SMOKE_AGENT_DIR={agent_dir} but jacs.config.json not found"
-        )
+        pytest.skip(f"JACS_SMOKE_AGENT_DIR={agent_dir} but jacs.config.json not found")
 
     # Path 2: in-process bootstrap (local dev).
     try:
         from haiai.config import create_agent  # type: ignore[import-not-found]
     except Exception:  # pragma: no cover — environment-specific
-        pytest.skip("haiai.config.create_agent unavailable; cannot bootstrap JACS agent")
+        pytest.skip(
+            "haiai.config.create_agent unavailable; cannot bootstrap JACS agent"
+        )
 
     config_path = os.path.join(workdir, "jacs.config.json")
     try:
@@ -341,12 +338,12 @@ def test_save_memory_round_trips_through_native_binding(
         with tempfile.TemporaryDirectory() as workdir:
             config_path = _bootstrap_jacs_agent(workdir)
             ffi_config = json.dumps(
-                    {
-                        "base_url": f"http://127.0.0.1:{port}",
-                        "jacs_config_path": config_path,
-                        "jacs_storage_backend": "remote",
-                        "client_type": "python",
-                        "timeout_secs": 5,
+                {
+                    "base_url": f"http://127.0.0.1:{port}",
+                    "jacs_config_path": config_path,
+                    "jacs_storage_backend": "remote",
+                    "client_type": "python",
+                    "timeout_secs": 5,
                     "max_retries": 0,
                 }
             )
@@ -431,12 +428,12 @@ def test_save_memory_local_path_through_native_binding(
         # calls, and binding the FFI to an unreachable URL surfaces that
         # invariant if the routing decision ever regresses.
         ffi_config = json.dumps(
-                {
-                    "base_url": "http://127.0.0.1:1",  # unreachable on purpose
-                    "jacs_config_path": config_path,
-                    "jacs_storage_backend": "fs",
-                    "client_type": "python",
-                    "timeout_secs": 5,
+            {
+                "base_url": "http://127.0.0.1:1",  # unreachable on purpose
+                "jacs_config_path": config_path,
+                "jacs_storage_backend": "fs",
+                "client_type": "python",
+                "timeout_secs": 5,
                 "max_retries": 0,
             }
         )

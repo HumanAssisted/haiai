@@ -76,10 +76,19 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
                 ),
             });
         }
+        // `ClientBuilder::timeout` is native-only on reqwest 0.13 — the wasm32
+        // shim relies on the browser's built-in fetch timeout. Matches
+        // HaiClient::new (HAIAI_WASM_PRD §4.8).
+        #[cfg(not(target_arch = "wasm32"))]
         let http = HttpClient::builder()
             .timeout(options.timeout)
             .build()
             .map_err(HaiError::from)?;
+        #[cfg(target_arch = "wasm32")]
+        let http = {
+            let _ = options.timeout;
+            HttpClient::builder().build().map_err(HaiError::from)?
+        };
         Ok(Self {
             inner,
             http,
@@ -116,10 +125,12 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
         }
     }
 
-    /// Build a `JACS {jacsId}:{ts}:{sig}` Authorization header. Mirrors `HaiClient::build_auth_header`.
+    /// Build a `JACS {jacsId}:{ts}:{nonce}:{sig}` Authorization header.
+    /// Mirrors `HaiClient::build_auth_header`.
     fn build_auth_header(&self) -> Result<String> {
         let ts = OffsetDateTime::now_utc().unix_timestamp();
-        let message = format!("{}:{ts}", self.inner.jacs_id());
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let message = format!("{}:{ts}:{nonce}", self.inner.jacs_id());
         let signature = self.inner.sign_string(&message).map_err(|e| {
             tracing::warn!(
                 operation = "remote_build_auth_header",
@@ -128,7 +139,10 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
             );
             e
         })?;
-        Ok(format!("JACS {}:{ts}:{signature}", self.inner.jacs_id()))
+        Ok(format!(
+            "JACS {}:{ts}:{nonce}:{signature}",
+            self.inner.jacs_id()
+        ))
     }
 
     /// Split a `key` of shape `id` or `id:version` into `(id, Option<version>)`.
@@ -286,6 +300,14 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
 
     /// Synchronous helper that runs an async future to completion. The blocking trait
     /// surface uses this so callers from non-async contexts (Python/Node FFI) work.
+    ///
+    /// Native-only: requires `tokio::runtime::Handle` + `block_in_place`,
+    /// neither of which exist on `wasm32-unknown-unknown` (tokio's wasm32
+    /// feature set is `macros + sync` only). Browser callers are already
+    /// async (Promises) and must use the `*_async` variants directly —
+    /// the synchronous trait methods (`store_document`, `get_record`,
+    /// etc.) are gated out of the wasm build by Task 010's audit.
+    #[cfg(not(target_arch = "wasm32"))]
     fn block_on<F: std::future::Future>(fut: F) -> F::Output {
         let rt = tokio::runtime::Handle::try_current();
         match rt {
@@ -379,7 +401,13 @@ impl<P: JacsProvider> JacsProvider for RemoteJacsProvider<P> {
 
 // =============================================================================
 // JacsDocumentProvider — every method goes through HTTP to /api/v1/records.
+//
+// Native-only: the blocking trait methods use `Self::block_on` which
+// requires `tokio::runtime::Handle` + `block_in_place` — neither is
+// available on wasm32. The wasm wrapper uses the `*_async` variants
+// directly (HAIAI_WASM_PRD §4.6, Task 010 audit).
 // =============================================================================
+#[cfg(not(target_arch = "wasm32"))]
 impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
     fn sign_document(&self, data: &Value) -> Result<String> {
         // Local-only — signing keys never leave the client.
@@ -727,38 +755,66 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
 
     /// Read a signed-text file (markdown w/ appended `-----BEGIN JACS SIGNATURE-----` block)
     /// and POST it to `/api/v1/records` with `Content-Type: text/markdown; profile=jacs-text-v1`.
+    ///
+    /// File-path variant: not available on wasm (no filesystem). Wasm callers
+    /// can sign and post bytes directly via `store_document` (Task 009 audit).
     fn store_text_file(&self, path: &str) -> Result<String> {
-        let bytes =
-            std::fs::read(path).map_err(|e| HaiError::Provider(format!("read {}: {}", path, e)))?;
-        let text = std::str::from_utf8(&bytes)
-            .map_err(|_| HaiError::Provider("text file is not valid UTF-8".to_string()))?;
-        if !text.contains("-----BEGIN JACS SIGNATURE-----") {
-            return Err(HaiError::Provider(
-                "text file has no JACS signature block — sign with sign_text_file first"
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            return Err(HaiError::BackendUnsupported {
+                method: "store_text_file".to_string(),
+                detail: "wasm build cannot read from disk; sign in-memory and call store_document"
                     .to_string(),
-            ));
+            });
         }
-        // DRY: shared POST + key-extraction with `store_document` /
-        // `store_image_file`.
-        self.post_record_for_key(bytes, CT_TEXT_MD)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let bytes = std::fs::read(path)
+                .map_err(|e| HaiError::Provider(format!("read {}: {}", path, e)))?;
+            let text = std::str::from_utf8(&bytes)
+                .map_err(|_| HaiError::Provider("text file is not valid UTF-8".to_string()))?;
+            if !text.contains("-----BEGIN JACS SIGNATURE-----") {
+                return Err(HaiError::Provider(
+                    "text file has no JACS signature block — sign with sign_text_file first"
+                        .to_string(),
+                ));
+            }
+            // DRY: shared POST + key-extraction with `store_document` /
+            // `store_image_file`.
+            self.post_record_for_key(bytes, CT_TEXT_MD)
+        }
     }
 
     /// Detect a signed image's format from leading magic bytes and POST it with
-    /// `Content-Type: image/png|jpeg|webp`.
+    /// `Content-Type: image/png|jpeg|webp`. Wasm build: unsupported — sign and
+    /// post bytes via `store_document` instead.
     fn store_image_file(&self, path: &str) -> Result<String> {
-        let bytes =
-            std::fs::read(path).map_err(|e| HaiError::Provider(format!("read {}: {}", path, e)))?;
-        let ct = detect_image_content_type(&bytes)?;
-        // Sanity-check: the image carries an embedded JACS chunk. We don't verify here
-        // (server runs the real verifier); we just refuse to upload obviously-unsigned bytes.
-        if !contains_jacs_chunk(&bytes) {
-            return Err(HaiError::Provider(
-                "image has no JACS signature — sign with sign_image first".to_string(),
-            ));
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            return Err(HaiError::BackendUnsupported {
+                method: "store_image_file".to_string(),
+                detail: "wasm build cannot read from disk; sign in-memory and call store_document"
+                    .to_string(),
+            });
         }
-        // DRY: shared POST + key-extraction with `store_document` /
-        // `store_text_file`.
-        self.post_record_for_key(bytes, ct)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let bytes = std::fs::read(path)
+                .map_err(|e| HaiError::Provider(format!("read {}: {}", path, e)))?;
+            let ct = detect_image_content_type(&bytes)?;
+            // Sanity-check: the image carries an embedded JACS chunk. We don't verify here
+            // (server runs the real verifier); we just refuse to upload obviously-unsigned bytes.
+            if !contains_jacs_chunk(&bytes) {
+                return Err(HaiError::Provider(
+                    "image has no JACS signature — sign with sign_image first".to_string(),
+                ));
+            }
+            // DRY: shared POST + key-extraction with `store_document` /
+            // `store_text_file`.
+            self.post_record_for_key(bytes, ct)
+        }
     }
 
     /// Fetch the raw record bytes (any content type — no UTF-8 decode, no JSON parse).
@@ -924,7 +980,13 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
 
 // =============================================================================
 // Inherent helpers — private support for the D5/D9 trait methods.
+//
+// Native-only: these helpers wrap `Self::block_on(... _async())`
+// (see HAIAI_WASM_PRD §4.6 / Task 010 audit). The wasm wrapper calls
+// the `*_async` variants on `RemoteJacsProvider` directly, so this
+// helper surface is not needed in browser builds.
 // =============================================================================
+#[cfg(not(target_arch = "wasm32"))]
 impl<P: JacsProvider> RemoteJacsProvider<P> {
     /// POST signed bytes (JSON envelope, signed markdown, or signed image) to
     /// `/api/v1/records` and return the server-issued record key.
@@ -1106,6 +1168,11 @@ fn extract_summaries_from_list(resp: &Value) -> Vec<DocSummary> {
         .unwrap_or_default()
 }
 
+// Native-only image helpers. The wasm build (HAIAI_WASM_PRD §4.2.1 + §4.8)
+// has no `jacs-media` dep and no filesystem path to images, so neither
+// `detect_image_content_type` nor `contains_jacs_chunk` (which calls
+// `jacs_media::extract_signature`) is reachable from the wasm-target HaiClient.
+#[cfg(not(target_arch = "wasm32"))]
 fn detect_image_content_type(bytes: &[u8]) -> Result<&'static str> {
     if bytes.starts_with(&[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n']) {
         Ok("image/png")
@@ -1130,6 +1197,7 @@ fn detect_image_content_type(bytes: &[u8]) -> Result<&'static str> {
 /// `Ok(false)` when the bytes are an image but carry no JACS chunk. An
 /// unreadable image returns `Ok(false)` — the server will 400 it anyway and we
 /// don't want to mask the real error here.
+#[cfg(not(target_arch = "wasm32"))]
 fn contains_jacs_chunk(bytes: &[u8]) -> bool {
     matches!(jacs_media::extract_signature(bytes, false), Ok(Some(_)))
 }
@@ -1142,7 +1210,10 @@ fn b64_url_decode(s: &str) -> Result<Vec<u8>> {
         .map_err(|e| HaiError::Provider(format!("base64url decode: {e}")))
 }
 
-#[cfg(test)]
+// Native-only test module: uses tokio multi-thread runtime, tempfile,
+// httpmock, image, and jacs_media — none of which are available on the
+// wasm32 target (HAIAI_WASM_PRD §4.2.1, Task 009/010).
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use crate::jacs::StaticJacsProvider;

@@ -1,0 +1,1 @@
+{"append_footer":false,"body":"Hello from the wasm cross-compat fixture.","cc":["gamma@hai.ai"],"idempotency_key":"idem-wasm-fixture-2026","labels":["fixture","wasm"],"subject":"Wasm cross-compat fixture","to":"beta@hai.ai"}

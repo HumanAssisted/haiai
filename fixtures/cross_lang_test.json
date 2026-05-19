@@ -6,14 +6,16 @@
     "parts": [
       "jacs_id",
       "timestamp",
+      "nonce",
       "signature_base64"
     ],
-    "signed_message_template": "{jacs_id}:{timestamp}",
+    "signed_message_template": "{jacs_id}:{timestamp}:{nonce}",
     "example": {
       "jacs_id": "test-agent-001",
       "timestamp": 1700000000,
+      "nonce": "fixture-nonce-001",
       "stub_signature_base64": "fixture-signature-base64",
-      "expected_header": "JACS test-agent-001:1700000000:fixture-signature-base64"
+      "expected_header": "JACS test-agent-001:1700000000:fixture-nonce-001:fixture-signature-base64"
     }
   },
   "canonical_json_cases": [

@@ -26,13 +26,26 @@
         "types": "./dist/types/types.d.ts",
         "default": "./dist/cjs/types.js"
       }
+    },
+    "./jacs-wasm": {
+      "import": {
+        "types": "./dist/types/jacs-wasm.d.ts",
+        "default": "./dist/esm/jacs-wasm.js"
+      }
+    },
+    "./jacs-wasm/worker": {
+      "import": {
+        "types": "./dist/types/jacs-wasm-worker.d.ts",
+        "default": "./dist/esm/jacs-wasm-worker.js"
+      }
     }
   },
   "bin": {
     "haiai": "./bin/haiai.cjs"
   },
   "dependencies": {
-    "@hai.ai/jacs": "file:../../JACS/jacsnpm",
+    "@hai.ai/jacs": "file:../../../wasm/jacsnpm",
+    "@jacs/wasm": "file:../../../wasm/jacs-wasm/pkg",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "haiinpm": "0.4.1",
     "ws": "^8.16.0"
@@ -51,7 +64,7 @@
     "vitest": "^1.2.0"
   },
   "scripts": {
-    "deps:local": "node -e \"const p=require('./package.json');p.dependencies['@hai.ai/jacs']='file:../../JACS/jacsnpm';require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')\"",
+    "deps:local": "node -e \"const p=require('./package.json');p.dependencies['@hai.ai/jacs']='file:../../../wasm/jacsnpm';p.dependencies['@jacs/wasm']='file:../../../wasm/jacs-wasm/pkg';require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')\"",
     "deps:prod": "node -e \"const p=require('./package.json'),d=require('./publish.deps.json');Object.assign(p.dependencies,d);require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')\"",
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.cjs.json && node ./scripts/write-cjs-package.cjs",
     "smoke:package": "npm run build && node ./scripts/smoke-package.cjs",
@@ -62,7 +75,7 @@
     "node": ">=18.0.0"
   },
   "author": "HAI.AI",
-  "license": "(Apache-2.0 OR MIT)",
+  "license": "BUSL-1.1",
   "homepage": "https://hai.ai",
   "repository": {
     "type": "git",

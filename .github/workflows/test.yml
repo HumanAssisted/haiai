@@ -10,6 +10,34 @@ concurrency:
   group: test-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  # Issues 009 + 011: `rust/Cargo.toml` has a workspace-wide
+  # `[patch.crates-io]` block that points jacs / jacs-core / jacs-wasm
+  # at `../../../wasm/*` (relative to `rust/Cargo.toml`). That patch is
+  # applied to EVERY Cargo build under `rust/`, not just the wasm
+  # target. So every CI job that invokes Cargo (test-python via
+  # maturin, test-node via napi, test-go via `cargo build -p haiigo`,
+  # test-rust, smoke-tests, wasm-checks) must find a working JACS
+  # checkout at the same path the patch resolves to in CI:
+  # `${{ github.workspace }}/../../wasm`.
+  #
+  # The patch also requires APIs that only exist on the WASM branch
+  # (e.g. `CoreAgent::export_encrypted_material`, `verify_with_key`),
+  # so JACS_REF is pinned to `WASM`. Once the WASM branch is merged
+  # into a tagged release that ships these APIs, pin this back to that
+  # tag.
+  JACS_REF: WASM
+  # Canonical sibling-JACS path expected by the Cargo patches in
+  # rust/Cargo.toml. Every job below clones JACS here so Cargo can
+  # resolve the patches consistently. Job-local steps that need the
+  # JACS package dirs (jacspy, jacsnpm, jacsgo) cd into this path too.
+  JACS_DIR: ${{ github.workspace }}/../../wasm
+  # The pq2025 browser path uses enough stack that the larger HAIAI wasm
+  # module can overflow wasm-ld's default stack under wasm-pack/Chrome.
+  # Keep this scoped to wasm32 cargo/wasm-pack invocations; native test jobs
+  # must not inherit wasm linker flags.
+  HAIAI_WASM_RUSTFLAGS: "-D warnings -C link-arg=-zstack-size=8388608"
+
 jobs:
   crypto-policy:
     runs-on: ubuntu-latest
@@ -70,8 +98,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust (for haiipy build via maturin)
         uses: dtolnay/rust-toolchain@stable
-      - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+      - name: Clone JACS (for workspace patch — rust/Cargo.toml patches to ${JACS_DIR})
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "$JACS_DIR"
       - name: Create virtualenv and install maturin
         run: |
           python -m venv .venv
@@ -93,7 +121,7 @@ jobs:
         # the Node `file:../../JACS/jacsnpm` override in node/package.json.
         run: |
           source .venv/bin/activate
-          cd "${{ github.workspace }}/../JACS/jacspy"
+          cd "$JACS_DIR/jacspy"
           maturin develop --release
         timeout-minutes: 10
       - name: Install dependencies
@@ -135,7 +163,7 @@ jobs:
   test-node:
     runs-on: ubuntu-latest
     needs: [crypto-policy, mcp-parity, jacs-version-parity, workflow-policy]
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -149,8 +177,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust (for haiinpm build via napi-rs)
         uses: dtolnay/rust-toolchain@stable
-      - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Clone JACS (for workspace patch — rust/Cargo.toml patches to ${JACS_DIR})
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "$JACS_DIR"
       - name: Build haiinpm native addon
         run: |
           cd rust/haiinpm
@@ -163,16 +195,25 @@ jobs:
         # alongside it. The committed package.json keeps the local-dev
         # file:../../JACS/jacsnpm path; building the napi addon here makes
         # the JACS loader's `existsSync(./jacs.linux-x64-gnu.node)` branch
-        # succeed without needing the missing registry subpackages. Once
-        # JACS publishes the platform binaries, restore `npm run deps:prod`.
+        # succeed without needing the missing registry subpackages. The
+        # browser re-export also needs a local @jacs/wasm package until
+        # that package is published. Once both are on npm, restore
+        # `npm run deps:prod`.
         run: |
-          cd "${{ github.workspace }}/../JACS/jacsnpm"
+          cd "$JACS_DIR/jacsnpm"
           npm install @napi-rs/cli
           npx napi build --platform --release
         timeout-minutes: 10
+      - name: Build local @jacs/wasm npm package
+        env:
+          RUSTFLAGS: ${{ env.HAIAI_WASM_RUSTFLAGS }}
+        run: |
+          PATH="$HOME/.cargo/bin:$PATH" wasm-pack build --target web --release "$JACS_DIR/jacs-wasm"
+          bash "$JACS_DIR/jacs-wasm/scripts/finalize-pkg.sh"
       - name: Install dependencies
         run: |
           cd node
+          npm run deps:local
           # haiinpm is not yet on npm registry; point at the local build.
           npm pkg set "dependencies.haiinpm=file:../rust/haiinpm"
           npm install
@@ -235,17 +276,17 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust (for jacsgo build)
         uses: dtolnay/rust-toolchain@stable
-      - name: Clone JACS (for workspace patch + jacsgo build)
-        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+      - name: Clone JACS (for workspace patch + jacsgo build — rust/Cargo.toml patches to ${JACS_DIR})
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "$JACS_DIR"
       - name: Cache jacsgo shared library
         id: cache-jacsgo
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/../JACS/jacsgo/build
-          key: jacsgo-${{ runner.os }}-${{ hashFiles('.github/workflows/test.yml') }}
+          path: ${{ github.workspace }}/../../wasm/jacsgo/build
+          key: jacsgo-${{ runner.os }}-${{ env.JACS_REF }}-${{ hashFiles('.github/workflows/test.yml') }}
       - name: Build jacsgo shared library
         if: steps.cache-jacsgo.outputs.cache-hit != 'true'
-        run: cd ${{ github.workspace }}/../JACS/jacsgo && make build-rust
+        run: cd "$JACS_DIR/jacsgo" && make build-rust
       - name: Build haiigo cdylib
         run: |
           cd rust
@@ -254,22 +295,22 @@ jobs:
         run: |
           cd go
           sed -i '/^replace github.com\/HumanAssisted\/JACS\/jacsgo/d' go.mod
-          echo 'replace github.com/HumanAssisted/JACS/jacsgo => ${{ github.workspace }}/../JACS/jacsgo' >> go.mod
+          echo "replace github.com/HumanAssisted/JACS/jacsgo => $JACS_DIR/jacsgo" >> go.mod
       - name: Run tests
         env:
           CGO_ENABLED: "1"
-          CGO_LDFLAGS: "-L${{ github.workspace }}/../JACS/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
-          CGO_CFLAGS: "-I${{ github.workspace }}/../JACS/jacsgo"
-          LD_LIBRARY_PATH: "${{ github.workspace }}/../JACS/jacsgo/build:${{ github.workspace }}/rust/target/release"
+          CGO_LDFLAGS: "-L${{ github.workspace }}/../../wasm/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
+          CGO_CFLAGS: "-I${{ github.workspace }}/../../wasm/jacsgo"
+          LD_LIBRARY_PATH: "${{ github.workspace }}/../../wasm/jacsgo/build:${{ github.workspace }}/rust/target/release"
         run: |
           cd go
           go test -race -v ./...
       - name: Smoke test haiigo FFI binding
         env:
           CGO_ENABLED: "1"
-          CGO_LDFLAGS: "-L${{ github.workspace }}/../JACS/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
-          CGO_CFLAGS: "-I${{ github.workspace }}/../JACS/jacsgo"
-          LD_LIBRARY_PATH: "${{ github.workspace }}/../JACS/jacsgo/build:${{ github.workspace }}/rust/target/release"
+          CGO_LDFLAGS: "-L${{ github.workspace }}/../../wasm/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
+          CGO_CFLAGS: "-I${{ github.workspace }}/../../wasm/jacsgo"
+          LD_LIBRARY_PATH: "${{ github.workspace }}/../../wasm/jacsgo/build:${{ github.workspace }}/rust/target/release"
         run: |
           cd go
           go test -run TestFFISmokeNewClient -v ./ffi/ || echo "FFI smoke test skipped (cdylib not linked)"
@@ -290,8 +331,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust-version }}
-      - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+      - name: Clone JACS (for workspace patch — rust/Cargo.toml patches to ${JACS_DIR})
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "$JACS_DIR"
       - name: Run tests (all workspace crates including hai-binding-core, haiinpm, haiipy, haiigo)
         run: |
           cd rust
@@ -314,7 +355,7 @@ jobs:
   smoke-tests:
     runs-on: ubuntu-latest
     needs: [test-python, test-node, test-go, test-rust]
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -330,8 +371,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-      - name: Clone JACS (for workspace patch + jacsgo build)
-        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Clone JACS (for workspace patch + jacsgo build — rust/Cargo.toml patches to ${JACS_DIR})
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "$JACS_DIR"
 
       # Build all native FFI artifacts up front.
       - name: Build haiigo cdylib (libhaiigo)
@@ -346,7 +391,7 @@ jobs:
         timeout-minutes: 15
       - name: Build jacsgo shared library
         run: |
-          cd "${{ github.workspace }}/../JACS/jacsgo"
+          cd "$JACS_DIR/jacsgo"
           make build-rust
 
       # Bootstrap a JACS smoke agent. `register=false` skips the HAI API
@@ -381,7 +426,7 @@ jobs:
         # pip install path against a pyproject pin that often leads PyPI.
         run: |
           source .venv/bin/activate
-          cd "${{ github.workspace }}/../JACS/jacspy"
+          cd "$JACS_DIR/jacspy"
           maturin develop --release
         timeout-minutes: 15
       - name: Install Python SDK dev deps
@@ -410,10 +455,22 @@ jobs:
           npm install @napi-rs/cli
           npx napi build --release
         timeout-minutes: 15
+      - name: Build JACS napi addon (jacs.linux-x64-gnu.node)
+        run: |
+          cd "$JACS_DIR/jacsnpm"
+          npm install @napi-rs/cli
+          npx napi build --platform --release
+        timeout-minutes: 10
+      - name: Build local @jacs/wasm npm package
+        env:
+          RUSTFLAGS: ${{ env.HAIAI_WASM_RUSTFLAGS }}
+        run: |
+          PATH="$HOME/.cargo/bin:$PATH" wasm-pack build --target web --release "$JACS_DIR/jacs-wasm"
+          bash "$JACS_DIR/jacs-wasm/scripts/finalize-pkg.sh"
       - name: Install Node SDK deps
         run: |
           cd node
-          npm run deps:prod
+          npm run deps:local
           npm pkg set "dependencies.haiinpm=file:../rust/haiinpm"
           npm install
       - name: Run Node smoke test
@@ -426,13 +483,126 @@ jobs:
         run: |
           cd go
           sed -i '/^replace github.com\/HumanAssisted\/JACS\/jacsgo/d' go.mod
-          echo 'replace github.com/HumanAssisted/JACS/jacsgo => ${{ github.workspace }}/../JACS/jacsgo' >> go.mod
+          echo "replace github.com/HumanAssisted/JACS/jacsgo => $JACS_DIR/jacsgo" >> go.mod
       - name: Run Go smoke test
         env:
           CGO_ENABLED: "1"
-          CGO_LDFLAGS: "-L${{ github.workspace }}/../JACS/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
-          CGO_CFLAGS: "-I${{ github.workspace }}/../JACS/jacsgo"
-          LD_LIBRARY_PATH: "${{ github.workspace }}/../JACS/jacsgo/build:${{ github.workspace }}/rust/target/release"
+          CGO_LDFLAGS: "-L${{ github.workspace }}/../../wasm/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
+          CGO_CFLAGS: "-I${{ github.workspace }}/../../wasm/jacsgo"
+          LD_LIBRARY_PATH: "${{ github.workspace }}/../../wasm/jacsgo/build:${{ github.workspace }}/rust/target/release"
           JACS_PRIVATE_KEY_PASSWORD: smoke-password
         run: make smoke-go
 
+  wasm-checks:
+    # HAIAI_WASM_PRD §8 + JACS ISSUE 003 lesson: wasm checks MUST be
+    # PR-blocking. Runs the wasm-pack toolchain, browser smoke, and
+    # the surface fixture enforcer (Task 037).
+    runs-on: ubuntu-latest
+    needs: [crypto-policy, jacs-version-parity, workflow-policy]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust + wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Install Chrome (for wasm-pack --headless --chrome)
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+          install-chromedriver: true
+        id: setup-chrome
+      - name: Export ChromeDriver path
+        run: echo "CHROMEDRIVER=${{ steps.setup-chrome.outputs.chromedriver-path }}" >> "$GITHUB_ENV"
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Clone JACS (rust/Cargo.toml patches to ${JACS_DIR})
+        # Issues 009 + 011: rust/Cargo.toml [patch.crates-io] points jacs /
+        # jacs-core / jacs-wasm at `../../../wasm/*` (the local conductor
+        # worktree layout). From rust/Cargo.toml that resolves to
+        # `${GITHUB_WORKSPACE}/../../wasm/*` in CI. The wasm-checks build
+        # needs APIs that only exist on the WASM branch (e.g.
+        # CoreAgent::export_encrypted_material, verify_with_key), which are
+        # NOT in v0.10.2. The same patch applies to every Cargo invocation
+        # in CI (test-python via maturin, test-node via napi, test-go,
+        # test-rust, smoke-tests), so JACS_REF + JACS_DIR are set at the
+        # workflow level and every job clones to the same path.
+        run: |
+          git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "$JACS_DIR"
+      - name: Forbidden-deps audit (wasm tree)
+        # `cargo tree -p haiai-wasm` must run from the rust/ workspace
+        # root — the package id lives in rust/Cargo.toml's `members`.
+        # Running from the repo root fails with "package ID specification
+        # `haiai-wasm` did not match any packages" (Issue 001 evidence).
+        working-directory: rust
+        run: |
+          chmod +x ../scripts/ci/forbidden-deps-wasm.sh
+          ../scripts/ci/forbidden-deps-wasm.sh haiai-wasm
+      - name: Crypto policy on haiai-wasm + node-wasm
+        run: |
+          chmod +x scripts/ci/check_no_local_crypto.sh
+          ./scripts/ci/check_no_local_crypto.sh
+      - name: Wasm-surface fixture check
+        run: |
+          chmod +x scripts/ci/check_wasm_surface.sh
+          ./scripts/ci/check_wasm_surface.sh
+      - name: cargo check (haiai with wasm feature, wasm32 target)
+        env:
+          RUSTFLAGS: ${{ env.HAIAI_WASM_RUSTFLAGS }}
+        working-directory: rust
+        run: cargo check -p haiai --no-default-features --features wasm --target wasm32-unknown-unknown
+      - name: cargo check (haiai-wasm wasm32 target)
+        env:
+          RUSTFLAGS: ${{ env.HAIAI_WASM_RUSTFLAGS }}
+        working-directory: rust
+        run: cargo check -p haiai-wasm --target wasm32-unknown-unknown
+      - name: wasm-pack test --headless --chrome (haiai-wasm)
+        # Runs the #[wasm_bindgen_test] suites under rust/haiai-wasm/tests
+        # (secret_leak.rs etc). Without this step those tests only compile
+        # at the cargo-check stage and are never executed — the prior
+        # session noted this as a known gap; the local environment lacks
+        # the chromedriver/Chrome pairing so verification is CI-only.
+        # browser-actions/setup-chrome is already installed earlier in this job.
+        env:
+          RUSTFLAGS: ${{ env.HAIAI_WASM_RUSTFLAGS }}
+        run: |
+          PATH="$HOME/.cargo/bin:$PATH" wasm-pack test --headless --chrome rust/haiai-wasm
+      - name: Cross-compat parity gate (native vs wasm)
+        # Issue 007: drive both sides of the byte-identity gate. The
+        # script runs the native snapshot test, then re-runs the wasm
+        # `parity_snapshot` test under wasm-pack, parses the marker
+        # block out of stdout into rust/target/parity/wasm.json, and
+        # diffs. Any drift on auth header / canonical register body /
+        # canonical send body / SSE event / WS event fails CI.
+        run: |
+          chmod +x scripts/ci/check_wasm_parity.sh
+          ./scripts/ci/check_wasm_parity.sh
+      - name: TypeScript check (@haiai/wasm wrapper)
+        # Use `-p typescript@5` to specify the package providing the
+        # `tsc` executable. `npx --yes typescript@5 tsc` (without `-p`)
+        # fails with "could not determine executable to run" because
+        # the typescript package's bin is named `tsc`, not `typescript`
+        # (Issue 001 evidence).
+        run: npx --yes -p typescript@5 tsc --noEmit -p node-wasm/tsconfig.json
+      - name: Build haiai-wasm npm package
+        env:
+          RUSTFLAGS: ${{ env.HAIAI_WASM_RUSTFLAGS }}
+        run: |
+          PATH="$HOME/.cargo/bin:$PATH" wasm-pack build --target web --release rust/haiai-wasm
+          bash node-wasm/scripts/finalize-pkg.sh
+      - name: Build local @jacs/wasm npm package for smoke
+        env:
+          RUSTFLAGS: ${{ env.HAIAI_WASM_RUSTFLAGS }}
+        run: |
+          PATH="$HOME/.cargo/bin:$PATH" wasm-pack build --target web --release "$JACS_DIR/jacs-wasm"
+          bash "$JACS_DIR/jacs-wasm/scripts/finalize-pkg.sh"
+      - name: Vite + Playwright smoke (Task 036)
+        working-directory: node-wasm/examples/vite-smoke
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+          npm test

@@ -1630,6 +1630,17 @@ impl JacsEmailProvider for LocalJacsProvider {
             .map_err(|e| HaiError::Provider(format!("serialize verify result: {e}")))
     }
 
+    fn verify_signed_email_transport(
+        &self,
+        raw: &[u8],
+        key: Vec<u8>,
+        mode: jacs::email::VerificationMode,
+    ) -> Result<jacs::email::SignedEmailVerificationResult> {
+        let simple = self.load_simple_agent()?;
+        jacs::email::verify_signed_email(raw, &simple, &key, mode)
+            .map_err(|e| HaiError::Provider(format!("verify_signed_email failed: {e}")))
+    }
+
     fn add_jacs_attachment(&self, email: &[u8], doc: &[u8]) -> Result<Vec<u8>> {
         jacs::email::add_jacs_attachment(email, doc)
             .map_err(|e| HaiError::Provider(format!("add_jacs_attachment failed: {e}")))

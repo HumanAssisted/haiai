@@ -36,9 +36,10 @@ func TestSendEmailWithOptionsServerSideSigning(t *testing.T) {
 
 	cl, _ := newTestClient(t, srv.URL)
 	result, err := cl.SendEmailWithOptions(context.Background(), SendEmailOptions{
-		To:      "bob@hai.ai",
-		Subject: "Hello",
-		Body:    "World",
+		To:             "bob@hai.ai",
+		Subject:        "Hello",
+		Body:           "World",
+		IdempotencyKey: "send-key-123",
 	})
 	if err != nil {
 		t.Fatalf("SendEmailWithOptions: %v", err)
@@ -64,6 +65,9 @@ func TestSendEmailWithOptionsServerSideSigning(t *testing.T) {
 	}
 	if gotBody["body"] != "World" {
 		t.Fatalf("unexpected body: %v", gotBody["body"])
+	}
+	if gotBody["idempotency_key"] != "send-key-123" {
+		t.Fatalf("unexpected idempotency_key: %v", gotBody["idempotency_key"])
 	}
 }
 
@@ -124,7 +128,23 @@ func TestGetMessageReturnsEmailMessage(t *testing.T) {
 			"body_text":"Hello",
 			"is_read":false,
 			"delivery_status":"delivered",
-			"created_at":"2026-02-24T00:00:00Z"
+			"created_at":"2026-02-24T00:00:00Z",
+			"owner_mail_auth_passed":true,
+			"owner_mail_auth_method":"dkim_spf",
+			"owner_mail_auth_details":{"dkim":"pass","spf":"pass"},
+			"email_summary":"Owner asked for recent bounces.",
+			"musubi_summary":{
+				"trust_vector":{"phishing":0.05},
+				"content_risk":"low",
+				"escalate":false,
+				"explanation":"Authenticated owner mail with low content risk."
+			},
+			"sender_reputation":{
+				"score":91.5,
+				"tier":"established",
+				"email_score":89.0,
+				"hai_score":94.0
+			}
 		}`))
 	}))
 	defer srv.Close()
@@ -142,6 +162,21 @@ func TestGetMessageReturnsEmailMessage(t *testing.T) {
 	}
 	if msg.Subject != "Test" {
 		t.Fatalf("unexpected subject: %s", msg.Subject)
+	}
+	if !msg.OwnerMailAuthPassed {
+		t.Fatal("owner auth should be true")
+	}
+	if msg.OwnerMailAuthMethod == nil || *msg.OwnerMailAuthMethod != "dkim_spf" {
+		t.Fatalf("unexpected owner auth method: %v", msg.OwnerMailAuthMethod)
+	}
+	if msg.EmailSummary == nil || *msg.EmailSummary != "Owner asked for recent bounces." {
+		t.Fatalf("unexpected email summary: %v", msg.EmailSummary)
+	}
+	if msg.MusubiSummary == nil || msg.MusubiSummary.TrustVector["phishing"] != 0.05 {
+		t.Fatalf("unexpected musubi summary: %+v", msg.MusubiSummary)
+	}
+	if msg.SenderReputation == nil || msg.SenderReputation.Tier != "established" {
+		t.Fatalf("unexpected sender reputation: %+v", msg.SenderReputation)
 	}
 }
 
@@ -828,15 +863,60 @@ func TestVerifyEmailWithErrorField(t *testing.T) {
 // SendSignedEmail tests
 // ---------------------------------------------------------------
 
+func TestSendSignedEmailDefaultsToHtmlInlineJacs(t *testing.T) {
+	var gotBody map[string]interface{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body: %v", err)
+		}
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("failed to decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message_id":"msg-inline-1","status":"sent"}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	result, err := cl.SendSignedEmail(context.Background(), SendEmailOptions{
+		To:             "bob@hai.ai",
+		Subject:        "Hello Signed",
+		Body:           "Signed body",
+		IdempotencyKey: "signed-key-123",
+	})
+	if err != nil {
+		t.Fatalf("SendSignedEmail: %v", err)
+	}
+	if result.MessageID != "msg-inline-1" {
+		t.Fatalf("unexpected message_id: %s", result.MessageID)
+	}
+	if gotBody["generation_type"] != string(EmailGenerationTypeHtmlInlineJacs) {
+		t.Fatalf("expected generation_type html_inline_jacs, got: %#v", gotBody["generation_type"])
+	}
+	if gotBody["idempotency_key"] != "signed-key-123" {
+		t.Fatalf("unexpected idempotency_key: %v", gotBody["idempotency_key"])
+	}
+}
+
 func TestSendSignedEmailDelegatesToSendEndpoint(t *testing.T) {
 	callCount := 0
 	var sendContentType string
 	var sendPath string
+	var gotBody map[string]interface{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		sendPath = r.URL.Path
 		sendContentType = r.Header.Get("Content-Type")
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed to read body: %v", err)
+		}
+		if err := json.Unmarshal(body, &gotBody); err != nil {
+			t.Fatalf("failed to decode body: %v", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"message_id":"msg-signed-1","status":"sent"}`))
 	}))
@@ -844,9 +924,10 @@ func TestSendSignedEmailDelegatesToSendEndpoint(t *testing.T) {
 
 	cl, _ := newTestClient(t, srv.URL)
 	result, err := cl.SendSignedEmail(context.Background(), SendEmailOptions{
-		To:      "bob@hai.ai",
-		Subject: "Hello Signed",
-		Body:    "Signed body",
+		To:             "bob@hai.ai",
+		Subject:        "Hello Signed",
+		Body:           "Signed body",
+		GenerationType: EmailGenerationTypeAttachmentJacs,
 	})
 	if err != nil {
 		t.Fatalf("SendSignedEmail: %v", err)
@@ -866,6 +947,9 @@ func TestSendSignedEmailDelegatesToSendEndpoint(t *testing.T) {
 	}
 	if sendContentType != "application/json" {
 		t.Fatalf("expected Content-Type application/json, got: %s", sendContentType)
+	}
+	if gotBody["generation_type"] != string(EmailGenerationTypeAttachmentJacs) {
+		t.Fatalf("expected generation_type attachment_jacs, got: %#v", gotBody["generation_type"])
 	}
 }
 
@@ -1147,6 +1231,65 @@ func TestSearchMessagesOmitsHasAttachmentsWhenNil(t *testing.T) {
 	}
 }
 
+func TestListMessagesParsesHostedEvidenceFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"messages":[{
+			"id":"msg-list",
+			"direction":"inbound",
+			"from_address":"owner@example.com",
+			"to_address":"agent@hai.ai",
+			"subject":"Status",
+			"body_text":"Show bounces",
+			"is_read":false,
+			"delivery_status":"delivered",
+			"created_at":"2026-05-14T10:00:00Z",
+			"owner_mail_auth_passed":true,
+			"owner_mail_auth_method":"dkim_spf",
+			"owner_mail_auth_details":{"dkim":"pass","spf":"pass"},
+			"email_summary":"Owner asked for recent bounces.",
+			"musubi_summary":{
+				"trust_vector":{"phishing":0.05},
+				"content_risk":"low",
+				"escalate":false,
+				"explanation":"Authenticated owner mail with low content risk."
+			},
+			"sender_reputation":{
+				"score":91.5,
+				"tier":"established",
+				"email_score":89.0,
+				"hai_score":94.0
+			}
+		}],"total":1,"unread":1}`))
+	}))
+	defer srv.Close()
+
+	cl, _ := newTestClient(t, srv.URL)
+	messages, err := cl.ListMessages(context.Background(), ListMessagesOptions{Limit: 1})
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(messages))
+	}
+	msg := messages[0]
+	if !msg.OwnerMailAuthPassed {
+		t.Fatal("owner auth should be true")
+	}
+	if msg.OwnerMailAuthMethod == nil || *msg.OwnerMailAuthMethod != "dkim_spf" {
+		t.Fatalf("unexpected owner auth method: %v", msg.OwnerMailAuthMethod)
+	}
+	if msg.EmailSummary == nil || *msg.EmailSummary != "Owner asked for recent bounces." {
+		t.Fatalf("unexpected email summary: %v", msg.EmailSummary)
+	}
+	if msg.MusubiSummary == nil || msg.MusubiSummary.TrustVector["phishing"] != 0.05 {
+		t.Fatalf("unexpected musubi summary: %+v", msg.MusubiSummary)
+	}
+	if msg.SenderReputation == nil || msg.SenderReputation.Tier != "established" {
+		t.Fatalf("unexpected sender reputation: %+v", msg.SenderReputation)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ListMessages with has_attachments filter
 // ---------------------------------------------------------------------------
@@ -1252,6 +1395,106 @@ func TestEmailMessageNewFieldsDefaultsWhenMissing(t *testing.T) {
 	}
 	if msg.Folder != "" {
 		t.Fatalf("folder should be empty when missing, got %s", msg.Folder)
+	}
+}
+
+func TestEmailMessageHostedEvidenceFieldsDeserialization(t *testing.T) {
+	raw := `{
+		"id":"msg-hosted",
+		"direction":"inbound",
+		"from_address":"owner@example.com",
+		"to_address":"agent@hai.ai",
+		"subject":"Status",
+		"body_text":"Show bounces",
+		"is_read":false,
+		"delivery_status":"delivered",
+		"created_at":"2026-05-14T10:00:00Z",
+		"owner_mail_auth_passed":true,
+		"owner_mail_auth_method":"dkim_spf",
+		"owner_mail_auth_details":{"dkim":"pass","spf":"pass"},
+		"email_summary":"Owner asked for recent bounces.",
+		"musubi_summary":{
+			"trust_vector":{"phishing":0.05,"prompt_injection":0.1},
+			"content_risk":"low",
+			"escalate":false,
+			"explanation":"Authenticated owner mail with low content risk."
+		},
+		"sender_reputation":{
+			"score":91.5,
+			"tier":"established",
+			"email_score":89.0,
+			"hai_score":94.0
+		}
+	}`
+	var msg EmailMessage
+	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !msg.OwnerMailAuthPassed {
+		t.Fatal("owner_mail_auth_passed should be true")
+	}
+	if msg.OwnerMailAuthMethod == nil || *msg.OwnerMailAuthMethod != "dkim_spf" {
+		t.Fatalf("unexpected owner_mail_auth_method: %v", msg.OwnerMailAuthMethod)
+	}
+	if msg.OwnerMailAuthDetails["dkim"] != "pass" {
+		t.Fatalf("unexpected owner_mail_auth_details: %v", msg.OwnerMailAuthDetails)
+	}
+	if msg.EmailSummary == nil || *msg.EmailSummary != "Owner asked for recent bounces." {
+		t.Fatalf("unexpected email_summary: %v", msg.EmailSummary)
+	}
+	if msg.MusubiSummary == nil {
+		t.Fatal("musubi_summary should be populated")
+	}
+	if msg.MusubiSummary.TrustVector["prompt_injection"] != 0.1 {
+		t.Fatalf("unexpected trust vector: %v", msg.MusubiSummary.TrustVector)
+	}
+	if msg.MusubiSummary.ContentRisk == nil || *msg.MusubiSummary.ContentRisk != "low" {
+		t.Fatalf("unexpected content_risk: %v", msg.MusubiSummary.ContentRisk)
+	}
+	if msg.MusubiSummary.Escalate {
+		t.Fatal("escalate should be false")
+	}
+	if msg.SenderReputation == nil || msg.SenderReputation.Tier != "established" {
+		t.Fatalf("unexpected sender_reputation: %+v", msg.SenderReputation)
+	}
+	if msg.SenderReputation.HaiScore == nil || *msg.SenderReputation.HaiScore != 94.0 {
+		t.Fatalf("unexpected hai_score: %+v", msg.SenderReputation.HaiScore)
+	}
+}
+
+func TestEmailMessageHostedEvidenceDefaultsWhenMissing(t *testing.T) {
+	raw := `{
+		"id":"msg-old",
+		"direction":"inbound",
+		"from_address":"a@b",
+		"to_address":"c@d",
+		"subject":"s",
+		"body_text":"b",
+		"is_read":false,
+		"delivery_status":"delivered",
+		"created_at":"2026-01-01T00:00:00Z"
+	}`
+	var msg EmailMessage
+	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if msg.OwnerMailAuthPassed {
+		t.Fatal("owner_mail_auth_passed should default false")
+	}
+	if msg.OwnerMailAuthMethod != nil {
+		t.Fatalf("owner_mail_auth_method should be nil, got %v", msg.OwnerMailAuthMethod)
+	}
+	if msg.OwnerMailAuthDetails != nil {
+		t.Fatalf("owner_mail_auth_details should be nil, got %v", msg.OwnerMailAuthDetails)
+	}
+	if msg.EmailSummary != nil {
+		t.Fatalf("email_summary should be nil, got %v", msg.EmailSummary)
+	}
+	if msg.MusubiSummary != nil {
+		t.Fatalf("musubi_summary should be nil, got %+v", msg.MusubiSummary)
+	}
+	if msg.SenderReputation != nil {
+		t.Fatalf("sender_reputation should be nil, got %+v", msg.SenderReputation)
 	}
 }
 

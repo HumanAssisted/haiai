@@ -299,6 +299,26 @@ class SendEmailResult:
 
 
 @dataclass
+class MusubiSummary:
+    """Compact Musubi safety summary attached to an email message."""
+
+    trust_vector: dict[str, float] = field(default_factory=dict)
+    content_risk: Optional[str] = None
+    escalate: bool = False
+    explanation: Optional[str] = None
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> MusubiSummary:
+        vector = data.get("trust_vector") or {}
+        return MusubiSummary(
+            trust_vector={str(k): float(v) for k, v in vector.items()},
+            content_risk=data.get("content_risk"),
+            escalate=bool(data.get("escalate", False)),
+            explanation=data.get("explanation"),
+        )
+
+
+@dataclass
 class EmailMessage:
     """An email message in the agent's inbox or sent folder."""
 
@@ -315,6 +335,14 @@ class EmailMessage:
     delivery_status: str = ""
     read_at: Optional[str] = None
     jacs_verified: Optional[bool] = None
+    jacs_signer_id: Optional[str] = None
+    jacs_key_is_owner: bool = False
+    owner_mail_auth_passed: bool = False
+    owner_mail_auth_method: Optional[str] = None
+    owner_mail_auth_details: Optional[dict[str, Any]] = None
+    email_summary: Optional[str] = None
+    musubi_summary: Optional[MusubiSummary] = None
+    sender_reputation: Optional[EmailReputationInfo] = None
     cc_addresses: list[str] = field(default_factory=list)
     labels: list[str] = field(default_factory=list)
     trust_score: Optional[float] = None
@@ -335,6 +363,20 @@ class EmailMessage:
         if thread_data is not None:
             thread = [EmailMessage.from_dict(t) for t in thread_data]
 
+        musubi_summary_data = m.get("musubi_summary")
+        musubi_summary = (
+            MusubiSummary.from_dict(musubi_summary_data)
+            if isinstance(musubi_summary_data, dict)
+            else None
+        )
+
+        sender_reputation_data = m.get("sender_reputation")
+        sender_reputation = (
+            EmailReputationInfo.from_dict(sender_reputation_data)
+            if isinstance(sender_reputation_data, dict)
+            else None
+        )
+
         return EmailMessage(
             id=m.get("id", ""),
             from_address=m.get("from_address", m.get("from", "")),
@@ -349,6 +391,14 @@ class EmailMessage:
             delivery_status=m.get("delivery_status", ""),
             read_at=m.get("read_at"),
             jacs_verified=m.get("jacs_verified"),
+            jacs_signer_id=m.get("jacs_signer_id"),
+            jacs_key_is_owner=m.get("jacs_key_is_owner", False),
+            owner_mail_auth_passed=m.get("owner_mail_auth_passed", False),
+            owner_mail_auth_method=m.get("owner_mail_auth_method"),
+            owner_mail_auth_details=m.get("owner_mail_auth_details"),
+            email_summary=m.get("email_summary"),
+            musubi_summary=musubi_summary,
+            sender_reputation=sender_reputation,
             cc_addresses=m.get("cc_addresses", []),
             labels=m.get("labels", []),
             trust_score=m.get("trust_score"),
@@ -435,6 +485,17 @@ class EmailReputationInfo:
     tier: str = ""
     email_score: float = 0.0
     hai_score: Optional[float] = None
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> EmailReputationInfo:
+        return EmailReputationInfo(
+            score=float(data.get("score", 0.0)),
+            tier=data.get("tier", ""),
+            email_score=float(data.get("email_score", 0.0)),
+            hai_score=(
+                float(data["hai_score"]) if data.get("hai_score") is not None else None
+            ),
+        )
 
 
 @dataclass
@@ -663,4 +724,3 @@ class ExtractMediaSignatureResult:
 
     present: bool
     payload: Optional[str] = None
-

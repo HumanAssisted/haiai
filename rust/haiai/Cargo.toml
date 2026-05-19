@@ -12,44 +12,148 @@ repository.workspace = true
 homepage.workspace = true
 
 [features]
-default = ["rustls-tls", "jacs-crate"]
+default = ["rustls-tls", "jacs-crate", "media"]
 rustls-tls = ["reqwest/rustls"]
 native-tls = ["reqwest/native-tls"]
 jacs-crate = ["dep:jacs"]
+# Image-signing / image-format detection (PNG/JPEG/WebP). Pulls
+# `jacs-media` which transitively pulls the `image` crate. On in `default`,
+# absent from `wasm` per HAIAI_WASM_PRD §4.2.1 (browser attachments are
+# base64-in-JSON, no file-path image upload path in V1).
+media = ["dep:jacs-media"]
 agreements = ["jacs-crate", "jacs/agreements"]
 attestation = ["jacs-crate", "jacs/attestation"]
+# Browser-side build profile (HAIAI_WASM_PRD.md §4.2). Mutually exclusive
+# with `jacs-crate` — enforced by a `compile_error!` in `src/lib.rs`.
+# Pulls `serde_json_canonicalizer` (canonical JSON when `jacs-crate` is
+# off) plus the wasm-only optional deps (wasm-bindgen-futures, web-sys,
+# js-sys, gloo-timers, jacs-core, jacs-wasm) so Tasks 011+ can `use`
+# them.
+# Activated via
+#   cargo check -p haiai --no-default-features --features wasm \
+#                        --target wasm32-unknown-unknown
+wasm = [
+    "serde_json_canonicalizer",
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:web-sys",
+    "dep:js-sys",
+    "dep:futures-channel",
+    "dep:gloo-timers",
+    "dep:jacs-core",
+    "dep:jacs-wasm",
+]
 
 [dependencies]
 async-trait.workspace = true
 base64.workspace = true
 percent-encoding.workspace = true
-reqwest = { workspace = true, features = ["stream"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_json_canonicalizer = { version = "0.3", optional = true }
 sha2.workspace = true
 thiserror.workspace = true
 time.workspace = true
-tokio.workspace = true
 futures-util = "0.3"
-tokio-tungstenite = "0.28"
+html5ever = "0.35"
 url.workspace = true
 uuid.workspace = true
 tracing = "0.1"
-tempfile = "3"
 bm25 = { version = "2.3", features = ["default_tokenizer"] }
-jacs = { version = "=0.10.1", optional = true, features = ["a2a"] }
+jacs = { version = "=0.10.2", optional = true, features = ["a2a"] }
 # Issue 014: real JACS-chunk parser for `store_image_file` pre-flight check.
 # The previous substring heuristic accepted any unsigned bytes containing the
 # literal `jacsSignature` substring, leading to wasted round-trips and a
 # maintenance footgun (SDK accepts what server rejects). The real extractor
 # is the single source of truth for "does this image carry a JACS signature".
-jacs-media = "=0.10.1"
+#
+# Task 009: now optional behind the `media` feature (default-on for native,
+# off for wasm) so the wasm tree doesn't pull `image` (PNG/JPEG codecs)
+# transitively (HAIAI_WASM_PRD §4.2.1).
+jacs-media = { version = "=0.10.2", optional = true }
+
+# Wasm-only optional deps (HAIAI_WASM_PRD.md §4.2). Declared here so they
+# are part of the dep graph but `optional = true` keeps them out of the
+# native build entirely. Activated by the `wasm` feature. Tasks 011-019
+# use these directly; Task 008 only wires the declarations so the dep
+# graph resolves cleanly.
+#
+# `web-sys` feature subset intentionally excludes `EventSource` — PRD
+# §4.6 keeps that path optional pending Task 002's backend confirmation.
+wasm-bindgen-futures = { version = "0.4", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+    # WebSocket transport (Task 018).
+    "WebSocket",
+    "MessageEvent",
+    "BinaryType",
+    "CloseEvent",
+    "ErrorEvent",
+    # SSE (fetch + ReadableStream) transport (Task 019).
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
+    "Request",
+    "RequestInit",
+    "Response",
+    "Headers",
+    "TextDecoder",
+    "TextDecoderOptions",
+    # Diagnostics + metrics surface.
+    "console",
+    "Performance",
+    "Window",
+] }
+js-sys = { version = "0.3", optional = true }
+futures-channel = { version = "0.3", optional = true }
+gloo-timers = { version = "0.3", optional = true, features = ["futures"] }
+jacs-core = { version = "=0.10.2", optional = true }
+jacs-wasm = { version = "=0.10.2", optional = true }
+
+# reqwest + tokio + tokio-tungstenite + tempfile are target-split per
+# HAIAI_WASM_PRD.md §4.2 / §4.2.1 / §4.8.
+#
+# Native build keeps the workspace reqwest entry (json, http2, query,
+# multipart) plus `stream` for SSE / get_raw_email; the workspace tokio
+# entry (rt-multi-thread, io-std, io-util, process, sync, macros); plus
+# tokio-tungstenite for WS and tempfile for tests.
+#
+# The wasm32 build is restricted to:
+#   - reqwest: default-features off, features = ["json"] only (wasm shim
+#     uses fetch() and supports nothing else)
+#   - tokio: default-features off, features = ["macros", "sync"] only
+#     (every other feature pulls mio / io / process which do not compile
+#     on wasm32-unknown-unknown)
+#   - tokio-tungstenite: NOT included (Task 014 introduces
+#     web_sys::WebSocket behind a trait)
+#   - tempfile: NOT included (browsers have no filesystem; native-only
+#     test dep)
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { workspace = true, features = ["stream"] }
+tokio = { workspace = true }
+tokio-tungstenite = "0.28"
+tempfile = "3"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Reqwest 0.13 moved `query` and `multipart` behind feature flags; on wasm32
+# the shim only supports query strings + JSON bodies + non-streaming bodies,
+# so we enable `query` but NOT `multipart` (PRD §4.8 documents attachments
+# via base64-in-JSON for the wasm path).
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "query"] }
+tokio = { version = "1", default-features = false, features = ["macros", "sync"] }
 
 [dev-dependencies]
-httpmock = "0.8"
-tokio.workspace = true
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
+
+# Native-only dev-deps. The wasm32 build of haiai has no `cargo test`
+# story (wasm-pack test runs only against haiai-wasm), so these dev-deps
+# do not need to be wasm-portable. Target-split per the same audit
+# (HAIAI_WASM_PRD.md §4.2.1) that flagged `image` (PNG/JPEG codecs) and
+# `httpmock` / `mail-parser` / native tokio as forbidden in the wasm
+# tree.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+httpmock = "0.8"
+mail-parser = "0.11"
+tokio.workspace = true
 # Used to generate test PNG/JPEG bytes for media-signing tests.
 # WebP fixtures are hand-built RIFF containers (no external encoder).
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

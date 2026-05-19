@@ -21,7 +21,7 @@
     },
     {
       "name": "send-email",
-      "args": ["to:string", "subject:string", "body:string", "cc:string[]", "bcc:string[]", "labels:string[]", "json:bool"]
+      "args": ["to:string", "subject:string", "body:string", "cc:string[]", "bcc:string[]", "labels:string[]", "generation_type:string?", "json:bool"]
     },
     {
       "name": "list-messages",

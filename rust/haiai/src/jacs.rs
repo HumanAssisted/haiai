@@ -198,7 +198,7 @@ pub trait JacsProvider: Send + Sync {
     /// Return the key identifier used for signing.
     fn key_id(&self) -> &str;
 
-    /// Return the signing algorithm name (e.g., "ed25519", "rsa-pss-sha256").
+    /// Return the signing algorithm name (e.g., "ed25519", "pq2025").
     fn algorithm(&self) -> &str;
 
     /// Return canonical JSON text for `value` in the same way JACS signs.
@@ -232,6 +232,36 @@ pub trait JacsProvider: Send + Sync {
              or any provider that wraps a real JACS SimpleAgent"
                 .to_string(),
         ))
+    }
+
+    /// Sign the canonical HTML-inline email pre-image as a hidden JACS envelope.
+    fn sign_html_inline_email_envelope(
+        &self,
+        raw_email: &[u8],
+    ) -> Result<crate::email_inline::HtmlInlineJacsEnvelope> {
+        #[cfg(feature = "jacs-crate")]
+        let content = {
+            let payload = jacs::email::build_html_inline_email_signature_payload(raw_email)
+                .map_err(|e| {
+                    HaiError::Provider(format!("JACS inline email payload failed: {e}"))
+                })?;
+            serde_json::to_value(payload)?
+        };
+
+        #[cfg(not(feature = "jacs-crate"))]
+        let content = {
+            use sha2::Digest as _;
+            let digest = sha2::Sha256::digest(raw_email);
+            let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+            serde_json::json!({ "raw_email_sha256": format!("sha256:{hash}") })
+        };
+
+        let signed = self.sign_envelope(&serde_json::json!({
+            "jacsType": "email_inline_signature",
+            "jacsLevel": "raw",
+            "content": content,
+        }))?;
+        crate::email_inline::build_hidden_jacs_envelope(&signed)
     }
 
     /// Sign a file as a JACS file envelope (JACS attachment pipeline).
@@ -618,6 +648,9 @@ pub(crate) fn logical_name_from_metadata(value: &Value) -> Option<String> {
     .map(str::to_string)
 }
 
+// Native-only helper: only `jacs_remote` (gated to native) consumes it.
+// Browser callers don't run the document-store flow.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn summary_matches_logical_name(summary: &DocSummary, logical_name: &str) -> bool {
     summary.logical_name.as_deref() == Some(logical_name)
 }
@@ -774,11 +807,24 @@ pub trait JacsDocumentProvider: JacsProvider {
 
     /// Sign and store a MEMORY record. If `content` is `None` the implementation
     /// reads `MEMORY.md` from CWD. Returns the record key (`id:version`).
+    ///
+    /// Wasm build (`target_arch = "wasm32"`): `content = None` is unsupported
+    /// because the browser has no CWD / filesystem. Callers must pass explicit
+    /// bytes (HAIAI_WASM_PRD §4.7, Task 009 audit).
     fn save_memory(&self, content: Option<&str>) -> Result<String> {
         let plaintext = match content {
             Some(s) => s.as_bytes().to_vec(),
+            #[cfg(not(target_arch = "wasm32"))]
             None => std::fs::read("MEMORY.md")
                 .map_err(|e| HaiError::Provider(format!("read MEMORY.md: {e}")))?,
+            #[cfg(target_arch = "wasm32")]
+            None => {
+                return Err(HaiError::BackendUnsupported {
+                    method: "save_memory".to_string(),
+                    detail: "wasm build cannot read MEMORY.md from CWD; pass content explicitly"
+                        .to_string(),
+                });
+            }
         };
         let doc = self.save_document(SaveDocumentRequest {
             doc_id: None,
@@ -793,12 +839,22 @@ pub trait JacsDocumentProvider: JacsProvider {
         Ok(doc.key)
     }
 
-    /// Sign and store a SOUL record. Mirror of `save_memory`.
+    /// Sign and store a SOUL record. Mirror of `save_memory`. Wasm build:
+    /// see `save_memory` doc-comment for the same gating constraint.
     fn save_soul(&self, content: Option<&str>) -> Result<String> {
         let plaintext = match content {
             Some(s) => s.as_bytes().to_vec(),
+            #[cfg(not(target_arch = "wasm32"))]
             None => std::fs::read("SOUL.md")
                 .map_err(|e| HaiError::Provider(format!("read SOUL.md: {e}")))?,
+            #[cfg(target_arch = "wasm32")]
+            None => {
+                return Err(HaiError::BackendUnsupported {
+                    method: "save_soul".to_string(),
+                    detail: "wasm build cannot read SOUL.md from CWD; pass content explicitly"
+                        .to_string(),
+                });
+            }
         };
         let doc = self.save_document(SaveDocumentRequest {
             doc_id: None,
@@ -1165,6 +1221,15 @@ pub trait JacsEmailProvider: JacsProvider {
 
     /// Verify a signed email with the given public key.
     fn verify_email(&self, raw: &[u8], key: Vec<u8>) -> Result<Value>;
+
+    /// Verify either attachment or HTML-inline signed email through JACS.
+    #[cfg(feature = "jacs-crate")]
+    fn verify_signed_email_transport(
+        &self,
+        raw: &[u8],
+        key: Vec<u8>,
+        mode: jacs::email::VerificationMode,
+    ) -> Result<jacs::email::SignedEmailVerificationResult>;
 
     /// Add a JACS attachment to an email.
     fn add_jacs_attachment(&self, email: &[u8], doc: &[u8]) -> Result<Vec<u8>>;
@@ -1897,7 +1962,7 @@ mod tests {
             intent: SaveIntent::Upsert,
         };
         assert_eq!(req.jacs_type, "soul");
-        assert_eq!(req.singleton, true);
+        assert!(req.singleton);
         assert!(matches!(req.intent, SaveIntent::Upsert));
         assert_eq!(req.logical_name, Some("SOUL.md".into()));
         assert_eq!(req.content_type, "text/markdown; profile=jacs-text-v1");

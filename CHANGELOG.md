@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`@haiai/wasm` browser package — foundation landed (HAIAI_WASM_PRD §4).** The Rust half (`rust/haiai-wasm/`) and the TypeScript wrapper skeleton (`node-wasm/`) ship as a new workspace member + new directory. `cargo check -p haiai --no-default-features --features wasm --target wasm32-unknown-unknown` now compiles green; `cargo check -p haiai-wasm --target wasm32-unknown-unknown` compiles green; `scripts/ci/forbidden-deps-wasm.sh` reports clean (no `tokio_tungstenite`, `mio`, `jacs-media`, `ring`, etc. in the wasm tree).
+  - New optional `wasm` feature on `rust/haiai/Cargo.toml`, mutually exclusive with `jacs-crate` (compile_error gate in `lib.rs`). Pulls `jacs-core`, `jacs-wasm`, `wasm-bindgen-futures`, `web-sys` (WebSocket/Performance/console subset), `js-sys`, `gloo-timers`.
+  - New optional `media` feature gates `jacs-media` (the image-codec dep) out of the wasm tree; native default keeps it on.
+  - target-split for `reqwest` (wasm uses `default-features=false, features=["json","query"]`), `tokio` (wasm uses `macros + sync` only), `tokio-tungstenite`, `tempfile`, and dev-deps.
+  - New target-agnostic modules: `rust/haiai/src/sse_parse.rs` (shared SSE parser), `rust/haiai/src/backoff.rs` (Timer trait + exponential backoff with `TokioTimer` / `GlooTimer` impls), `rust/haiai/src/config_browser.rs` (in-memory `AgentConfig` deserializer), `rust/haiai/src/transport.rs` (`HaiTransport` trait + `NativeReqwestTransport` impl).
+  - `rust/haiai-wasm/` skeleton crate with native no-op stub + wasm32 `initHaiaiWasm` / `version` / `about` exports. Full `BrowserAgentHandle` surface (lifecycle / crypto / HTTP wrappers / event streams) lands across follow-up commits paired with the matching `node-wasm/` TS wrappers.
+  - `node-wasm/` TS wrapper skeleton: `package.template.json` (npm `@haiai/wasm`, depends on `@jacs/wasm=0.10.2`), `tsconfig.json`, hand-written `index.ts` with `BrowserAgent` sentinel + `HaiaiWasmError`, `scripts/finalize-pkg.sh` that merges wasm-pack output into a publishable npm artifact, plus a 4-test sanity harness.
+  - `fixtures/wasm_browser_surface.json` enumerates the 47-method browser surface; `scripts/ci/check_wasm_surface.sh` enforces drift between fixture, HaiClient, and the TS wrapper. `scripts/ci/forbidden-deps-wasm.sh` + tests guard against forbidden deps slipping into the wasm tree. `scripts/ci/check_no_local_crypto.sh` extended to scan `rust/haiai-wasm/src/` and `node-wasm/`.
+  - `make versions` and `make check-versions` cover the new `rust/haiai-wasm/Cargo.toml` and `node-wasm/package.template.json` files. `scripts/bump-version.sh` walks them on every bump.
+  - Cross-compat fixtures pinned at `rust/haiai/tests/fixtures/wasm_compat/`: auth header, canonical send/register body, raw MIME, SSE line + event, WS frame + event, agreement. All round-trip green through the new shared parsers.
+  - `docs/HAIAI_WASM_BACKEND_ASSUMPTIONS.md` documents the backend SSE auth + CORS contract assumptions the browser client depends on; `docs/HAIAI_WASM_NATIVE_DEPS_AUDIT.md` inventories every wasm-incompatible call site in `rust/haiai/src/` with a gating decision per site.
+  - **Native invariant preserved.** All 201 native lib tests + 7 wasm-compat fixture tests pass. No behavior change to the existing Node / Python / Go SDKs, the CLI, the MCP server, or the FFI bindings.
+- **HTML-inline signed email is now the default signed-email generation mode.** Rust, Python, Node, Go, CLI, and MCP callers can still request `attachment_jacs` for compatibility; otherwise outbound signed email is generated as HTML with an inline signed logo, hidden JACS envelope, and verify footer link.
+- Added a canonical SHA-256 constant and unit test for the bundled HAI verification logo so SDK/server asset drift is caught in CI.
+- **Hosted-agent email evidence fields are exposed across SDKs.** Rust, Python, Node, and Go `EmailMessage` DTOs now deserialize owner ordinary-mail auth evidence, deterministic email summaries, compact Musubi summaries, and sender reputation snapshots with safe defaults for older API responses.
+
+### Changed
+
+- **Signed-email inputs are strict in HTML-inline mode.** The SDK owns HTML rendering for now: callers pass plain text, and the SDK rejects user HTML tokens plus reserved HAI/JACS inline markers before signing so generated signature artifacts cannot be injected or confused with user content.
+- Node and Go signed-email facades now pass `html_inline_jacs` explicitly when callers omit a generation type, matching Python and keeping the cross-language default visible at the FFI boundary.
+
 ## 0.4.0 (2026-04-28)
 
 ### Breaking

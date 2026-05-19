@@ -1,6 +1,8 @@
 .PHONY: test test-python test-node test-go test-rust \
         smoke smoke-python smoke-node smoke-go \
         build-python-ffi build-node-ffi build-haiigo \
+        build-haiai-wasm test-haiai-wasm publish-haiai-wasm \
+        release-haiai-wasm retry-haiai-wasm \
         versions check-versions check-jacs-versions \
         bump-version bump-jacs-version \
         generate-knowledge check-knowledge \
@@ -23,6 +25,11 @@ HAIIGO_VERSION := $(shell grep '^version' rust/haiigo/Cargo.toml | head -1 | sed
 PYTHON_VERSION := $(shell grep '^version' python/pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
 NODE_VERSION := $(shell grep '"version"' node/package.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
 PLUGIN_VERSION := $(shell grep '"version"' .claude-plugin/plugin.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
+# Browser package versions (HAIAI_WASM_PRD §4.11 / Task 040). 11th + 12th
+# packages in the share-one-version invariant.
+HAIAI_WASM_VERSION := $(shell grep '^version' rust/haiai-wasm/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+NODE_WASM_VERSION := $(shell grep '"version"' node-wasm/package.template.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
+HAIAI_WASM_RUSTFLAGS ?= -D warnings -C link-arg=-zstack-size=8388608
 
 # JACS dependency versions across SDKs
 JACS_RUST := $(shell grep '^jacs ' rust/haiai/Cargo.toml | sed 's/.*"\(=*[0-9][^"]*\)".*/\1/' | sed 's/^=//')
@@ -30,6 +37,8 @@ JACS_RUST_CLI := $(shell grep '^jacs ' rust/haiai-cli/Cargo.toml | sed 's/.*"\(=
 JACS_RUST_MCP := $(shell grep '^jacs ' rust/hai-mcp/Cargo.toml | sed 's/.*"\(=*[0-9][^"]*\)".*/\1/' | sed 's/^=//')
 JACS_PYTHON := $(shell grep 'jacs==' python/pyproject.toml | sed 's/.*jacs==\([^"]*\)".*/\1/')
 JACS_NODE := $(shell grep '@hai.ai/jacs' node/package.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
+JACS_CI_REF := $(shell grep '^  JACS_REF:' .github/workflows/test.yml | head -1 | sed 's/^  JACS_REF:[[:space:]]*//')
+JACS_CI_VERSION := $(shell printf '%s\n' '$(JACS_CI_REF)' | awk '/^v[0-9]/{sub(/^v/,""); print; next} /^[0-9]/{print}')
 
 # ============================================================================
 # TEST
@@ -121,6 +130,8 @@ versions:
 	@echo "  python                 $(PYTHON_VERSION)"
 	@echo "  node                   $(NODE_VERSION)"
 	@echo "  plugin                 $(PLUGIN_VERSION)"
+	@echo "  rust/haiai-wasm        $(HAIAI_WASM_VERSION)"
+	@echo "  node-wasm              $(NODE_WASM_VERSION)"
 	@echo ""
 	@if [ "$(RUST_VERSION)" = "$(CLI_VERSION)" ] && \
 		[ "$(RUST_VERSION)" = "$(MCP_VERSION)" ] && \
@@ -130,7 +141,9 @@ versions:
 		[ "$(RUST_VERSION)" = "$(HAIIGO_VERSION)" ] && \
 		[ "$(RUST_VERSION)" = "$(PYTHON_VERSION)" ] && \
 		[ "$(RUST_VERSION)" = "$(NODE_VERSION)" ] && \
-		[ "$(RUST_VERSION)" = "$(PLUGIN_VERSION)" ]; then \
+		[ "$(RUST_VERSION)" = "$(PLUGIN_VERSION)" ] && \
+		[ "$(RUST_VERSION)" = "$(HAIAI_WASM_VERSION)" ] && \
+		[ "$(RUST_VERSION)" = "$(NODE_WASM_VERSION)" ]; then \
 		echo "All versions match: $(RUST_VERSION)"; \
 	else \
 		echo "WARNING: Versions do not match!"; \
@@ -157,6 +170,18 @@ check-versions:
 		echo "ERROR: haiai ($(RUST_VERSION)) != node ($(NODE_VERSION))"; exit 1; fi
 	@if [ "$(RUST_VERSION)" != "$(PLUGIN_VERSION)" ]; then \
 		echo "ERROR: haiai ($(RUST_VERSION)) != plugin ($(PLUGIN_VERSION))"; exit 1; fi
+	@# Browser packages (HAIAI_WASM_PRD §4.11 / Task 040).
+	@# Empty-version gate (JACS_WASM ISSUE 001 lesson): also fail if either
+	@# parsed value is empty — silently empty would let drift slip past the
+	@# eq-check above.
+	@if [ -z "$(HAIAI_WASM_VERSION)" ]; then \
+		echo "ERROR: haiai-wasm version not detected (rust/haiai-wasm/Cargo.toml)"; exit 1; fi
+	@if [ -z "$(NODE_WASM_VERSION)" ]; then \
+		echo "ERROR: node-wasm version not detected (node-wasm/package.template.json)"; exit 1; fi
+	@if [ "$(RUST_VERSION)" != "$(HAIAI_WASM_VERSION)" ]; then \
+		echo "ERROR: haiai ($(RUST_VERSION)) != haiai-wasm ($(HAIAI_WASM_VERSION))"; exit 1; fi
+	@if [ "$(RUST_VERSION)" != "$(NODE_WASM_VERSION)" ]; then \
+		echo "ERROR: haiai ($(RUST_VERSION)) != node-wasm ($(NODE_WASM_VERSION))"; exit 1; fi
 	@echo "All versions match: $(RUST_VERSION)"
 
 bump-version:
@@ -173,12 +198,17 @@ check-jacs-versions:
 	@echo "  rust/haiai-cli  $(JACS_RUST_CLI)"
 	@echo "  rust/hai-mcp    $(JACS_RUST_MCP)"
 	@echo "  python          $(JACS_PYTHON)"
+	@echo "  ci JACS_REF     $(JACS_CI_REF)"
 	@if [ "$(JACS_RUST)" != "$(JACS_RUST_CLI)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != haiai-cli ($(JACS_RUST_CLI))"; exit 1; fi
 	@if [ "$(JACS_RUST)" != "$(JACS_RUST_MCP)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != hai-mcp ($(JACS_RUST_MCP))"; exit 1; fi
 	@if [ "$(JACS_RUST)" != "$(JACS_PYTHON)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != python ($(JACS_PYTHON))"; exit 1; fi
+	@if [ -n "$(JACS_CI_VERSION)" ] && [ "$(JACS_RUST)" != "$(JACS_CI_VERSION)" ]; then \
+		echo "ERROR: jacs in haiai ($(JACS_RUST)) != CI JACS_REF version ($(JACS_CI_VERSION))"; exit 1; fi
+	@if [ -z "$(JACS_CI_VERSION)" ]; then \
+		echo "  ci JACS_REF     $(JACS_CI_REF) (branch ref, skipping tag-version match)"; fi
 	@case "$(JACS_NODE)" in \
 		file:*) echo "  node            $(JACS_NODE) (local path, skipping match check)" ;; \
 		*) if [ "$(JACS_RUST)" != "$(JACS_NODE)" ]; then \
@@ -368,3 +398,39 @@ help:
 	@echo "  CRATES_IO_TOKEN  - for rust/v* tags"
 	@echo "  PYPI_API_TOKEN   - for python/v* tags (or trusted publisher)"
 	@echo "  NPM_TOKEN        - for node/v* tags"
+
+# ============================================================================
+# @haiai/wasm browser package (HAIAI_WASM_PRD §4.11 / Task 039)
+# ============================================================================
+
+build-haiai-wasm:
+	@echo "Building @haiai/wasm artifact for v$(HAIAI_WASM_VERSION)..."
+	@command -v wasm-pack >/dev/null 2>&1 || { echo "ERROR: wasm-pack not on PATH. Install via: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh" >&2; exit 1; }
+	RUSTFLAGS="$(HAIAI_WASM_RUSTFLAGS)" wasm-pack build --target web --release rust/haiai-wasm
+	bash node-wasm/scripts/finalize-pkg.sh
+	@echo "✓ rust/haiai-wasm/pkg/ is publishable. Inspect with: cd rust/haiai-wasm/pkg && npm pack --dry-run"
+
+test-haiai-wasm:
+	@echo "Running haiai-wasm wasm-pack tests (Chrome headless)..."
+	@command -v wasm-pack >/dev/null 2>&1 || { echo "ERROR: wasm-pack not on PATH" >&2; exit 1; }
+	RUSTFLAGS="$(HAIAI_WASM_RUSTFLAGS)" wasm-pack test --headless --chrome rust/haiai-wasm
+
+publish-haiai-wasm: build-haiai-wasm
+	@echo "Publishing @haiai/wasm to npm..."
+	cd rust/haiai-wasm/pkg && npm publish --access public $(if $(NPM_DRY_RUN),--dry-run,)
+
+release-haiai-wasm:
+	@echo "Releasing @haiai/wasm v$(HAIAI_WASM_VERSION)..."
+	-git tag -d haiai-wasm-v$(HAIAI_WASM_VERSION) 2>/dev/null
+	-git push origin --delete haiai-wasm-v$(HAIAI_WASM_VERSION) 2>/dev/null
+	git tag haiai-wasm-v$(HAIAI_WASM_VERSION)
+	git push origin haiai-wasm-v$(HAIAI_WASM_VERSION)
+	@echo "✓ Tagged haiai-wasm-v$(HAIAI_WASM_VERSION) - CI will publish to npm"
+
+retry-haiai-wasm:
+	@echo "Retrying @haiai/wasm release for v$(HAIAI_WASM_VERSION)..."
+	-git tag -d haiai-wasm-v$(HAIAI_WASM_VERSION)
+	-git push origin --delete haiai-wasm-v$(HAIAI_WASM_VERSION)
+	git tag haiai-wasm-v$(HAIAI_WASM_VERSION)
+	git push origin haiai-wasm-v$(HAIAI_WASM_VERSION)
+	@echo "✓ Re-tagged haiai-wasm-v$(HAIAI_WASM_VERSION) - CI will retry npm publish"

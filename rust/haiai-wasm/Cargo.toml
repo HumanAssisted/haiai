@@ -1,0 +1,68 @@
+[package]
+name = "haiai-wasm"
+version = "0.4.1"
+description = "Browser-side HAI client (wasm-bindgen wrapper around haiai with the wasm feature on)"
+readme = "README.md"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+# Need both rlib (so `cargo test` can link against the library) and cdylib
+# (so wasm-pack emits a usable .wasm). Mirrors jacs-wasm's layout.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Native-stub mode: when building on a non-wasm32 target the crate
+# compiles to a tiny no-op so workspace-wide `cargo check --workspace`
+# stays green (per PRD §4.1 — "Do not rely on 'not part of workspace'
+# as the gating mechanism"). Heavy deps land only on wasm32 below.
+[dependencies]
+
+# Wasm-only deps. Pulled when targeting wasm32-unknown-unknown so the
+# native build doesn't link wasm-bindgen at all (it has runtime asserts
+# that fail outside a browser host).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+haiai = { path = "../haiai", default-features = false, features = ["wasm"] }
+# jacs-core for CoreAgent + SigningAlgorithm constructors (PRD §4.3 lifecycle
+# methods construct a CoreAgent directly because jacs-wasm::CoreAgentHandle
+# keeps its inner agent private).
+jacs-core = "=0.10.2"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde-wasm-bindgen = "0.6"
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+console_error_panic_hook = "0.1"
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Storage",
+    "Worker",
+    "WorkerOptions",
+    "WorkerType",
+    "MessageEvent",
+    "DedicatedWorkerGlobalScope",
+    # PRD §10.2 metrics() uses performance.now(); HAIAI_WASM_DEBUG logs
+    # via console.debug. Both are tiny — no native crates pulled.
+    "Performance",
+    "console",
+] }
+# Public-key / signature wire form is base64 (PRD §4.3 `publicKeyBase64`).
+base64 = "0.22"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+# Issue 006 secret-leak test drives the same `localStore.saveEncryptedAgent`
+# code path `BrowserAgent.save` uses, then scans localStorage. Pulled as a
+# dev-dep so production wasm builds don't pull jacs-wasm directly — haiai
+# already pulls it transitively under the `wasm` feature for the
+# JacsWasmProvider.
+jacs-wasm = "=0.10.2"
+# Issues 006 + 010 follow-up tests need `Response`, `Headers`, `Request`
+# (to build mocked fetch responses) and `BodyInit` (to feed string
+# response bodies). Same crate as the production deps above; dev-only
+# features stay isolated here so production builds don't pull them.
+web-sys = { version = "0.3", features = ["Window", "Storage", "Response", "Headers", "Request", "ResponseInit"] }
+wasm-bindgen-futures = "0.4"

@@ -1,0 +1,4 @@
+event: benchmark_job
+id: evt-001
+data: {"type":"benchmark_job","job_id":"job-42","tier":"free"}
+

@@ -8,6 +8,7 @@ wrapper tests but exercises the full Python SDK code path:
 Skipped when `haiipy` is missing or the installed wheel predates the Layer-8
 media exports (matches `test_cross_lang_media.py` skip semantics).
 """
+
 from __future__ import annotations
 
 import json
@@ -269,9 +270,7 @@ def test_extract_media_signature_raw_returns_base64url(
     assert raw.present is True
     assert raw.payload is not None
     # base64url-no-pad: ASCII letters, digits, '-', '_'.
-    allowed = set(
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-    )
+    allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
     assert all(ch in allowed for ch in raw.payload)
 
 
@@ -321,7 +320,9 @@ def test_sign_image_default_writes_backup_when_overwriting(
     # JACS may either return the bak path or write the backup silently;
     # the contract is that no_backup=False does NOT skip the bak write
     # when overwriting.
-    bak_present = (stage_dir / "out_bak.png.bak").exists() or signed.backup_path is not None
+    bak_present = (
+        stage_dir / "out_bak.png.bak"
+    ).exists() or signed.backup_path is not None
     assert bak_present, (
         "default no_backup=False should write <out>.bak when overwriting"
     )

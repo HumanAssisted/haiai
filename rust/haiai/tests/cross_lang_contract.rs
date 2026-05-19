@@ -31,6 +31,7 @@ struct AuthHeaderFixture {
 struct AuthHeaderExample {
     jacs_id: String,
     timestamp: i64,
+    nonce: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,31 +74,39 @@ fn auth_header_matches_shared_shape() {
 
     let header = client.build_auth_header().expect("auth header");
     let token = header.strip_prefix("JACS ").expect("auth header prefix");
-    let parts: Vec<&str> = token.splitn(3, ':').collect();
+    let parts: Vec<&str> = token.splitn(4, ':').collect();
 
     assert_eq!(fixture.auth_header.scheme, "JACS");
     assert_eq!(
         fixture.auth_header.parts,
-        vec!["jacs_id", "timestamp", "signature_base64"]
+        vec!["jacs_id", "timestamp", "nonce", "signature_base64"]
     );
-    assert_eq!(parts.len(), 3);
+    assert_eq!(parts.len(), 4);
     assert_eq!(parts[0], fixture.auth_header.example.jacs_id);
     assert_eq!(
         fixture.auth_header.signed_message_template,
-        "{jacs_id}:{timestamp}"
+        "{jacs_id}:{timestamp}:{nonce}"
     );
 
     let decoded = base64::engine::general_purpose::STANDARD
-        .decode(parts[2])
+        .decode(parts[3])
         .expect("decode static provider signature");
     let signed_message = String::from_utf8(decoded).expect("utf8 signature payload");
-    assert_eq!(signed_message, format!("sig:{}:{}", parts[0], parts[1]));
+    assert_eq!(
+        signed_message,
+        format!("sig:{}:{}:{}", parts[0], parts[1], parts[2])
+    );
 
     let parsed_timestamp = parts[1].parse::<i64>().expect("timestamp");
     assert!(
         parsed_timestamp >= fixture.auth_header.example.timestamp,
         "timestamp should be unix seconds"
     );
+    assert!(
+        !fixture.auth_header.example.nonce.is_empty(),
+        "fixture should include an example nonce"
+    );
+    assert!(!parts[2].is_empty(), "nonce should be present");
 }
 
 // ===========================================================================
@@ -171,9 +180,10 @@ fn stage_fixture_agent() -> (tempfile::TempDir, PathBuf) {
             .expect("parse fixture config");
 
     let temp = tempfile::tempdir().expect("tempdir");
+    let temp_root = temp.path().canonicalize().expect("canonical tempdir");
 
     let src_keys = source_dir.join(value["jacs_key_directory"].as_str().unwrap_or("keys"));
-    let tmp_keys = temp.path().join("keys");
+    let tmp_keys = temp_root.join("keys");
     fs::create_dir_all(&tmp_keys).expect("mkdir keys");
     for entry in fs::read_dir(&src_keys).expect("read keys") {
         let entry = entry.expect("key entry");
@@ -181,13 +191,13 @@ fn stage_fixture_agent() -> (tempfile::TempDir, PathBuf) {
     }
 
     let src_data = source_dir.join(value["jacs_data_directory"].as_str().unwrap_or("."));
-    let tmp_data = temp.path().join("data");
+    let tmp_data = temp_root.join("data");
     copy_fixture_dir(&src_data, &tmp_data);
 
     value["jacs_data_directory"] = Value::String(tmp_data.to_string_lossy().into_owned());
     value["jacs_key_directory"] = Value::String(tmp_keys.to_string_lossy().into_owned());
 
-    let config = temp.path().join("jacs.config.json");
+    let config = temp_root.join("jacs.config.json");
     fs::write(
         &config,
         serde_json::to_vec_pretty(&value).expect("encode config"),
@@ -239,7 +249,7 @@ fn tamper_after(bytes: &mut [u8], marker: &[u8], offset: usize) {
 /// For a signed markdown file, mutate one body byte BEFORE the
 /// `-----BEGIN JACS SIGNATURE-----` block so verify reports HashMismatch
 /// rather than Malformed.
-fn tamper_text_body(bytes: &mut Vec<u8>) {
+fn tamper_text_body(bytes: &mut [u8]) {
     const MARKER: &[u8] = b"-----BEGIN JACS SIGNATURE-----";
     let body_end = bytes
         .windows(MARKER.len())
@@ -259,7 +269,8 @@ fn assert_image_valid(name: &str, expected_signer: &str) {
         LocalJacsProvider::from_config_path(Some(&config), None).expect("load fixture agent");
 
     let work = tempfile::tempdir().expect("tempdir");
-    let staged = work.path().join(name);
+    let work_root = work.path().canonicalize().expect("canonical workdir");
+    let staged = work_root.join(name);
     fs::write(&staged, read_fixture_with_checksum(name)).expect("stage signed image");
 
     let result = provider
@@ -285,7 +296,8 @@ fn assert_image_tampered(name: &str, marker: &[u8], offset: usize) {
         LocalJacsProvider::from_config_path(Some(&config), None).expect("load fixture agent");
 
     let work = tempfile::tempdir().expect("tempdir");
-    let staged = work.path().join(name);
+    let work_root = work.path().canonicalize().expect("canonical workdir");
+    let staged = work_root.join(name);
     let mut bytes = read_fixture_with_checksum(name);
     tamper_after(&mut bytes, marker, offset);
     fs::write(&staged, &bytes).expect("write tampered");
@@ -353,7 +365,8 @@ fn cross_lang_signed_text_md_verifies() {
         LocalJacsProvider::from_config_path(Some(&config), None).expect("load fixture agent");
 
     let work = tempfile::tempdir().expect("tempdir");
-    let staged = work.path().join("signed.md");
+    let work_root = work.path().canonicalize().expect("canonical workdir");
+    let staged = work_root.join("signed.md");
     fs::write(&staged, read_fixture_with_checksum("signed.md")).expect("stage signed.md");
 
     let result = provider
@@ -384,7 +397,8 @@ fn cross_lang_signed_text_md_tampered_returns_hash_mismatch() {
         LocalJacsProvider::from_config_path(Some(&config), None).expect("load fixture agent");
 
     let work = tempfile::tempdir().expect("tempdir");
-    let staged = work.path().join("signed.md");
+    let work_root = work.path().canonicalize().expect("canonical workdir");
+    let staged = work_root.join("signed.md");
     let mut bytes = read_fixture_with_checksum("signed.md");
     tamper_text_body(&mut bytes);
     fs::write(&staged, &bytes).expect("write tampered");

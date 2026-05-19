@@ -68,6 +68,11 @@ fn contract_deserialize_email_message() {
     assert_eq!(msg.created_at, "2026-02-24T12:00:00Z");
     assert!(msg.read_at.is_none());
     assert_eq!(msg.jacs_verified, Some(true));
+    assert_eq!(msg.jacs_signer_id.as_deref(), Some("owner-agent-jacs-id"));
+    assert!(
+        msg.jacs_key_is_owner,
+        "owner-key attestation must deserialize for hosted owner instructions"
+    );
     assert!(
         (msg.trust_score.unwrap() - 92.4).abs() < 0.01,
         "trust_score should be ~92.4, got {:?}",
@@ -89,6 +94,8 @@ fn contract_deserialize_list_messages_response() {
     assert_eq!(msg.id, "550e8400-e29b-41d4-a716-446655440000");
     assert_eq!(msg.subject, "Test Subject");
     assert_eq!(msg.body_text, "Hello, this is a test email body.");
+    assert_eq!(msg.jacs_signer_id.as_deref(), Some("owner-agent-jacs-id"));
+    assert!(msg.jacs_key_is_owner);
     assert!(
         (msg.trust_score.unwrap() - 92.4).abs() < 0.01,
         "inbound trust_score should be ~92.4"
@@ -118,7 +125,7 @@ fn contract_deserialize_email_status() {
     assert_eq!(status.daily_used, 5);
     assert_eq!(status.resets_at, "2026-02-25T00:00:00Z");
     assert_eq!(status.messages_sent_total, 42);
-    assert_eq!(status.external_enabled, false);
+    assert!(!status.external_enabled);
     assert_eq!(status.external_sends_today, 0);
     assert!(status.last_tier_change.is_none());
 }

@@ -13,12 +13,12 @@ homepage.workspace = true
 
 [dependencies]
 haiai = { version = "=0.4.1", path = "../haiai" }
-jacs = { version = "=0.10.1", features = ["a2a"] }
-jacs-binding-core = "=0.10.1"
-jacs-mcp = { version = "=0.10.1", features = ["mcp", "full-tools"] }
+jacs = { version = "=0.10.2", features = ["a2a"] }
+jacs-binding-core = "=0.10.2"
+jacs-mcp = { version = "=0.10.2", features = ["mcp", "full-tools"] }
 anyhow = "1"
 base64.workspace = true
-rmcp = { version = "0.12", features = ["server", "transport-io", "macros"] }
+rmcp = { version = "1.6", features = ["server", "transport-io", "macros"] }
 schemars = "1.0"
 serde.workspace = true
 serde_json.workspace = true

@@ -13,10 +13,11 @@ type crossLangFixture struct {
 		Parts                 []string `json:"parts"`
 		SignedMessageTemplate string   `json:"signed_message_template"`
 		Example               struct {
-			JacsID             string `json:"jacs_id"`
-			Timestamp          int64  `json:"timestamp"`
-			StubSignatureB64   string `json:"stub_signature_base64"`
-			ExpectedHeader     string `json:"expected_header"`
+			JacsID           string `json:"jacs_id"`
+			Timestamp        int64  `json:"timestamp"`
+			Nonce            string `json:"nonce"`
+			StubSignatureB64 string `json:"stub_signature_base64"`
+			ExpectedHeader   string `json:"expected_header"`
 		} `json:"example"`
 	} `json:"auth_header"`
 	CanonicalJSONCases []struct {
@@ -63,22 +64,23 @@ func TestCrossLangAuthHeaderContract(t *testing.T) {
 	if fixture.AuthHeader.Scheme != "JACS" {
 		t.Fatalf("scheme = %q, want JACS", fixture.AuthHeader.Scheme)
 	}
-	if len(fixture.AuthHeader.Parts) != 3 {
-		t.Fatalf("parts len = %d, want 3", len(fixture.AuthHeader.Parts))
+	if len(fixture.AuthHeader.Parts) != 4 {
+		t.Fatalf("parts len = %d, want 4", len(fixture.AuthHeader.Parts))
 	}
 
 	ts := strconv.FormatInt(fixture.AuthHeader.Example.Timestamp, 10)
-	message := authHeaderMessage(fixture.AuthHeader.Example.JacsID, ts)
-	if message != "test-agent-001:1700000000" {
+	message := authHeaderMessage(fixture.AuthHeader.Example.JacsID, ts, fixture.AuthHeader.Example.Nonce)
+	if message != "test-agent-001:1700000000:fixture-nonce-001" {
 		t.Fatalf("authHeaderMessage = %q", message)
 	}
-	if fixture.AuthHeader.SignedMessageTemplate != "{jacs_id}:{timestamp}" {
+	if fixture.AuthHeader.SignedMessageTemplate != "{jacs_id}:{timestamp}:{nonce}" {
 		t.Fatalf("signed message template = %q", fixture.AuthHeader.SignedMessageTemplate)
 	}
 
 	header := authHeaderValue(
 		fixture.AuthHeader.Example.JacsID,
 		ts,
+		fixture.AuthHeader.Example.Nonce,
 		fixture.AuthHeader.Example.StubSignatureB64,
 	)
 	if header != fixture.AuthHeader.Example.ExpectedHeader {

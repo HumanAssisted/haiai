@@ -109,11 +109,12 @@ def _extract_raw_key_from_pem(pem_str: str) -> bytes:
 
     Raises :class:`~haiai.errors.HaiError` on malformed input.
     """
-    import base64
 
     from haiai.errors import HaiError
 
-    body_lines = [ln for ln in pem_str.splitlines() if ln and not ln.startswith("-----")]
+    body_lines = [
+        ln for ln in pem_str.splitlines() if ln and not ln.startswith("-----")
+    ]
     if not body_lines:
         raise HaiError(
             "PEM body is empty",
@@ -314,7 +315,9 @@ def fetch_server_keys(hai_url: str, ffi=None) -> list[_CachedKey]:
 
     try:
         if ffi is None:
-            raise RuntimeError("FFI client required for fetch_server_keys (no native HTTP fallback)")
+            raise RuntimeError(
+                "FFI client required for fetch_server_keys (no native HTTP fallback)"
+            )
         data = ffi.fetch_server_keys()
     except Exception as exc:
         logger.warning("Failed to fetch HAI signing keys: %s", exc)

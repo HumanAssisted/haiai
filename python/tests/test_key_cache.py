@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import time
 from typing import Any
-from unittest.mock import patch
 
-import pytest
 
 from haiai.client import HaiClient
-from haiai.models import PublicKeyInfo
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +39,7 @@ class TestFetchRemoteKeyCachesResult:
         mock_ffi = client._get_ffi()
 
         call_count = 0
+
         def counting_fetch(*args: Any, **kwargs: Any) -> dict:
             nonlocal call_count
             call_count += 1
@@ -62,6 +60,7 @@ class TestFetchRemoteKeyCacheExpires:
         mock_ffi = client._get_ffi()
 
         versions = iter(["v1", "v2"])
+
         def version_fetch(*args: Any, **kwargs: Any) -> dict:
             return _make_key_response(next(versions))
 
@@ -85,6 +84,7 @@ class TestInvalidateAgentKeyCacheForcesRefetch:
         mock_ffi = client._get_ffi()
 
         versions = iter(["v1", "v2"])
+
         def version_fetch(*args: Any, **kwargs: Any) -> dict:
             return _make_key_response(next(versions))
 
@@ -105,10 +105,13 @@ class TestCacheKeyedByIdAndVersion:
         mock_ffi = client._get_ffi()
 
         call_count = 0
+
         def counting_fetch(jacs_id: str, version: str = "latest") -> dict:
             nonlocal call_count
             call_count += 1
-            if jacs_id == "agent-1" or (isinstance(jacs_id, str) and "agent-1" in str(jacs_id)):
+            if jacs_id == "agent-1" or (
+                isinstance(jacs_id, str) and "agent-1" in str(jacs_id)
+            ):
                 return _make_key_response("v1")
             return _make_key_response("v2")
 
@@ -138,6 +141,7 @@ class TestFetchKeyByHashCache:
         mock_ffi = client._get_ffi()
 
         call_count = 0
+
         def counting_fetch(*args: Any, **kwargs: Any) -> dict:
             nonlocal call_count
             call_count += 1
@@ -155,6 +159,7 @@ class TestFetchKeyByHashCache:
         mock_ffi = client._get_ffi()
 
         call_count = 0
+
         def counting_fetch(*args: Any, **kwargs: Any) -> dict:
             nonlocal call_count
             call_count += 1
@@ -180,6 +185,7 @@ class TestFetchKeyByEmailCache:
         mock_ffi = client._get_ffi()
 
         call_count = 0
+
         def counting_fetch(*args: Any, **kwargs: Any) -> dict:
             nonlocal call_count
             call_count += 1
@@ -204,6 +210,7 @@ class TestFetchKeyByDomainCache:
         mock_ffi = client._get_ffi()
 
         call_count = 0
+
         def counting_fetch(*args: Any, **kwargs: Any) -> dict:
             nonlocal call_count
             call_count += 1

@@ -1,8 +1,17 @@
+// HAIAI_WASM_PRD §4.7 + Task 009: the on-disk loaders below need `std::fs`
+// and are unreachable from a browser build. We keep the in-memory
+// `AgentConfig` struct + serde derives unconditional so the wasm
+// `config_browser::from_json_string` (Task 016) can re-use the same shape.
+// All FS-touching helpers are gated `cfg(not(target_arch = "wasm32"))`
+// or use the env-only fallbacks that already short-circuit on missing
+// disk state.
 use std::env;
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
 use serde_json::Value;
 
 use crate::error::{HaiError, Result};
@@ -27,6 +36,7 @@ pub struct AgentConfig {
 /// 1. explicit `path`
 /// 2. `JACS_CONFIG_PATH`
 /// 3. `./jacs.config.json`
+#[cfg(not(target_arch = "wasm32"))]
 pub fn load_config(path: Option<&Path>) -> Result<AgentConfig> {
     let source_path = resolve_config_path(path);
     if !source_path.is_file() {
@@ -104,6 +114,21 @@ pub fn resolve_private_key_candidates(config: &AgentConfig) -> Vec<PathBuf> {
     candidates
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn load_config(_path: Option<&Path>) -> Result<AgentConfig> {
+    // Browsers cannot read jacs.config.json from disk. Callers in the
+    // wasm build should use `config_browser::from_json_string` (Task 016)
+    // to materialize an AgentConfig from a JSON string instead. We re-use
+    // the existing `BackendUnsupported` typed variant (PRD §10 explicitly
+    // forbids new HaiError variants for the wasm port).
+    Err(HaiError::BackendUnsupported {
+        method: "load_config".to_string(),
+        detail: "file system access not available in wasm32 build; use config_browser::from_json_string"
+            .to_string(),
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn resolve_config_path(path: Option<&Path>) -> PathBuf {
     if let Some(path) = path {
         return path.to_path_buf();
@@ -157,19 +182,29 @@ pub fn resolve_storage_backend(
         }
     }
 
-    // Priority 3: storage field in config
-    let config_path_resolved = resolve_config_path(config_path);
-    if config_path_resolved.is_file() {
-        if let Ok(raw) = fs::read_to_string(&config_path_resolved) {
-            if let Ok(data) = serde_json::from_str::<Value>(&raw) {
-                if let Some(label) = get_string(
-                    &data,
-                    &["jacs_default_storage", "default_storage", "defaultStorage"],
-                ) {
-                    return resolve_storage_backend_label(&label);
+    // Priority 3: storage field in config (file-backed lookup, native only).
+    // The wasm build skips straight to Priority 4 — see HAIAI_WASM_PRD §4.7.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let config_path_resolved = resolve_config_path(config_path);
+        if config_path_resolved.is_file() {
+            if let Ok(raw) = fs::read_to_string(&config_path_resolved) {
+                if let Ok(data) = serde_json::from_str::<Value>(&raw) {
+                    if let Some(label) = get_string(
+                        &data,
+                        &["jacs_default_storage", "default_storage", "defaultStorage"],
+                    ) {
+                        return resolve_storage_backend_label(&label);
+                    }
                 }
             }
         }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        // Browser builds have no jacs.config.json on disk; silence the
+        // `unused` warning on the parameter.
+        let _ = config_path;
     }
 
     // Priority 4: default to fs
@@ -202,16 +237,23 @@ pub fn resolve_remote(explicit: Option<bool>, config_path: Option<&Path>) -> boo
         }
     }
 
-    // Priority 3: config file `remote` field
-    let config_path_resolved = resolve_config_path(config_path);
-    if config_path_resolved.is_file() {
-        if let Ok(raw) = fs::read_to_string(&config_path_resolved) {
-            if let Ok(data) = serde_json::from_str::<Value>(&raw) {
-                if let Some(val) = data.get("remote").and_then(|v| v.as_bool()) {
-                    return val;
+    // Priority 3: config file `remote` field (native only — wasm skips).
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let config_path_resolved = resolve_config_path(config_path);
+        if config_path_resolved.is_file() {
+            if let Ok(raw) = fs::read_to_string(&config_path_resolved) {
+                if let Ok(data) = serde_json::from_str::<Value>(&raw) {
+                    if let Some(val) = data.get("remote").and_then(|v| v.as_bool()) {
+                        return val;
+                    }
                 }
             }
         }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = config_path;
     }
 
     // Priority 4: backward compat — JACS_DEFAULT_STORAGE=remote implies remote=true
@@ -278,23 +320,30 @@ pub fn redacted_display(
         }
     }
 
-    // Priority 3: config file
-    let config_path_resolved = resolve_config_path(config_path);
-    if config_path_resolved.is_file() {
-        if let Ok(raw) = fs::read_to_string(&config_path_resolved) {
-            if let Ok(data) = serde_json::from_str::<Value>(&raw) {
-                if let Some(label) = get_string(
-                    &data,
-                    &["jacs_default_storage", "default_storage", "defaultStorage"],
-                ) {
-                    return StorageConfigSummary {
-                        backend: label,
-                        source: "config file",
-                        remote,
-                    };
+    // Priority 3: config file (native only — wasm has no disk).
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let config_path_resolved = resolve_config_path(config_path);
+        if config_path_resolved.is_file() {
+            if let Ok(raw) = fs::read_to_string(&config_path_resolved) {
+                if let Ok(data) = serde_json::from_str::<Value>(&raw) {
+                    if let Some(label) = get_string(
+                        &data,
+                        &["jacs_default_storage", "default_storage", "defaultStorage"],
+                    ) {
+                        return StorageConfigSummary {
+                            backend: label,
+                            source: "config file",
+                            remote,
+                        };
+                    }
                 }
             }
         }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = config_path;
     }
 
     // Priority 4: default
@@ -329,6 +378,7 @@ pub fn resolve_log_filter(config_path: Option<&Path>) -> String {
     DEFAULT_LOG_FILTER.to_string()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn get_string(data: &Value, keys: &[&str]) -> Option<String> {
     for key in keys {
         if let Some(value) = data.get(key).and_then(Value::as_str) {
@@ -338,7 +388,7 @@ fn get_string(data: &Value, keys: &[&str]) -> Option<String> {
     None
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use std::fs;
 

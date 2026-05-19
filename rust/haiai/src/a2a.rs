@@ -543,10 +543,16 @@ impl<'a, P: JacsProvider> A2AIntegration<'a, P> {
                 attachments: Vec::new(),
                 labels: Vec::new(),
                 append_footer: None,
+                idempotency_key: None,
             })
             .await
     }
 
+    /// Native-only: delegates to `HaiClient::on_benchmark_job` which uses
+    /// `connect_sse` / `connect_ws` (tokio::spawn + tokio::select!). Browsers
+    /// drive the equivalent loop directly through `EventStreamHandle` in the
+    /// `haiai-wasm` crate (HAIAI_WASM_PRD §4.6, Task 010 audit).
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn on_mediated_benchmark_job<F, Fut>(
         &self,
         options: A2AMediatedJobOptions,

@@ -1,0 +1,60 @@
+{
+  "name": "@haiai/wasm",
+  "version": "0.4.1",
+  "description": "Browser HAI API client (WASM) on top of @jacs/wasm",
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
+  "types": "index.d.ts",
+  "sideEffects": false,
+  "files": [
+    "haiai_wasm.js",
+    "haiai_wasm.d.ts",
+    "haiai_wasm_bg.wasm",
+    "haiai_wasm_bg.wasm.d.ts",
+    "index.js",
+    "index.d.ts",
+    "types.js",
+    "types.d.ts",
+    "worker/index.js",
+    "worker/index.d.ts",
+    "worker/haiai-worker.js",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "import": "./index.js",
+      "types": "./index.d.ts"
+    },
+    "./types": {
+      "import": "./types.js",
+      "types": "./types.d.ts"
+    },
+    "./worker": {
+      "import": "./worker/index.js",
+      "types": "./worker/index.d.ts"
+    },
+    "./pkg/*": "./*"
+  },
+  "dependencies": {
+    "@jacs/wasm": "=0.10.2"
+  },
+  "homepage": "https://hai.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HumanAssisted/haiai"
+  },
+  "license": "BUSL-1.1",
+  "keywords": [
+    "haiai",
+    "hai",
+    "jacs",
+    "wasm",
+    "browser",
+    "email",
+    "agent"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}

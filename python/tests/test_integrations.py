@@ -26,7 +26,9 @@ from haiai.integrations import (
 )
 
 
-def _install_module(monkeypatch: pytest.MonkeyPatch, module_name: str, **attrs: Any) -> types.ModuleType:
+def _install_module(
+    monkeypatch: pytest.MonkeyPatch, module_name: str, **attrs: Any
+) -> types.ModuleType:
     module = types.ModuleType(module_name)
     for key, value in attrs.items():
         setattr(module, key, value)
@@ -34,14 +36,18 @@ def _install_module(monkeypatch: pytest.MonkeyPatch, module_name: str, **attrs: 
     return module
 
 
-def _install_package(monkeypatch: pytest.MonkeyPatch, package_name: str) -> types.ModuleType:
+def _install_package(
+    monkeypatch: pytest.MonkeyPatch, package_name: str
+) -> types.ModuleType:
     module = types.ModuleType(package_name)
     module.__path__ = []  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, package_name, module)
     return module
 
 
-def test_langgraph_helpers_delegate_to_jacs_langchain(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_langgraph_helpers_delegate_to_jacs_langchain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _install_package(monkeypatch, "jacs")
     _install_package(monkeypatch, "jacs.adapters")
 
@@ -71,16 +77,28 @@ def test_langgraph_helpers_delegate_to_jacs_langchain(monkeypatch: pytest.Monkey
         langchain_signing_middleware(client="c", config_path="cfg.json", strict=True)
         == "middleware-ok"
     )
-    assert calls["middleware"] == {"client": "c", "config_path": "cfg.json", "strict": True}
+    assert calls["middleware"] == {
+        "client": "c",
+        "config_path": "cfg.json",
+        "strict": True,
+    }
 
-    assert langgraph_wrap_tool_call(client="c2", config_path="cfg2", strict=False) == "wrap-ok"
+    assert (
+        langgraph_wrap_tool_call(client="c2", config_path="cfg2", strict=False)
+        == "wrap-ok"
+    )
     assert calls["wrap"] == {"client": "c2", "config_path": "cfg2", "strict": False}
 
-    assert langgraph_awrap_tool_call(client="c3", config_path="cfg3", strict=True) == "awrap-ok"
+    assert (
+        langgraph_awrap_tool_call(client="c3", config_path="cfg3", strict=True)
+        == "awrap-ok"
+    )
     assert calls["awrap"] == {"client": "c3", "config_path": "cfg3", "strict": True}
 
 
-def test_crewai_helpers_delegate_to_jacs_crewai(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_crewai_helpers_delegate_to_jacs_crewai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _install_package(monkeypatch, "jacs")
     _install_package(monkeypatch, "jacs.adapters")
 
@@ -116,7 +134,9 @@ def test_crewai_helpers_delegate_to_jacs_crewai(monkeypatch: pytest.MonkeyPatch)
         "strict": True,
     }
 
-    signed_tool = crewai_signed_tool("inner", client="s1", config_path="cfg", strict=True)
+    signed_tool = crewai_signed_tool(
+        "inner", client="s1", config_path="cfg", strict=True
+    )
     assert isinstance(signed_tool, FakeSignedTool)
     assert signed_tool.inner_tool == "inner"
     assert signed_tool.kwargs == {"client": "s1", "config_path": "cfg", "strict": True}
@@ -124,7 +144,11 @@ def test_crewai_helpers_delegate_to_jacs_crewai(monkeypatch: pytest.MonkeyPatch)
     verified_tool = crewai_verified_input("inner2", client="s2", config_path="cfg2")
     assert isinstance(verified_tool, FakeVerifiedInput)
     assert verified_tool.inner_tool == "inner2"
-    assert verified_tool.kwargs == {"client": "s2", "config_path": "cfg2", "strict": False}
+    assert verified_tool.kwargs == {
+        "client": "s2",
+        "config_path": "cfg2",
+        "strict": False,
+    }
 
 
 def test_mcp_helper_delegates_to_jacs_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -214,19 +238,16 @@ def test_mcp_tool_registration_helpers_delegate_to_jacs_adapters_mcp(
 
     mcp_server = object()
     client = object()
-    assert (
-        register_jacs_tools(
-            mcp_server,
-            client=client,
-            config_path="jacs.config.json",
-            strict=True,
-            tools=[
-                "share_public_key",
-                "share_agent",
-            ],
-        )
-        == {"ok": "jacs"}
-    )
+    assert register_jacs_tools(
+        mcp_server,
+        client=client,
+        config_path="jacs.config.json",
+        strict=True,
+        tools=[
+            "share_public_key",
+            "share_agent",
+        ],
+    ) == {"ok": "jacs"}
     assert calls["register_jacs_tools"] == {
         "mcp_server": mcp_server,
         "client": client,
@@ -235,7 +256,9 @@ def test_mcp_tool_registration_helpers_delegate_to_jacs_adapters_mcp(
         "tools": ["share_public_key", "share_agent"],
     }
 
-    assert register_a2a_tools(mcp_server, client=client, config_path="cfg", strict=False) == {"ok": "a2a"}
+    assert register_a2a_tools(
+        mcp_server, client=client, config_path="cfg", strict=False
+    ) == {"ok": "a2a"}
     assert calls["register_a2a_tools"] == {
         "mcp_server": mcp_server,
         "client": client,
@@ -243,7 +266,9 @@ def test_mcp_tool_registration_helpers_delegate_to_jacs_adapters_mcp(
         "strict": False,
     }
 
-    assert register_trust_tools(mcp_server, client=client, config_path="cfg2", strict=True) == {"ok": "trust"}
+    assert register_trust_tools(
+        mcp_server, client=client, config_path="cfg2", strict=True
+    ) == {"ok": "trust"}
     assert calls["register_trust_tools"] == {
         "mcp_server": mcp_server,
         "client": client,
@@ -261,7 +286,12 @@ def test_agentsdk_wrapper_and_verify_delegate_to_base_adapter(
     instances: list[Any] = []
 
     class FakeBaseAdapter:
-        def __init__(self, client: Any = None, config_path: str | None = None, strict: bool = False) -> None:
+        def __init__(
+            self,
+            client: Any = None,
+            config_path: str | None = None,
+            strict: bool = False,
+        ) -> None:
             self.client = client
             self.config_path = config_path
             self.strict = strict
@@ -277,7 +307,9 @@ def test_agentsdk_wrapper_and_verify_delegate_to_base_adapter(
 
     _install_module(monkeypatch, "jacs.adapters.base", BaseJacsAdapter=FakeBaseAdapter)
 
-    decorator = agentsdk_tool_wrapper(client="client-1", config_path="cfg.json", strict=True)
+    decorator = agentsdk_tool_wrapper(
+        client="client-1", config_path="cfg.json", strict=True
+    )
 
     @decorator
     def add_one(value: int) -> int:
@@ -291,7 +323,9 @@ def test_agentsdk_wrapper_and_verify_delegate_to_base_adapter(
 
 
 @pytest.mark.asyncio
-async def test_agentsdk_wrapper_supports_async_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_agentsdk_wrapper_supports_async_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _install_package(monkeypatch, "jacs")
     _install_package(monkeypatch, "jacs.adapters")
 
@@ -316,7 +350,9 @@ async def test_agentsdk_wrapper_supports_async_tools(monkeypatch: pytest.MonkeyP
     assert await async_tool("hello") == "async::async_tool::HELLO"
 
 
-def test_missing_dependency_error_includes_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_dependency_error_includes_install_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     real_import_module = importlib.import_module
 
     def fake_import_module(module_name: str, package: str | None = None) -> Any:

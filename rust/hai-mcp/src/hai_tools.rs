@@ -1,10 +1,10 @@
 use haiai::{
     generate_verify_link, generate_verify_link_hosted, media_verify_status_to_str,
-    text_signature_status_to_str, CreateEmailTemplateOptions, HaiClient, JacsMediaProvider,
-    JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions, MediaVerifyStatus,
-    RegisterAgentOptions, SearchOptions, SendEmailOptions, SignImageOptions, SignTextOptions,
-    TextSignatureStatus, UpdateEmailTemplateOptions, VerifyImageOptions, VerifyTextOptions,
-    VerifyTextResult,
+    text_signature_status_to_str, CreateEmailTemplateOptions, EmailGenerationType, HaiClient,
+    JacsMediaProvider, JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions,
+    MediaVerifyStatus, RegisterAgentOptions, SearchOptions, SendEmailOptions, SignImageOptions,
+    SignTextOptions, TextSignatureStatus, UpdateEmailTemplateOptions, VerifyImageOptions,
+    VerifyTextOptions, VerifyTextResult,
 };
 use jacs_mcp::path_policy::{resolve_input_path, resolve_output_path};
 use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
@@ -213,6 +213,11 @@ fn definition_values() -> Vec<Value> {
                     "bcc": { "type": "array", "items": { "type": "string" }, "description": "BCC recipients" },
                     "labels": { "type": "array", "items": { "type": "string" }, "description": "Labels/tags for the message" },
                     "in_reply_to": { "type": "string", "description": "Message-ID to reply to (for threading)" },
+                    "generation_type": {
+                        "type": "string",
+                        "enum": ["html_inline_jacs", "attachment_jacs"],
+                        "description": "Signed email generation type. Default: html_inline_jacs; use attachment_jacs for compatibility."
+                    },
                     "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
                     "config_path": { "type": "string" }
                 },
@@ -849,18 +854,23 @@ async fn prepare_email_client(
 
 async fn call_send_email(context: &HaiServerContext, args: &Value) -> ToolResult {
     let client = prepare_email_client(context, args).await?;
+    let generation_type = optional_email_generation_type(args)?;
     let result = client
-        .send_signed_email(&SendEmailOptions {
-            to: required_string(args, "to")?.to_string(),
-            subject: required_string(args, "subject")?.to_string(),
-            body: required_string(args, "body")?.to_string(),
-            cc: optional_string_array(args, "cc"),
-            bcc: optional_string_array(args, "bcc"),
-            in_reply_to: optional_string(args, "in_reply_to").map(ToString::to_string),
-            attachments: vec![],
-            labels: optional_string_array(args, "labels"),
-            append_footer: None,
-        })
+        .send_signed_email_with_generation_type(
+            &SendEmailOptions {
+                to: required_string(args, "to")?.to_string(),
+                subject: required_string(args, "subject")?.to_string(),
+                body: required_string(args, "body")?.to_string(),
+                cc: optional_string_array(args, "cc"),
+                bcc: optional_string_array(args, "bcc"),
+                in_reply_to: optional_string(args, "in_reply_to").map(ToString::to_string),
+                attachments: vec![],
+                labels: optional_string_array(args, "labels"),
+                append_footer: None,
+                idempotency_key: optional_string(args, "idempotency_key").map(ToString::to_string),
+            },
+            generation_type,
+        )
         .await
         .map_err(tool_message)?;
 
@@ -1712,21 +1722,15 @@ async fn call_delete_email_template(context: &HaiServerContext, args: &Value) ->
 }
 
 fn success_tool_result(text: String, structured: Value) -> CallToolResult {
-    CallToolResult {
-        content: vec![Content::text(text)],
-        structured_content: Some(structured),
-        is_error: Some(false),
-        meta: None,
-    }
+    let mut result = CallToolResult::success(vec![Content::text(text)]);
+    result.structured_content = Some(structured);
+    result
 }
 
 fn error_tool_result(message: String) -> CallToolResult {
-    CallToolResult {
-        content: vec![Content::text(message.clone())],
-        structured_content: Some(json!({ "error": message })),
-        is_error: Some(true),
-        meta: None,
-    }
+    let mut result = CallToolResult::error(vec![Content::text(message.clone())]);
+    result.structured_content = Some(json!({ "error": message }));
+    result
 }
 
 fn required_string<'a>(args: &'a Value, key: &str) -> Result<&'a str, ToolError> {
@@ -1737,6 +1741,16 @@ fn required_string<'a>(args: &'a Value, key: &str) -> Result<&'a str, ToolError>
 
 fn optional_string<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.get(key).and_then(Value::as_str)
+}
+
+fn optional_email_generation_type(args: &Value) -> Result<EmailGenerationType, ToolError> {
+    match optional_string(args, "generation_type") {
+        None | Some("html_inline_jacs") => Ok(EmailGenerationType::HtmlInlineJacs),
+        Some("attachment_jacs") => Ok(EmailGenerationType::AttachmentJacs),
+        Some(value) => Err(ToolError::InvalidParams(format!(
+            "generation_type must be html_inline_jacs or attachment_jacs, got {value}"
+        ))),
+    }
 }
 
 fn optional_u32(args: &Value, key: &str) -> Option<u32> {
@@ -1952,6 +1966,35 @@ mod tests {
         let err = required_string(&args, "message_id").expect_err("missing field");
         assert!(
             matches!(err, ToolError::InvalidParams(message) if message == "message_id is required")
+        );
+    }
+
+    #[test]
+    fn optional_email_generation_type_defaults_to_html_inline() {
+        let args = json!({});
+        let generation_type = optional_email_generation_type(&args).expect("generation type");
+        assert!(matches!(
+            generation_type,
+            EmailGenerationType::HtmlInlineJacs
+        ));
+    }
+
+    #[test]
+    fn optional_email_generation_type_accepts_attachment_compatibility() {
+        let args = json!({ "generation_type": "attachment_jacs" });
+        let generation_type = optional_email_generation_type(&args).expect("generation type");
+        assert!(matches!(
+            generation_type,
+            EmailGenerationType::AttachmentJacs
+        ));
+    }
+
+    #[test]
+    fn optional_email_generation_type_rejects_unknown_value() {
+        let args = json!({ "generation_type": "legacy" });
+        let err = optional_email_generation_type(&args).expect_err("invalid generation type");
+        assert!(
+            matches!(err, ToolError::InvalidParams(message) if message.contains("generation_type must be html_inline_jacs or attachment_jacs"))
         );
     }
 
@@ -2378,7 +2421,7 @@ mod tests {
         let venv = structured_of(&verified);
         assert_eq!(venv["success"].as_bool(), Some(true));
         assert_eq!(venv["status"].as_str(), Some("signed"));
-        assert!(venv["signatures"].as_array().unwrap().len() >= 1);
+        assert!(!venv["signatures"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]

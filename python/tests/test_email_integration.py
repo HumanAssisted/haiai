@@ -118,9 +118,9 @@ class TestEmailIntegrationLifecycle:
         # The sent message should be among the listed messages.
         ids = [m.id for m in messages]
         subjects = [m.subject for m in messages]
-        assert (
-            self._message_id in ids or self._subject in subjects
-        ), f"sent message (id={self._message_id}) not found in list_messages"
+        assert self._message_id in ids or self._subject in subjects, (
+            f"sent message (id={self._message_id}) not found in list_messages"
+        )
 
     def test_03_get_message(self, registered_client) -> None:
         """Get the sent message by ID and verify subject/body match."""
@@ -131,9 +131,7 @@ class TestEmailIntegrationLifecycle:
         assert msg.subject == self._subject, (
             f"expected subject={self._subject!r}, got {msg.subject!r}"
         )
-        assert self._body in msg.body_text, (
-            f"expected body to contain {self._body!r}"
-        )
+        assert self._body in msg.body_text, f"expected body to contain {self._body!r}"
 
     def test_04_mark_read(self, registered_client) -> None:
         """Mark the message as read -- should not raise."""
@@ -193,9 +191,7 @@ class TestEmailIntegrationLifecycle:
         )
 
         assert isinstance(reply_result, SendEmailResult)
-        assert reply_result.message_id, (
-            "reply must return a non-empty message_id"
-        )
+        assert reply_result.message_id, "reply must return a non-empty message_id"
         self.__class__._reply_message_id = reply_result.message_id
 
     def test_10_delete(self, registered_client) -> None:

@@ -1,10 +1,22 @@
 [workspace]
-members = ["haiai", "hai-mcp", "haiai-cli", "hai-binding-core", "haiinpm", "haiipy", "haiigo"]
+members = [
+    "haiai",
+    "hai-mcp",
+    "haiai-cli",
+    "hai-binding-core",
+    "haiinpm",
+    "haiipy",
+    "haiigo",
+    # Browser-side wasm-bindgen wrapper (HAIAI_WASM_PRD §4.1 / Task 020).
+    # Compiles to a native no-op stub off-wasm so workspace-wide
+    # `cargo check --workspace` stays green.
+    "haiai-wasm",
+]
 resolver = "2"
 
 [workspace.package]
 edition = "2021"
-license = "Apache-2.0 OR MIT"
+license = "BUSL-1.1"
 authors = ["HAI.AI <engineering@hai.ai>"]
 repository = "https://github.com/HumanAssisted/haiai"
 homepage = "https://hai.ai"
@@ -17,15 +29,24 @@ reqwest = { version = "0.13.2", default-features = false, features = ["json", "h
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-time = { version = "0.3", features = ["formatting", "parsing"] }
+# `wasm-bindgen` gives `OffsetDateTime::now_utc()` a browser clock backend
+# instead of panicking via std::time on wasm32-unknown-unknown.
+time = { version = "0.3", features = ["formatting", "parsing", "wasm-bindgen"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "process", "sync"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 sha2 = "0.10"
 
-# Local development: uncomment to build against local JACS instead of crates.io.
+# Local development: point at the JACS WASM-branch workspace so haiai builds
+# against the same jacs / jacs-binding-core / jacs-mcp / jacs-media /
+# jacs-core / jacs-wasm versions that ship the browser primitives the wasm
+# feature depends on.
+# Path is relative to rust/Cargo.toml: ../../../wasm/jacs == /conductor/workspaces/jacs/wasm/jacs.
+# jacs-core and jacs-wasm are NOT (yet) on crates.io — local paths only.
 [patch.crates-io]
-jacs = { path = "../../JACS/jacs" }
-jacs-binding-core = { path = "../../JACS/binding-core" }
-jacs-mcp = { path = "../../JACS/jacs-mcp" }
-jacs-media = { path = "../../JACS/jacs-media" }
+jacs = { path = "../../../wasm/jacs" }
+jacs-binding-core = { path = "../../../wasm/binding-core" }
+jacs-mcp = { path = "../../../wasm/jacs-mcp" }
+jacs-media = { path = "../../../wasm/jacs-media" }
+jacs-core = { path = "../../../wasm/jacs-core" }
+jacs-wasm = { path = "../../../wasm/jacs-wasm" }

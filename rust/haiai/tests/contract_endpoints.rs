@@ -201,7 +201,7 @@ async fn register_is_unauthenticated() {
     assert_eq!(result.jacs_id, "agent-1");
     // The JACS auth mock should have zero hits (register doesn't send auth)
     assert_eq!(
-        mock_no_auth.hits_async().await,
+        mock_no_auth.calls_async().await,
         0,
         "register must NOT send Authorization header"
     );
@@ -255,7 +255,7 @@ async fn register_omits_private_key() {
     assert_eq!(result.jacs_id, "agent-1");
     // The private key trap mock should have zero hits
     assert_eq!(
-        private_key_trap.hits_async().await,
+        private_key_trap.calls_async().await,
         0,
         "register body must NOT contain PRIVATE KEY"
     );

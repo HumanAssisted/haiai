@@ -96,7 +96,9 @@ def main() -> None:
     verification = verify_artifact(jacs, wrapped_task, trust_policy=TRUST_POLICY)
     print(f"Valid: {verification.get('valid')}")
     print(f"Signer: {verification.get('signerId') or verification.get('signer_id')}")
-    print(f"Type: {verification.get('artifactType') or verification.get('artifact_type')}")
+    print(
+        f"Type: {verification.get('artifactType') or verification.get('artifact_type')}"
+    )
 
     print("\n=== Step 4: Chain of custody ===")
     result_artifact = {

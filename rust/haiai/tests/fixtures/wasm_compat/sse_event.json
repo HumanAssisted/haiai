@@ -1,0 +1,10 @@
+{
+  "data": {
+    "job_id": "job-42",
+    "tier": "free",
+    "type": "benchmark_job"
+  },
+  "event_type": "benchmark_job",
+  "id": "evt-001",
+  "raw": "{\"type\":\"benchmark_job\",\"job_id\":\"job-42\",\"tier\":\"free\"}"
+}

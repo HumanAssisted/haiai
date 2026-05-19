@@ -44,6 +44,8 @@ RUST_CARGO_FILES=(
   rust/haiinpm/Cargo.toml
   rust/haiipy/Cargo.toml
   rust/haiigo/Cargo.toml
+  # Browser-side Rust crate (HAIAI_WASM_PRD §4.11 / Task 040).
+  rust/haiai-wasm/Cargo.toml
 )
 
 for f in "${RUST_CARGO_FILES[@]}"; do
@@ -137,6 +139,16 @@ echo ""
 echo "Plugin:"
 sed -i '' "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" .claude-plugin/plugin.json
 echo "  .claude-plugin/plugin.json"
+
+# --- Browser package (node-wasm/package.template.json) ---
+# HAIAI_WASM_PRD §4.11 / Task 040: @haiai/wasm joins the share-one-version
+# invariant. The template is the source of truth; finalize-pkg.sh stamps
+# the version into the wasm-pack-produced pkg/package.json at publish.
+
+echo ""
+echo "node-wasm:"
+sed -i '' "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" node-wasm/package.template.json
+echo "  node-wasm/package.template.json"
 
 # --- Regenerate lockfiles ---
 

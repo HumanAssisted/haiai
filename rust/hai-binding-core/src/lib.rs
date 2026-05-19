@@ -1,3 +1,10 @@
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 //! # hai-binding-core
 //!
 //! Shared core logic for HAI SDK language bindings (Python, Node.js, Go).
@@ -769,9 +776,19 @@ impl HaiClientWrapper {
 
     /// Send a signed email (locally signed with agent JACS key).
     pub async fn send_signed_email(&self, options_json: &str) -> HaiBindingResult<String> {
-        let options: haiai::types::SendEmailOptions = serde_json::from_str(options_json)?;
+        #[derive(serde::Deserialize)]
+        struct SendSignedEmailOptions {
+            #[serde(flatten)]
+            options: haiai::types::SendEmailOptions,
+            #[serde(default)]
+            generation_type: haiai::types::EmailGenerationType,
+        }
+
+        let options: SendSignedEmailOptions = serde_json::from_str(options_json)?;
         let client = self.inner.read().await;
-        let result = client.send_signed_email(&options).await?;
+        let result = client
+            .send_signed_email_with_generation_type(&options.options, options.generation_type)
+            .await?;
         Ok(serde_json::to_string(&result)?)
     }
 
@@ -3313,7 +3330,7 @@ mod tests {
         let (temp_dir, config_path) = write_temp_media_fixture_config();
         let wrapper = build_media_wrapper(&config_path);
         let in_path = temp_dir.path().join("in.png");
-        std::fs::write(&in_path, &make_media_test_png(32, 32)).expect("write");
+        std::fs::write(&in_path, make_media_test_png(32, 32)).expect("write");
         let out_path = temp_dir.path().join("out.png");
 
         let signed_json = wrapper
@@ -3338,7 +3355,7 @@ mod tests {
         let (temp_dir, config_path) = write_temp_media_fixture_config();
         let wrapper = build_media_wrapper(&config_path);
         let in_path = temp_dir.path().join("in.png");
-        std::fs::write(&in_path, &make_media_test_png(32, 32)).expect("write");
+        std::fs::write(&in_path, make_media_test_png(32, 32)).expect("write");
         let out_path = temp_dir.path().join("out.png");
         wrapper
             .sign_image(in_path.to_str().unwrap(), out_path.to_str().unwrap(), "{}")
@@ -3375,7 +3392,7 @@ mod tests {
         let (temp_dir, config_path) = write_temp_media_fixture_config();
         let wrapper = build_media_wrapper(&config_path);
         let in_path = temp_dir.path().join("in.png");
-        std::fs::write(&in_path, &make_media_test_png(32, 32)).expect("write");
+        std::fs::write(&in_path, make_media_test_png(32, 32)).expect("write");
         let out_path = temp_dir.path().join("out.png");
         wrapper
             .sign_image(in_path.to_str().unwrap(), out_path.to_str().unwrap(), "{}")
@@ -3412,7 +3429,7 @@ mod tests {
             HaiClientWrapper::from_config_json_auto(r#"{"jacs_id":"static-only"}"#).expect("ok");
         let dir = tempfile::tempdir().unwrap();
         let in_path = dir.path().join("a.png");
-        std::fs::write(&in_path, &make_media_test_png(32, 32)).unwrap();
+        std::fs::write(&in_path, make_media_test_png(32, 32)).unwrap();
         let result = wrapper
             .sign_image(
                 in_path.to_str().unwrap(),

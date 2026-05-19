@@ -1,0 +1,44 @@
+{
+  // IDE / `tsc --noEmit` type-check config for @haiai/wasm.
+  // Mirrors the jacs-wasm tsconfig pattern (HAIAI_WASM_PRD §4.10 / Task 031).
+  //
+  // The hand-written `index.ts` imports from `./haiai_wasm.js` — a name that
+  // exists in the *published* `pkg/` layout after `wasm-pack build`. To make
+  // `tsc --noEmit` work from a fresh checkout (no `pkg/` present yet), we
+  // ship a checked-in stub `haiai_wasm.d.ts` that mirrors the wasm-bindgen
+  // surface. TS resolves `./haiai_wasm.js` to the stub via `bundler`
+  // moduleResolution.
+  //
+  // The real `pkg/haiai_wasm.d.ts` is the source of truth at build / publish
+  // time — `finalize-pkg.sh` does NOT ship this checked-in stub.
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ES2020",
+    "moduleResolution": "bundler",
+    "lib": ["ES2020", "DOM", "DOM.Iterable", "WebWorker"],
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "declaration": false,
+    "noEmit": true,
+    "baseUrl": "."
+  },
+  "include": [
+    "index.ts",
+    "types.ts",
+    "worker/**/*.ts",
+    "haiai_wasm.d.ts",
+    "jacs_wasm_stub.d.ts",
+    "examples/ts/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "examples/vite-smoke",
+    "pkg"
+  ]
+}
