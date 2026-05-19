@@ -59,13 +59,15 @@ else
   WASM_LOG="$(mktemp -t wasm_parity_log.XXXXXX)"
   trap 'rm -f "${WASM_LOG}"' EXIT
   if ! PATH="${HOME}/.cargo/bin:${PATH}" RUSTFLAGS="${WASM_RUSTFLAGS}" \
-    wasm-pack test --headless --chrome rust/haiai-wasm --test parity_snapshot 2>&1 | tee "${WASM_LOG}"; then
+    wasm-pack test --headless --chrome rust/haiai-wasm --test parity_snapshot -- --nocapture 2>&1 | tee "${WASM_LOG}"; then
     echo "ERROR: wasm-pack test --test parity_snapshot failed" >&2
     exit 2
   fi
 
   # Extract the JSON snapshot between sentinel markers. The markers
   # appear on a single line per `println!` in parity_snapshot.rs.
+  # `--nocapture` above is required because wasm-bindgen-test suppresses
+  # stdout from passing tests.
   # `tr` strips ANSI colors that browser-actions/setup-chrome can
   # inject into wasm-pack's stdout.
   PARITY_JSON="$(tr -d '\033' < "${WASM_LOG}" \

@@ -113,12 +113,11 @@ fn cross_compat_wasm_emits_snapshot() {
     });
     // Emit the snapshot between sentinel markers. The CI script parses
     // stdout for the markers, extracts the JSON, and writes it to
-    // rust/target/parity/wasm.json. We use `serde_json::to_string_pretty`
-    // so the wasm.json layout matches the native.json layout
-    // byte-for-byte (both files round-trip through to_string_pretty).
-    let pretty = serde_json::to_string_pretty(&snapshot).expect("serialize snapshot");
+    // rust/target/parity/wasm.json. Keep this on one physical line so
+    // the shell extractor can match it without multiline state.
+    let compact = serde_json::to_string(&snapshot).expect("serialize snapshot");
     // wasm_bindgen_test routes Rust stdout to the console; printing the
     // marker block on one line keeps the regex in check_wasm_parity.sh
     // simple (no newlines between markers).
-    println!("{PARITY_BEGIN}{pretty}{PARITY_END}");
+    println!("{PARITY_BEGIN}{compact}{PARITY_END}");
 }
