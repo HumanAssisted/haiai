@@ -77,6 +77,10 @@ pub mod mime;
 // HAIAI_WASM_PRD §4.2.1 + Task 009 audit.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod self_knowledge;
+// `transport` declares the `HaiTransport` trait + native impl
+// (HAIAI_WASM_PRD §4.2 / Task 011). The wasm impl lands in Task 012;
+// the full HaiClient generic-over-T rewire lands when Task 012 lands.
+pub mod transport;
 pub mod types;
 // `validation` pulls `html5ever` for HTML body validation in the email send
 // path. The wasm build's send path canonicalizes / signs in pure JSON; we
