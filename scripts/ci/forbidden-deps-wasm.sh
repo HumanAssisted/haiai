@@ -63,11 +63,11 @@ else
   if [[ -n "${FEATURES}" ]]; then
     read -ra FEATURE_ARGS <<< "${FEATURES}"
   fi
-  # Check the production dependency graph only. `cargo tree` includes
-  # dev-dependencies by default; wasm-pack tests intentionally have browser
-  # dev-deps that are not part of the shipped wasm package.
-  if ! TREE="$(cargo tree -p "${CRATE}" --target "${WASM_TARGET}" --edges normal,build ${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"} 2>&1)"; then
-    echo "ERROR: cargo tree -p ${CRATE} --target ${WASM_TARGET} --edges normal,build ${FEATURES} failed:" >&2
+  # Check the production runtime dependency graph only. `cargo tree`
+  # includes dev-dependencies by default, and build-dependencies are
+  # host-side (Linux/macOS) rather than wasm-shipped code.
+  if ! TREE="$(cargo tree -p "${CRATE}" --target "${WASM_TARGET}" --edges normal ${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"} 2>&1)"; then
+    echo "ERROR: cargo tree -p ${CRATE} --target ${WASM_TARGET} --edges normal ${FEATURES} failed:" >&2
     echo "${TREE}" >&2
     exit 2
   fi
