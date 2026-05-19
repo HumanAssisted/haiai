@@ -12,11 +12,15 @@
 //! ## Surface coverage
 //!
 //! - `jacs_id`, `key_id`, `algorithm`, `canonical_json` — direct accessors.
-//! - `sign_string`, `sign_bytes`, `sign_response`, `sign_envelope` —
-//!   delegate to `CoreAgent::sign_message`, then extract the
-//!   `jacsSignature.signature` base64 string so HAIAI's `Authorization:
-//!   JACS <id>:<ts>:<nonce>:<signature>` header carries a JACS-verifiable
-//!   value.
+//! - `sign_string`, `sign_bytes` — delegate to
+//!   `CoreAgent::sign_raw_bytes` so the on-wire signature is over the
+//!   exact bytes the verifier reconstructs from the auth header
+//!   (`Authorization: JACS <id>:<ts>:<nonce>:<sig>`). Native + wasm
+//!   produce byte-identical signatures for byte-identical input.
+//! - `sign_response`, `sign_envelope` — delegate to
+//!   `CoreAgent::sign_message`. These callers want the JACS-wrapped
+//!   document (verifier reconstructs canonical bytes from the
+//!   wrapper).
 //! - `verify_a2a_artifact` — delegates to `CoreAgent::verify`.
 //! - All other extension methods (`sign_email_locally`, `rotate`,
 //!   `update_agent`, `sign_file_envelope`, …) inherit the default trait
@@ -79,19 +83,17 @@ impl JacsWasmProvider {
         }
     }
 
-    /// Extract the base64 `jacsSignature.signature` field from a signed
-    /// document. Returns an error if the field is missing or non-string.
-    fn extract_signature_b64(signed: &Value) -> Result<String> {
-        signed
-            .get("jacsSignature")
-            .and_then(|s| s.get("signature"))
-            .and_then(|s| s.as_str())
-            .map(ToString::to_string)
-            .ok_or_else(|| {
-                HaiError::Provider(
-                    "JacsWasmProvider: signed document missing jacsSignature.signature".to_string(),
-                )
-            })
+    /// Sign exact `bytes` with the underlying jacs-core signer. Used by
+    /// `sign_string` + `sign_bytes` so the auth-header signature is over
+    /// the same byte string the verifier reconstructs from the header
+    /// fields.
+    fn sign_raw(&self, bytes: &[u8]) -> Result<Vec<u8>> {
+        let guard = self.agent.lock().map_err(|e| {
+            HaiError::Provider(format!("JacsWasmProvider: agent mutex poisoned: {e}"))
+        })?;
+        guard
+            .sign_raw_bytes(bytes)
+            .map_err(|e| HaiError::Provider(format!("jacs_core::sign_raw_bytes failed: {e:?}")))
     }
 
     /// Sign a JACS message-typed wrapper around `payload`. The wrapper
@@ -114,29 +116,21 @@ impl JacsProvider for JacsWasmProvider {
     }
 
     fn sign_string(&self, message: &str) -> Result<String> {
-        // Sign the message text as the body of a JACS message; extract
-        // the resulting base64 signature. The on-wire bytes differ from
-        // the native HAIAI path (which signs the raw bytes) — this
-        // wrapper exists per HAIAI_WASM_PRD §4.5 / §4.9 because
-        // `jacs_core::CoreAgent` intentionally does NOT expose a raw
-        // bytes-signer. The verifier (hai/api) reconstructs the JACS
-        // canonical payload from the signed document, so verification
-        // succeeds for any client that uses this same wrapper.
-        let signed = self.sign_message(Value::String(message.to_string()))?;
-        Self::extract_signature_b64(&signed)
+        // Sign the exact message bytes via the raw-bytes primitive that
+        // jacs_core::CoreAgent exposes for protocol-layer signing. This
+        // matches the native HAIAI auth path: both wasm + native produce
+        // byte-identical signatures for byte-identical (jacs_id, ts,
+        // nonce, body_hash) inputs. The verifier (hai/api) reconstructs
+        // the same byte string from the header fields and compares
+        // signatures directly — no JACS document wrapper involved.
+        let sig_bytes = self.sign_raw(message.as_bytes())?;
+        Ok(base64::engine::general_purpose::STANDARD.encode(sig_bytes))
     }
 
     fn sign_bytes(&self, data: &[u8]) -> Result<Vec<u8>> {
-        // Same approach as sign_string: wrap the bytes as a base64
-        // string inside a JACS message document. Callers that need byte
-        // parity with the native impl should use `sign_envelope` and
-        // canonicalize themselves.
-        let encoded = base64::engine::general_purpose::STANDARD.encode(data);
-        let signed = self.sign_message(Value::String(encoded))?;
-        let signature_b64 = Self::extract_signature_b64(&signed)?;
-        base64::engine::general_purpose::STANDARD
-            .decode(signature_b64.as_bytes())
-            .map_err(|e| HaiError::Provider(format!("base64 decode signature failed: {e}")))
+        // Same direct primitive as sign_string — sign exact bytes,
+        // return exact signature bytes. No base64 hop, no JACS wrapper.
+        self.sign_raw(data)
     }
 
     fn key_id(&self) -> &str {
