@@ -23,6 +23,10 @@ HAIIGO_VERSION := $(shell grep '^version' rust/haiigo/Cargo.toml | head -1 | sed
 PYTHON_VERSION := $(shell grep '^version' python/pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
 NODE_VERSION := $(shell grep '"version"' node/package.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
 PLUGIN_VERSION := $(shell grep '"version"' .claude-plugin/plugin.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
+# Browser package versions (HAIAI_WASM_PRD §4.11 / Task 040). 11th + 12th
+# packages in the share-one-version invariant.
+HAIAI_WASM_VERSION := $(shell grep '^version' rust/haiai-wasm/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+NODE_WASM_VERSION := $(shell grep '"version"' node-wasm/package.template.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
 
 # JACS dependency versions across SDKs
 JACS_RUST := $(shell grep '^jacs ' rust/haiai/Cargo.toml | sed 's/.*"\(=*[0-9][^"]*\)".*/\1/' | sed 's/^=//')
@@ -122,6 +126,8 @@ versions:
 	@echo "  python                 $(PYTHON_VERSION)"
 	@echo "  node                   $(NODE_VERSION)"
 	@echo "  plugin                 $(PLUGIN_VERSION)"
+	@echo "  rust/haiai-wasm        $(HAIAI_WASM_VERSION)"
+	@echo "  node-wasm              $(NODE_WASM_VERSION)"
 	@echo ""
 	@if [ "$(RUST_VERSION)" = "$(CLI_VERSION)" ] && \
 		[ "$(RUST_VERSION)" = "$(MCP_VERSION)" ] && \
@@ -131,7 +137,9 @@ versions:
 		[ "$(RUST_VERSION)" = "$(HAIIGO_VERSION)" ] && \
 		[ "$(RUST_VERSION)" = "$(PYTHON_VERSION)" ] && \
 		[ "$(RUST_VERSION)" = "$(NODE_VERSION)" ] && \
-		[ "$(RUST_VERSION)" = "$(PLUGIN_VERSION)" ]; then \
+		[ "$(RUST_VERSION)" = "$(PLUGIN_VERSION)" ] && \
+		[ "$(RUST_VERSION)" = "$(HAIAI_WASM_VERSION)" ] && \
+		[ "$(RUST_VERSION)" = "$(NODE_WASM_VERSION)" ]; then \
 		echo "All versions match: $(RUST_VERSION)"; \
 	else \
 		echo "WARNING: Versions do not match!"; \
@@ -158,6 +166,18 @@ check-versions:
 		echo "ERROR: haiai ($(RUST_VERSION)) != node ($(NODE_VERSION))"; exit 1; fi
 	@if [ "$(RUST_VERSION)" != "$(PLUGIN_VERSION)" ]; then \
 		echo "ERROR: haiai ($(RUST_VERSION)) != plugin ($(PLUGIN_VERSION))"; exit 1; fi
+	@# Browser packages (HAIAI_WASM_PRD §4.11 / Task 040).
+	@# Empty-version gate (JACS_WASM ISSUE 001 lesson): also fail if either
+	@# parsed value is empty — silently empty would let drift slip past the
+	@# eq-check above.
+	@if [ -z "$(HAIAI_WASM_VERSION)" ]; then \
+		echo "ERROR: haiai-wasm version not detected (rust/haiai-wasm/Cargo.toml)"; exit 1; fi
+	@if [ -z "$(NODE_WASM_VERSION)" ]; then \
+		echo "ERROR: node-wasm version not detected (node-wasm/package.template.json)"; exit 1; fi
+	@if [ "$(RUST_VERSION)" != "$(HAIAI_WASM_VERSION)" ]; then \
+		echo "ERROR: haiai ($(RUST_VERSION)) != haiai-wasm ($(HAIAI_WASM_VERSION))"; exit 1; fi
+	@if [ "$(RUST_VERSION)" != "$(NODE_WASM_VERSION)" ]; then \
+		echo "ERROR: haiai ($(RUST_VERSION)) != node-wasm ($(NODE_WASM_VERSION))"; exit 1; fi
 	@echo "All versions match: $(RUST_VERSION)"
 
 bump-version:
