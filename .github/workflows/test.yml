@@ -484,6 +484,15 @@ jobs:
           RUSTFLAGS: "-D warnings"
         working-directory: rust
         run: cargo check -p haiai-wasm --target wasm32-unknown-unknown
+      - name: wasm-pack test --headless --chrome (haiai-wasm)
+        # Runs the #[wasm_bindgen_test] suites under rust/haiai-wasm/tests
+        # (secret_leak.rs etc). Without this step those tests only compile
+        # at the cargo-check stage and are never executed — the prior
+        # session noted this as a known gap; the local environment lacks
+        # the chromedriver/Chrome pairing so verification is CI-only.
+        # browser-actions/setup-chrome is already installed earlier in this job.
+        run: |
+          PATH="$HOME/.cargo/bin:$PATH" wasm-pack test --headless --chrome rust/haiai-wasm
       - name: TypeScript check (@haiai/wasm wrapper)
         run: npx --yes typescript@5 tsc --noEmit -p node-wasm/tsconfig.json
       - name: Build haiai-wasm npm package
