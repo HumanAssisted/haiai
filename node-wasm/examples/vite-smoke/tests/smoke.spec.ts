@@ -29,7 +29,52 @@ type SmokeReport = {
   };
 };
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+};
+
 test("haiai wasm smoke covers hello + TS save/load + SSE eventStream", async ({ page }) => {
+  await page.route("**/api/v1/agents/hello", async (route) => {
+    if (route.request().method() === "OPTIONS") {
+      await route.fulfill({ status: 204, headers: corsHeaders });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        timestamp: new Date().toISOString(),
+        client_ip: "127.0.0.1",
+        hai_public_key_fingerprint: "test",
+        message: "hello from @haiai/wasm playwright route",
+        hai_signed_ack: "stub-ack",
+        hello_id: "smoke-1",
+      }),
+    });
+  });
+  await page.route("**/api/v1/agents/**/events", async (route) => {
+    if (route.request().method() === "OPTIONS") {
+      await route.fulfill({ status: 204, headers: corsHeaders });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "text/event-stream",
+      },
+      body:
+        "data: {\"type\":\"smoke-1\",\"seq\":1}\n\n" +
+        "data: {\"type\":\"smoke-2\",\"seq\":2}\n\n" +
+        "data: {\"type\":\"smoke-3\",\"seq\":3}\n\n",
+    });
+  });
+
   await page.goto("/");
   // Wait for the smoke script to populate window.__haiaiSmoke.
   await page.waitForFunction(

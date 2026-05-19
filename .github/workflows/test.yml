@@ -163,7 +163,7 @@ jobs:
   test-node:
     runs-on: ubuntu-latest
     needs: [crypto-policy, mcp-parity, jacs-version-parity, workflow-policy]
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -177,6 +177,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust (for haiinpm build via napi-rs)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       - name: Clone JACS (for workspace patch — rust/Cargo.toml patches to ${JACS_DIR})
         run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "$JACS_DIR"
       - name: Build haiinpm native addon
@@ -191,16 +195,25 @@ jobs:
         # alongside it. The committed package.json keeps the local-dev
         # file:../../JACS/jacsnpm path; building the napi addon here makes
         # the JACS loader's `existsSync(./jacs.linux-x64-gnu.node)` branch
-        # succeed without needing the missing registry subpackages. Once
-        # JACS publishes the platform binaries, restore `npm run deps:prod`.
+        # succeed without needing the missing registry subpackages. The
+        # browser re-export also needs a local @jacs/wasm package until
+        # that package is published. Once both are on npm, restore
+        # `npm run deps:prod`.
         run: |
           cd "$JACS_DIR/jacsnpm"
           npm install @napi-rs/cli
           npx napi build --platform --release
         timeout-minutes: 10
+      - name: Build local @jacs/wasm npm package
+        env:
+          RUSTFLAGS: ${{ env.HAIAI_WASM_RUSTFLAGS }}
+        run: |
+          PATH="$HOME/.cargo/bin:$PATH" wasm-pack build --target web --release "$JACS_DIR/jacs-wasm"
+          bash "$JACS_DIR/jacs-wasm/scripts/finalize-pkg.sh"
       - name: Install dependencies
         run: |
           cd node
+          npm run deps:local
           # haiinpm is not yet on npm registry; point at the local build.
           npm pkg set "dependencies.haiinpm=file:../rust/haiinpm"
           npm install
@@ -342,7 +355,7 @@ jobs:
   smoke-tests:
     runs-on: ubuntu-latest
     needs: [test-python, test-node, test-go, test-rust]
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -358,6 +371,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       - name: Clone JACS (for workspace patch + jacsgo build — rust/Cargo.toml patches to ${JACS_DIR})
         run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "$JACS_DIR"
 
@@ -438,10 +455,22 @@ jobs:
           npm install @napi-rs/cli
           npx napi build --release
         timeout-minutes: 15
+      - name: Build JACS napi addon (jacs.linux-x64-gnu.node)
+        run: |
+          cd "$JACS_DIR/jacsnpm"
+          npm install @napi-rs/cli
+          npx napi build --platform --release
+        timeout-minutes: 10
+      - name: Build local @jacs/wasm npm package
+        env:
+          RUSTFLAGS: ${{ env.HAIAI_WASM_RUSTFLAGS }}
+        run: |
+          PATH="$HOME/.cargo/bin:$PATH" wasm-pack build --target web --release "$JACS_DIR/jacs-wasm"
+          bash "$JACS_DIR/jacs-wasm/scripts/finalize-pkg.sh"
       - name: Install Node SDK deps
         run: |
           cd node
-          npm run deps:prod
+          npm run deps:local
           npm pkg set "dependencies.haiinpm=file:../rust/haiinpm"
           npm install
       - name: Run Node smoke test
@@ -565,6 +594,12 @@ jobs:
         run: |
           PATH="$HOME/.cargo/bin:$PATH" wasm-pack build --target web --release rust/haiai-wasm
           bash node-wasm/scripts/finalize-pkg.sh
+      - name: Build local @jacs/wasm npm package for smoke
+        env:
+          RUSTFLAGS: ${{ env.HAIAI_WASM_RUSTFLAGS }}
+        run: |
+          PATH="$HOME/.cargo/bin:$PATH" wasm-pack build --target web --release "$JACS_DIR/jacs-wasm"
+          bash "$JACS_DIR/jacs-wasm/scripts/finalize-pkg.sh"
       - name: Vite + Playwright smoke (Task 036)
         working-directory: node-wasm/examples/vite-smoke
         run: |

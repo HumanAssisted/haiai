@@ -53,6 +53,12 @@ declare global {
 // fast against the Vite dev server — we never want production HTTP
 // from the smoke).
 const originalFetch = window.fetch.bind(window);
+function responseWithUrl(body: BodyInit | null, init: ResponseInit, url: string): Response {
+  const response = new Response(body, init);
+  Object.defineProperty(response, "url", { value: url });
+  return response;
+}
+
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url =
     typeof input === "string"
@@ -62,7 +68,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
         : input.url;
 
   if (url.includes("/api/v1/agents/hello")) {
-    return new Response(
+    return responseWithUrl(
       JSON.stringify({
         timestamp: new Date().toISOString(),
         client_ip: "127.0.0.1",
@@ -72,6 +78,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
         hello_id: "smoke-1",
       }),
       { headers: { "Content-Type": "application/json" } },
+      url,
     );
   }
 
@@ -80,12 +87,16 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   // `data: <json>\n\n` per the SSE spec.
   if (url.includes("/events") || url.includes("/sse")) {
     const body =
-      "data: {\"event_type\":\"smoke-1\",\"seq\":1}\n\n" +
-      "data: {\"event_type\":\"smoke-2\",\"seq\":2}\n\n" +
-      "data: {\"event_type\":\"smoke-3\",\"seq\":3}\n\n";
-    return new Response(body, {
-      headers: { "Content-Type": "text/event-stream" },
-    });
+      "data: {\"type\":\"smoke-1\",\"seq\":1}\n\n" +
+      "data: {\"type\":\"smoke-2\",\"seq\":2}\n\n" +
+      "data: {\"type\":\"smoke-3\",\"seq\":3}\n\n";
+    return responseWithUrl(
+      body,
+      {
+        headers: { "Content-Type": "text/event-stream" },
+      },
+      url,
+    );
   }
 
   return originalFetch(input, init);
@@ -93,6 +104,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
 
 const SAVE_KEY = "haiai-wasm-vite-smoke-save-load";
 const SAVE_PASSWORD = "vite-smoke-PASSWORD-9876543210!";
+const SMOKE_BASE_URL = window.location.origin;
 
 async function runSaveLoadFacade(): Promise<SmokeReport["saveLoad"]> {
   try {
@@ -151,7 +163,7 @@ async function runSaveLoadFacade(): Promise<SmokeReport["saveLoad"]> {
 
 async function runSseEventStream(): Promise<SmokeReport["sseStream"]> {
   try {
-    const agent = await BrowserAgent.createEphemeral("ed25519");
+    const agent = await BrowserAgent.createEphemeral("ed25519", { baseUrl: SMOKE_BASE_URL });
     // Drive the eventStream() iterator with an explicit URL+auth (the
     // override path) so we can point the mocked fetch above at it.
     // The `transport: "sse"` arm calls EventStreamHandle.openSse(url, auth).
@@ -195,7 +207,7 @@ async function run(): Promise<void> {
     statusEl.textContent = "initializing";
     await initHaiaiWasm();
     statusEl.textContent = "agent";
-    const agent = await BrowserAgent.createEphemeral("ed25519");
+    const agent = await BrowserAgent.createEphemeral("ed25519", { baseUrl: SMOKE_BASE_URL });
     jacsEl.textContent = agent.jacsId();
     statusEl.textContent = "hello";
     const hello = await agent.client.hello(false);

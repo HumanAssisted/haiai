@@ -8,7 +8,7 @@
 # 2. Merges `node-wasm/package.template.json` into `pkg/package.json`
 #    via Python json (avoids a `jq` dependency on dev machines).
 # 3. Compiles the hand-written `index.ts` + `worker/*.ts` + `types.ts`
-#    to JS + d.ts via the node-wasm/tsconfig.json and copies them into
+#    to JS + d.ts from a staged `tsconfig.json` and copies them into
 #    pkg/.
 # 4. Copies node-wasm/README.md into pkg/ so npm shows the README.
 #
@@ -21,6 +21,11 @@ REPO_ROOT="$(cd "${NODE_WASM_DIR}/.." && pwd)"
 PKG_DIR="${REPO_ROOT}/rust/haiai-wasm/pkg"
 TEMPLATE="${NODE_WASM_DIR}/package.template.json"
 CARGO_TOML="${REPO_ROOT}/rust/haiai-wasm/Cargo.toml"
+STAGE_DIR="$(mktemp -d)"
+cleanup() {
+    rm -rf "${STAGE_DIR}"
+}
+trap cleanup EXIT
 
 if [[ ! -d "${PKG_DIR}" ]]; then
     echo "error: ${PKG_DIR} does not exist. Run 'wasm-pack build --target web --release rust/haiai-wasm' first." >&2
@@ -62,32 +67,76 @@ print(f"finalize-pkg: wrote {pkg_path} (version={version})")
 PY
 
 # --- 3. Compile the hand-written TS wrapper ---
-# Use the node-wasm tsconfig with `--noEmit false --declaration true`
-# overrides so we emit both index.js and index.d.ts into pkg/.
-if command -v tsc >/dev/null 2>&1; then
-    cd "${NODE_WASM_DIR}"
-    tsc \
-        --project tsconfig.json \
-        --noEmit false \
-        --declaration true \
-        --outDir "${PKG_DIR}" \
-        index.ts || {
-        echo "finalize-pkg: tsc emit failed for index.ts" >&2
-        exit 1
-    }
-    if [[ -f types.ts ]]; then
-        tsc \
-            --project tsconfig.json \
-            --noEmit false \
-            --declaration true \
-            --outDir "${PKG_DIR}" \
-            types.ts || true
-    fi
-    cd "${REPO_ROOT}"
-    echo "finalize-pkg: compiled TS wrapper into ${PKG_DIR}"
-else
-    echo "finalize-pkg: tsc not available; skipping TS compile (CI must run with TypeScript installed)" >&2
+# Stage the sources next to the real wasm-pack declarations so `tsc`
+# validates the published wrapper against the generated wasm-bindgen API,
+# without mixing `--project` and explicit source files (TS5042).
+mkdir -p "${STAGE_DIR}/worker"
+cp "${NODE_WASM_DIR}/index.ts" "${STAGE_DIR}/index.ts"
+cp "${NODE_WASM_DIR}/types.ts" "${STAGE_DIR}/types.ts"
+cp "${NODE_WASM_DIR}/worker/index.ts" "${STAGE_DIR}/worker/index.ts"
+cp "${NODE_WASM_DIR}/jacs_wasm_stub.d.ts" "${STAGE_DIR}/jacs_wasm_stub.d.ts"
+
+if [[ ! -f "${PKG_DIR}/haiai_wasm.d.ts" ]]; then
+    echo "error: ${PKG_DIR}/haiai_wasm.d.ts missing. Run wasm-pack build first." >&2
+    exit 1
 fi
+cp "${PKG_DIR}/haiai_wasm.d.ts" "${STAGE_DIR}/haiai_wasm.d.ts"
+
+cat > "${STAGE_DIR}/tsconfig.json" <<'JSON'
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ES2020",
+    "moduleResolution": "bundler",
+    "lib": ["ES2020", "DOM", "DOM.Iterable", "WebWorker"],
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "declaration": true,
+    "noEmitOnError": false,
+    "outDir": "./out",
+    "rootDir": "."
+  },
+  "include": [
+    "./index.ts",
+    "./types.ts",
+    "./worker/*.ts",
+    "./haiai_wasm.d.ts",
+    "./jacs_wasm_stub.d.ts"
+  ]
+}
+JSON
+
+if command -v tsc >/dev/null 2>&1; then
+    echo "finalize-pkg: tsc -p ${STAGE_DIR}/tsconfig.json"
+    (cd "${STAGE_DIR}" && tsc -p tsconfig.json)
+elif command -v npx >/dev/null 2>&1; then
+    echo "finalize-pkg: npx tsc -p ${STAGE_DIR}/tsconfig.json"
+    (cd "${STAGE_DIR}" && npx --yes -p typescript@5 tsc -p tsconfig.json)
+else
+    echo "error: tsc not available; cannot finalize TypeScript wrappers." >&2
+    echo "       install Node + typescript and re-run finalize-pkg.sh." >&2
+    exit 1
+fi
+
+# Copy the compiled outputs back into pkg/. Skip the staged copy of
+# `haiai_wasm.d.ts` so the real wasm-pack declaration remains in place.
+mkdir -p "${PKG_DIR}/worker"
+if [[ -d "${STAGE_DIR}/out" ]]; then
+    cp "${STAGE_DIR}/out/index.js" "${PKG_DIR}/index.js"
+    cp "${STAGE_DIR}/out/index.d.ts" "${PKG_DIR}/index.d.ts"
+    cp "${STAGE_DIR}/out/types.js" "${PKG_DIR}/types.js"
+    cp "${STAGE_DIR}/out/types.d.ts" "${PKG_DIR}/types.d.ts"
+    cp "${STAGE_DIR}/out/worker/index.js" "${PKG_DIR}/worker/index.js"
+    cp "${STAGE_DIR}/out/worker/index.d.ts" "${PKG_DIR}/worker/index.d.ts"
+fi
+cp "${NODE_WASM_DIR}/worker/haiai-worker.js" "${PKG_DIR}/worker/haiai-worker.js"
+echo "finalize-pkg: compiled TS wrapper into ${PKG_DIR}"
 
 # --- 4. Copy README ---
 if [[ -f "${NODE_WASM_DIR}/README.md" ]]; then

@@ -19,7 +19,7 @@ import init, {
 // delegate every write/read through this surface so policy (key
 // namespacing, quota typing, validate_encrypted_material_shape) stays
 // in one place.
-import { localStore as jacsLocalStore } from "@jacs/wasm";
+import { initJacsWasm, localStore as jacsLocalStore } from "@jacs/wasm";
 
 import type {
   Algorithm,
@@ -56,7 +56,7 @@ let initialized = false;
  */
 export async function initHaiaiWasm(): Promise<void> {
   if (initialized) return;
-  await init();
+  await Promise.all([init(), initJacsWasm()]);
   wasmInit();
   initialized = true;
 }

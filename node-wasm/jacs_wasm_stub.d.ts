@@ -7,6 +7,7 @@
 // `npm install`. Keep in sync with `jacs-wasm/index.ts::localStore`.
 
 declare module "@jacs/wasm" {
+  export function initJacsWasm(): Promise<void>;
   export const localStore: {
     saveEncryptedAgent(key: string, materialJson: string): void;
     loadEncryptedAgent(key: string): string | null;

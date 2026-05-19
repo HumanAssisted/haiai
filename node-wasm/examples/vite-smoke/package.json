@@ -11,7 +11,8 @@
     "test": "playwright test"
   },
   "dependencies": {
-    "@haiai/wasm": "file:../.."
+    "@haiai/wasm": "file:../../../rust/haiai-wasm/pkg",
+    "@jacs/wasm": "file:../../../../../wasm/jacs-wasm/pkg"
   },
   "devDependencies": {
     "vite": "^5.4.0",
