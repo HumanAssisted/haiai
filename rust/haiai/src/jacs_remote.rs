@@ -76,10 +76,19 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
                 ),
             });
         }
+        // `ClientBuilder::timeout` is native-only on reqwest 0.13 — the wasm32
+        // shim relies on the browser's built-in fetch timeout. Matches
+        // HaiClient::new (HAIAI_WASM_PRD §4.8).
+        #[cfg(not(target_arch = "wasm32"))]
         let http = HttpClient::builder()
             .timeout(options.timeout)
             .build()
             .map_err(HaiError::from)?;
+        #[cfg(target_arch = "wasm32")]
+        let http = {
+            let _ = options.timeout;
+            HttpClient::builder().build().map_err(HaiError::from)?
+        };
         Ok(Self {
             inner,
             http,
@@ -291,6 +300,14 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
 
     /// Synchronous helper that runs an async future to completion. The blocking trait
     /// surface uses this so callers from non-async contexts (Python/Node FFI) work.
+    ///
+    /// Native-only: requires `tokio::runtime::Handle` + `block_in_place`,
+    /// neither of which exist on `wasm32-unknown-unknown` (tokio's wasm32
+    /// feature set is `macros + sync` only). Browser callers are already
+    /// async (Promises) and must use the `*_async` variants directly —
+    /// the synchronous trait methods (`store_document`, `get_record`,
+    /// etc.) are gated out of the wasm build by Task 010's audit.
+    #[cfg(not(target_arch = "wasm32"))]
     fn block_on<F: std::future::Future>(fut: F) -> F::Output {
         let rt = tokio::runtime::Handle::try_current();
         match rt {
@@ -384,7 +401,13 @@ impl<P: JacsProvider> JacsProvider for RemoteJacsProvider<P> {
 
 // =============================================================================
 // JacsDocumentProvider — every method goes through HTTP to /api/v1/records.
+//
+// Native-only: the blocking trait methods use `Self::block_on` which
+// requires `tokio::runtime::Handle` + `block_in_place` — neither is
+// available on wasm32. The wasm wrapper uses the `*_async` variants
+// directly (HAIAI_WASM_PRD §4.6, Task 010 audit).
 // =============================================================================
+#[cfg(not(target_arch = "wasm32"))]
 impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
     fn sign_document(&self, data: &Value) -> Result<String> {
         // Local-only — signing keys never leave the client.
@@ -957,7 +980,13 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
 
 // =============================================================================
 // Inherent helpers — private support for the D5/D9 trait methods.
+//
+// Native-only: these helpers wrap `Self::block_on(... _async())`
+// (see HAIAI_WASM_PRD §4.6 / Task 010 audit). The wasm wrapper calls
+// the `*_async` variants on `RemoteJacsProvider` directly, so this
+// helper surface is not needed in browser builds.
 // =============================================================================
+#[cfg(not(target_arch = "wasm32"))]
 impl<P: JacsProvider> RemoteJacsProvider<P> {
     /// POST signed bytes (JSON envelope, signed markdown, or signed image) to
     /// `/api/v1/records` and return the server-issued record key.

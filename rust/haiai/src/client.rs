@@ -2,14 +2,23 @@ use std::future::Future;
 use std::time::Duration;
 
 use base64::Engine;
+#[cfg(not(target_arch = "wasm32"))]
 use futures_util::{SinkExt, StreamExt};
 use reqwest::{Response, StatusCode};
 use serde_json::{json, Value};
 use time::OffsetDateTime;
 use tokio::sync::{mpsc, oneshot};
+// Native-only stack for SSE / WebSocket transports + reconnect-backoff.
+// The wasm transport (Tasks 014, 018, 019) replaces tokio_tungstenite with
+// web_sys::WebSocket and tokio::spawn with wasm_bindgen_futures::spawn_local.
+// See HAIAI_WASM_PRD §4.6 and the Task 007 audit (docs/HAIAI_WASM_NATIVE_DEPS_AUDIT.md).
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinHandle;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio_tungstenite::tungstenite::Message;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio_tungstenite::{connect_async, tungstenite};
+#[cfg(not(target_arch = "wasm32"))]
 use tungstenite::client::IntoClientRequest;
 
 use crate::error::{HaiError, Result};
@@ -28,12 +37,20 @@ use crate::types::{
 
 pub const DEFAULT_BASE_URL: &str = "https://hai.ai";
 
+// SSE / WebSocket connection types are native-only — both hold a
+// `tokio::task::JoinHandle` and are returned from `connect_sse` /
+// `connect_ws` which use `tokio::spawn` + `tokio::select!`. The wasm
+// build exposes streaming through `EventStreamHandle` in the
+// `haiai-wasm` crate (Task 029) backed by `web_sys::WebSocket` /
+// `ReadableStream`. See HAIAI_WASM_PRD §4.6.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct SseConnection {
     events: mpsc::Receiver<HaiEvent>,
     shutdown: Option<oneshot::Sender<()>>,
     task: Option<JoinHandle<()>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl SseConnection {
     pub async fn next_event(&mut self) -> Option<HaiEvent> {
         self.events.recv().await
@@ -56,12 +73,14 @@ impl SseConnection {
 /// the FFI boundary. To send job responses, use the separate
 /// [`submit_response()`](HaiClient::submit_response) REST endpoint, which is
 /// available via FFI in all SDKs.
+#[cfg(not(target_arch = "wasm32"))]
 pub struct WsConnection {
     events: mpsc::Receiver<HaiEvent>,
     shutdown: Option<oneshot::Sender<()>>,
     task: Option<JoinHandle<()>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl WsConnection {
     pub async fn next_event(&mut self) -> Option<HaiEvent> {
         self.events.recv().await
@@ -158,10 +177,22 @@ impl<P: JacsProvider> HaiClient<P> {
             );
         }
 
+        // `reqwest::ClientBuilder::timeout` is not available on the wasm32
+        // target — reqwest's fetch-backed wasm shim uses the browser's
+        // built-in fetch timeout. Native build still applies the configured
+        // timeout (HAIAI_WASM_PRD §4.8).
+        #[cfg(not(target_arch = "wasm32"))]
         let http = reqwest::Client::builder()
             .timeout(options.timeout)
             .default_headers(default_headers)
             .build()?;
+        #[cfg(target_arch = "wasm32")]
+        let http = {
+            let _ = options.timeout; // wasm fetch timeout is browser-controlled
+            reqwest::Client::builder()
+                .default_headers(default_headers)
+                .build()?
+        };
 
         Ok(Self {
             base_url: trimmed.to_string(),
@@ -636,6 +667,12 @@ impl<P: JacsProvider> HaiClient<P> {
                 })
             }
             EmailGenerationType::HtmlInlineJacs => {
+                // `validation` is native-only (html5ever); wasm callers that
+                // hit the inline-JACS HTML path skip the structural HTML check
+                // — the browser path canonicalizes / signs in pure JSON so the
+                // validator's HTML pass is redundant. See HAIAI_WASM_PRD §4.7
+                // and Task 009.
+                #[cfg(not(target_arch = "wasm32"))]
                 crate::validation::validate_send_email(options)?;
 
                 let verify_url = format!("{}/verify/email", self.base_url.trim_end_matches('/'));
@@ -1658,7 +1695,7 @@ impl<P: JacsProvider> HaiClient<P> {
                 }
             }
 
-            tokio::time::sleep(options.poll_interval).await;
+            sleep_compat(options.poll_interval).await;
         }
 
         let short_id = self.jacs.jacs_id().chars().take(8).collect::<String>();
@@ -1712,6 +1749,12 @@ impl<P: JacsProvider> HaiClient<P> {
         self.enterprise_run().await
     }
 
+    /// Native SSE connect. Uses `tokio::spawn` + `tokio::select!` over
+    /// `reqwest::Response::bytes_stream()` — none of which are available on
+    /// the wasm32 target. The browser SSE consumer lives in
+    /// `rust/haiai-wasm/src/...` (Task 019) and uses `fetch()` +
+    /// `ReadableStream`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn connect_sse(&self) -> Result<SseConnection> {
         let url = self.url("/api/v1/agents/connect");
         let response = self
@@ -1763,6 +1806,10 @@ impl<P: JacsProvider> HaiClient<P> {
         })
     }
 
+    /// Native WS connect via `tokio_tungstenite`. Wasm build replaces this
+    /// with `web_sys::WebSocket` behind the `WebSocketTransport` trait
+    /// (Tasks 014 + 018, HAIAI_WASM_PRD §4.6).
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn connect_ws(&self) -> Result<WsConnection> {
         let ws_url = build_ws_url(&self.base_url, "/ws/agent/connect");
         let mut request = ws_url.into_client_request().map_err(|err| {
@@ -1853,6 +1900,13 @@ impl<P: JacsProvider> HaiClient<P> {
     /// with exponential backoff up to `max_reconnect_attempts` times (default 10).
     /// A "disconnect" event is treated as an intentional server-side shutdown
     /// and will NOT trigger reconnection.
+    ///
+    /// Native-only: delegates to `connect_sse` / `connect_ws` and uses
+    /// `tokio::time::sleep` for backoff. The wasm-side equivalent will live
+    /// in `haiai-wasm` driven by the `EventStreamHandle` async iterator
+    /// (Task 029) once the trait splits land. See Task 015 for the shared
+    /// backoff helper plan.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn on_benchmark_job<F, Fut>(&self, transport: TransportType, handler: F) -> Result<()>
     where
         F: FnMut(Value) -> Fut,
@@ -1863,6 +1917,7 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     /// Like [`on_benchmark_job`] but with a configurable max reconnect attempt count.
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn on_benchmark_job_with_reconnect<F, Fut>(
         &self,
         transport: TransportType,
@@ -2001,11 +2056,31 @@ impl<P: JacsProvider> HaiClient<P> {
 
             // Exponential backoff: 100ms, 200ms, 400ms, ...
             let delay = Duration::from_millis(100 * (1u64 << attempt));
-            tokio::time::sleep(delay).await;
+            sleep_compat(delay).await;
         }
 
         // max_retries is always >= 1 (enforced in new()), so this is unreachable
         unreachable!("max_retries is always >= 1")
+    }
+}
+
+/// Target-agnostic async sleep used by the retry / poll paths in HaiClient.
+///
+/// Native build uses `tokio::time::sleep` (matches the workspace `tokio`
+/// feature set). Wasm build uses `gloo_timers::future::sleep` which
+/// schedules a `setTimeout` task on the browser event loop and resolves
+/// when it fires (`HAIAI_WASM_PRD §4.6` reconnect-backoff helper notes;
+/// Task 015 will hoist the shared logic into a dedicated `backoff`
+/// module).
+#[inline]
+async fn sleep_compat(delay: Duration) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        tokio::time::sleep(delay).await;
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        gloo_timers::future::sleep(delay).await;
     }
 }
 

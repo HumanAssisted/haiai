@@ -51,6 +51,11 @@ compile_error!(
 );
 
 pub mod a2a;
+// `agent::Agent` is built on `LocalJacsProvider` (which is `jacs-crate`-gated
+// and conflicts with the `wasm` feature) and on `crate::validation` (gated
+// out of wasm by Task 009). Browser callers use `BrowserAgentHandle` from
+// the `haiai-wasm` crate instead (HAIAI_WASM_PRD §4.3).
+#[cfg(not(target_arch = "wasm32"))]
 pub mod agent;
 pub mod client;
 pub mod config;
@@ -91,9 +96,14 @@ pub use a2a::{
 #[cfg(feature = "jacs-crate")]
 pub use agent::{Agent, EmailNamespace};
 pub use client::{
-    HaiClient, HaiClientOptions, SseConnection, WsConnection, DEFAULT_BASE_URL,
-    DEFAULT_DNS_RESOLVER, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_SECS,
+    HaiClient, HaiClientOptions, DEFAULT_BASE_URL, DEFAULT_DNS_RESOLVER, DEFAULT_MAX_RETRIES,
+    DEFAULT_TIMEOUT_SECS,
 };
+// SseConnection / WsConnection are native-only (tokio task handles); the
+// wasm build exposes streaming via `EventStreamHandle` in `haiai-wasm`
+// (Task 029). See HAIAI_WASM_PRD §4.6.
+#[cfg(not(target_arch = "wasm32"))]
+pub use client::{SseConnection, WsConnection};
 #[cfg(feature = "jacs-crate")]
 pub use config::resolve_log_filter;
 pub use config::{

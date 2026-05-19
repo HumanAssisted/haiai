@@ -117,7 +117,11 @@ tokio-tungstenite = "0.28"
 tempfile = "3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-reqwest = { version = "0.13.2", default-features = false, features = ["json"] }
+# Reqwest 0.13 moved `query` and `multipart` behind feature flags; on wasm32
+# the shim only supports query strings + JSON bodies + non-streaming bodies,
+# so we enable `query` but NOT `multipart` (PRD §4.8 documents attachments
+# via base64-in-JSON for the wasm path).
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "query"] }
 tokio = { version = "1", default-features = false, features = ["macros", "sync"] }
 
 [dev-dependencies]
