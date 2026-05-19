@@ -125,6 +125,7 @@ fn install_mock_fetch(canned_response_json: &'static str) -> FetchMock {
                             ..Default::default()
                         }
                     });
+                let response_url = captured.url.clone();
                 requests.borrow_mut().push(captured);
 
                 let init = web_sys::ResponseInit::new();
@@ -134,6 +135,29 @@ fn install_mock_fetch(canned_response_json: &'static str) -> FetchMock {
                     &init,
                 )
                 .map_err(|e| JsValue::from_str(&format!("Response build failed: {e:?}")))?;
+                // reqwest's wasm backend parses `Response.url()` after fetch.
+                // Real browser fetch responses carry the final request URL;
+                // synthetic `Response` values default to `""`, which panics
+                // as `RelativeUrlWithoutBase`.
+                let descriptor = js_sys::Object::new();
+                js_sys::Reflect::set(
+                    &descriptor,
+                    &JsValue::from_str("value"),
+                    &JsValue::from_str(&response_url),
+                )
+                .expect("descriptor.value");
+                js_sys::Reflect::set(
+                    &descriptor,
+                    &JsValue::from_str("configurable"),
+                    &JsValue::TRUE,
+                )
+                .expect("descriptor.configurable");
+                js_sys::Reflect::define_property(
+                    response.unchecked_ref::<js_sys::Object>(),
+                    &JsValue::from_str("url"),
+                    &descriptor,
+                )
+                .expect("define mocked Response.url");
                 Ok(JsValue::from(response))
             })
         });
