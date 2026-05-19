@@ -64,6 +64,10 @@ pub mod backoff;
 pub mod agent;
 pub mod client;
 pub mod config;
+// `config_browser` deserializes an in-memory JSON string into `AgentConfig`
+// for browser builds (no jacs.config.json on disk). HAIAI_WASM_PRD §4.7 /
+// Task 016. Compiles on both targets (pure logic).
+pub mod config_browser;
 #[cfg(feature = "jacs-crate")]
 pub mod document_store;
 #[cfg(feature = "jacs-crate")]
