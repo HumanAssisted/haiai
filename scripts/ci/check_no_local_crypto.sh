@@ -90,11 +90,14 @@ check_pattern \
 #   hash.ts    -- uses createHash from node:crypto (deterministic hashing, acceptable)
 #   crypt.ts   -- JACS crypto delegation layer
 #   mime.ts    -- MIME handling
-# client.ts is REMOVED from allowlist -- fromCredentials no longer uses node:crypto.
+#   client.ts  -- uses ONLY randomUUID() for auth-header nonce generation
+#                 (client.ts:367). Re-added to the allowlist 2026-05-18
+#                 after HAIAI WASM ISSUE 4 verified the usage is a
+#                 non-signing, non-key-derivation random ID.
 check_pattern \
   "Node native crypto imports" \
   "from 'node:crypto'" \
-  '^(node/src/(crypt|signing|hash|mime)\.ts):' \
+  '^(node/src/(crypt|signing|hash|mime|client)\.ts):' \
   ${LEGACY_ROOTS[@]+"${LEGACY_ROOTS[@]}"} || status=1
 
 # Go allowlist (post-crypto-elimination):
