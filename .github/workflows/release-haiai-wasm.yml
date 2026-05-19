@@ -1,0 +1,95 @@
+name: Publish @haiai/wasm
+
+# HAIAI_WASM_PRD §4.11 + §8: tag-triggered npm publish.
+# Tag shape: haiai-wasm-vX.Y.Z (matches rust/haiai-wasm/Cargo.toml::version
+# and node-wasm/package.template.json::version).
+
+on:
+  push:
+    tags:
+      - "haiai-wasm-v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  JACS_REF: v0.10.2
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: ver
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#haiai-wasm-v}"
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::empty VERSION after stripping haiai-wasm-v prefix from $TAG" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved VERSION=$VERSION"
+
+      - name: Setup Rust + wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Clone JACS (for workspace patch)
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+
+      - name: Assert @jacs/wasm pre-publish precondition
+        # JACS_WASM Task 021 pattern: refuse to publish @haiai/wasm if
+        # the matching @jacs/wasm version is not already on npm — the
+        # browser package depends on it at runtime.
+        run: |
+          set -euo pipefail
+          if ! npm view "@jacs/wasm@${{ steps.ver.outputs.version }}" version >/dev/null 2>&1; then
+            echo "::error::@jacs/wasm@${{ steps.ver.outputs.version }} is not on npm yet — release JACS first." >&2
+            exit 1
+          fi
+          echo "Found @jacs/wasm@${{ steps.ver.outputs.version }} on npm."
+
+      - name: Forbidden-deps audit
+        run: |
+          chmod +x scripts/ci/forbidden-deps-wasm.sh
+          ./scripts/ci/forbidden-deps-wasm.sh haiai-wasm
+
+      - name: Wasm-surface fixture check
+        run: |
+          chmod +x scripts/ci/check_wasm_surface.sh
+          ./scripts/ci/check_wasm_surface.sh
+
+      - name: Build wasm-pack artifact
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: PATH="$HOME/.cargo/bin:$PATH" wasm-pack build --target web --release rust/haiai-wasm
+
+      - name: Finalize @haiai/wasm npm package
+        run: bash node-wasm/scripts/finalize-pkg.sh
+
+      - name: Publish @haiai/wasm to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        working-directory: rust/haiai-wasm/pkg
+        run: |
+          if [[ -n "${NPM_DRY_RUN:-}" ]]; then
+            npm publish --dry-run --access public
+          else
+            npm publish --access public --provenance
+          fi

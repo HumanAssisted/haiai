@@ -1,6 +1,8 @@
 .PHONY: test test-python test-node test-go test-rust \
         smoke smoke-python smoke-node smoke-go \
         build-python-ffi build-node-ffi build-haiigo \
+        build-haiai-wasm test-haiai-wasm publish-haiai-wasm \
+        release-haiai-wasm retry-haiai-wasm \
         versions check-versions check-jacs-versions \
         bump-version bump-jacs-version \
         generate-knowledge check-knowledge \
@@ -392,3 +394,39 @@ help:
 	@echo "  CRATES_IO_TOKEN  - for rust/v* tags"
 	@echo "  PYPI_API_TOKEN   - for python/v* tags (or trusted publisher)"
 	@echo "  NPM_TOKEN        - for node/v* tags"
+
+# ============================================================================
+# @haiai/wasm browser package (HAIAI_WASM_PRD §4.11 / Task 039)
+# ============================================================================
+
+build-haiai-wasm:
+	@echo "Building @haiai/wasm artifact for v$(HAIAI_WASM_VERSION)..."
+	@command -v wasm-pack >/dev/null 2>&1 || { echo "ERROR: wasm-pack not on PATH. Install via: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh" >&2; exit 1; }
+	RUSTFLAGS="-D warnings" wasm-pack build --target web --release rust/haiai-wasm
+	bash node-wasm/scripts/finalize-pkg.sh
+	@echo "✓ rust/haiai-wasm/pkg/ is publishable. Inspect with: cd rust/haiai-wasm/pkg && npm pack --dry-run"
+
+test-haiai-wasm:
+	@echo "Running haiai-wasm wasm-pack tests (Chrome headless)..."
+	@command -v wasm-pack >/dev/null 2>&1 || { echo "ERROR: wasm-pack not on PATH" >&2; exit 1; }
+	RUSTFLAGS="-D warnings" wasm-pack test --headless --chrome rust/haiai-wasm
+
+publish-haiai-wasm: build-haiai-wasm
+	@echo "Publishing @haiai/wasm to npm..."
+	cd rust/haiai-wasm/pkg && npm publish --access public $(if $(NPM_DRY_RUN),--dry-run,)
+
+release-haiai-wasm:
+	@echo "Releasing @haiai/wasm v$(HAIAI_WASM_VERSION)..."
+	-git tag -d haiai-wasm-v$(HAIAI_WASM_VERSION) 2>/dev/null
+	-git push origin --delete haiai-wasm-v$(HAIAI_WASM_VERSION) 2>/dev/null
+	git tag haiai-wasm-v$(HAIAI_WASM_VERSION)
+	git push origin haiai-wasm-v$(HAIAI_WASM_VERSION)
+	@echo "✓ Tagged haiai-wasm-v$(HAIAI_WASM_VERSION) - CI will publish to npm"
+
+retry-haiai-wasm:
+	@echo "Retrying @haiai/wasm release for v$(HAIAI_WASM_VERSION)..."
+	-git tag -d haiai-wasm-v$(HAIAI_WASM_VERSION)
+	-git push origin --delete haiai-wasm-v$(HAIAI_WASM_VERSION)
+	git tag haiai-wasm-v$(HAIAI_WASM_VERSION)
+	git push origin haiai-wasm-v$(HAIAI_WASM_VERSION)
+	@echo "✓ Re-tagged haiai-wasm-v$(HAIAI_WASM_VERSION) - CI will retry npm publish"
