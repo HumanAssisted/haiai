@@ -76,9 +76,12 @@ fi
 status=0
 seen=""
 for crate in "${FORBIDDEN[@]}"; do
-  # Match `^(│   )*├── crate v…` or `crate v…` (cargo tree formats); use a
-  # simple word-boundary check that is robust across tree drawing chars.
-  if printf '%s\n' "${TREE}" | grep -E "(^|[[:space:]│├└─]+)${crate} v" >/dev/null 2>&1; then
+  # Match only real cargo-tree package rows:
+  #   crate v...
+  #   ├── crate v...
+  #   │   └── crate v...
+  # Do not match cargo warning/help text that merely mentions `crate v...`.
+  if printf '%s\n' "${TREE}" | grep -E "^(${crate} v|[[:space:]│]*[├└]── ${crate} v)" >/dev/null 2>&1; then
     echo "FORBIDDEN: '${crate}' appears in ${CRATE} ${WASM_TARGET} tree" >&2
     seen="${seen} ${crate}"
     status=1
