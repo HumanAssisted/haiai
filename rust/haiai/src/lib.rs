@@ -36,6 +36,7 @@
 //!     attachments: vec![],
 //!     labels: vec![],
 //!     append_footer: None,
+//!     idempotency_key: None,
 //! }).await?;
 //! # Ok(())
 //! # }
