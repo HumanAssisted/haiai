@@ -116,8 +116,9 @@ fn cross_compat_wasm_emits_snapshot() {
     // rust/target/parity/wasm.json. Keep this on one physical line so
     // the shell extractor can match it without multiline state.
     let compact = serde_json::to_string(&snapshot).expect("serialize snapshot");
-    // wasm_bindgen_test routes Rust stdout to the console; printing the
-    // marker block on one line keeps the regex in check_wasm_parity.sh
-    // simple (no newlines between markers).
-    println!("{PARITY_BEGIN}{compact}{PARITY_END}");
+    // The Chrome wasm-bindgen runner captures console output reliably under
+    // `--nocapture`; Rust stdout can still be swallowed for passing tests.
+    web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+        "{PARITY_BEGIN}{compact}{PARITY_END}"
+    )));
 }
