@@ -33,6 +33,7 @@
     "types.ts",
     "worker/**/*.ts",
     "haiai_wasm.d.ts",
+    "jacs_wasm_stub.d.ts",
     "examples/ts/**/*.ts"
   ],
   "exclude": [

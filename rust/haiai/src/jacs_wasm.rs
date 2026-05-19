@@ -83,6 +83,48 @@ impl JacsWasmProvider {
         }
     }
 
+    /// Round-trip the underlying `CoreAgent` into an encrypted-material
+    /// JSON string (the shape `BrowserAgentHandle::import_encrypted`
+    /// accepts). Issue 003 fix.
+    ///
+    /// Delegates to `CoreAgent::export_encrypted_material` and JSON-
+    /// serializes the result. Returns `HaiError::Provider("… Locked
+    /// …")` if the signer has been cleared.
+    pub fn export_encrypted_material_json(&self, password: &str) -> Result<String> {
+        let guard = self.agent.lock().map_err(|e| {
+            HaiError::Provider(format!("JacsWasmProvider: agent mutex poisoned: {e}"))
+        })?;
+        let material = guard.export_encrypted_material(password).map_err(|e| {
+            HaiError::Provider(format!("jacs_core::export_encrypted_material failed: {e:?}"))
+        })?;
+        serde_json::to_string(&material).map_err(|e| {
+            HaiError::Provider(format!("serialize AgentMaterial failed: {e}"))
+        })
+    }
+
+    /// Idempotent secret eviction on the underlying `CoreAgent`. After
+    /// this call the inner signer is `None` and any subsequent
+    /// `sign_raw` / `sign_message` returns `HaiError::Provider("…
+    /// Locked …")`. The public key + algorithm remain — verification
+    /// keeps working. Issue 002 fix.
+    pub fn clear_secrets(&self) -> Result<()> {
+        let mut guard = self.agent.lock().map_err(|e| {
+            HaiError::Provider(format!("JacsWasmProvider: agent mutex poisoned: {e}"))
+        })?;
+        guard.clear_secrets();
+        Ok(())
+    }
+
+    /// `true` iff the underlying `CoreAgent` still holds an unlocked
+    /// signer. Used by the wasm wrapper layer to assert the actual
+    /// in-memory state (not just a wrapper flag).
+    pub fn is_unlocked(&self) -> bool {
+        self.agent
+            .lock()
+            .map(|g| g.is_unlocked())
+            .unwrap_or(false)
+    }
+
     /// Sign exact `bytes` with the underlying jacs-core signer. Used by
     /// `sign_string` + `sign_bytes` so the auth-header signature is over
     /// the same byte string the verifier reconstructs from the header

@@ -648,6 +648,9 @@ pub(crate) fn logical_name_from_metadata(value: &Value) -> Option<String> {
     .map(str::to_string)
 }
 
+// Native-only helper: only `jacs_remote` (gated to native) consumes it.
+// Browser callers don't run the document-store flow.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn summary_matches_logical_name(summary: &DocSummary, logical_name: &str) -> bool {
     summary.logical_name.as_deref() == Some(logical_name)
 }

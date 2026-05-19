@@ -17,7 +17,6 @@ use wasm_bindgen::prelude::*;
 
 use crate::errors::{js_error, map_hai_error};
 use haiai::sse_wasm::WasmSseConnection;
-use haiai::types::HaiEvent;
 use haiai::ws_protocol::{parse_frame_text, WebSocketTransport, WsMessage};
 use haiai::ws_wasm::{build_authenticated_ws_url, WasmWebSocket};
 

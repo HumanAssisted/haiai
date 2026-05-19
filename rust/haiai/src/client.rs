@@ -7,6 +7,11 @@ use futures_util::{SinkExt, StreamExt};
 use reqwest::{Response, StatusCode};
 use serde_json::{json, Value};
 use time::OffsetDateTime;
+// `tokio::sync::{mpsc, oneshot}` back the native SSE/WS channels in
+// `SseConnection` + `WsConnection` + `connect_sse`/`connect_ws`. None
+// of those compile on wasm32 (they need `tokio::task::JoinHandle`),
+// so the import is native-only.
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::sync::{mpsc, oneshot};
 // Native-only stack for SSE / WebSocket transports + reconnect-backoff.
 // The wasm transport (Tasks 014, 018, 019) replaces tokio_tungstenite with
@@ -26,7 +31,7 @@ use crate::jacs::JacsProvider;
 use crate::types::{
     AgentKeyHistory, AgentVerificationResult, Contact, CreateEmailTemplateOptions,
     DeleteUsernameResult, DnsCertifiedResult, DnsCertifiedRunOptions, DocumentVerificationResult,
-    EmailGenerationType, EmailMessage, EmailStatus, EmailTemplate, FreeChaoticResult, HaiEvent,
+    EmailGenerationType, EmailMessage, EmailStatus, EmailTemplate, FreeChaoticResult,
     HelloResult, JobResponseResult, ListEmailTemplatesOptions, ListEmailTemplatesResult,
     ListMessagesOptions, ProRunOptions, ProRunResult, PublicKeyInfo, RawEmailResponse,
     RegisterAgentOptions, RegistrationResult, RotateKeysOptions, RotationResult, SearchOptions,
@@ -34,6 +39,13 @@ use crate::types::{
     UpdateAgentResult, UpdateEmailTemplateOptions, UpdateUsernameResult,
     VerifyAgentDocumentRequest, VerifyAgentResult,
 };
+// `HaiEvent` only flows through native SSE/WS channels (`SseConnection`,
+// `WsConnection`, `connect_sse`/`connect_ws`, on_benchmark_job). The
+// browser surface uses `EventStreamHandle` in haiai-wasm which builds
+// its own `HaiEvent` value via the shared `sse_parse`/`ws_protocol`
+// modules. Gate the import out of wasm so we don't trip dead-code.
+#[cfg(not(target_arch = "wasm32"))]
+use crate::types::HaiEvent;
 
 pub const DEFAULT_BASE_URL: &str = "https://hai.ai";
 
@@ -148,6 +160,12 @@ pub struct HaiClient<P: JacsProvider> {
 const RETRYABLE_STATUS_CODES: &[u16] = &[429, 500, 502, 503, 504];
 
 /// Default maximum reconnect attempts for `on_benchmark_job`.
+///
+/// Native-only: the reconnect loop in `on_benchmark_job_with_reconnect`
+/// is `#[cfg(not(target_arch = "wasm32"))]`. The browser SSE/WS path
+/// (rust/haiai-wasm/src/events.rs) handles reconnects through the
+/// shared `crate::backoff` helper, not this constant.
+#[cfg(not(target_arch = "wasm32"))]
 const DEFAULT_MAX_RECONNECT_ATTEMPTS: usize = 10;
 
 impl<P: JacsProvider> HaiClient<P> {
@@ -2149,6 +2167,10 @@ fn parse_transcript(data: &Value) -> Vec<TranscriptMessage> {
 // `tests/wasm_compat_fixtures.rs` import + any downstream caller.
 pub use crate::sse_parse::{parse_sse_event_payload, SseParser};
 
+// Native-only WS URL builder — only `connect_ws` (gated to native)
+// consumes it. The wasm-side equivalent is
+// `haiai::ws_wasm::build_authenticated_ws_url`.
+#[cfg(not(target_arch = "wasm32"))]
 fn build_ws_url(base_url: &str, path: &str) -> String {
     let base = base_url.trim_end_matches('/');
     let ws_base = if let Some(rest) = base.strip_prefix("https://") {

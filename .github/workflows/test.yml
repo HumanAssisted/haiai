@@ -463,9 +463,14 @@ jobs:
       - name: Clone JACS (workspace patch)
         run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
       - name: Forbidden-deps audit (wasm tree)
+        # `cargo tree -p haiai-wasm` must run from the rust/ workspace
+        # root — the package id lives in rust/Cargo.toml's `members`.
+        # Running from the repo root fails with "package ID specification
+        # `haiai-wasm` did not match any packages" (Issue 001 evidence).
+        working-directory: rust
         run: |
-          chmod +x scripts/ci/forbidden-deps-wasm.sh
-          ./scripts/ci/forbidden-deps-wasm.sh haiai-wasm
+          chmod +x ../scripts/ci/forbidden-deps-wasm.sh
+          ../scripts/ci/forbidden-deps-wasm.sh haiai-wasm
       - name: Crypto policy on haiai-wasm + node-wasm
         run: |
           chmod +x scripts/ci/check_no_local_crypto.sh
@@ -493,8 +498,23 @@ jobs:
         # browser-actions/setup-chrome is already installed earlier in this job.
         run: |
           PATH="$HOME/.cargo/bin:$PATH" wasm-pack test --headless --chrome rust/haiai-wasm
+      - name: Cross-compat parity gate (native vs wasm)
+        # Issue 007: drive both sides of the byte-identity gate. The
+        # script runs the native snapshot test, then re-runs the wasm
+        # `parity_snapshot` test under wasm-pack, parses the marker
+        # block out of stdout into rust/target/parity/wasm.json, and
+        # diffs. Any drift on auth header / canonical register body /
+        # canonical send body / SSE event / WS event fails CI.
+        run: |
+          chmod +x scripts/ci/check_wasm_parity.sh
+          ./scripts/ci/check_wasm_parity.sh
       - name: TypeScript check (@haiai/wasm wrapper)
-        run: npx --yes typescript@5 tsc --noEmit -p node-wasm/tsconfig.json
+        # Use `-p typescript@5` to specify the package providing the
+        # `tsc` executable. `npx --yes typescript@5 tsc` (without `-p`)
+        # fails with "could not determine executable to run" because
+        # the typescript package's bin is named `tsc`, not `typescript`
+        # (Issue 001 evidence).
+        run: npx --yes -p typescript@5 tsc --noEmit -p node-wasm/tsconfig.json
       - name: Build haiai-wasm npm package
         run: |
           PATH="$HOME/.cargo/bin:$PATH" wasm-pack build --target web --release rust/haiai-wasm

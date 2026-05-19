@@ -36,6 +36,7 @@ export class BrowserAgentHandle {
   clearSecrets(): void;
   isUnlocked(): boolean;
   exportAgent(): string;
+  exportEncrypted(password: string): string;
   getPublicKeyBase64(): string;
   algorithm(): string;
   jacsId(): string;
@@ -108,6 +109,13 @@ export class BrowserAgentHandle {
   proRun(transport?: string | null, pollIntervalMs?: number | null, pollTimeoutMs?: number | null): Promise<unknown>;
   dnsCertifiedRun(transport?: string | null, pollIntervalMs?: number | null, pollTimeoutMs?: number | null): Promise<unknown>;
   submitResponse(jobId: string, message: string, metadataJson: string | null | undefined, processingTimeMs: number): Promise<unknown>;
+
+  // ── Event-stream connectors (Issue 005) ──
+  // Open a stream using the agent's own baseUrl + a freshly-signed
+  // auth header. Returns an `EventStreamHandle` ready to iterate via
+  // `nextEvent()`.
+  connectSse(): Promise<EventStreamHandle>;
+  connectWs(): Promise<EventStreamHandle>;
 }
 
 /**

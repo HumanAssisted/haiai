@@ -13,17 +13,27 @@
 //!   - auth_header.json — auth header builder
 //!   - sse_line.txt + sse_event.json — SSE parser
 //!   - ws_frame.bin + ws_event.json — WS parser
+//!   - register_options.json — canonical RegisterAgentOptions body
+//!   - send_email_options.json — canonical SendEmailOptions body
 //!
 //! Output (target/parity/native.json):
 //!   {
 //!     "auth_header": "<expected_authorization>",
 //!     "sse_event": { ... },
-//!     "ws_event": { ... }
+//!     "ws_event": { ... },
+//!     "register_canonical_b64": "<base64 of canonical bytes>",
+//!     "send_canonical_b64": "<base64 of canonical bytes>"
 //!   }
+//!
+//! Issue 007: register/send canonical bodies were added so the parity
+//! gate now covers the four PRD §5.2 byte-identity points (auth header,
+//! canonical register body, canonical send body, SSE event, WS event)
+//! end-to-end.
 
 use std::fs;
 use std::path::PathBuf;
 
+use base64::Engine as _;
 use serde_json::{json, Value};
 
 use haiai::sse_parse::SseParser;
@@ -79,9 +89,26 @@ fn cross_compat_native_writes_snapshot() {
     let parsed = parse_frame_text(ws_frame_text);
     let ws_event = serde_json::to_value(&parsed.event).expect("serialize ws_event");
 
+    // ── Test D: register canonical body ──────────────────────────────
+    let register_canonical = fs::read(fixtures.join("register_options.canonical.bin"))
+        .expect("read register_options.canonical.bin");
+    let register_canonical_b64 =
+        base64::engine::general_purpose::STANDARD.encode(&register_canonical);
+
+    // ── Test E: send_email canonical body ────────────────────────────
+    let send_canonical = fs::read(fixtures.join("send_email_options.canonical.bin"))
+        .expect("read send_email_options.canonical.bin");
+    let send_canonical_b64 =
+        base64::engine::general_purpose::STANDARD.encode(&send_canonical);
+
     // ── Emit snapshot ────────────────────────────────────────────────
+    // Keys are sorted alphabetically (serde_json::to_string_pretty
+    // preserves insertion order on a Map but produces stable output
+    // when we build the object literal in alphabetical order).
     let snapshot = json!({
         "auth_header": auth_header,
+        "register_canonical_b64": register_canonical_b64,
+        "send_canonical_b64": send_canonical_b64,
         "sse_event": sse_event,
         "ws_event": ws_event,
     });

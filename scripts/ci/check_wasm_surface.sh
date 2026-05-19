@@ -27,6 +27,11 @@ cd "${ROOT}"
 
 FIXTURE="fixtures/wasm_browser_surface.json"
 CLIENT_RS="rust/haiai/src/client.rs"
+# Stream-kind entries (connectSse/connectWs) live on the wasm
+# `BrowserAgentHandle`, not on the native HaiClient — verify them
+# against the wasm crate instead so a missing wasm export trips the
+# gate even when HaiClient has matching native methods (Issue 005).
+BROWSER_AGENT_RS="rust/haiai-wasm/src/browser_agent.rs"
 NODE_WASM_INDEX="node-wasm/index.ts"
 
 if [[ ! -f "${FIXTURE}" ]]; then
@@ -35,6 +40,10 @@ if [[ ! -f "${FIXTURE}" ]]; then
 fi
 if [[ ! -f "${CLIENT_RS}" ]]; then
   echo "ERROR: ${CLIENT_RS} not found" >&2
+  exit 2
+fi
+if [[ ! -f "${BROWSER_AGENT_RS}" ]]; then
+  echo "ERROR: ${BROWSER_AGENT_RS} not found" >&2
   exit 2
 fi
 
@@ -63,12 +72,18 @@ missing_ts=()
 while IFS='|' read -r JS_NAME RUST_FN KIND; do
   [[ -z "${JS_NAME}" ]] && continue
 
-  # 1) Rust HaiClient method exists when rust_fn is set.
+  # 1) Rust method exists when rust_fn is set. Stream entries live on
+  # the wasm-bindgen handle (`BrowserAgentHandle`), everything else on
+  # the native HaiClient. Local helpers may be sync (`pub fn`) so we
+  # accept both `pub async fn` and `pub fn`.
   if [[ -n "${RUST_FN}" ]]; then
-    # Accept either `pub async fn <name>` or `pub fn <name>` (local
-    # helpers like build_auth_header / canonical_json are sync).
-    if ! grep -qE "^[[:space:]]*pub (async )?fn ${RUST_FN}\b" "${CLIENT_RS}"; then
-      missing_rust+=("${JS_NAME} (rust_fn=${RUST_FN})")
+    if [[ "${KIND}" == "stream" ]]; then
+      TARGET_FILE="${BROWSER_AGENT_RS}"
+    else
+      TARGET_FILE="${CLIENT_RS}"
+    fi
+    if ! grep -qE "^[[:space:]]*pub (async )?fn ${RUST_FN}\b" "${TARGET_FILE}"; then
+      missing_rust+=("${JS_NAME} (rust_fn=${RUST_FN}, kind=${KIND}, file=${TARGET_FILE})")
       status=1
     fi
   fi
@@ -92,7 +107,7 @@ while IFS='|' read -r JS_NAME RUST_FN KIND; do
 done < "${ENTRIES_FILE}"
 
 if (( ${#missing_rust[@]} > 0 )); then
-  echo "ERROR: ${#missing_rust[@]} fixture entries have no matching HaiClient method in ${CLIENT_RS}:" >&2
+  echo "ERROR: ${#missing_rust[@]} fixture entries have no matching Rust method:" >&2
   for m in "${missing_rust[@]}"; do
     echo "  - ${m}" >&2
   done
@@ -115,4 +130,4 @@ MSG
   exit 1
 fi
 
-echo "check_wasm_surface: ${FIXTURE} <-> ${CLIENT_RS}$([[ -f \"${NODE_WASM_INDEX}\" ]] && echo \" + ${NODE_WASM_INDEX}\") is in sync."
+echo "check_wasm_surface: ${FIXTURE} <-> ${CLIENT_RS} + ${BROWSER_AGENT_RS}$([[ -f \"${NODE_WASM_INDEX}\" ]] && echo \" + ${NODE_WASM_INDEX}\") is in sync."

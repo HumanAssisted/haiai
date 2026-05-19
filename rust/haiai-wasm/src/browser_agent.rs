@@ -36,10 +36,9 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Mutex;
 
 use base64::Engine as _;
-use jacs_core::{CoreAgent, CoreError, SigningAlgorithm, UnlockSecret};
+use jacs_core::{CoreAgent, CoreError, SigningAlgorithm, UnlockSecret, VerificationOutcome};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wasm_bindgen::prelude::*;
@@ -118,14 +117,28 @@ fn debug_log(line: &str) {
 /// rebuild on `clearSecrets` / reload paths.
 struct Shared {
     client: HaiClient<JacsWasmProvider>,
-    /// Public key for verify-only paths + `getPublicKeyBase64`.
+    /// Public key for verify-only paths + `getPublicKeyBase64`. For
+    /// `publicOnly` handles this is the caller-supplied key; for
+    /// `createEphemeral` / `importEncrypted` it is `CoreAgent::public_key`.
     public_key: Vec<u8>,
     algorithm: SigningAlgorithm,
-    /// `true` for handles built via `publicOnly` (no private key).
+    /// Identity surface for `jacsId()` + `exportAgent`. For
+    /// `publicOnly` handles this is the caller-supplied jacsId (Issue
+    /// 004 fix); for the other constructors it is the ephemeral
+    /// `CoreAgent`'s embedded jacsId. The provider's HTTP path uses
+    /// `client.jacs_id()` (the ephemeral agent) — verifier handles
+    /// don't make signed HTTP calls so the divergence is benign.
+    display_jacs_id: String,
+    /// `true` for handles built via `publicOnly` (no usable private key
+    /// even though the wrapper internally holds an unrelated ephemeral
+    /// CoreAgent purely to satisfy the `HaiClient::new` signature).
+    /// Verifier mode means `verify_json` uses the supplied public key
+    /// directly via `CoreAgent::verify_with_key` rather than delegating
+    /// to the internal CoreAgent.
     is_verifier: bool,
     /// Set to `true` once `clearSecrets` runs. Subsequent sign attempts
     /// return `Locked`. The underlying CoreAgent inside the provider
-    /// also has its signer cleared at that point.
+    /// also has its signer cleared at that point (Issue 002 fix).
     secrets_cleared: bool,
     metrics: HandleMetrics,
 }
@@ -153,7 +166,7 @@ impl BrowserAgentHandle {
         let algo = parse_algorithm(algorithm)?;
         let agent = CoreAgent::ephemeral(algo).map_err(map_core_error)?;
         let public_key = agent.public_key().to_vec();
-        Self::build(agent, public_key, algo, false, base_url)
+        Self::build(agent, public_key, algo, false, None, base_url)
     }
 
     /// Import an encrypted agent from a JSON-serialized
@@ -173,31 +186,52 @@ impl BrowserAgentHandle {
                 .map_err(map_core_error)?;
         let public_key = agent.public_key().to_vec();
         let algorithm = agent.algorithm();
-        Self::build(agent, public_key, algorithm, false, base_url)
+        Self::build(agent, public_key, algorithm, false, None, base_url)
     }
 
-    /// Build a verify-only handle from a base64 public key. Sign
-    /// attempts on the returned handle throw `Locked`; verify methods
-    /// + read-only HTTP calls work.
+    /// Build a verify-only handle from a base64 public key. The returned
+    /// handle:
+    ///   - reports `jacs_id()` as the caller-supplied `jacs_id` (Issue 004),
+    ///   - verifies signatures with the caller-supplied `public_key_base64`
+    ///     via `CoreAgent::verify_with_key` (Issue 004),
+    ///   - refuses every sign-requiring path with a typed `Locked` error.
+    ///
+    /// Internally we still construct an ephemeral CoreAgent and clear
+    /// its secrets — that is purely a structural requirement of
+    /// `HaiClient<JacsWasmProvider>::new`; the ephemeral agent's own
+    /// jacsId / public key never surface to JS.
     #[wasm_bindgen(js_name = publicOnly)]
     pub fn public_only(
-        _jacs_id: &str,
+        jacs_id: &str,
         public_key_base64: &str,
         algorithm: &str,
         base_url: Option<String>,
     ) -> Result<BrowserAgentHandle, JsError> {
         crate::init_haiai_wasm();
+        if jacs_id.trim().is_empty() {
+            return Err(js_error(
+                "MalformedDocument",
+                "publicOnly requires a non-empty jacsId",
+            ));
+        }
         let algo = parse_algorithm(algorithm)?;
         let public_key = base64::engine::general_purpose::STANDARD
             .decode(public_key_base64)
             .map_err(|e| js_error("MalformedKey", format!("invalid base64 public key: {e}")))?;
-        // Construct an ephemeral agent and immediately clear secrets
-        // so the handle can only verify. The matching ephemeral keypair
-        // is unrelated to `public_key`; the handle reports `public_key`
-        // via `getPublicKeyBase64` regardless.
+        // Construct an ephemeral agent and immediately clear its
+        // secrets — purely structural (HaiClient::new requires a
+        // provider). The handle reports the caller-supplied jacsId +
+        // public key for every JS-visible surface.
         let mut agent = CoreAgent::ephemeral(algo).map_err(map_core_error)?;
         agent.clear_secrets();
-        Self::build(agent, public_key, algo, true, base_url)
+        Self::build(
+            agent,
+            public_key,
+            algo,
+            /* is_verifier */ true,
+            Some(jacs_id.to_string()),
+            base_url,
+        )
     }
 
     fn build(
@@ -205,6 +239,11 @@ impl BrowserAgentHandle {
         public_key: Vec<u8>,
         algorithm: SigningAlgorithm,
         is_verifier: bool,
+        // Optional override for the JS-visible `jacsId`. `publicOnly`
+        // passes the caller-supplied identity here; the other
+        // constructors pass `None` so the inner `HaiClient` agent ID is
+        // used.
+        display_jacs_id_override: Option<String>,
         base_url: Option<String>,
     ) -> Result<BrowserAgentHandle, JsError> {
         let provider = JacsWasmProvider::new(agent);
@@ -213,11 +252,14 @@ impl BrowserAgentHandle {
             opts.base_url = url;
         }
         let client = HaiClient::new(provider, opts).map_err(map_hai_error)?;
+        let display_jacs_id = display_jacs_id_override
+            .unwrap_or_else(|| client.jacs_id().to_string());
         Ok(BrowserAgentHandle {
             inner: Rc::new(RefCell::new(Shared {
                 client,
                 public_key,
                 algorithm,
+                display_jacs_id,
                 is_verifier,
                 secrets_cleared: is_verifier,
                 metrics: HandleMetrics::default(),
@@ -225,42 +267,67 @@ impl BrowserAgentHandle {
         })
     }
 
-    /// Idempotent secret eviction. After this call, subsequent
-    /// sign attempts return `Locked`; read-only calls continue to
-    /// work.
+    /// Idempotent secret eviction. After this call:
+    ///   - the wrapper flag is set, blocking every JS-visible sign path,
+    ///   - the underlying `CoreAgent`'s signer is dropped via
+    ///     `JacsWasmProvider::clear_secrets` (Issue 002 fix), so even a
+    ///     hypothetical reentry path through the provider can no longer
+    ///     sign.
+    /// Errors from the provider's clear path are swallowed — clear is
+    /// idempotent and the wrapper flag is the authoritative gate
+    /// either way.
     #[wasm_bindgen(js_name = clearSecrets)]
     pub fn clear_secrets(&self) {
+        let s = self.inner.borrow();
+        // Best-effort: even if the mutex were poisoned we still want
+        // the wrapper flag set. The provider's clear_secrets is
+        // idempotent and a no-op if the inner agent is already locked.
+        let _ = s.client.jacs().clear_secrets();
+        drop(s);
         let mut s = self.inner.borrow_mut();
         s.secrets_cleared = true;
-        // NOTE: HaiClient doesn't expose a "clear secrets" path on
-        // its provider — once the provider is constructed the
-        // CoreAgent lives inside JacsWasmProvider's Mutex. The flag
-        // here suppresses sign attempts at the wrapper boundary so
-        // the in-memory key is no longer reachable from JS even
-        // though the CoreAgent itself remains in memory until the
-        // handle is dropped. This is a known limitation documented
-        // in HAIAI_WASM_PRD §10.2 (browser memory is JS-accessible
-        // by design).
-        debug_log("clearSecrets: handle locked");
+        debug_log("clearSecrets: handle locked + provider signer dropped");
     }
 
-    /// `true` iff a signer is currently held.
+    /// `true` iff the underlying `CoreAgent` still holds an unlocked
+    /// signer AND the wrapper flag has not been set. Issue 002 — we
+    /// query both layers so the property holds even if a future code
+    /// path desynchronizes them.
     #[wasm_bindgen(js_name = isUnlocked)]
     pub fn is_unlocked(&self) -> bool {
-        !self.inner.borrow().secrets_cleared
+        let s = self.inner.borrow();
+        !s.secrets_cleared && s.client.jacs().is_unlocked()
     }
 
-    /// Export the agent JSON as a string.
+    /// Export the unlocked agent as an encrypted `AgentMaterial` JSON
+    /// string under `password`. The shape is exactly what
+    /// `BrowserAgentHandle::import_encrypted` accepts, so a save/load
+    /// round-trip with the same password reconstructs an equivalent
+    /// handle. Issue 003 fix.
+    ///
+    /// Throws `Locked` if the signer has been cleared (publicOnly /
+    /// post-clearSecrets handles). The encrypted envelope is the V2
+    /// Argon2id format (`jacs_core::envelope::encrypt_private_key`).
+    #[wasm_bindgen(js_name = exportEncrypted)]
+    pub fn export_encrypted(&self, password: &str) -> Result<String, JsError> {
+        self.require_unlocked()?;
+        let s = self.inner.borrow();
+        s.client
+            .jacs()
+            .export_encrypted_material_json(password)
+            .map_err(map_hai_error)
+    }
+
+    /// Export the agent JSON as a string. Minimal `BrowserAgent.publicOnly`
+    /// round-trip payload: `jacsId` + `algorithm` + `publicKeyBase64`.
+    /// For `publicOnly` handles this echoes the user-supplied identity
+    /// (Issue 004) so a downstream `publicOnly(jacsId, publicKey)` call
+    /// constructs an equivalent verifier handle.
     #[wasm_bindgen(js_name = exportAgent)]
     pub fn export_agent(&self) -> Result<String, JsError> {
-        // We don't have direct access to the CoreAgent now — the
-        // provider keeps it private. Return the minimal exportable
-        // shape: jacsId + algorithm + base64 public key, sufficient
-        // for `BrowserAgent.publicOnly` round-trips. Full agent JSON
-        // export requires the encrypted-material flow.
         let s = self.inner.borrow();
         let v = serde_json::json!({
-            "jacsId": s.client.jacs_id(),
+            "jacsId": s.display_jacs_id,
             "algorithm": algorithm_str(s.algorithm),
             "publicKeyBase64": base64::engine::general_purpose::STANDARD.encode(&s.public_key),
         });
@@ -281,10 +348,12 @@ impl BrowserAgentHandle {
         algorithm_str(self.inner.borrow().algorithm).to_string()
     }
 
-    /// Agent ID (jacsId).
+    /// Agent ID (jacsId). For `publicOnly` handles this is the caller-
+    /// supplied id (Issue 004); for ephemeral/imported handles it is
+    /// the inner `HaiClient`'s jacsId.
     #[wasm_bindgen(js_name = jacsId)]
     pub fn jacs_id(&self) -> String {
-        self.inner.borrow().client.jacs_id().to_string()
+        self.inner.borrow().display_jacs_id.clone()
     }
 
     // -----------------------------------------------------------------
@@ -311,19 +380,31 @@ impl BrowserAgentHandle {
 
     /// Verify a signed JACS document. Returns `{ valid, status, ... }`
     /// as a JS object.
+    ///
+    /// For `publicOnly` handles (Issue 004) verification runs through
+    /// `CoreAgent::verify_with_key(public_key, algorithm)` so the
+    /// caller-supplied public key is the verifier, NOT the internal
+    /// ephemeral CoreAgent. For ephemeral / imported handles we
+    /// delegate to the provider so verification picks up the same
+    /// CoreAgent that signed.
     #[wasm_bindgen(js_name = verifyJson)]
     pub fn verify_json(&self, signed_json: &str) -> Result<JsValue, JsValue> {
         let started = now_ms();
-        let result = {
+        let result_json = {
             let s = self.inner.borrow();
-            s.client
-                .verify_a2a_artifact(signed_json)
-                .map_err(|e| JsValue::from(map_hai_error(e)))?
+            if s.is_verifier {
+                verify_with_supplied_key(signed_json, &s.public_key, s.algorithm)
+                    .map_err(JsValue::from)?
+            } else {
+                s.client
+                    .verify_a2a_artifact(signed_json)
+                    .map_err(|e| JsValue::from(map_hai_error(e)))?
+            }
         };
         let mut s = self.inner.borrow_mut();
         s.metrics.verify_count = s.metrics.verify_count.saturating_add(1);
         s.metrics.last_verify_duration_ms = now_ms() - started;
-        let parsed: Value = serde_json::from_str(&result)
+        let parsed: Value = serde_json::from_str(&result_json)
             .map_err(|e| JsValue::from(js_error("MalformedResponse", format!("verify result parse: {e}"))))?;
         serde_wasm_bindgen::to_value(&parsed)
             .map_err(|e| JsValue::from(js_error("MalformedResponse", format!("to_value: {e}"))))
@@ -383,6 +464,38 @@ impl BrowserAgentHandle {
             s.client.sign_message(msg)
         })
         .map_err(map_hai_error)
+    }
+
+    // -----------------------------------------------------------------
+    // Event-stream connectors (Issue 005 / Task 029) — the agent-side
+    // SSE / WS connectors that compute URL + auth header from the
+    // handle's own state. `EventStreamHandle::openSse`/`openWs` remain
+    // available as a low-level escape hatch when callers want to use a
+    // bespoke URL or pre-built header.
+    // -----------------------------------------------------------------
+
+    /// Open an authenticated SSE event stream against this agent's
+    /// configured `base_url` + the canonical `/api/v1/agents/connect`
+    /// path. The auth header is rebuilt from the handle's signer.
+    #[wasm_bindgen(js_name = connectSse)]
+    pub async fn connect_sse(&self) -> Result<crate::events::EventStreamHandle, JsValue> {
+        let (url, auth_header) = self
+            .build_stream_url_and_auth("/api/v1/agents/connect", /* websocket */ false)
+            .map_err(JsValue::from)?;
+        crate::events::EventStreamHandle::open_sse(&url, &auth_header).await
+    }
+
+    /// Open an authenticated WebSocket event stream against this
+    /// agent's configured `base_url` + the canonical `/ws/agent/connect`
+    /// path. Auth is appended as `?auth=<encoded>` because browsers
+    /// cannot set custom headers on the WS handshake (see
+    /// `haiai::ws_wasm::build_authenticated_ws_url`).
+    #[wasm_bindgen(js_name = connectWs)]
+    pub async fn connect_ws(&self) -> Result<crate::events::EventStreamHandle, JsValue> {
+        let (url, auth_header) = self
+            .build_stream_url_and_auth("/ws/agent/connect", /* websocket */ true)
+            .map_err(JsValue::from)?;
+        crate::events::EventStreamHandle::open_ws(&url, &auth_header).await
     }
 
     /// Build a `/jacs/verify?s=<base64url>` link for a signed
@@ -1025,7 +1138,15 @@ impl BrowserAgentHandle {
         let started = now_ms();
         let result = {
             let s = self.inner.borrow();
-            s.client.dns_certified_run(&opts).await
+            // `dns_certified_run` is the legacy name for the "pro" tier;
+            // the upstream HaiClient method is deprecated but still
+            // delegates correctly. Allow it locally so the wasm build
+            // stays warning-clean while the JS API keeps the historical
+            // name; the upstream rename will be wired through Task 030
+            // follow-up when the deprecated stub is removed.
+            #[allow(deprecated)]
+            let r = s.client.dns_certified_run(&opts).await;
+            r
         };
         self.record_http(started, result.is_err());
         let r = result.map_err(|e| JsValue::from(map_hai_error(e)))?;
@@ -1076,6 +1197,42 @@ impl BrowserAgentHandle {
         }
         s.metrics.last_http_duration_ms = now_ms() - started_ms;
     }
+
+    /// Compose the stream URL + a freshly-signed `Authorization` header
+    /// for the agent-side `connectSse` / `connectWs` connectors
+    /// (Issue 005). Verifier handles cannot sign, so this path returns
+    /// `Locked` for them — the low-level `EventStreamHandle.openSse/
+    /// openWs` escape hatch remains available with a caller-supplied
+    /// header.
+    fn build_stream_url_and_auth(
+        &self,
+        path: &str,
+        websocket: bool,
+    ) -> Result<(String, String), JsError> {
+        self.require_unlocked()?;
+        let s = self.inner.borrow();
+        let base = s.client.base_url().trim_end_matches('/').to_string();
+        // For SSE we keep https://; for WS we swap https://→wss:// and
+        // http://→ws:// to match the native `build_ws_url` shape and the
+        // `wss://`-only invariant enforced by
+        // `haiai::ws_wasm::build_authenticated_ws_url`.
+        let url = if websocket {
+            if let Some(rest) = base.strip_prefix("https://") {
+                format!("wss://{rest}{path}")
+            } else if let Some(rest) = base.strip_prefix("http://") {
+                format!("ws://{rest}{path}")
+            } else {
+                format!("{base}{path}")
+            }
+        } else {
+            format!("{base}{path}")
+        };
+        let auth = s
+            .client
+            .build_auth_header()
+            .map_err(|e| js_error("Provider", format!("build_auth_header: {e}")))?;
+        Ok((url, auth))
+    }
 }
 
 fn parse_algorithm(raw: &str) -> Result<SigningAlgorithm, JsError> {
@@ -1124,4 +1281,34 @@ fn from_json<T: for<'de> Deserialize<'de>>(s: &str) -> Result<T, JsError> {
 fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(value)
         .map_err(|e| JsValue::from(js_error("MalformedResponse", format!("to_value: {e}"))))
+}
+
+/// Verify a signed JACS document against an externally-supplied public
+/// key + algorithm (Issue 004). Returns a JSON-string result with the
+/// same shape `JacsWasmProvider::verify_a2a_artifact` produces so the
+/// JS surface is stable across verifier vs ephemeral handles.
+fn verify_with_supplied_key(
+    signed_json: &str,
+    public_key: &[u8],
+    algorithm: SigningAlgorithm,
+) -> Result<String, JsError> {
+    let wrapped: Value = serde_json::from_str(signed_json)
+        .map_err(|e| js_error("MalformedDocument", format!("invalid signed JSON: {e}")))?;
+    let outcome: VerificationOutcome = CoreAgent::verify_with_key(&wrapped, public_key, algorithm)
+        .map_err(map_core_error)?;
+    let signer_id = wrapped
+        .get("jacsSignature")
+        .and_then(|s| s.get("agentID"))
+        .and_then(|s| s.as_str())
+        .unwrap_or("");
+    let result = serde_json::json!({
+        "valid": outcome.valid,
+        "status": if outcome.valid { "verified" } else { "invalid" },
+        "signerId": signer_id,
+        "artifactType": wrapped.get("jacsType").and_then(Value::as_str).unwrap_or(""),
+        "timestamp": wrapped.get("jacsVersionDate").and_then(Value::as_str).unwrap_or(""),
+        "originalArtifact": wrapped.get("a2aArtifact").cloned().unwrap_or(Value::Null),
+    });
+    serde_json::to_string(&result)
+        .map_err(|e| js_error("MalformedResponse", format!("serialize verify result: {e}")))
 }

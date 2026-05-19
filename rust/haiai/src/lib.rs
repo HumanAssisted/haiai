@@ -51,6 +51,12 @@ compile_error!(
     "the `wasm` and `jacs-crate` features are mutually exclusive: use `--no-default-features --features wasm`"
 );
 
+// `a2a` pulls native-only dependencies (the full A2A mediator/job-loop
+// uses `tokio::sync::Mutex` + `tokio::spawn` + native HTTP), and the
+// browser-side A2A surface is not part of the HAIAI_WASM_PRD §3.2
+// public wasm contract. Gate it out of the wasm build entirely so we
+// don't have to scatter `#[cfg]` over hundreds of lines.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod a2a;
 // `backoff` is the target-agnostic exponential-backoff helper used by
 // reconnect / retry loops. Native uses `tokio::time::sleep` via
@@ -78,6 +84,10 @@ pub mod error;
 pub mod jacs;
 #[cfg(feature = "jacs-crate")]
 pub mod jacs_local;
+// `jacs_remote` is the native HAI remote document/storage provider. It
+// uses native `reqwest::Client` directly + native blocking helpers and
+// is not part of the browser surface. Gate out of wasm.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod jacs_remote;
 // `jacs_wasm::JacsWasmProvider` adapts JACS WASM (`jacs_core::CoreAgent`)
 // to HAIAI's `JacsProvider` trait so `HaiClient<JacsWasmProvider>` can
@@ -131,6 +141,7 @@ pub mod types;
 pub mod validation;
 pub mod verify;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub use a2a::{
     A2AAgentCapabilities, A2AAgentCard, A2AAgentExtension, A2AAgentInterface, A2AAgentSkill,
     A2AArtifactSignature, A2AArtifactVerificationResult, A2AChainEntry, A2AChainOfCustody,
@@ -195,6 +206,7 @@ pub use jacs::{
 };
 #[cfg(feature = "jacs-crate")]
 pub use jacs_local::LocalJacsProvider;
+#[cfg(not(target_arch = "wasm32"))]
 pub use jacs_remote::{RemoteJacsProvider, RemoteJacsProviderOptions};
 pub use types::*;
 pub use verify::{

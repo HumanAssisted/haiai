@@ -13,6 +13,14 @@ import init, {
   EventStreamHandle,
 } from "./haiai_wasm.js";
 
+// `@jacs/wasm` is the source of truth for browser-side encrypted-agent
+// persistence. HAIAI does not vendor its own localStorage layer per
+// CLAUDE.md Rule 1 ("No JACS reimplementation"); save/load below
+// delegate every write/read through this surface so policy (key
+// namespacing, quota typing, validate_encrypted_material_shape) stays
+// in one place.
+import { localStore as jacsLocalStore } from "@jacs/wasm";
+
 import type {
   Algorithm,
   HaiEvent,
@@ -158,6 +166,48 @@ export class BrowserAgent {
     return new BrowserAgent(handle);
   }
 
+  /**
+   * Load an encrypted agent previously persisted via
+   * `BrowserAgent.save(storageKey, password)` from browser localStorage
+   * (Issue 003). Returns `null` when the key is absent so callers can
+   * branch on first-run flows without try/catching.
+   *
+   * Errors:
+   *   - `InvalidPassword` — wrong password.
+   *   - `MalformedDocument` — stored blob is not a valid AgentMaterial.
+   *   - `Internal` — localStorage unavailable.
+   */
+  static async load(
+    storageKey: string,
+    options: { password: string } & BrowserAgentInit,
+  ): Promise<BrowserAgent | null> {
+    await initHaiaiWasm();
+    if (!storageKey) {
+      throw new HaiaiWasmError(
+        "MalformedDocument",
+        "load(storageKey, {password}) requires a non-empty storageKey",
+      );
+    }
+    if (!options || typeof options.password !== "string" || options.password === "") {
+      throw new HaiaiWasmError(
+        "MalformedDocument",
+        "load(storageKey, {password}) requires a non-empty password option",
+      );
+    }
+    let materialJson: string | null;
+    try {
+      materialJson = jacsLocalStore.loadEncryptedAgent(storageKey);
+    } catch (e) {
+      throw wrapWasmError(e);
+    }
+    if (materialJson === null) {
+      return null;
+    }
+    return BrowserAgent.importEncrypted(materialJson, options.password, {
+      baseUrl: options.baseUrl,
+    });
+  }
+
   static async publicOnly(
     jacsId: string,
     publicKeyBase64: string,
@@ -204,6 +254,48 @@ export class BrowserAgent {
 
   exportAgent(): unknown {
     return JSON.parse(safeSync(() => this.handle.exportAgent()));
+  }
+
+  /**
+   * Encrypt the agent under `password` and return the `AgentMaterial`
+   * JSON string — the same shape `BrowserAgent.importEncrypted` accepts
+   * (Issue 003). Suitable for handing to any storage layer.
+   */
+  exportEncrypted(password: string): string {
+    return safeSync(() => this.handle.exportEncrypted(password));
+  }
+
+  /**
+   * Persist the agent to browser localStorage under `storageKey`,
+   * encrypted with `password`. Delegates the storage write to
+   * `@jacs/wasm`'s `localStore.saveEncryptedAgent` so policy (key
+   * namespacing, quota typing, encrypted-shape validation) stays in
+   * the canonical layer (Issue 003).
+   *
+   * Errors:
+   *   - `Locked` — signer was cleared / publicOnly handle.
+   *   - `Internal` — localStorage unavailable or quota exceeded
+   *     (typed by `@jacs/wasm` and re-thrown via `wrapWasmError`).
+   */
+  save(storageKey: string, password: string): void {
+    if (!storageKey) {
+      throw new HaiaiWasmError(
+        "MalformedDocument",
+        "save(storageKey, password) requires a non-empty storageKey",
+      );
+    }
+    if (!password) {
+      throw new HaiaiWasmError(
+        "MalformedDocument",
+        "save(storageKey, password) requires a non-empty password",
+      );
+    }
+    const materialJson = this.exportEncrypted(password);
+    try {
+      jacsLocalStore.saveEncryptedAgent(storageKey, materialJson);
+    } catch (e) {
+      throw wrapWasmError(e);
+    }
   }
 
   publicKeyBase64(): string {
@@ -308,9 +400,16 @@ export interface BrowserHaiClient {
   dnsCertifiedRun(transport?: EventStreamTransport, pollIntervalMs?: number, pollTimeoutMs?: number): Promise<unknown>;
   submitResponse(jobId: string, message: string, metadata?: unknown, processingTimeMs?: number): Promise<unknown>;
 
-  // Event streams
-  connectSse(url: string, authHeader: string): AsyncIterableIterator<HaiEvent>;
-  connectWs(url: string, authHeader: string): AsyncIterableIterator<HaiEvent>;
+  // Event streams.
+  //
+  // `connectSse()` / `connectWs()` (no args) use the agent's configured
+  // baseUrl + canonical paths + a freshly-signed auth header
+  // (Issue 005). The overloads accepting `(url, authHeader)` remain as
+  // a low-level escape hatch for callers who want to override either.
+  // `eventStream({transport})` delegates to whichever variant matches
+  // the supplied options.
+  connectSse(url?: string, authHeader?: string): AsyncIterableIterator<HaiEvent>;
+  connectWs(url?: string, authHeader?: string): AsyncIterableIterator<HaiEvent>;
   eventStream(options: EventStreamOptions): AsyncIterableIterator<HaiEvent>;
 }
 
@@ -505,19 +604,20 @@ class BrowserHaiClientImpl implements BrowserHaiClient {
 
   /**
    * Convenience wrapper around `eventStream({ transport: "sse" })`.
-   * Matches the `connectSse` fixture entry (HAIAI_WASM_PRD §4.3 +
-   * fixtures/wasm_browser_surface.json) — the underlying call still
-   * routes through `EventStreamHandle.openSse`.
+   * With no args, uses the agent-side `BrowserAgentHandle.connectSse`
+   * which derives URL + auth from the handle (Issue 005). With explicit
+   * `(url, authHeader)`, behaves like the low-level
+   * `EventStreamHandle.openSse` escape hatch.
    */
-  connectSse(url: string, authHeader: string): AsyncIterableIterator<HaiEvent> {
+  connectSse(url?: string, authHeader?: string): AsyncIterableIterator<HaiEvent> {
     return this.eventStream({ transport: "sse", url, authHeader });
   }
 
   /**
    * Convenience wrapper around `eventStream({ transport: "ws" })`.
-   * Matches the `connectWs` fixture entry.
+   * See `connectSse` for the (no args) vs (url, authHeader) split.
    */
-  connectWs(url: string, authHeader: string): AsyncIterableIterator<HaiEvent> {
+  connectWs(url?: string, authHeader?: string): AsyncIterableIterator<HaiEvent> {
     return this.eventStream({ transport: "ws", url, authHeader });
   }
 
@@ -527,21 +627,37 @@ class BrowserHaiClientImpl implements BrowserHaiClient {
    * The TS wrapper owns the `EventStreamHandle` lifecycle and closes it
    * when the iterator is exhausted or the caller breaks out of the
    * `for await` loop.
+   *
+   * Default path (no `url`/`authHeader`): delegates to the agent-side
+   * `BrowserAgentHandle.connectSse` / `connectWs` (Issue 005) so the URL
+   * and auth come from the handle. Override path: when `url` is
+   * supplied, opens an `EventStreamHandle` against that URL with the
+   * (also supplied) `authHeader`.
    */
   eventStream(options: EventStreamOptions): AsyncIterableIterator<HaiEvent> {
     const transport = options.transport;
-    const url = options.url ?? "";
-    const authHeader = options.authHeader ?? "";
+    const overrideUrl = options.url;
+    const overrideAuth = options.authHeader;
     let handle: EventStreamHandle | null = null;
     let done = false;
 
     const ensureOpen = async () => {
       if (handle !== null) return;
       try {
-        handle =
-          transport === "ws"
-            ? await EventStreamHandle.openWs(url, authHeader)
-            : await EventStreamHandle.openSse(url, authHeader);
+        if (overrideUrl !== undefined && overrideUrl !== "") {
+          // Low-level escape hatch — caller takes responsibility for
+          // both URL and auth header.
+          handle =
+            transport === "ws"
+              ? await EventStreamHandle.openWs(overrideUrl, overrideAuth ?? "")
+              : await EventStreamHandle.openSse(overrideUrl, overrideAuth ?? "");
+        } else {
+          // Default path — agent-side connector derives URL + auth.
+          handle =
+            transport === "ws"
+              ? await this.handle.connectWs()
+              : await this.handle.connectSse();
+        }
       } catch (e) {
         throw wrapWasmError(e);
       }

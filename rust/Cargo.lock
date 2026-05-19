@@ -1447,6 +1447,7 @@ dependencies = [
  "console_error_panic_hook",
  "haiai",
  "jacs-core",
+ "jacs-wasm",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",
