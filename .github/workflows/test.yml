@@ -460,8 +460,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Clone JACS (workspace patch)
-        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+      - name: Clone JACS (wasm-checks needs WASM branch APIs at the path rust/Cargo.toml patches)
+        # Issue 009: rust/Cargo.toml [patch.crates-io] points jacs / jacs-core /
+        # jacs-wasm at `../../../wasm/*` (the local conductor worktree layout).
+        # From rust/Cargo.toml that resolves to `${GITHUB_WORKSPACE}/../../wasm/*`
+        # in CI. The wasm-checks build needs APIs that only exist on the WASM
+        # branch (e.g. CoreAgent::export_encrypted_material, verify_with_key),
+        # which are NOT in v0.10.2. Pin the wasm-checks JACS clone to the WASM
+        # branch and place it at the path Cargo patches.
+        run: |
+          git clone --depth 1 --branch WASM https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../../wasm"
       - name: Forbidden-deps audit (wasm tree)
         # `cargo tree -p haiai-wasm` must run from the rust/ workspace
         # root — the package id lives in rust/Cargo.toml's `members`.
