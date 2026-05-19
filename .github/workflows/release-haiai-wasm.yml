@@ -14,7 +14,15 @@ permissions:
   id-token: write
 
 env:
-  JACS_REF: v0.10.2
+  # Issues 009 + 011: rust/Cargo.toml [patch.crates-io] points JACS deps
+  # at ../../../wasm/*. Every Cargo invocation in this workflow (the
+  # wasm-pack build below) goes through that patch, so JACS must be
+  # cloned to ${{ github.workspace }}/../../wasm. The patch also depends
+  # on APIs that only exist on the WASM branch
+  # (CoreAgent::export_encrypted_material, verify_with_key) so JACS_REF
+  # is the WASM branch until those APIs ship in a tagged release.
+  JACS_REF: WASM
+  JACS_DIR: ${{ github.workspace }}/../../wasm
 
 jobs:
   publish:
@@ -50,8 +58,8 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+      - name: Clone JACS (for workspace patch — rust/Cargo.toml patches to ${JACS_DIR})
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "$JACS_DIR"
 
       - name: Assert @jacs/wasm pre-publish precondition
         # JACS_WASM Task 021 pattern: refuse to publish @haiai/wasm if

@@ -60,4 +60,9 @@ wasm-bindgen-test = "0.3"
 # already pulls it transitively under the `wasm` feature for the
 # JacsWasmProvider.
 jacs-wasm = "=0.10.2"
-web-sys = { version = "0.3", features = ["Window", "Storage"] }
+# Issues 006 + 010 follow-up tests need `Response`, `Headers`, `Request`
+# (to build mocked fetch responses) and `BodyInit` (to feed string
+# response bodies). Same crate as the production deps above; dev-only
+# features stay isolated here so production builds don't pull them.
+web-sys = { version = "0.3", features = ["Window", "Storage", "Response", "Headers", "Request", "ResponseInit"] }
+wasm-bindgen-futures = "0.4"

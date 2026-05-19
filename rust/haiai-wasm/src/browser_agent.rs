@@ -627,6 +627,31 @@ impl BrowserAgentHandle {
         to_js(&r)
     }
 
+    /// Set the agent's `@hai.ai` email address.
+    ///
+    /// Used by `sendSignedEmail` to build the RFC 5322 `From:` header.
+    /// In production this is populated by a successful `register` call;
+    /// in browser flows where the caller already knows the email (e.g.
+    /// after a separate registration step, or a server-side restore)
+    /// they can set it here without going back through register.
+    ///
+    /// Also load-bearing for the browser test suite — the
+    /// `sendsignedemail_flow.rs` wasm-pack test sets it directly,
+    /// bypassing the HTTP register exchange, so the send-signed flow
+    /// can be exercised against a single mocked fetch.
+    #[wasm_bindgen(js_name = setAgentEmail)]
+    pub fn set_agent_email(&self, email: &str) -> Result<(), JsValue> {
+        if email.trim().is_empty() {
+            return Err(JsValue::from(js_error(
+                "MalformedDocument",
+                "setAgentEmail requires a non-empty email",
+            )));
+        }
+        let mut s = self.inner.borrow_mut();
+        s.client.set_agent_email(email.to_string());
+        Ok(())
+    }
+
     #[wasm_bindgen(js_name = deleteUsername)]
     pub async fn delete_username(&self, agent_id: &str) -> Result<JsValue, JsValue> {
         self.require_unlocked().map_err(JsValue::from)?;

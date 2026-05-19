@@ -62,6 +62,11 @@ export class BrowserAgentHandle {
   verifyStatus(agentId?: string | null): Promise<unknown>;
   updateUsername(agentId: string, newUsername: string): Promise<unknown>;
   deleteUsername(agentId: string): Promise<unknown>;
+  /**
+   * Set the agent's @hai.ai email used as the From: header by
+   * `sendSignedEmail`. Mirrors native `HaiClient::set_agent_email`.
+   */
+  setAgentEmail(email: string): void;
 
   // ── Email send + inbox ──
   sendEmail(optionsJson: string): Promise<unknown>;

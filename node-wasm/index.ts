@@ -302,6 +302,20 @@ export class BrowserAgent {
     return safeSync(() => this.handle.getPublicKeyBase64());
   }
 
+  /**
+   * Set the `@hai.ai` email address used as the RFC 5322 `From:` header by
+   * `sendSignedEmail`. Required when the caller has already established an
+   * agent identity outside the wasm wrapper (e.g. server-side registration
+   * or a restored agent) and wants to send signed mail without re-issuing
+   * a `register` HTTP exchange.
+   *
+   * Mirrors the native `HaiClient::set_agent_email`. Throws
+   * `MalformedDocument` if `email` is empty.
+   */
+  setAgentEmail(email: string): void {
+    safeSync(() => this.handle.setAgentEmail(email));
+  }
+
   algorithm(): Algorithm {
     return safeSync(() => this.handle.algorithm()) as Algorithm;
   }
