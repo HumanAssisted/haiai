@@ -1,5 +1,17 @@
 [workspace]
-members = ["haiai", "hai-mcp", "haiai-cli", "hai-binding-core", "haiinpm", "haiipy", "haiigo"]
+members = [
+    "haiai",
+    "hai-mcp",
+    "haiai-cli",
+    "hai-binding-core",
+    "haiinpm",
+    "haiipy",
+    "haiigo",
+    # Browser-side wasm-bindgen wrapper (HAIAI_WASM_PRD §4.1 / Task 020).
+    # Compiles to a native no-op stub off-wasm so workspace-wide
+    # `cargo check --workspace` stays green.
+    "haiai-wasm",
+]
 resolver = "2"
 
 [workspace.package]

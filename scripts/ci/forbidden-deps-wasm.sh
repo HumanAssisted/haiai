@@ -56,9 +56,14 @@ if [[ -n "${WASM_TREE_FIXTURE:-}" ]]; then
   TREE="$(cat "${WASM_TREE_FIXTURE}")"
 else
   # When the override is unset we shell out to cargo. Use `read -ra` so the
-  # feature string is split safely.
-  read -ra FEATURE_ARGS <<< "${FEATURES}"
-  if ! TREE="$(cargo tree -p "${CRATE}" --target "${WASM_TARGET}" "${FEATURE_ARGS[@]}" 2>&1)"; then
+  # feature string is split safely. `${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"}`
+  # expands to nothing when the array is empty (FEATURES was unset/empty),
+  # which is required under `set -u`.
+  FEATURE_ARGS=()
+  if [[ -n "${FEATURES}" ]]; then
+    read -ra FEATURE_ARGS <<< "${FEATURES}"
+  fi
+  if ! TREE="$(cargo tree -p "${CRATE}" --target "${WASM_TARGET}" ${FEATURE_ARGS[@]+"${FEATURE_ARGS[@]}"} 2>&1)"; then
     echo "ERROR: cargo tree -p ${CRATE} --target ${WASM_TARGET} ${FEATURES} failed:" >&2
     echo "${TREE}" >&2
     exit 2
