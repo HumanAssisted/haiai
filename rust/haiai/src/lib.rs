@@ -51,6 +51,11 @@ compile_error!(
 );
 
 pub mod a2a;
+// `backoff` is the target-agnostic exponential-backoff helper used by
+// reconnect / retry loops. Native uses `tokio::time::sleep` via
+// `TokioTimer`; wasm uses `gloo_timers::future::sleep` via `GlooTimer`.
+// HAIAI_WASM_PRD §4.6 / Task 015.
+pub mod backoff;
 // `agent::Agent` is built on `LocalJacsProvider` (which is `jacs-crate`-gated
 // and conflicts with the `wasm` feature) and on `crate::validation` (gated
 // out of wasm by Task 009). Browser callers use `BrowserAgentHandle` from
