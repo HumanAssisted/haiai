@@ -29,6 +29,9 @@
 #                              chromedriver). The wasm.json snapshot must
 #                              still already exist on disk; otherwise the
 #                              script fails.
+#   HAIAI_WASM_RUSTFLAGS     — rustflags for wasm-pack only. Defaults to
+#                              warnings-as-errors plus an explicit wasm stack
+#                              size large enough for pq2025 browser signing.
 set -euo pipefail
 
 ROOT="${1:-.}"
@@ -36,6 +39,7 @@ cd "${ROOT}"
 
 NATIVE_SNAPSHOT="rust/target/parity/native.json"
 WASM_SNAPSHOT="rust/target/parity/wasm.json"
+WASM_RUSTFLAGS="${HAIAI_WASM_RUSTFLAGS:--D warnings -C link-arg=-zstack-size=8388608}"
 
 # ── (1) Regenerate native snapshot ──────────────────────────────────
 echo "check_wasm_parity: regenerating native snapshot..."
@@ -54,7 +58,8 @@ else
   echo "check_wasm_parity: regenerating wasm snapshot via wasm-pack..."
   WASM_LOG="$(mktemp -t wasm_parity_log.XXXXXX)"
   trap 'rm -f "${WASM_LOG}"' EXIT
-  if ! PATH="${HOME}/.cargo/bin:${PATH}" wasm-pack test --headless --chrome rust/haiai-wasm --test parity_snapshot 2>&1 | tee "${WASM_LOG}"; then
+  if ! PATH="${HOME}/.cargo/bin:${PATH}" RUSTFLAGS="${WASM_RUSTFLAGS}" \
+    wasm-pack test --headless --chrome rust/haiai-wasm --test parity_snapshot 2>&1 | tee "${WASM_LOG}"; then
     echo "ERROR: wasm-pack test --test parity_snapshot failed" >&2
     exit 2
   fi

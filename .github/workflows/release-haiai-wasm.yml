@@ -23,6 +23,7 @@ env:
   # is the WASM branch until those APIs ship in a tagged release.
   JACS_REF: WASM
   JACS_DIR: ${{ github.workspace }}/../../wasm
+  HAIAI_WASM_RUSTFLAGS: "-D warnings -C link-arg=-zstack-size=8388608"
 
 jobs:
   publish:
@@ -85,7 +86,7 @@ jobs:
 
       - name: Build wasm-pack artifact
         env:
-          RUSTFLAGS: "-D warnings"
+          RUSTFLAGS: ${{ env.HAIAI_WASM_RUSTFLAGS }}
         run: PATH="$HOME/.cargo/bin:$PATH" wasm-pack build --target web --release rust/haiai-wasm
 
       - name: Finalize @haiai/wasm npm package

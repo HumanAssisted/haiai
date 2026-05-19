@@ -29,6 +29,7 @@ PLUGIN_VERSION := $(shell grep '"version"' .claude-plugin/plugin.json | head -1 
 # packages in the share-one-version invariant.
 HAIAI_WASM_VERSION := $(shell grep '^version' rust/haiai-wasm/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
 NODE_WASM_VERSION := $(shell grep '"version"' node-wasm/package.template.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
+HAIAI_WASM_RUSTFLAGS ?= -D warnings -C link-arg=-zstack-size=8388608
 
 # JACS dependency versions across SDKs
 JACS_RUST := $(shell grep '^jacs ' rust/haiai/Cargo.toml | sed 's/.*"\(=*[0-9][^"]*\)".*/\1/' | sed 's/^=//')
@@ -405,14 +406,14 @@ help:
 build-haiai-wasm:
 	@echo "Building @haiai/wasm artifact for v$(HAIAI_WASM_VERSION)..."
 	@command -v wasm-pack >/dev/null 2>&1 || { echo "ERROR: wasm-pack not on PATH. Install via: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh" >&2; exit 1; }
-	RUSTFLAGS="-D warnings" wasm-pack build --target web --release rust/haiai-wasm
+	RUSTFLAGS="$(HAIAI_WASM_RUSTFLAGS)" wasm-pack build --target web --release rust/haiai-wasm
 	bash node-wasm/scripts/finalize-pkg.sh
 	@echo "✓ rust/haiai-wasm/pkg/ is publishable. Inspect with: cd rust/haiai-wasm/pkg && npm pack --dry-run"
 
 test-haiai-wasm:
 	@echo "Running haiai-wasm wasm-pack tests (Chrome headless)..."
 	@command -v wasm-pack >/dev/null 2>&1 || { echo "ERROR: wasm-pack not on PATH" >&2; exit 1; }
-	RUSTFLAGS="-D warnings" wasm-pack test --headless --chrome rust/haiai-wasm
+	RUSTFLAGS="$(HAIAI_WASM_RUSTFLAGS)" wasm-pack test --headless --chrome rust/haiai-wasm
 
 publish-haiai-wasm: build-haiai-wasm
 	@echo "Publishing @haiai/wasm to npm..."

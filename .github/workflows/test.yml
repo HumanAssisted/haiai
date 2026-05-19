@@ -32,6 +32,11 @@ env:
   # resolve the patches consistently. Job-local steps that need the
   # JACS package dirs (jacspy, jacsnpm, jacsgo) cd into this path too.
   JACS_DIR: ${{ github.workspace }}/../../wasm
+  # The pq2025 browser path uses enough stack that the larger HAIAI wasm
+  # module can overflow wasm-ld's default stack under wasm-pack/Chrome.
+  # Keep this scoped to wasm32 cargo/wasm-pack invocations; native test jobs
+  # must not inherit wasm linker flags.
+  HAIAI_WASM_RUSTFLAGS: "-D warnings -C link-arg=-zstack-size=8388608"
 
 jobs:
   crypto-policy:
@@ -476,6 +481,12 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       - name: Install Chrome (for wasm-pack --headless --chrome)
         uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+          install-chromedriver: true
+        id: setup-chrome
+      - name: Export ChromeDriver path
+        run: echo "CHROMEDRIVER=${{ steps.setup-chrome.outputs.chromedriver-path }}" >> "$GITHUB_ENV"
       - name: Setup Node 20
         uses: actions/setup-node@v4
         with:
@@ -512,12 +523,12 @@ jobs:
           ./scripts/ci/check_wasm_surface.sh
       - name: cargo check (haiai with wasm feature, wasm32 target)
         env:
-          RUSTFLAGS: "-D warnings"
+          RUSTFLAGS: ${{ env.HAIAI_WASM_RUSTFLAGS }}
         working-directory: rust
         run: cargo check -p haiai --no-default-features --features wasm --target wasm32-unknown-unknown
       - name: cargo check (haiai-wasm wasm32 target)
         env:
-          RUSTFLAGS: "-D warnings"
+          RUSTFLAGS: ${{ env.HAIAI_WASM_RUSTFLAGS }}
         working-directory: rust
         run: cargo check -p haiai-wasm --target wasm32-unknown-unknown
       - name: wasm-pack test --headless --chrome (haiai-wasm)
@@ -527,6 +538,8 @@ jobs:
         # session noted this as a known gap; the local environment lacks
         # the chromedriver/Chrome pairing so verification is CI-only.
         # browser-actions/setup-chrome is already installed earlier in this job.
+        env:
+          RUSTFLAGS: ${{ env.HAIAI_WASM_RUSTFLAGS }}
         run: |
           PATH="$HOME/.cargo/bin:$PATH" wasm-pack test --headless --chrome rust/haiai-wasm
       - name: Cross-compat parity gate (native vs wasm)
@@ -547,6 +560,8 @@ jobs:
         # (Issue 001 evidence).
         run: npx --yes -p typescript@5 tsc --noEmit -p node-wasm/tsconfig.json
       - name: Build haiai-wasm npm package
+        env:
+          RUSTFLAGS: ${{ env.HAIAI_WASM_RUSTFLAGS }}
         run: |
           PATH="$HOME/.cargo/bin:$PATH" wasm-pack build --target web --release rust/haiai-wasm
           bash node-wasm/scripts/finalize-pkg.sh
