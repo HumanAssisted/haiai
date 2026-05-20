@@ -522,10 +522,10 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     assert!(tools.contains(&"hai_save_memory".to_string()));
     assert!(tools.contains(&"jacs_export_agent".to_string()));
     assert!(!tools.contains(&"jacs_memory_save".to_string()));
-    assert!(tools.contains(&"jacs_memory_recall".to_string()));
-    assert!(tools.contains(&"jacs_memory_list".to_string()));
-    assert!(tools.contains(&"jacs_memory_forget".to_string()));
-    assert!(tools.contains(&"jacs_memory_update".to_string()));
+    assert!(!tools.contains(&"jacs_memory_recall".to_string()));
+    assert!(!tools.contains(&"jacs_memory_list".to_string()));
+    assert!(!tools.contains(&"jacs_memory_forget".to_string()));
+    assert!(!tools.contains(&"jacs_memory_update".to_string()));
     assert!(!tools.contains(&"hai_create_agent".to_string()));
     assert!(tools.contains(&"hai_self_knowledge".to_string()));
 

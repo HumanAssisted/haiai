@@ -701,7 +701,7 @@ class HaiClient:
 
         try:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                tmp_path = Path(tmp_dir)
+                tmp_path = Path(tmp_dir).resolve()
                 tmp_key_dir = tmp_path / "keys"
                 tmp_key_dir.mkdir()
                 tmp_data_dir = tmp_path / "data"

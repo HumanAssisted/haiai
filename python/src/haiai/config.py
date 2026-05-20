@@ -248,7 +248,7 @@ def _resolve_absolute_dir(value: str, config_dir: Path) -> Path:
     p = Path(value)
     if not p.is_absolute():
         p = config_dir / p
-    return p
+    return p.resolve()
 
 
 def _read_agent_name_from_doc(data_dir: Path, id_and_version: str) -> str:
@@ -288,9 +288,17 @@ def _load_canonical(raw: dict, path: Path) -> tuple[AgentConfig, str]:
         key_dir=str(key_dir),
         jacs_id=agent_id,
     )
-    # The canonical config is already in the format SimpleAgent.load() expects,
-    # so we pass the path straight through — no shadow config needed.
-    return cfg, str(path)
+    resolved_raw = dict(raw)
+    resolved_raw["jacs_data_directory"] = str(data_dir)
+    resolved_raw["jacs_key_directory"] = str(key_dir)
+
+    # The canonical config shape is correct, but Python tempfile paths on macOS
+    # often enter as /var/folders/... while current JACS rejects symlinked parent
+    # components. Pass SimpleAgent.load() a shadow config with resolved paths.
+    shadow_path = path.parent / ".haiai_resolved_jacs.config.json"
+    with open(shadow_path, "w", encoding="utf-8") as f:
+        json.dump(resolved_raw, f, indent=2)
+    return cfg, str(shadow_path)
 
 
 def _load_legacy(raw: dict, path: Path) -> tuple[AgentConfig, str]:
@@ -331,7 +339,7 @@ def load(config_path: str | None = None) -> None:
 
     if config_path is None:
         config_path = os.environ.get("JACS_CONFIG_PATH", "./jacs.config.json")
-    path = Path(config_path)
+    path = Path(config_path).resolve()
     if not path.is_file():
         raise FileNotFoundError(f"JACS config not found: {path}")
 
@@ -359,6 +367,7 @@ def load(config_path: str | None = None) -> None:
 
     # Validate password is configured (fail early)
     load_private_key_password()
+    os.environ["JACS_CONFIG_PATH"] = jacs_config_path
 
     # Load agent from binding-core using SimpleAgent (handles key loading).
     try:
@@ -366,7 +375,7 @@ def load(config_path: str | None = None) -> None:
     except ImportError:
         from jacs.jacs import SimpleAgent as _SimpleAgent  # type: ignore[no-redef]
 
-    native_agent = _SimpleAgent.load(jacs_config_path)
+    native_agent = _SimpleAgent.load(str(Path(jacs_config_path).resolve()))
 
     # Wrap in adapter for JacsAgent API compatibility
     try:

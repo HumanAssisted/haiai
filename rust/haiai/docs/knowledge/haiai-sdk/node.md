@@ -138,4 +138,4 @@ The package ships both ESM and CJS builds. `import` and `require` both work.
 
 ## License
 
-BUSL-1.1 — see [LICENSE](../LICENSE) for details.
+Apache-2.0 OR MIT

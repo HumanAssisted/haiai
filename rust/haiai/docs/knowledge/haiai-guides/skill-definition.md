@@ -218,35 +218,12 @@ JACS supports three trust levels for agent verification:
 | `jacs_is_trusted` | Check whether a specific agent is trusted (returns boolean) |
 | `jacs_get_trusted_agent` | Retrieve the full agent JSON for a trusted agent |
 
-### State Management
+### Generic Documents
 
 | Tool | Purpose |
 |------|---------|
-| `jacs_sign_state` | Sign an agent state file (memory, skill, plan, config, or hook) to establish provenance and integrity |
-| `jacs_verify_state` | Verify the integrity and authenticity of a signed agent state (checks file hash and signature) |
-| `jacs_load_state` | Load a signed agent state document, optionally verifying before returning content |
-| `jacs_update_state` | Update a previously signed state file (recomputes hash, creates new signed version) |
-| `jacs_list_state` | List signed agent state documents with optional filtering by type, framework, or tags |
-| `jacs_adopt_state` | Adopt an external file as signed agent state (marks origin as 'adopted', optionally records source URL) |
-
-### Memory
-
-| Tool | Purpose |
-|------|---------|
-| `jacs_memory_save` | Save a memory as a cryptographically signed private document. Persists context, decisions, or learned information across sessions |
-| `jacs_memory_recall` | Search saved memories by query string and optional tag filter |
-| `jacs_memory_list` | List all saved memory documents with optional filtering by tags or framework |
-| `jacs_memory_update` | Update an existing memory with new content, name, or tags (creates new signed version) |
-| `jacs_memory_forget` | Mark a memory document as removed (provenance chain preserved, no longer returned by recall) |
-
-### Messaging
-
-| Tool | Purpose |
-|------|---------|
-| `jacs_message_send` | Create and cryptographically sign a message for sending to another agent. Returns the signed JACS document for transmission |
-| `jacs_message_receive` | Verify a received signed message and extract content, sender ID, and timestamp |
-| `jacs_message_update` | Update and re-sign an existing message document with new content |
-| `jacs_message_agree` | Verify and co-sign (agree to) a received signed message. Creates an agreement document referencing the original |
+| `jacs_sign_document` | Sign arbitrary JSON as a generic JACS document. Application semantics belong inside the signed content |
+| `jacs_verify_document` | Verify a signed JACS document's canonical hash and cryptographic signature |
 
 ### Multi-Party Agreements
 
@@ -272,15 +249,6 @@ JACS supports three trust levels for agent verification:
 | `jacs_wrap_a2a_artifact` | Wrap an A2A artifact with JACS provenance (signs artifact, binds agent identity, optional parent signatures for chain-of-custody) |
 | `jacs_verify_a2a_artifact` | Verify a JACS-wrapped A2A artifact's signature and hash |
 | `jacs_assess_a2a_agent` | Assess trust level of a remote A2A agent given its Agent Card (apply open, verified, or strict trust policy) |
-
-### Security & Audit
-
-| Tool | Purpose |
-|------|---------|
-| `jacs_audit` | Run a read-only JACS security audit and health checks. Returns risks, health_checks, summary, and overall_status |
-| `jacs_audit_log` | Record a tool-use, data-access, or other event as a signed audit trail entry (tamper-evident log) |
-| `jacs_audit_query` | Search the audit trail by action type, target, and/or time range. Supports pagination |
-| `jacs_audit_export` | Export audit trail entries for a time period as a single signed JACS document |
 
 ### Search
 
@@ -370,29 +338,11 @@ hai_reply_email with message_id="msg-uuid-here", body="Sounds good, let's procee
 hai_search_messages with q="proposal"
 ```
 
-### Sign agent memory as state
-
-```
-jacs_sign_state with file_path="MEMORY.md", state_type="memory"
-```
-
-This will create a signed agentstate document with:
-- State type: "memory"
-- File reference with SHA-256 hash
-- Cryptographic signature proving authorship
-
 ### Save and recall agent memory
 
-```
-# Save a memory
-jacs_memory_save with name="project-context", content="The auth rewrite is driven by compliance requirements", tags=["project", "auth"]
-
-# Recall it later
-jacs_memory_recall with query="auth rewrite"
-
-# List all memories
-jacs_memory_list
-```
+Use `hai_save_memory` for HAI-managed memory storage, then query saved
+documents with `hai_self_knowledge` or HAI document APIs. The retired JACS
+memory application schema is no longer exposed by the embedded JACS MCP server.
 
 ### Create a multi-party agreement
 
@@ -410,15 +360,11 @@ Check status:
 jacs_check_agreement with agreement="{...agreement JSON...}"
 ```
 
-### Agent-to-agent messaging
+### Agent-to-agent payloads
 
-`jacs_message_send` creates signed JACS message payloads; it does **not** deliver messages on its own.
-
-Use this flow:
-1. Create/sign the message payload with `jacs_message_send`
-2. Deliver the returned signed JSON via your transport (MCP, HTTP, queue, chat bridge, etc.)
-3. Recipient verifies on receipt with `jacs_message_receive`
-4. Recipient can agree to the message with `jacs_message_agree`
+Use `jacs_sign_document` to sign transport payloads as generic JACS documents,
+then deliver the returned JSON via your transport. Put application-level
+message fields such as sender, recipient, thread ID, and body inside `content`.
 
 ### Bootstrap trust with another agent
 
@@ -445,19 +391,6 @@ jacs_attest_verify with document_key="jacsId:jacsVersion", full=true
 
 # Export as DSSE for SLSA/in-toto compatibility
 jacs_attest_export_dsse with document="{...attestation JSON...}"
-```
-
-### Audit trail
-
-```
-# Log an action
-jacs_audit_log with action="data-access", target="customer-records", details={"reason": "support ticket #123"}
-
-# Query the trail
-jacs_audit_query with action="data-access", from="2026-03-01T00:00:00Z"
-
-# Export for compliance
-jacs_audit_export with from="2026-03-01T00:00:00Z", to="2026-03-15T23:59:59Z"
 ```
 
 ## CLI Commands

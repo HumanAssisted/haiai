@@ -12,6 +12,7 @@
 
 - **Signed-email inputs are strict in HTML-inline mode.** The SDK owns HTML rendering for now: callers pass plain text, and the SDK rejects user HTML tokens plus reserved HAI/JACS inline markers before signing so generated signature artifacts cannot be injected or confused with user content.
 - Node and Go signed-email facades now pass `html_inline_jacs` explicitly when callers omit a generation type, matching Python and keeping the cross-language default visible at the FFI boundary.
+- **JACS schema consolidation compatibility.** HAIAI now treats retired JACS application schemas as generic signed documents in MCP/docs/email assertions and refreshes embedded self-knowledge from the current JACS docs.
 
 ### Fixed
 

@@ -205,7 +205,7 @@ struct AgentSigner(Arc<StdMutex<Agent>>);
 impl JacsSigner for AgentSigner {
     fn sign_message(&self, data: &Value) -> Result<SignedDocument, JacsError> {
         let doc_content = json!({
-            "jacsType": "message",
+            "jacsType": "document",
             "jacsLevel": "raw",
             "content": data
         });

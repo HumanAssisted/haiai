@@ -771,7 +771,14 @@ mod tests {
         let jacs_doc: serde_json::Value = serde_json::from_slice(&doc_bytes).unwrap();
 
         // Verify JACS envelope structure
-        assert_eq!(jacs_doc["jacsType"].as_str(), Some("message"));
+        assert!(
+            matches!(
+                jacs_doc["jacsType"].as_str(),
+                Some("document") | Some("message")
+            ),
+            "unexpected jacsType: {:?}",
+            jacs_doc["jacsType"].as_str()
+        );
         assert!(jacs_doc.get("jacsId").is_some(), "should have jacsId");
         assert!(
             jacs_doc.get("jacsSignature").is_some(),
