@@ -372,3 +372,53 @@ help:
 	@echo "  CRATES_IO_TOKEN  - for rust/v* tags"
 	@echo "  PYPI_API_TOKEN   - for python/v* tags (or trusted publisher)"
 	@echo "  NPM_TOKEN        - for node/v* tags"
+
+# ============================================================================
+# DISK MAINTENANCE — Rust target/ + cargo cache hygiene
+# ============================================================================
+# With rust/.cargo/config.toml's target-dir set, every cargo invocation
+# across the rust/ workspace writes into rust/target. These targets prune
+# stale artifacts and inspect usage. Recommended cadence:
+#   make disk-usage         # anytime, read-only
+#   make disk-sweep         # weekly — drops artifacts older than 14 days
+#   make disk-clean-light   # monthly — keeps release/
+#   make disk-clean-deep    # reclaim disk; forces full rebuild
+HAIAI_TREE := $(CURDIR)
+HAIAI_WORKSPACE := $(HAIAI_TREE)/rust
+HAIAI_TARGET_DIR := $(HAIAI_WORKSPACE)/target
+
+.PHONY: disk-usage disk-clean-deep disk-clean-light disk-sweep install-disk-tools
+
+disk-usage: ## Show every Rust target/ in the haiai tree (read-only)
+	@find $(HAIAI_TREE) -type d -name target \
+	    -not -path "*/node_modules/*" -not -path "*/.venv*" \
+	    -prune -exec du -sh {} + 2>/dev/null | sort -hr
+
+disk-clean-deep: ## cargo clean the rust/ workspace (cleans every member crate)
+	@if [ -d $(HAIAI_TARGET_DIR) ]; then \
+	  cd $(HAIAI_WORKSPACE) && cargo clean --workspace; \
+	else \
+	  echo "No target dir at $(HAIAI_TARGET_DIR) — nothing to clean."; \
+	fi
+
+disk-clean-light: ## Drop debug/{incremental,deps,build}; keep release/
+	@if [ -d $(HAIAI_TARGET_DIR)/debug ]; then \
+	  rm -rf $(HAIAI_TARGET_DIR)/debug/incremental \
+	         $(HAIAI_TARGET_DIR)/debug/deps \
+	         $(HAIAI_TARGET_DIR)/debug/build; \
+	  echo "Cleaned $(HAIAI_TARGET_DIR)/debug/{incremental,deps,build}"; \
+	else \
+	  echo "No debug/ under $(HAIAI_TARGET_DIR) — nothing to clean."; \
+	fi
+
+disk-sweep: install-disk-tools ## Prune artifacts >14 days + autoclean cargo registry
+	@if [ -d $(HAIAI_TARGET_DIR) ]; then \
+	  cd $(HAIAI_WORKSPACE) && cargo sweep --time 14; \
+	else \
+	  echo "No target dir at $(HAIAI_TARGET_DIR) — nothing to sweep."; \
+	fi
+	cargo cache --autoclean
+
+install-disk-tools:
+	@command -v cargo-sweep >/dev/null 2>&1 || cargo install cargo-sweep
+	@command -v cargo-cache >/dev/null 2>&1 || cargo install cargo-cache
