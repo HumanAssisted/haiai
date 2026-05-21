@@ -6,7 +6,7 @@ Parameters
 
 Licensor:             Human Assisted Intelligence, Inc.
 
-Licensed Work:        haiai
+Licensed Work:        haiai version 0.4.1
 
                       The Licensed Work includes all source code,
                       documentation, examples, tools, SDKs, configuration
@@ -63,9 +63,11 @@ Additional Use Grant: You may make production use of the Licensed Work,
                       Competing Offering solely because Licensor later releases
                       new products, services, or features.
 
-Change Date:          Four years from the date the applicable version of the
-                      Licensed Work is first made publicly available by
-                      Licensor under this License.
+Change Date:          2030-05-20
+
+                      Four years from the date this version of the Licensed
+                      Work was first made publicly available by Licensor
+                      under this License.
 
 Change License:       GNU Affero General Public License, Version 3.0 or later
                       (AGPL-3.0-or-later)
