@@ -46,6 +46,12 @@ This crate delegates all cryptographic operations to JACS via `JacsProvider` and
 - Verify-link generation
 - A2A facade composition (`client.get_a2a(...)`)
 
+## Signed Email Generation
+
+`HaiClient::send_signed_email` defaults to `EmailGenerationType::HtmlInlineJacs`: the SDK renders safe HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Use `send_signed_email_with_generation_type(..., EmailGenerationType::AttachmentJacs)` only for compatibility with the older attachment transport.
+
+HTML-inline signing accepts plain-text `SendEmailOptions::body` for now. The SDK rejects caller-supplied HTML tokens and reserved HAI/JACS inline markers before signing so generated signature artifacts cannot be confused with user content.
+
 ## Trait Architecture (Layers 0-7)
 
 JACS 0.9.4 capabilities are exposed through 8 layered extension traits:
@@ -137,4 +143,4 @@ haiai = { version = "0.1.2", features = ["agreements", "attestation"] }
 
 ## License
 
-Apache-2.0 OR MIT
+BUSL-1.1 — see [LICENSE](../../LICENSE) for details.

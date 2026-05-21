@@ -110,12 +110,12 @@
     ]
   },
   "build_auth_header": {
-    "description": "buildAuthHeader must produce 'JACS {jacsId}:{timestamp}:{signature_base64}'. Vectors in cross_lang_test.json cover format; these cover edge cases.",
+    "description": "buildAuthHeader must produce 'JACS {jacsId}:{timestamp}:{nonce}:{signature_base64}'. Vectors in cross_lang_test.json cover format; these cover edge cases.",
     "cases": [
       {
         "name": "special_chars_in_id",
         "jacs_id": "agent/with:special",
-        "note": "The jacsId is used as-is in the header (no URL encoding). Colon in jacsId is disambiguated by SplitN(3)."
+        "note": "The jacsId is used as-is in the header (no URL encoding). Colon remains invalid for HTTP auth because ':' is the field delimiter."
       }
     ]
   }

@@ -1,6 +1,6 @@
 use jacs_mcp::JacsMcpServer;
 use rmcp::model::{
-    CallToolRequestParam, Implementation, ListToolsResult, PaginatedRequestParam,
+    CallToolRequestParams, Implementation, ListToolsResult, PaginatedRequestParams,
     ServerCapabilities, ServerInfo, Tool, ToolsCapability,
 };
 use rmcp::service::RequestContext;
@@ -31,33 +31,28 @@ impl HaiMcpServer {
 
 impl ServerHandler for HaiMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: Default::default(),
-            capabilities: ServerCapabilities {
-                tools: Some(ToolsCapability {
-                    list_changed: Some(false),
-                }),
-                ..Default::default()
-            },
-            server_info: Implementation {
-                name: "hai-mcp".to_string(),
-                title: Some("HAIAI MCP Server".to_string()),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                icons: None,
-                website_url: Some(haiai::DEFAULT_BASE_URL.to_string()),
-            },
-            instructions: Some(
+        let mut implementation = Implementation::new("hai-mcp", env!("CARGO_PKG_VERSION"));
+        implementation.title = Some("HAIAI MCP Server".to_string());
+        implementation.website_url = Some(haiai::DEFAULT_BASE_URL.to_string());
+
+        let capabilities = ServerCapabilities::builder()
+            .enable_tools_with(ToolsCapability {
+                list_changed: Some(false),
+            })
+            .build();
+
+        ServerInfo::new(capabilities)
+            .with_server_info(implementation)
+            .with_instructions(
                 "This MCP server runs locally over stdio only. It embeds the canonical JACS MCP \
                  server in-process and adds HAI platform tools for registration, authenticated \
-                 agent operations, and mailbox/email workflows."
-                    .to_string(),
-            ),
-        }
+                 agent operations, and mailbox/email workflows.",
+            )
     }
 
     async fn list_tools(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         Ok(ListToolsResult {
@@ -68,7 +63,7 @@ impl ServerHandler for HaiMcpServer {
 
     async fn call_tool(
         &self,
-        request: CallToolRequestParam,
+        request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::CallToolResult, McpError> {
         if request.name.as_ref() == "jacs_memory_save" {

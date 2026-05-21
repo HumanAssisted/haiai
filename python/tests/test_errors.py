@@ -41,6 +41,7 @@ class TestHaiError:
     def test_from_response_with_json(self) -> None:
         class FakeResp:
             status_code = 500
+
             def json(self):
                 return {"error": "internal"}
 
@@ -51,6 +52,7 @@ class TestHaiError:
     def test_from_response_no_json(self) -> None:
         class FakeResp:
             status_code = 502
+
             def json(self):
                 raise ValueError("no json")
 

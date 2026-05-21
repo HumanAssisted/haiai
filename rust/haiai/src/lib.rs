@@ -1,3 +1,10 @@
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 //! Rust HAIAI.
 //!
 //! This crate is intentionally a thin HAI-platform wrapper around JACS.
@@ -23,12 +30,7 @@
 //!     to: "other@hai.ai".into(),
 //!     subject: "Hello".into(),
 //!     body: "World".into(),
-//!     cc: vec![],
-//!     bcc: vec![],
-//!     in_reply_to: None,
-//!     attachments: vec![],
-//!     labels: vec![],
-//!     append_footer: None,
+//!     ..Default::default()
 //! }).await?;
 //! # Ok(())
 //! # }
@@ -42,6 +44,7 @@ pub mod config;
 pub mod document_store;
 #[cfg(feature = "jacs-crate")]
 pub mod email;
+pub mod email_inline;
 pub mod error;
 pub mod jacs;
 #[cfg(feature = "jacs-crate")]
@@ -53,20 +56,6 @@ pub mod self_knowledge;
 pub mod types;
 pub mod validation;
 pub mod verify;
-
-#[cfg(test)]
-pub(crate) mod test_support {
-    use std::sync::{Mutex, MutexGuard};
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
-        match ENV_LOCK.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        }
-    }
-}
 
 pub use a2a::{
     A2AAgentCapabilities, A2AAgentCard, A2AAgentExtension, A2AAgentInterface, A2AAgentSkill,
@@ -107,6 +96,7 @@ pub use email::{
     ParsedEmailParts,
     SignedHeaderEntry,
 };
+pub use email_inline::*;
 pub use error::{HaiError, Result};
 #[cfg(feature = "agreements")]
 pub use jacs::JacsAgreementProvider;
@@ -132,3 +122,17 @@ pub use verify::{
     generate_verify_link, generate_verify_link_hosted, MAX_VERIFY_DOCUMENT_BYTES,
     MAX_VERIFY_URL_LEN,
 };
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
+        match ENV_LOCK.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+}

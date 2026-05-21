@@ -51,7 +51,11 @@ class HaiError(Exception):
         self.error_code = ""  # populated from API error_code field when available
 
     def __str__(self) -> str:
-        base = f"{self.message} (HTTP {self.status_code})" if self.status_code else self.message
+        base = (
+            f"{self.message} (HTTP {self.status_code})"
+            if self.status_code
+            else self.message
+        )
         if self.action:
             return f"{base}. {self.action}"
         return base
@@ -77,9 +81,7 @@ class HaiError(Exception):
 class HaiApiError(HaiError):
     """Error returned by the HAI server (non-2xx response)."""
 
-    def __init__(
-        self, message: str, status_code: int = 0, body: str = ""
-    ) -> None:
+    def __init__(self, message: str, status_code: int = 0, body: str = "") -> None:
         super().__init__(message, status_code=status_code)
         self.body = body
 
@@ -124,7 +126,10 @@ class RateLimited(HaiApiError):
     """
 
     def __init__(
-        self, message: str, status_code: int = 429, body: str = "",
+        self,
+        message: str,
+        status_code: int = 429,
+        body: str = "",
         resets_at: str = "",
     ) -> None:
         super().__init__(message, status_code=status_code, body=body)

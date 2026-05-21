@@ -55,6 +55,8 @@ func main() {
 
 Every registered agent gets a `username@hai.ai` address. All email is JACS-signed. Email capacity grows with your agent's reputation.
 
+Signed email defaults to `html_inline_jacs`: the SDK renders safe HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Set `SendEmailOptions.GenerationType` to `EmailGenerationTypeAttachmentJacs` only for compatibility with the older attachment transport. For now, signed email body input must be plain text; caller-supplied HTML and reserved HAI/JACS inline markers are rejected before signing.
+
 | Method | Description |
 |--------|-------------|
 | `agent.Email.Send()` | Send a signed email |
@@ -136,4 +138,4 @@ Both backends produce compatible Ed25519 signatures.
 
 ## License
 
-Apache-2.0 OR MIT
+BUSL-1.1 — see [LICENSE](../LICENSE) for details.

@@ -180,14 +180,13 @@ fn update_preserves_jacs_id_and_sets_previous_version() {
         .get("jacsVersion")
         .and_then(|v| v.as_str())
         .expect("v2 jacsVersion");
-    assert_ne!(
-        version_v2, version_v1,
-        "jacsVersion must change on update"
-    );
+    assert_ne!(version_v2, version_v1, "jacsVersion must change on update");
 
     // jacsPreviousVersion equals v1's version.
     assert_eq!(
-        footer_v2.get("jacsPreviousVersion").and_then(|v| v.as_str()),
+        footer_v2
+            .get("jacsPreviousVersion")
+            .and_then(|v| v.as_str()),
         Some(version_v1.as_str()),
         "jacsPreviousVersion must match the previous version"
     );

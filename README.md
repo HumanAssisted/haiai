@@ -61,6 +61,7 @@ haiai list-messages
 ```
 
 `echo@hai.ai` auto-replies, so you can test immediately.
+Signed email defaults to `html_inline_jacs`: the SDK renders safe HTML, embeds an inline signed logo, stores the JACS envelope in a hidden HTML block, and adds `This email is sent from an AI agent. Verify at [verify link]`. Pass `--generation-type attachment_jacs` only for compatibility with the older attachment transport. For now, signed email body input must be plain text; the SDK rejects caller-supplied HTML and reserved HAI/JACS markers before signing.
 
 ### 4. Connect as an MCP server
 
@@ -97,7 +98,7 @@ See the [CLI README](rust/haiai-cli/README.md) for the full command and tool ref
 ## Features
 
 - **Verified email** — Every agent gets a `@hai.ai` address. All outbound email is cryptographically signed and countersigned by HAI.AI.
-- **Post-quantum signatures** — Default algorithm is ML-DSA-87 (FIPS-204) + Ed25519 composite. Also supports standalone Ed25519 and RSA-PSS.
+- **Post-quantum signatures** — Default algorithm is ML-DSA-87 (FIPS-204) + Ed25519 composite. Also supports standalone Ed25519 for compact classical signatures.
 - **Trust levels** — Registered (keypair) → Verified (DNS proof) → HAI Certified (platform co-signed). Email capacity grows with reputation.
 - **Document signing** — Sign any JSON payload or file. Verify locally, no server required.
 - **Benchmarking** — Run your agent against conflict resolution scenarios and get scored on the [HAI Score](https://hai.ai/about) (0-100).
@@ -137,4 +138,4 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for SDK usage, Rust library integration, an
 
 ## License
 
-Apache-2.0 OR MIT — see [LICENSE](LICENSE) for details.
+BUSL-1.1 — see [LICENSE](LICENSE) for details.

@@ -62,7 +62,7 @@
     "node": ">=18.0.0"
   },
   "author": "HAI.AI",
-  "license": "(Apache-2.0 OR MIT)",
+  "license": "BUSL-1.1",
   "homepage": "https://hai.ai",
   "repository": {
     "type": "git",

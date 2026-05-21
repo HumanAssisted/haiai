@@ -522,10 +522,10 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     assert!(tools.contains(&"hai_save_memory".to_string()));
     assert!(tools.contains(&"jacs_export_agent".to_string()));
     assert!(!tools.contains(&"jacs_memory_save".to_string()));
-    assert!(tools.contains(&"jacs_memory_recall".to_string()));
-    assert!(tools.contains(&"jacs_memory_list".to_string()));
-    assert!(tools.contains(&"jacs_memory_forget".to_string()));
-    assert!(tools.contains(&"jacs_memory_update".to_string()));
+    assert!(!tools.contains(&"jacs_memory_recall".to_string()));
+    assert!(!tools.contains(&"jacs_memory_list".to_string()));
+    assert!(!tools.contains(&"jacs_memory_forget".to_string()));
+    assert!(!tools.contains(&"jacs_memory_update".to_string()));
     assert!(!tools.contains(&"hai_create_agent".to_string()));
     assert!(tools.contains(&"hai_self_knowledge".to_string()));
 
@@ -536,10 +536,7 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
             "content": "MCP routed provider saves locally when storage is fs"
         }),
     );
-    assert_eq!(
-        saved_memory["structuredContent"]["key"].as_str().is_some(),
-        true
-    );
+    assert!(saved_memory["structuredContent"]["key"].as_str().is_some());
 
     let exported = session.call_tool(10, "jacs_export_agent", json!({}));
     let export_text = exported["content"][0]["text"]
@@ -619,10 +616,7 @@ fn hai_save_memory_traces_tool_storage_and_outcome() {
             "content": "MCP tracing proves local routed storage"
         }),
     );
-    assert_eq!(
-        saved_memory["structuredContent"]["key"].as_str().is_some(),
-        true
-    );
+    assert!(saved_memory["structuredContent"]["key"].as_str().is_some());
 
     thread::sleep(Duration::from_millis(100));
     let logs = std::fs::read_to_string(&log_file).expect("read mcp log file");

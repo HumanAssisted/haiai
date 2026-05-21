@@ -1,0 +1,37 @@
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+        language: system
+        always_run: true
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: bash -c 'cargo clippy --manifest-path rust/Cargo.toml --fix --allow-dirty --allow-staged --all-targets --all-features && cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings'
+        language: system
+        always_run: true
+        pass_filenames: false
+
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check --fix
+        language: system
+        always_run: true
+        pass_filenames: false
+
+      - id: ruff-format
+        name: ruff format
+        entry: ruff format
+        language: system
+        always_run: true
+        pass_filenames: false
+
+      - id: sloc
+        name: Update lines of code
+        entry: bash -c './sloc.sh && git add LINES_OF_CODE.md'
+        language: system
+        always_run: true
+        pass_filenames: false

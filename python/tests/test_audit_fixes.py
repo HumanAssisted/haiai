@@ -6,8 +6,6 @@ then pass after the fix is applied.
 
 from __future__ import annotations
 
-import json
-from typing import Any
 
 import pytest
 
@@ -17,6 +15,7 @@ from haiai.client import HaiClient
 # ===================================================================
 # Issue #3 -- hello_world must include agent_id in payload
 # ===================================================================
+
 
 class TestHelloWorldAgentId:
     """hello_world() calls ffi.hello() which receives include_test arg."""
@@ -66,6 +65,7 @@ class TestHelloWorldAgentId:
 # ===================================================================
 # Issue #6 -- free benchmark must include transport: "sse"
 # ===================================================================
+
 
 class TestBenchmarkTransport:
     """benchmark() calls ffi.benchmark() which handles transport."""
@@ -117,26 +117,33 @@ class TestBenchmarkTransport:
 # Issue #13 -- base URL validation
 # ===================================================================
 
+
 class TestBaseUrlValidation:
     """_make_url (or client construction) must reject invalid base URLs."""
 
-    @pytest.mark.parametrize("bad_url", [
-        "",
-        "ftp://example.com",
-        "file:///etc/passwd",
-        "not-a-url",
-        "://missing-scheme",
-        "javascript:alert(1)",
-    ])
+    @pytest.mark.parametrize(
+        "bad_url",
+        [
+            "",
+            "ftp://example.com",
+            "file:///etc/passwd",
+            "not-a-url",
+            "://missing-scheme",
+            "javascript:alert(1)",
+        ],
+    )
     def test_invalid_base_url_raises_valueerror(self, bad_url: str) -> None:
         with pytest.raises(ValueError, match="(?i)url|scheme|http"):
             HaiClient._make_url(bad_url, "/api/v1/test")
 
-    @pytest.mark.parametrize("good_url,expected", [
-        ("https://api.hai.ai", "https://api.hai.ai/api/v1/test"),
-        ("http://localhost:8080", "http://localhost:8080/api/v1/test"),
-        ("https://api.hai.ai/", "https://api.hai.ai/api/v1/test"),
-    ])
+    @pytest.mark.parametrize(
+        "good_url,expected",
+        [
+            ("https://api.hai.ai", "https://api.hai.ai/api/v1/test"),
+            ("http://localhost:8080", "http://localhost:8080/api/v1/test"),
+            ("https://api.hai.ai/", "https://api.hai.ai/api/v1/test"),
+        ],
+    )
     def test_valid_base_url_accepted(self, good_url: str, expected: str) -> None:
         result = HaiClient._make_url(good_url, "/api/v1/test")
         assert result == expected
@@ -146,6 +153,7 @@ class TestBaseUrlValidation:
 # Issue #18 -- list_messages & search_messages missing has_attachments
 #             list_messages also missing since/until
 # ===================================================================
+
 
 class TestMessageQueryParams:
     """list_messages and search_messages must support has_attachments,

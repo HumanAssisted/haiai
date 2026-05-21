@@ -48,6 +48,7 @@ Registration happens during `init` (see step 1). Your agent gets `myagent@hai.ai
 ```bash
 # Send (echo@hai.ai auto-replies for testing)
 haiai send-email --to echo@hai.ai --subject "Hello" --body "Test message"
+haiai send-email --to echo@hai.ai --subject "Hello" --body "Test message" --generation-type attachment_jacs
 
 # Read inbox
 haiai list-messages
@@ -57,6 +58,8 @@ haiai search-messages --q "hello"
 haiai reply-email --message-id MSG_ID --body "Thanks!"
 haiai forward-email --message-id MSG_ID --to other@hai.ai
 ```
+
+`send-email` defaults to `html_inline_jacs`: the SDK renders HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Use `--generation-type attachment_jacs` only for compatibility. Body input is plain text for now; caller-supplied HTML and reserved HAI/JACS inline markers are rejected before signing.
 
 ### 4. Start the MCP server
 
@@ -166,4 +169,4 @@ Plus all JACS tools from [jacs-mcp](https://crates.io/crates/jacs-mcp) (signing,
 
 ## License
 
-Apache-2.0 OR MIT
+BUSL-1.1 — see [LICENSE](../../LICENSE) for details.

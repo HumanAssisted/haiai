@@ -116,10 +116,12 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
         }
     }
 
-    /// Build a `JACS {jacsId}:{ts}:{sig}` Authorization header. Mirrors `HaiClient::build_auth_header`.
+    /// Build a `JACS {jacsId}:{ts}:{nonce}:{sig}` Authorization header.
+    /// Mirrors `HaiClient::build_auth_header`.
     fn build_auth_header(&self) -> Result<String> {
         let ts = OffsetDateTime::now_utc().unix_timestamp();
-        let message = format!("{}:{ts}", self.inner.jacs_id());
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let message = format!("{}:{ts}:{nonce}", self.inner.jacs_id());
         let signature = self.inner.sign_string(&message).map_err(|e| {
             tracing::warn!(
                 operation = "remote_build_auth_header",
@@ -128,7 +130,10 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
             );
             e
         })?;
-        Ok(format!("JACS {}:{ts}:{signature}", self.inner.jacs_id()))
+        Ok(format!(
+            "JACS {}:{ts}:{nonce}:{signature}",
+            self.inner.jacs_id()
+        ))
     }
 
     /// Split a `key` of shape `id` or `id:version` into `(id, Option<version>)`.

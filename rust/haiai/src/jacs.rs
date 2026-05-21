@@ -198,7 +198,7 @@ pub trait JacsProvider: Send + Sync {
     /// Return the key identifier used for signing.
     fn key_id(&self) -> &str;
 
-    /// Return the signing algorithm name (e.g., "ed25519", "rsa-pss-sha256").
+    /// Return the signing algorithm name (e.g., "ed25519", "pq2025").
     fn algorithm(&self) -> &str;
 
     /// Return canonical JSON text for `value` in the same way JACS signs.
@@ -232,6 +232,36 @@ pub trait JacsProvider: Send + Sync {
              or any provider that wraps a real JACS SimpleAgent"
                 .to_string(),
         ))
+    }
+
+    /// Sign the canonical HTML-inline email pre-image as a hidden JACS envelope.
+    fn sign_html_inline_email_envelope(
+        &self,
+        raw_email: &[u8],
+    ) -> Result<crate::email_inline::HtmlInlineJacsEnvelope> {
+        #[cfg(feature = "jacs-crate")]
+        let content = {
+            let payload = jacs::email::build_html_inline_email_signature_payload(raw_email)
+                .map_err(|e| {
+                    HaiError::Provider(format!("JACS inline email payload failed: {e}"))
+                })?;
+            serde_json::to_value(payload)?
+        };
+
+        #[cfg(not(feature = "jacs-crate"))]
+        let content = {
+            use sha2::Digest as _;
+            let digest = sha2::Sha256::digest(raw_email);
+            let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+            serde_json::json!({ "raw_email_sha256": format!("sha256:{hash}") })
+        };
+
+        let signed = self.sign_envelope(&serde_json::json!({
+            "jacsType": "email_inline_signature",
+            "jacsLevel": "raw",
+            "content": content,
+        }))?;
+        crate::email_inline::build_hidden_jacs_envelope(&signed)
     }
 
     /// Sign a file as a JACS file envelope (JACS attachment pipeline).
@@ -1166,6 +1196,15 @@ pub trait JacsEmailProvider: JacsProvider {
     /// Verify a signed email with the given public key.
     fn verify_email(&self, raw: &[u8], key: Vec<u8>) -> Result<Value>;
 
+    /// Verify either attachment or HTML-inline signed email through JACS.
+    #[cfg(feature = "jacs-crate")]
+    fn verify_signed_email_transport(
+        &self,
+        raw: &[u8],
+        key: Vec<u8>,
+        mode: jacs::email::VerificationMode,
+    ) -> Result<jacs::email::SignedEmailVerificationResult>;
+
     /// Add a JACS attachment to an email.
     fn add_jacs_attachment(&self, email: &[u8], doc: &[u8]) -> Result<Vec<u8>>;
 
@@ -1300,6 +1339,21 @@ impl JacsProvider for Box<dyn JacsProvider> {
         (**self).canonical_json(value)
     }
 
+    fn sign_envelope(&self, value: &Value) -> Result<String> {
+        (**self).sign_envelope(value)
+    }
+
+    fn sign_html_inline_email_envelope(
+        &self,
+        raw_email: &[u8],
+    ) -> Result<crate::email_inline::HtmlInlineJacsEnvelope> {
+        (**self).sign_html_inline_email_envelope(raw_email)
+    }
+
+    fn sign_file_envelope(&self, path: &str, embed: bool) -> Result<SignedDocument> {
+        (**self).sign_file_envelope(path, embed)
+    }
+
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
         (**self).sign_response(payload)
     }
@@ -1377,6 +1431,21 @@ impl JacsProvider for Box<dyn JacsMediaProvider> {
 
     fn canonical_json(&self, value: &Value) -> Result<String> {
         (**self).canonical_json(value)
+    }
+
+    fn sign_envelope(&self, value: &Value) -> Result<String> {
+        (**self).sign_envelope(value)
+    }
+
+    fn sign_html_inline_email_envelope(
+        &self,
+        raw_email: &[u8],
+    ) -> Result<crate::email_inline::HtmlInlineJacsEnvelope> {
+        (**self).sign_html_inline_email_envelope(raw_email)
+    }
+
+    fn sign_file_envelope(&self, path: &str, embed: bool) -> Result<SignedDocument> {
+        (**self).sign_file_envelope(path, embed)
     }
 
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
@@ -1897,7 +1966,7 @@ mod tests {
             intent: SaveIntent::Upsert,
         };
         assert_eq!(req.jacs_type, "soul");
-        assert_eq!(req.singleton, true);
+        assert!(req.singleton);
         assert!(matches!(req.intent, SaveIntent::Upsert));
         assert_eq!(req.logical_name, Some("SOUL.md".into()));
         assert_eq!(req.content_type, "text/markdown; profile=jacs-text-v1");

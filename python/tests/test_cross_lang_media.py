@@ -101,7 +101,9 @@ def _read_signed_with_checksum(name: str) -> bytes:
     bytes_ = (MEDIA_DIR / name).read_bytes()
     expected = _load_checksum(name)
     got = sha256(bytes_).hexdigest()
-    assert got == expected, f"checksum drift on fixtures/media/{name}: got {got}, expected {expected}"
+    assert got == expected, (
+        f"checksum drift on fixtures/media/{name}: got {got}, expected {expected}"
+    )
     return bytes_
 
 

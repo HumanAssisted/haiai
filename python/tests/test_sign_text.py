@@ -3,6 +3,7 @@
 Mirrors `rust/haiai-cli/tests/cli_text_tests.rs` and `rust/hai-binding-core`
 sign_text round-trip tests. Exercises the full Python SDK code path.
 """
+
 from __future__ import annotations
 
 import json

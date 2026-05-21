@@ -205,7 +205,7 @@ struct AgentSigner(Arc<StdMutex<Agent>>);
 impl JacsSigner for AgentSigner {
     fn sign_message(&self, data: &Value) -> Result<SignedDocument, JacsError> {
         let doc_content = json!({
-            "jacsType": "message",
+            "jacsType": "document",
             "jacsLevel": "raw",
             "content": data
         });
@@ -615,7 +615,7 @@ pub(crate) mod tests {
         let embedded = shared.embedded_provider().expect("embedded provider");
 
         let in_path = temp_dir.path().join("in.png");
-        fs::write(&in_path, &make_test_png(32, 32)).expect("write png");
+        fs::write(&in_path, make_test_png(32, 32)).expect("write png");
         let out_path = temp_dir.path().join("out.png");
 
         let signed = embedded
@@ -641,7 +641,7 @@ pub(crate) mod tests {
         let embedded = shared.embedded_provider().expect("embedded provider");
 
         let in_path = temp_dir.path().join("ex.png");
-        fs::write(&in_path, &make_test_png(32, 32)).expect("write png");
+        fs::write(&in_path, make_test_png(32, 32)).expect("write png");
         let out_path = temp_dir.path().join("ex_signed.png");
         embedded
             .sign_image(
@@ -673,7 +673,7 @@ pub(crate) mod tests {
         let embedded = shared.embedded_provider().expect("embedded provider");
 
         let in_path = temp_dir.path().join("in.png");
-        fs::write(&in_path, &make_test_png(32, 32)).expect("write png");
+        fs::write(&in_path, make_test_png(32, 32)).expect("write png");
         let out_path = temp_dir.path().join("local_signed.png");
 
         let signed = local

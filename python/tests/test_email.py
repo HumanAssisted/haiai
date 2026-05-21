@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
-import warnings
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
@@ -28,7 +26,6 @@ from haiai.models import (
     EmailReputationInfo,
     EmailStatus,
     EmailVolumeInfo,
-    SendEmailResult,
 )
 
 BASE_URL = "https://test.hai.ai"
@@ -53,7 +50,10 @@ class _FakeResponse:
     """Minimal fake httpx response for monkeypatching."""
 
     def __init__(
-        self, status_code: int, payload: Any = None, text: str = "",
+        self,
+        status_code: int,
+        payload: Any = None,
+        text: str = "",
     ) -> None:
         self.status_code = status_code
         self._payload = payload or {}
@@ -99,6 +99,26 @@ class TestSendEmailServerSideSigning:
         assert "jacs_signature" not in options
         assert "jacs_timestamp" not in options
 
+    def test_send_email_passes_idempotency_key(
+        self,
+        loaded_config: None,
+    ) -> None:
+        """send_email forwards idempotency_key to Rust core."""
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["send_email"] = {"message_id": "msg-idem", "status": "sent"}
+
+        client.send_email(
+            BASE_URL,
+            "bob@hai.ai",
+            "Hello",
+            "World",
+            idempotency_key="send-key-123",
+        )
+
+        options = mock_ffi.calls[0][1][0]
+        assert options["idempotency_key"] == "send-key-123"
+
     def test_send_email_passes_in_reply_to(
         self,
         loaded_config: None,
@@ -109,7 +129,9 @@ class TestSendEmailServerSideSigning:
 
         mock_ffi.responses["send_email"] = {"message_id": "msg-4", "status": "sent"}
 
-        client.send_email(BASE_URL, "bob@hai.ai", "Re: Hello", "Reply body", in_reply_to="orig-id")
+        client.send_email(
+            BASE_URL, "bob@hai.ai", "Re: Hello", "Reply body", in_reply_to="orig-id"
+        )
 
         assert len(mock_ffi.calls) == 1
         options = mock_ffi.calls[0][1][0]
@@ -138,7 +160,11 @@ class TestSendEmailServerSideSigning:
             },
         ]
         client.send_email(
-            BASE_URL, "bob@hai.ai", "With attachments", "Body", attachments=attachments,
+            BASE_URL,
+            "bob@hai.ai",
+            "With attachments",
+            "Body",
+            attachments=attachments,
         )
 
         options = mock_ffi.calls[0][1][0]
@@ -206,7 +232,9 @@ class TestSendEmailErrors:
         mock_ffi = client._get_ffi()
 
         def raise_on_send(options: Any) -> Any:
-            raise RateLimited("rate limited", status_code=429, resets_at="2026-03-01T00:00:00Z")
+            raise RateLimited(
+                "rate limited", status_code=429, resets_at="2026-03-01T00:00:00Z"
+            )
 
         mock_ffi.responses["send_email"] = raise_on_send
 
@@ -282,7 +310,6 @@ class TestSendEmailErrors:
 
 
 class TestGetMessage:
-
     def test_get_message_success(
         self,
         loaded_config: None,
@@ -301,6 +328,22 @@ class TestGetMessage:
             "delivery_status": "delivered",
             "read_at": None,
             "jacs_verified": True,
+            "owner_mail_auth_passed": True,
+            "owner_mail_auth_method": "dkim_spf",
+            "owner_mail_auth_details": {"dkim": "pass", "spf": "pass"},
+            "email_summary": "Owner asked for recent bounces.",
+            "musubi_summary": {
+                "trust_vector": {"phishing": 0.05, "prompt_injection": 0.1},
+                "content_risk": "low",
+                "escalate": False,
+                "explanation": "Authenticated owner mail with low content risk.",
+            },
+            "sender_reputation": {
+                "score": 91.5,
+                "tier": "established",
+                "email_score": 89.0,
+                "hai_score": 94.0,
+            },
         }
 
         client = HaiClient()
@@ -318,6 +361,20 @@ class TestGetMessage:
         assert result.direction == "inbound"
         assert result.delivery_status == "delivered"
         assert result.jacs_verified is True
+        assert result.owner_mail_auth_passed is True
+        assert result.owner_mail_auth_method == "dkim_spf"
+        assert result.owner_mail_auth_details == {"dkim": "pass", "spf": "pass"}
+        assert result.email_summary == "Owner asked for recent bounces."
+        assert result.musubi_summary is not None
+        assert result.musubi_summary.trust_vector == {
+            "phishing": 0.05,
+            "prompt_injection": 0.1,
+        }
+        assert result.musubi_summary.content_risk == "low"
+        assert result.musubi_summary.escalate is False
+        assert result.sender_reputation is not None
+        assert result.sender_reputation.tier == "established"
+        assert result.sender_reputation.hai_score == 94.0
 
     def test_get_message_404(
         self,
@@ -325,7 +382,6 @@ class TestGetMessage:
     ) -> None:
         client = HaiClient()
         mock_ffi = client._get_ffi()
-
 
         def raise_not_found(message_id: str) -> Any:
             raise HaiApiError("message not found", status_code=404)
@@ -343,13 +399,12 @@ class TestGetMessage:
 
 
 class TestDeleteMessage:
-
     def test_delete_message_success(
         self,
         loaded_config: None,
     ) -> None:
         client = HaiClient()
-        mock_ffi = client._get_ffi()
+        client._get_ffi()
 
         # delete_message returns None (void), so no response needed
 
@@ -362,7 +417,6 @@ class TestDeleteMessage:
     ) -> None:
         client = HaiClient()
         mock_ffi = client._get_ffi()
-
 
         def raise_not_found(message_id: str) -> Any:
             raise HaiApiError("message not found", status_code=404)
@@ -380,14 +434,12 @@ class TestDeleteMessage:
 
 
 class TestMarkUnread:
-
     def test_mark_unread_success(
         self,
         loaded_config: None,
     ) -> None:
         client = HaiClient()
         mock_ffi = client._get_ffi()
-
 
         result = client.mark_unread(BASE_URL, "msg-42")
         assert result is True
@@ -403,7 +455,6 @@ class TestMarkUnread:
 
 
 class TestSearchMessages:
-
     def test_search_messages_basic(
         self,
         loaded_config: None,
@@ -429,7 +480,10 @@ class TestSearchMessages:
         mock_ffi.responses["search_messages"] = search_results
 
         result = client.search_messages(
-            BASE_URL, q="hello", direction="inbound", limit=10,
+            BASE_URL,
+            q="hello",
+            direction="inbound",
+            limit=10,
         )
         assert len(result) == 1
         assert result[0].id == "msg-1"
@@ -467,7 +521,6 @@ class TestSearchMessages:
 
 
 class TestGetUnreadCount:
-
     def test_get_unread_count_success(
         self,
         loaded_config: None,
@@ -499,7 +552,6 @@ class TestGetUnreadCount:
 
 
 class TestReply:
-
     def test_reply_fetches_original_and_sends(
         self,
         loaded_config: None,
@@ -522,7 +574,10 @@ class TestReply:
         mock_ffi = client._get_ffi()
 
         mock_ffi.responses["get_message"] = original_msg
-        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-reply", "status": "sent"}
+        mock_ffi.responses["send_signed_email"] = {
+            "message_id": "msg-reply",
+            "status": "sent",
+        }
 
         result = client.reply(BASE_URL, "msg-orig", "The answer is 4.")
 
@@ -559,7 +614,10 @@ class TestReply:
         mock_ffi = client._get_ffi()
 
         mock_ffi.responses["get_message"] = original_msg
-        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-reply", "status": "sent"}
+        mock_ffi.responses["send_signed_email"] = {
+            "message_id": "msg-reply",
+            "status": "sent",
+        }
 
         client.reply(BASE_URL, "msg-orig", "Answer", subject="Custom Subject")
         send_options = mock_ffi.calls[1][1][0]
@@ -582,8 +640,12 @@ class TestEmailUrlConstruction:
         mock_ffi = client._get_ffi()
 
         mock_ffi.responses["get_message"] = {
-            "id": "m1", "from_address": "", "to_address": "",
-            "subject": "", "body_text": "", "created_at": "",
+            "id": "m1",
+            "from_address": "",
+            "to_address": "",
+            "subject": "",
+            "body_text": "",
+            "created_at": "",
         }
 
         client.get_message(BASE_URL, "msg-42")
@@ -596,7 +658,6 @@ class TestEmailUrlConstruction:
     ) -> None:
         client = HaiClient()
         mock_ffi = client._get_ffi()
-
 
         client.delete_message(BASE_URL, "msg-42")
         assert mock_ffi.calls[0][0] == "delete_message"
@@ -657,7 +718,10 @@ class TestReplyThreading:
         mock_ffi = client._get_ffi()
 
         mock_ffi.responses["get_message"] = original_msg
-        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-reply", "status": "sent"}
+        mock_ffi.responses["send_signed_email"] = {
+            "message_id": "msg-reply",
+            "status": "sent",
+        }
 
         client.reply(BASE_URL, "db-uuid-123", "Thanks!")
 
@@ -688,7 +752,10 @@ class TestReplyThreading:
         mock_ffi = client._get_ffi()
 
         mock_ffi.responses["get_message"] = original_msg
-        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-reply", "status": "sent"}
+        mock_ffi.responses["send_signed_email"] = {
+            "message_id": "msg-reply",
+            "status": "sent",
+        }
 
         client.reply(BASE_URL, "db-uuid-456", "Thanks!")
 
@@ -713,9 +780,10 @@ class TestSendEmailErrorCodeParsing:
         client = HaiClient()
         mock_ffi = client._get_ffi()
 
-
         def raise_on_send(options: Any) -> Any:
-            raise EmailNotActive("Agent email is allocated and cannot send messages", status_code=403)
+            raise EmailNotActive(
+                "Agent email is allocated and cannot send messages", status_code=403
+            )
 
         mock_ffi.responses["send_email"] = raise_on_send
 
@@ -731,7 +799,6 @@ class TestSendEmailErrorCodeParsing:
         """error_code=RECIPIENT_NOT_FOUND on 400 must raise RecipientNotFound."""
         client = HaiClient()
         mock_ffi = client._get_ffi()
-
 
         def raise_on_send(options: Any) -> Any:
             raise RecipientNotFound("Invalid recipient", status_code=400)
@@ -750,7 +817,6 @@ class TestSendEmailErrorCodeParsing:
         """error_code=RATE_LIMITED on 429 must raise RateLimited."""
         client = HaiClient()
         mock_ffi = client._get_ffi()
-
 
         def raise_on_send(options: Any) -> Any:
             raise RateLimited("Daily limit reached", status_code=429)
@@ -803,6 +869,52 @@ class TestHaiErrorFromResponseErrorCode:
 class TestSendSignedEmail:
     """Verify send_signed_email delegates to send_email (deprecated)."""
 
+    def test_send_signed_email_defaults_to_html_inline_jacs(
+        self,
+        loaded_config: None,
+    ) -> None:
+        """send_signed_email requests the Rust core HTML-inline default."""
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
+
+        mock_ffi.responses["send_signed_email"] = {
+            "message_id": "msg-inline-1",
+            "status": "sent",
+        }
+
+        result = client.send_signed_email(
+            BASE_URL, "bob@hai.ai", "Hello Signed", "Signed body"
+        )
+
+        assert result.message_id == "msg-inline-1"
+        assert result.status == "sent"
+        assert mock_ffi.calls[0][0] == "send_signed_email"
+        options = mock_ffi.calls[0][1][0]
+        assert options["generation_type"] == "html_inline_jacs"
+
+    def test_send_signed_email_passes_idempotency_key(
+        self,
+        loaded_config: None,
+    ) -> None:
+        """send_signed_email forwards idempotency_key to Rust core."""
+        client = HaiClient()
+        mock_ffi = client._get_ffi()
+        mock_ffi.responses["send_signed_email"] = {
+            "message_id": "msg-idem-signed",
+            "status": "sent",
+        }
+
+        client.send_signed_email(
+            BASE_URL,
+            "bob@hai.ai",
+            "Hello Signed",
+            "Signed body",
+            idempotency_key="signed-key-123",
+        )
+
+        options = mock_ffi.calls[0][1][0]
+        assert options["idempotency_key"] == "signed-key-123"
+
     def test_send_signed_email_delegates_to_send_email(
         self,
         loaded_config: None,
@@ -811,10 +923,17 @@ class TestSendSignedEmail:
         client = HaiClient()
         mock_ffi = client._get_ffi()
 
-        mock_ffi.responses["send_signed_email"] = {"message_id": "msg-signed-1", "status": "sent"}
+        mock_ffi.responses["send_signed_email"] = {
+            "message_id": "msg-signed-1",
+            "status": "sent",
+        }
 
         result = client.send_signed_email(
-            BASE_URL, "bob@hai.ai", "Hello Signed", "Signed body",
+            BASE_URL,
+            "bob@hai.ai",
+            "Hello Signed",
+            "Signed body",
+            generation_type="attachment_jacs",
         )
 
         assert result.message_id == "msg-signed-1"
@@ -824,6 +943,7 @@ class TestSendSignedEmail:
         options = mock_ffi.calls[0][1][0]
         assert options["to"] == "bob@hai.ai"
         assert options["subject"] == "Hello Signed"
+        assert options["generation_type"] == "attachment_jacs"
 
     def test_send_signed_email_fails_without_agent_email(
         self,
@@ -856,7 +976,10 @@ class TestSendEmailCcBccLabels:
         mock_ffi.responses["send_email"] = {"message_id": "msg-cc", "status": "sent"}
 
         client.send_email(
-            BASE_URL, "bob@hai.ai", "Hello", "World",
+            BASE_URL,
+            "bob@hai.ai",
+            "Hello",
+            "World",
             cc=["carol@hai.ai", "dave@hai.ai"],
             bcc=["eve@hai.ai"],
             labels=["important", "follow-up"],
@@ -993,8 +1116,12 @@ class TestEmailMessageNewFields:
 
     def test_email_message_defaults(self) -> None:
         msg = EmailMessage(
-            id="m1", from_address="a@hai.ai", to_address="b@hai.ai",
-            subject="Hi", body_text="Body", created_at="2026-01-01T00:00:00Z",
+            id="m1",
+            from_address="a@hai.ai",
+            to_address="b@hai.ai",
+            subject="Hi",
+            body_text="Body",
+            created_at="2026-01-01T00:00:00Z",
         )
         assert msg.cc_addresses == []
         assert msg.labels == []
@@ -1002,9 +1129,15 @@ class TestEmailMessageNewFields:
 
     def test_email_message_with_new_fields(self) -> None:
         msg = EmailMessage(
-            id="m1", from_address="a@hai.ai", to_address="b@hai.ai",
-            subject="Hi", body_text="Body", created_at="2026-01-01T00:00:00Z",
-            cc_addresses=["c@hai.ai"], labels=["urgent"], folder="archive",
+            id="m1",
+            from_address="a@hai.ai",
+            to_address="b@hai.ai",
+            subject="Hi",
+            body_text="Body",
+            created_at="2026-01-01T00:00:00Z",
+            cc_addresses=["c@hai.ai"],
+            labels=["urgent"],
+            folder="archive",
         )
         assert msg.cc_addresses == ["c@hai.ai"]
         assert msg.labels == ["urgent"]
@@ -1015,15 +1148,39 @@ class TestEmailMessageNewFields:
         loaded_config: None,
     ) -> None:
         """list_messages must populate cc_addresses, labels, folder from response."""
-        msg_data = [{
-            "id": "m1", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
-            "subject": "Test", "body_text": "Body", "created_at": "2026-01-01T00:00:00Z",
-            "direction": "inbound", "message_id": "<m1@hai.ai>",
-            "is_read": False, "delivery_status": "delivered",
-            "cc_addresses": ["c@hai.ai", "d@hai.ai"],
-            "labels": ["important"],
-            "folder": "archive",
-        }]
+        msg_data = [
+            {
+                "id": "m1",
+                "from_address": "a@hai.ai",
+                "to_address": "b@hai.ai",
+                "subject": "Test",
+                "body_text": "Body",
+                "created_at": "2026-01-01T00:00:00Z",
+                "direction": "inbound",
+                "message_id": "<m1@hai.ai>",
+                "is_read": False,
+                "delivery_status": "delivered",
+                "cc_addresses": ["c@hai.ai", "d@hai.ai"],
+                "labels": ["important"],
+                "folder": "archive",
+                "owner_mail_auth_passed": True,
+                "owner_mail_auth_method": "dkim_spf",
+                "owner_mail_auth_details": {"dkim": "pass", "spf": "pass"},
+                "email_summary": "Owner asked for recent bounces.",
+                "musubi_summary": {
+                    "trust_vector": {"phishing": 0.05},
+                    "content_risk": "low",
+                    "escalate": False,
+                    "explanation": "Authenticated owner mail with low content risk.",
+                },
+                "sender_reputation": {
+                    "score": 91.5,
+                    "tier": "established",
+                    "email_score": 89.0,
+                    "hai_score": 94.0,
+                },
+            }
+        ]
 
         client = HaiClient()
         mock_ffi = client._get_ffi()
@@ -1035,6 +1192,13 @@ class TestEmailMessageNewFields:
         assert result[0].cc_addresses == ["c@hai.ai", "d@hai.ai"]
         assert result[0].labels == ["important"]
         assert result[0].folder == "archive"
+        assert result[0].owner_mail_auth_passed is True
+        assert result[0].owner_mail_auth_method == "dkim_spf"
+        assert result[0].email_summary == "Owner asked for recent bounces."
+        assert result[0].musubi_summary is not None
+        assert result[0].musubi_summary.trust_vector == {"phishing": 0.05}
+        assert result[0].sender_reputation is not None
+        assert result[0].sender_reputation.tier == "established"
 
 
 # ---------------------------------------------------------------
@@ -1083,7 +1247,6 @@ class TestForward:
         client = HaiClient()
         mock_ffi = client._get_ffi()
 
-
         def raise_on_forward(params: Any) -> Any:
             raise HaiAuthError("Forbidden", status_code=403)
 
@@ -1108,7 +1271,6 @@ class TestArchiveUnarchive:
         client = HaiClient()
         mock_ffi = client._get_ffi()
 
-
         result = client.archive(BASE_URL, "msg-42")
         assert result is True
         assert mock_ffi.calls[0][0] == "archive"
@@ -1121,7 +1283,6 @@ class TestArchiveUnarchive:
         client = HaiClient()
         mock_ffi = client._get_ffi()
 
-
         result = client.unarchive(BASE_URL, "msg-42")
         assert result is True
         assert mock_ffi.calls[0][0] == "unarchive"
@@ -1133,7 +1294,6 @@ class TestArchiveUnarchive:
     ) -> None:
         client = HaiClient()
         mock_ffi = client._get_ffi()
-
 
         def raise_on_archive(message_id: str) -> Any:
             raise HaiAuthError("Unauthorized", status_code=401)
@@ -1212,7 +1372,6 @@ class TestContacts:
         client = HaiClient()
         mock_ffi = client._get_ffi()
 
-
         def raise_on_contacts() -> Any:
             raise HaiAuthError("Forbidden", status_code=403)
 
@@ -1233,8 +1392,12 @@ class TestEmailMessageReplyTextFields:
     def test_defaults_are_none(self) -> None:
         """New optional fields default to None when not supplied."""
         msg = EmailMessage(
-            id="m1", from_address="a@hai.ai", to_address="b@hai.ai",
-            subject="Hi", body_text="Body", created_at="2026-01-01T00:00:00Z",
+            id="m1",
+            from_address="a@hai.ai",
+            to_address="b@hai.ai",
+            subject="Hi",
+            body_text="Body",
+            created_at="2026-01-01T00:00:00Z",
         )
         assert msg.body_text_clean is None
         assert msg.quoted_text is None
@@ -1243,13 +1406,21 @@ class TestEmailMessageReplyTextFields:
     def test_construction_with_new_fields(self) -> None:
         """EmailMessage accepts body_text_clean, quoted_text, and thread."""
         child = EmailMessage(
-            id="m0", from_address="b@hai.ai", to_address="a@hai.ai",
-            subject="Re: Hi", body_text="Previous msg", created_at="2026-01-01T00:00:00Z",
-            body_text_clean="Previous msg", quoted_text=None,
+            id="m0",
+            from_address="b@hai.ai",
+            to_address="a@hai.ai",
+            subject="Re: Hi",
+            body_text="Previous msg",
+            created_at="2026-01-01T00:00:00Z",
+            body_text_clean="Previous msg",
+            quoted_text=None,
         )
         msg = EmailMessage(
-            id="m1", from_address="a@hai.ai", to_address="b@hai.ai",
-            subject="Re: Hi", body_text="New text\n\n> Previous msg",
+            id="m1",
+            from_address="a@hai.ai",
+            to_address="b@hai.ai",
+            subject="Re: Hi",
+            body_text="New text\n\n> Previous msg",
             created_at="2026-01-01T01:00:00Z",
             body_text_clean="New text",
             quoted_text="Previous msg",
@@ -1266,15 +1437,22 @@ class TestEmailMessageReplyTextFields:
         loaded_config: None,
     ) -> None:
         """list_messages must populate body_text_clean and quoted_text."""
-        msg_data = [{
-            "id": "m1", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
-            "subject": "Re: Hi", "body_text": "New\n\n> Old",
-            "created_at": "2026-01-01T00:00:00Z",
-            "direction": "inbound", "message_id": "<m1@hai.ai>",
-            "is_read": False, "delivery_status": "delivered",
-            "body_text_clean": "New",
-            "quoted_text": "Old",
-        }]
+        msg_data = [
+            {
+                "id": "m1",
+                "from_address": "a@hai.ai",
+                "to_address": "b@hai.ai",
+                "subject": "Re: Hi",
+                "body_text": "New\n\n> Old",
+                "created_at": "2026-01-01T00:00:00Z",
+                "direction": "inbound",
+                "message_id": "<m1@hai.ai>",
+                "is_read": False,
+                "delivery_status": "delivered",
+                "body_text_clean": "New",
+                "quoted_text": "Old",
+            }
+        ]
 
         client = HaiClient()
         mock_ffi = client._get_ffi()
@@ -1291,13 +1469,20 @@ class TestEmailMessageReplyTextFields:
         loaded_config: None,
     ) -> None:
         """When API omits body_text_clean/quoted_text they should be None."""
-        msg_data = [{
-            "id": "m1", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
-            "subject": "Hi", "body_text": "No quoting here",
-            "created_at": "2026-01-01T00:00:00Z",
-            "direction": "inbound", "message_id": "<m1@hai.ai>",
-            "is_read": False, "delivery_status": "delivered",
-        }]
+        msg_data = [
+            {
+                "id": "m1",
+                "from_address": "a@hai.ai",
+                "to_address": "b@hai.ai",
+                "subject": "Hi",
+                "body_text": "No quoting here",
+                "created_at": "2026-01-01T00:00:00Z",
+                "direction": "inbound",
+                "message_id": "<m1@hai.ai>",
+                "is_read": False,
+                "delivery_status": "delivered",
+            }
+        ]
 
         client = HaiClient()
         mock_ffi = client._get_ffi()
@@ -1314,20 +1499,30 @@ class TestEmailMessageReplyTextFields:
     ) -> None:
         """get_message must populate body_text_clean, quoted_text, and thread."""
         msg_data = {
-            "id": "m2", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
-            "subject": "Re: Hi", "body_text": "Reply\n\n> Original",
+            "id": "m2",
+            "from_address": "a@hai.ai",
+            "to_address": "b@hai.ai",
+            "subject": "Re: Hi",
+            "body_text": "Reply\n\n> Original",
             "created_at": "2026-01-01T01:00:00Z",
-            "direction": "inbound", "message_id": "<m2@hai.ai>",
-            "is_read": False, "delivery_status": "delivered",
+            "direction": "inbound",
+            "message_id": "<m2@hai.ai>",
+            "is_read": False,
+            "delivery_status": "delivered",
             "body_text_clean": "Reply",
             "quoted_text": "Original",
             "thread": [
                 {
-                    "id": "m1", "from_address": "b@hai.ai", "to_address": "a@hai.ai",
-                    "subject": "Hi", "body_text": "Original",
+                    "id": "m1",
+                    "from_address": "b@hai.ai",
+                    "to_address": "a@hai.ai",
+                    "subject": "Hi",
+                    "body_text": "Original",
                     "created_at": "2026-01-01T00:00:00Z",
-                    "direction": "outbound", "message_id": "<m1@hai.ai>",
-                    "is_read": True, "delivery_status": "delivered",
+                    "direction": "outbound",
+                    "message_id": "<m1@hai.ai>",
+                    "is_read": True,
+                    "delivery_status": "delivered",
                     "body_text_clean": "Original",
                 },
             ],
@@ -1354,11 +1549,16 @@ class TestEmailMessageReplyTextFields:
     ) -> None:
         """get_message with no thread key should leave thread as None."""
         msg_data = {
-            "id": "m1", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
-            "subject": "Hi", "body_text": "Body",
+            "id": "m1",
+            "from_address": "a@hai.ai",
+            "to_address": "b@hai.ai",
+            "subject": "Hi",
+            "body_text": "Body",
             "created_at": "2026-01-01T00:00:00Z",
-            "direction": "inbound", "message_id": "<m1@hai.ai>",
-            "is_read": False, "delivery_status": "delivered",
+            "direction": "inbound",
+            "message_id": "<m1@hai.ai>",
+            "is_read": False,
+            "delivery_status": "delivered",
         }
 
         client = HaiClient()
@@ -1375,11 +1575,16 @@ class TestEmailMessageReplyTextFields:
     ) -> None:
         """get_message with empty thread list should return empty list."""
         msg_data = {
-            "id": "m1", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
-            "subject": "Hi", "body_text": "Body",
+            "id": "m1",
+            "from_address": "a@hai.ai",
+            "to_address": "b@hai.ai",
+            "subject": "Hi",
+            "body_text": "Body",
             "created_at": "2026-01-01T00:00:00Z",
-            "direction": "inbound", "message_id": "<m1@hai.ai>",
-            "is_read": False, "delivery_status": "delivered",
+            "direction": "inbound",
+            "message_id": "<m1@hai.ai>",
+            "is_read": False,
+            "delivery_status": "delivered",
             "thread": [],
         }
 
@@ -1396,15 +1601,22 @@ class TestEmailMessageReplyTextFields:
         loaded_config: None,
     ) -> None:
         """search_messages must populate body_text_clean and quoted_text."""
-        msg_data = [{
-            "id": "m1", "from_address": "a@hai.ai", "to_address": "b@hai.ai",
-            "subject": "Re: Hi", "body_text": "New\n\n> Old",
-            "created_at": "2026-01-01T00:00:00Z",
-            "direction": "inbound", "message_id": "<m1@hai.ai>",
-            "is_read": False, "delivery_status": "delivered",
-            "body_text_clean": "New",
-            "quoted_text": "Old",
-        }]
+        msg_data = [
+            {
+                "id": "m1",
+                "from_address": "a@hai.ai",
+                "to_address": "b@hai.ai",
+                "subject": "Re: Hi",
+                "body_text": "New\n\n> Old",
+                "created_at": "2026-01-01T00:00:00Z",
+                "direction": "inbound",
+                "message_id": "<m1@hai.ai>",
+                "is_read": False,
+                "delivery_status": "delivered",
+                "body_text_clean": "New",
+                "quoted_text": "Old",
+            }
+        ]
 
         client = HaiClient()
         mock_ffi = client._get_ffi()
@@ -1458,8 +1670,12 @@ class TestEmailStatusNestedFields:
             external_sends_today=3,
             last_tier_change="2026-01-01T00:00:00Z",
             volume=EmailVolumeInfo(sent_total=500, received_total=300, sent_24h=10),
-            delivery=EmailDeliveryInfo(bounce_count=2, spam_report_count=1, delivery_rate=0.98),
-            reputation=EmailReputationInfo(score=85.5, tier="established", email_score=90.0, hai_score=80.0),
+            delivery=EmailDeliveryInfo(
+                bounce_count=2, spam_report_count=1, delivery_rate=0.98
+            ),
+            reputation=EmailReputationInfo(
+                score=85.5, tier="established", email_score=90.0, hai_score=80.0
+            ),
         )
         assert status.volume is not None
         assert status.volume.sent_total == 500

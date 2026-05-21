@@ -1,3 +1,10 @@
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 // Package haiai provides the Go SDK for the HAI.AI agent benchmarking platform.
 //
 // All authentication uses JACS agent identity (Ed25519 signatures).
@@ -751,6 +758,9 @@ func (c *Client) SendSignedEmail(ctx context.Context, opts SendEmailOptions) (*S
 		if opts.Attachments[i].DataBase64 == "" && len(opts.Attachments[i].Data) > 0 {
 			opts.Attachments[i].DataBase64 = base64.StdEncoding.EncodeToString(opts.Attachments[i].Data)
 		}
+	}
+	if opts.GenerationType == "" {
+		opts.GenerationType = EmailGenerationTypeHtmlInlineJacs
 	}
 
 	optsJSON, err := json.Marshal(opts)

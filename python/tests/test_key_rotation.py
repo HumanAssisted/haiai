@@ -7,16 +7,14 @@ These tests verify the rotation workflow (archive, generate, sign, config update
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 from haiai.client import HaiClient
-from haiai.config import load, reset, get_config
+from haiai.config import load, reset
 from haiai.errors import HaiAuthError
-from haiai.models import AgentConfig, RotationResult
+from haiai.models import RotationResult
 
 
 @pytest.fixture(autouse=True)
@@ -60,8 +58,12 @@ def agent_dir(tmp_path, monkeypatch):
         )
 
         # Find generated key files
-        priv_path = Path(info.get("private_key_path", str(key_dir / "agent_private_key.pem")))
-        pub_path = Path(info.get("public_key_path", str(key_dir / "agent_public_key.pem")))
+        priv_path = Path(
+            info.get("private_key_path", str(key_dir / "agent_private_key.pem"))
+        )
+        pub_path = Path(
+            info.get("public_key_path", str(key_dir / "agent_public_key.pem"))
+        )
 
         # Write a HAI-format config
         config = {
@@ -76,8 +78,12 @@ def agent_dir(tmp_path, monkeypatch):
             "tmp_path": tmp_path,
             "key_dir": key_dir,
             "config_path": str(config_path),
-            "priv_path": priv_path if priv_path.is_file() else key_dir / "agent_private_key.pem",
-            "pub_path": pub_path if pub_path.is_file() else key_dir / "agent_public_key.pem",
+            "priv_path": priv_path
+            if priv_path.is_file()
+            else key_dir / "agent_private_key.pem",
+            "pub_path": pub_path
+            if pub_path.is_file()
+            else key_dir / "agent_public_key.pem",
             "has_real_jacs": True,
         }
 
@@ -85,8 +91,12 @@ def agent_dir(tmp_path, monkeypatch):
         # No JACS bindings -- create placeholder files
         priv_path = key_dir / "agent_private_key.pem"
         pub_path = key_dir / "agent_public_key.pem"
-        priv_path.write_text("-----BEGIN ENCRYPTED PRIVATE KEY-----\nplaceholder\n-----END ENCRYPTED PRIVATE KEY-----\n")
-        pub_path.write_text("-----BEGIN PUBLIC KEY-----\nplaceholder\n-----END PUBLIC KEY-----\n")
+        priv_path.write_text(
+            "-----BEGIN ENCRYPTED PRIVATE KEY-----\nplaceholder\n-----END ENCRYPTED PRIVATE KEY-----\n"
+        )
+        pub_path.write_text(
+            "-----BEGIN PUBLIC KEY-----\nplaceholder\n-----END PUBLIC KEY-----\n"
+        )
 
         config = {
             "jacsAgentName": "test-rotation-agent",
@@ -143,7 +153,7 @@ class TestRotateKeysGeneratesNewKeypair:
         _load_agent(agent_dir)
         client = HaiClient()
 
-        result = client.rotate_keys(
+        client.rotate_keys(
             register_with_hai=False,
             config_path=agent_dir["config_path"],
         )
@@ -155,7 +165,7 @@ class TestRotateKeysGeneratesNewKeypair:
         # Old keys should be archived with version suffix
         key_dir = agent_dir["key_dir"]
         orig_priv = agent_dir["priv_path"]
-        archive_priv = orig_priv.with_suffix(f".v1-original.pem")
+        archive_priv = orig_priv.with_suffix(".v1-original.pem")
         assert archive_priv.is_file(), (
             f"Old private key should be archived at {archive_priv}. "
             f"Files in key_dir: {list(key_dir.iterdir())}"
@@ -212,9 +222,11 @@ class TestRotateKeysHaiFailureKeepsLocal:
 
         def patched_get_ffi(self_client):
             ffi = original_get_ffi(self_client)
+
             # Make register always raise
             def raise_on_register(options):
                 raise HaiApiError("Internal Server Error", status_code=500)
+
             ffi.responses["register"] = raise_on_register
             return ffi
 
@@ -280,7 +292,9 @@ class TestRotateKeysVersionIsUUID:
 class TestRotateKeysFixtureContract:
     def test_rotation_result_fields_match_fixture(self):
         """Verify RotationResult has all fields defined in the shared fixture."""
-        fixture_path = Path(__file__).parent.parent.parent / "fixtures" / "rotation_result.json"
+        fixture_path = (
+            Path(__file__).parent.parent.parent / "fixtures" / "rotation_result.json"
+        )
         if not fixture_path.is_file():
             pytest.skip("Shared fixture not found")
 
@@ -288,6 +302,7 @@ class TestRotateKeysFixtureContract:
         fixture_fields = set(fixture.keys())
 
         import dataclasses
+
         result_fields = {f.name for f in dataclasses.fields(RotationResult)}
 
         assert fixture_fields == result_fields, (

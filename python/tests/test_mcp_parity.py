@@ -19,7 +19,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
 
 from haiai._ffi_adapter import FFIAdapter
 
@@ -139,9 +138,7 @@ class TestMCPToolContractParity:
             ffi_methods = MCP_TOOL_TO_FFI_METHODS.get(tool_name)
             if ffi_methods is None:
                 # Unknown tool in fixture -- mapping needs update
-                missing.append(
-                    f"{tool_name}: no mapping in MCP_TOOL_TO_FFI_METHODS"
-                )
+                missing.append(f"{tool_name}: no mapping in MCP_TOOL_TO_FFI_METHODS")
                 continue
             for method in ffi_methods:
                 if method not in adapter_methods:
@@ -149,9 +146,8 @@ class TestMCPToolContractParity:
                         f"{tool_name} -> FFI method '{method}' not in FFIAdapter"
                     )
 
-        assert not missing, (
-            "MCP tools missing FFI adapter backing:\n"
-            + "\n".join(f"  - {m}" for m in missing)
+        assert not missing, "MCP tools missing FFI adapter backing:\n" + "\n".join(
+            f"  - {m}" for m in missing
         )
 
     def test_mapping_covers_all_fixture_tools(self) -> None:

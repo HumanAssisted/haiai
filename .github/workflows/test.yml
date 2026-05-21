@@ -10,6 +10,9 @@ concurrency:
   group: test-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  JACS_REF: v0.10.2
+
 jobs:
   crypto-policy:
     runs-on: ubuntu-latest
@@ -71,7 +74,7 @@ jobs:
       - name: Setup Rust (for haiipy build via maturin)
         uses: dtolnay/rust-toolchain@stable
       - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
       - name: Create virtualenv and install maturin
         run: |
           python -m venv .venv
@@ -150,7 +153,7 @@ jobs:
       - name: Setup Rust (for haiinpm build via napi-rs)
         uses: dtolnay/rust-toolchain@stable
       - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
       - name: Build haiinpm native addon
         run: |
           cd rust/haiinpm
@@ -236,13 +239,13 @@ jobs:
       - name: Setup Rust (for jacsgo build)
         uses: dtolnay/rust-toolchain@stable
       - name: Clone JACS (for workspace patch + jacsgo build)
-        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
       - name: Cache jacsgo shared library
         id: cache-jacsgo
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/../JACS/jacsgo/build
-          key: jacsgo-${{ runner.os }}-${{ hashFiles('.github/workflows/test.yml') }}
+          key: jacsgo-${{ runner.os }}-${{ env.JACS_REF }}-${{ hashFiles('.github/workflows/test.yml') }}
       - name: Build jacsgo shared library
         if: steps.cache-jacsgo.outputs.cache-hit != 'true'
         run: cd ${{ github.workspace }}/../JACS/jacsgo && make build-rust
@@ -291,7 +294,7 @@ jobs:
         with:
           toolchain: ${{ matrix.rust-version }}
       - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
       - name: Run tests (all workspace crates including hai-binding-core, haiinpm, haiipy, haiigo)
         run: |
           cd rust
@@ -331,7 +334,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Clone JACS (for workspace patch + jacsgo build)
-        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
 
       # Build all native FFI artifacts up front.
       - name: Build haiigo cdylib (libhaiigo)
@@ -435,4 +438,3 @@ jobs:
           LD_LIBRARY_PATH: "${{ github.workspace }}/../JACS/jacsgo/build:${{ github.workspace }}/rust/target/release"
           JACS_PRIVATE_KEY_PASSWORD: smoke-password
         run: make smoke-go
-

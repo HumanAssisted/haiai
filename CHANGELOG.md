@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **HTML-inline signed email is now the default signed-email generation mode.** Rust, Python, Node, Go, CLI, and MCP callers can still request `attachment_jacs` for compatibility; otherwise outbound signed email is generated as HTML with an inline signed logo, hidden JACS envelope, and verify footer link.
+- Added a canonical SHA-256 constant and unit test for the bundled HAI verification logo so SDK/server asset drift is caught in CI.
+- **Hosted-agent email evidence fields are exposed across SDKs.** Rust, Python, Node, and Go `EmailMessage` DTOs now deserialize owner ordinary-mail auth evidence, deterministic email summaries, compact Musubi summaries, and sender reputation snapshots with safe defaults for older API responses.
+
+### Changed
+
+- **Signed-email inputs are strict in HTML-inline mode.** The SDK owns HTML rendering for now: callers pass plain text, and the SDK rejects user HTML tokens plus reserved HAI/JACS inline markers before signing so generated signature artifacts cannot be injected or confused with user content.
+- Node and Go signed-email facades now pass `html_inline_jacs` explicitly when callers omit a generation type, matching Python and keeping the cross-language default visible at the FFI boundary.
+- **JACS schema consolidation compatibility.** HAIAI now treats retired JACS application schemas as generic signed documents in MCP/docs/email assertions and refreshes embedded self-knowledge from the current JACS docs.
+
+### Fixed
+
+- **HTML-inline signed email through FFI bindings.** `Box<dyn JacsMediaProvider>` now forwards envelope-signing methods, so the default `html_inline_jacs` path works for Python, Node, Go, and other binding-core callers backed by `LocalJacsProvider`.
+
 ## 0.4.0 (2026-04-28)
 
 ### Breaking

@@ -17,13 +17,13 @@ use crate::jacs::JacsProvider;
 use crate::types::{
     AgentKeyHistory, AgentVerificationResult, Contact, CreateEmailTemplateOptions,
     DeleteUsernameResult, DnsCertifiedResult, DnsCertifiedRunOptions, DocumentVerificationResult,
-    EmailMessage, EmailStatus, EmailTemplate, FreeChaoticResult, HaiEvent, HelloResult,
-    JobResponseResult, ListEmailTemplatesOptions, ListEmailTemplatesResult, ListMessagesOptions,
-    ProRunOptions, ProRunResult, PublicKeyInfo, RawEmailResponse, RegisterAgentOptions,
-    RegistrationResult, RotateKeysOptions, RotationResult, SearchOptions, SendEmailOptions,
-    SendEmailResult, TranscriptMessage, TransportType, UpdateAgentResult,
-    UpdateEmailTemplateOptions, UpdateUsernameResult, VerifyAgentDocumentRequest,
-    VerifyAgentResult,
+    EmailGenerationType, EmailMessage, EmailStatus, EmailTemplate, FreeChaoticResult, HaiEvent,
+    HelloResult, JobResponseResult, ListEmailTemplatesOptions, ListEmailTemplatesResult,
+    ListMessagesOptions, ProRunOptions, ProRunResult, PublicKeyInfo, RawEmailResponse,
+    RegisterAgentOptions, RegistrationResult, RotateKeysOptions, RotationResult, SearchOptions,
+    SendEmailOptions, SendEmailResult, SignedEmail, TranscriptMessage, TransportType,
+    UpdateAgentResult, UpdateEmailTemplateOptions, UpdateUsernameResult,
+    VerifyAgentDocumentRequest, VerifyAgentResult,
 };
 
 pub const DEFAULT_BASE_URL: &str = "https://hai.ai";
@@ -89,6 +89,7 @@ pub const DEFAULT_DNS_RESOLVER: &str = "https://dns.google/resolve";
 /// Header name for SDK client identification. The API repo defines its own
 /// matching constant -- keep them in sync.
 pub const HAI_CLIENT_HEADER: &str = "x-hai-client";
+const IDEMPOTENCY_KEY_HEADER: &str = "Idempotency-Key";
 
 #[derive(Debug, Clone)]
 pub struct HaiClientOptions {
@@ -209,9 +210,13 @@ impl<P: JacsProvider> HaiClient<P> {
 
     pub fn build_auth_header(&self) -> Result<String> {
         let ts = OffsetDateTime::now_utc().unix_timestamp();
-        let message = format!("{}:{ts}", self.jacs.jacs_id());
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let message = format!("{}:{ts}:{nonce}", self.jacs.jacs_id());
         let signature = self.jacs.sign_string(&message)?;
-        Ok(format!("JACS {}:{ts}:{signature}", self.jacs.jacs_id()))
+        Ok(format!(
+            "JACS {}:{ts}:{nonce}:{signature}",
+            self.jacs.jacs_id()
+        ))
     }
 
     pub fn sign_message(&self, message: &str) -> Result<String> {
@@ -237,20 +242,20 @@ impl<P: JacsProvider> HaiClient<P> {
         }
 
         let url = self.url("/api/v1/agents/hello");
-        let auth = self.build_auth_header()?;
         let response = self
             .request_with_retry(|| {
                 let http = &self.http;
                 let url = &url;
-                let auth = &auth;
                 let payload = &payload;
                 async move {
+                    let auth = self.build_auth_header()?;
                     http.post(url.as_str())
                         .header("Authorization", auth.as_str())
                         .header("Content-Type", "application/json")
                         .json(payload)
                         .send()
                         .await
+                        .map_err(HaiError::from)
                 }
             })
             .await?;
@@ -317,6 +322,7 @@ impl<P: JacsProvider> HaiClient<P> {
                         .json(body)
                         .send()
                         .await
+                        .map_err(HaiError::from)
                 }
             })
             .await?;
@@ -537,76 +543,7 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     pub async fn send_email(&self, options: &SendEmailOptions) -> Result<SendEmailResult> {
-        // Validate agent_email is set before sending.
-        let _ = self.agent_email.as_deref().ok_or_else(|| {
-            HaiError::Message("agent email not set — register with a username first".into())
-        })?;
-        let safe_jacs_id = encode_path_segment(self.hai_agent_id());
-        let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/send"));
-
-        // Defensive: strip CR/LF from subject to prevent header injection
-        // (e.g. from email header folding in stored inbound subjects).
-        let safe_subject = crate::mime::sanitize_header(&options.subject);
-
-        // Server handles JACS signing — client only sends content fields.
-        let mut payload = json!({
-            "to": options.to,
-            "subject": safe_subject,
-            "body": options.body,
-        });
-        if !options.cc.is_empty() {
-            payload["cc"] = json!(options.cc);
-        }
-        if !options.bcc.is_empty() {
-            payload["bcc"] = json!(options.bcc);
-        }
-        if !options.labels.is_empty() {
-            payload["labels"] = json!(options.labels);
-        }
-        if let Some(ref in_reply_to) = options.in_reply_to {
-            payload["in_reply_to"] = Value::String(in_reply_to.clone());
-        }
-        if !options.attachments.is_empty() {
-            use base64::Engine;
-            let att_json: Vec<Value> = options
-                .attachments
-                .iter()
-                .map(|att| {
-                    json!({
-                        "filename": att.filename,
-                        "content_type": att.content_type,
-                        "data_base64": att.data_base64.clone().unwrap_or_else(|| {
-                            base64::engine::general_purpose::STANDARD.encode(&att.data)
-                        }),
-                    })
-                })
-                .collect();
-            payload["attachments"] = Value::Array(att_json);
-        }
-
-        let auth = self.build_auth_header()?;
-        let response = self
-            .request_with_retry(|| {
-                let http = &self.http;
-                let url = &url;
-                let auth = &auth;
-                let payload = &payload;
-                async move {
-                    http.post(url.as_str())
-                        .header("Authorization", auth.as_str())
-                        .header("Content-Type", "application/json")
-                        .json(payload)
-                        .send()
-                        .await
-                }
-            })
-            .await?;
-
-        let data = response_json(response).await?;
-        Ok(SendEmailResult {
-            message_id: value_string(&data, &["message_id"]),
-            status: value_string(&data, &["status"]),
-        })
+        self.send_signed_email(options).await
     }
 
     /// Send an agent-signed email.
@@ -627,52 +564,42 @@ impl<P: JacsProvider> HaiClient<P> {
     /// - MIME construction or JACS signing fails
     /// - The server rejects the signed email
     pub async fn send_signed_email(&self, options: &SendEmailOptions) -> Result<SendEmailResult> {
-        let from = self.agent_email.as_deref().ok_or_else(|| {
-            HaiError::Message("agent email not set — register with a username first".into())
-        })?;
+        self.send_signed_email_with_generation_type(options, EmailGenerationType::HtmlInlineJacs)
+            .await
+    }
 
-        // Append verification footer before signing (Decision D8: client-side,
-        // not server-side, because modifying the body post-signing would
-        // invalidate the JACS signature).
-        let body = if options.append_footer != Some(false) {
-            // Check if ANY recipient is external (not @hai.ai)
-            let has_external = !options.to.ends_with("@hai.ai")
-                || options.cc.iter().any(|a| !a.ends_with("@hai.ai"))
-                || options.bcc.iter().any(|a| !a.ends_with("@hai.ai"));
-            if has_external {
-                let slug = email_to_slug(from);
-                format!(
-                    "{}\n\nVerify this agent's reputation: {}/agents/{}",
-                    options.body, self.base_url, slug
-                )
-            } else {
-                options.body.clone()
-            }
-        } else {
-            options.body.clone()
-        };
-
-        // Step 1: Build RFC 5322 MIME locally (with footer-amended body)
-        let opts_with_footer = SendEmailOptions {
-            body,
-            ..options.clone()
-        };
-        let raw_mime = crate::mime::build_rfc5322_email(&opts_with_footer, from)?;
-
-        // Step 2: Sign with the agent's own JACS key
-        let signed = self.jacs.sign_email_locally(&raw_mime)?;
+    /// Send an agent-signed email with an explicit generation type.
+    pub async fn send_signed_email_with_generation_type(
+        &self,
+        options: &SendEmailOptions,
+        generation_type: EmailGenerationType,
+    ) -> Result<SendEmailResult> {
+        let signed_email = self.create_signed_email(options, generation_type)?;
+        let idempotency_key = send_idempotency_key(options);
 
         // Step 3: POST to the send-signed endpoint
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/send-signed"));
+        let raw_email = signed_email.raw_email;
 
         let response = self
-            .http
-            .post(url)
-            .header("Authorization", self.build_auth_header()?)
-            .header("Content-Type", "message/rfc822")
-            .body(signed)
-            .send()
+            .request_with_retry(|| {
+                let http = &self.http;
+                let url = &url;
+                let raw_email = &raw_email;
+                let idempotency_key = &idempotency_key;
+                async move {
+                    let auth = self.build_auth_header()?;
+                    http.post(url.as_str())
+                        .header("Authorization", auth.as_str())
+                        .header(IDEMPOTENCY_KEY_HEADER, idempotency_key.as_str())
+                        .header("Content-Type", "message/rfc822")
+                        .body(raw_email.clone())
+                        .send()
+                        .await
+                        .map_err(HaiError::from)
+                }
+            })
             .await?;
 
         let data = response_json(response).await?;
@@ -680,6 +607,108 @@ impl<P: JacsProvider> HaiClient<P> {
             message_id: value_string(&data, &["message_id"]),
             status: value_string(&data, &["status"]),
         })
+    }
+
+    /// Create a signed RFC 5322 email locally without submitting it.
+    pub fn create_signed_email(
+        &self,
+        options: &SendEmailOptions,
+        generation_type: EmailGenerationType,
+    ) -> Result<SignedEmail> {
+        let from = self.agent_email.as_deref().ok_or_else(|| {
+            HaiError::Message("agent email not set — register with a username first".into())
+        })?;
+
+        match generation_type {
+            EmailGenerationType::AttachmentJacs => {
+                let body = self.body_with_legacy_verification_footer(options, from);
+                let opts_with_footer = SendEmailOptions {
+                    body,
+                    ..options.clone()
+                };
+                let raw_mime = crate::mime::build_rfc5322_email(&opts_with_footer, from)?;
+                let raw_email = self.jacs.sign_email_locally(&raw_mime)?;
+                Ok(SignedEmail {
+                    raw_email,
+                    generation_type,
+                    hidden_envelope_size_bytes: None,
+                    signed_logo_size_bytes: None,
+                })
+            }
+            EmailGenerationType::HtmlInlineJacs => {
+                crate::validation::validate_send_email(options)?;
+
+                let verify_url = format!("{}/verify/email", self.base_url.trim_end_matches('/'));
+                let text_body =
+                    crate::email_inline::render_text_inline_email_body(&options.body, &verify_url);
+                let opts_for_mime = SendEmailOptions {
+                    body: text_body,
+                    ..options.clone()
+                };
+                let headers = crate::mime::generate_rfc5322_header_values()?;
+
+                let placeholder_html = crate::email_inline::render_html_inline_email_body(
+                    &options.body,
+                    &verify_url,
+                    "{}",
+                );
+                let raw_for_signing = crate::mime::build_html_inline_rfc5322_email_with_headers(
+                    &opts_for_mime,
+                    from,
+                    &placeholder_html,
+                    Some(crate::email_inline::HAI_JACS_LOGO_BYTES),
+                    &headers,
+                )?;
+                let hidden_envelope = self
+                    .jacs
+                    .sign_html_inline_email_envelope(&raw_for_signing)?;
+                let signed_logo = crate::email_inline::embed_jacs_header_in_inline_logo(
+                    &hidden_envelope.compact_header,
+                )?;
+                let html = crate::email_inline::render_html_inline_email_body(
+                    &options.body,
+                    &verify_url,
+                    &hidden_envelope.hidden_envelope,
+                );
+                let raw_email = crate::mime::build_html_inline_rfc5322_email_with_headers(
+                    &opts_for_mime,
+                    from,
+                    &html,
+                    Some(&signed_logo.bytes),
+                    &headers,
+                )?;
+
+                Ok(SignedEmail {
+                    raw_email,
+                    generation_type,
+                    hidden_envelope_size_bytes: Some(hidden_envelope.hidden_envelope_size_bytes),
+                    signed_logo_size_bytes: Some(signed_logo.size_bytes),
+                })
+            }
+        }
+    }
+
+    fn body_with_legacy_verification_footer(
+        &self,
+        options: &SendEmailOptions,
+        from: &str,
+    ) -> String {
+        if options.append_footer == Some(false) {
+            return options.body.clone();
+        }
+
+        let has_external = !options.to.ends_with("@hai.ai")
+            || options.cc.iter().any(|a| !a.ends_with("@hai.ai"))
+            || options.bcc.iter().any(|a| !a.ends_with("@hai.ai"));
+        if has_external {
+            let slug = email_to_slug(from);
+            format!(
+                "{}\n\nVerify this agent's reputation: {}/agents/{}",
+                options.body, self.base_url, slug
+            )
+        } else {
+            options.body.clone()
+        }
     }
 
     pub async fn list_messages(&self, options: &ListMessagesOptions) -> Result<Vec<EmailMessage>> {
@@ -1522,20 +1551,20 @@ impl<P: JacsProvider> HaiClient<P> {
             "tier": tier.unwrap_or("free"),
         });
         let url = self.url("/api/benchmark/run");
-        let auth = self.build_auth_header()?;
         let response = self
             .request_with_retry(|| {
                 let http = &self.http;
                 let url = &url;
-                let auth = &auth;
                 let payload = &payload;
                 async move {
+                    let auth = self.build_auth_header()?;
                     http.post(url.as_str())
                         .header("Authorization", auth.as_str())
                         .header("Content-Type", "application/json")
                         .json(payload)
                         .send()
                         .await
+                        .map_err(HaiError::from)
                 }
             })
             .await?;
@@ -1952,13 +1981,10 @@ impl<P: JacsProvider> HaiClient<P> {
     /// The closure must build and send a request, returning a `reqwest::Response`.
     /// On success or non-retryable error the response is returned immediately.
     /// Transport-level errors (e.g. DNS, connection refused) are NOT retried.
-    async fn request_with_retry<F, Fut>(
-        &self,
-        mut make_request: F,
-    ) -> std::result::Result<Response, reqwest::Error>
+    async fn request_with_retry<F, Fut>(&self, mut make_request: F) -> Result<Response>
     where
         F: FnMut() -> Fut,
-        Fut: Future<Output = std::result::Result<Response, reqwest::Error>>,
+        Fut: Future<Output = Result<Response>>,
     {
         for attempt in 0..self.max_retries {
             let response = make_request().await?;
@@ -1981,6 +2007,15 @@ impl<P: JacsProvider> HaiClient<P> {
         // max_retries is always >= 1 (enforced in new()), so this is unreachable
         unreachable!("max_retries is always >= 1")
     }
+}
+
+fn send_idempotency_key(options: &SendEmailOptions) -> String {
+    options
+        .idempotency_key
+        .as_deref()
+        .filter(|key| !key.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
 }
 
 fn normalize_path(path: &str) -> String {
@@ -2180,13 +2215,6 @@ impl EmptyFallback for String {
     }
 }
 
-/// Compute the v2 content hash for an email (subject + body + sorted attachment hashes).
-///
-/// **DEPRECATED**: This function supports the legacy v2 header-based signing flow
-/// used by `send_email`. It will be removed when `send_email` is updated to use
-/// JACS attachment-based signing (TASK_014).
-///
-/// Formula:
 // =============================================================================
 // HaiClient<P> passthroughs for JacsMediaProvider (Layer 8)
 // =============================================================================
@@ -2245,7 +2273,13 @@ impl<P: crate::jacs::JacsMediaProvider> HaiClient<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "jacs-crate")]
+    use crate::jacs::JacsEmailProvider;
     use crate::jacs::StaticJacsProvider;
+    #[cfg(feature = "jacs-crate")]
+    use crate::jacs_local::LocalJacsProvider;
+    #[cfg(feature = "jacs-crate")]
+    use crate::types::CreateAgentOptions;
     use crate::types::EmailAttachment;
 
     #[test]
@@ -2282,6 +2316,129 @@ mod tests {
         };
 
         assert!(att.effective_data().is_empty());
+    }
+
+    #[test]
+    fn create_signed_email_returns_rfc5322_without_http_submission() {
+        let provider = StaticJacsProvider::new("test-agent-001");
+        let mut client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: "https://api.hai.ai".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        client.set_agent_email("test-agent-001@hai.ai".to_string());
+
+        let signed = client
+            .create_signed_email(
+                &SendEmailOptions {
+                    to: "recipient@hai.ai".to_string(),
+                    subject: "Created locally".to_string(),
+                    body: "Hello".to_string(),
+                    cc: vec![],
+                    bcc: vec![],
+                    in_reply_to: None,
+                    attachments: vec![],
+                    labels: vec![],
+                    append_footer: None,
+                    idempotency_key: None,
+                },
+                EmailGenerationType::AttachmentJacs,
+            )
+            .unwrap();
+        let raw = String::from_utf8_lossy(signed.as_bytes());
+
+        assert_eq!(signed.generation_type, EmailGenerationType::AttachmentJacs);
+        assert!(raw.contains("From: <test-agent-001@hai.ai>\r\n"));
+        assert!(raw.contains("To: recipient@hai.ai\r\n"));
+        assert!(raw.contains("Subject: Created locally\r\n"));
+        assert!(raw.contains("Hello"));
+    }
+
+    #[cfg(feature = "jacs-crate")]
+    #[test]
+    fn attachment_jacs_generation_uses_jacs_attachment_transport() {
+        let _guard = crate::test_support::env_lock();
+        let tmp = tempfile::Builder::new()
+            .prefix("haiai-attachment-mode-")
+            .tempdir()
+            .expect("create temp dir");
+        let base_dir = tmp.path().canonicalize().expect("canonical temp dir");
+        let key_dir = base_dir.join("keys");
+        let data_dir = base_dir.join("data");
+        std::fs::create_dir_all(&key_dir).unwrap();
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let config_path = base_dir.join("jacs.config.json");
+
+        LocalJacsProvider::create_agent_with_options(&CreateAgentOptions {
+            name: "attachment-mode-agent".to_string(),
+            password: "test-password-1234".to_string(),
+            algorithm: Some("ed25519".to_string()),
+            data_directory: Some(data_dir.display().to_string()),
+            key_directory: Some(key_dir.display().to_string()),
+            config_path: Some(config_path.display().to_string()),
+            agent_type: None,
+            description: Some("Attachment compatibility test agent".to_string()),
+            domain: None,
+            default_storage: None,
+        })
+        .expect("create local JACS agent");
+
+        unsafe {
+            std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "test-password-1234");
+        }
+        let provider = LocalJacsProvider::from_config_path(Some(config_path.as_path()), None)
+            .expect("load provider");
+        let mut client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: "https://api.hai.ai".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        client.set_agent_email("attachment-mode-agent@hai.ai".to_string());
+
+        let signed = client
+            .create_signed_email(
+                &SendEmailOptions {
+                    to: "recipient@hai.ai".to_string(),
+                    subject: "Attachment compatibility".to_string(),
+                    body: "Hello".to_string(),
+                    cc: vec![],
+                    bcc: vec![],
+                    in_reply_to: None,
+                    attachments: vec![],
+                    labels: vec![],
+                    append_footer: None,
+                    idempotency_key: None,
+                },
+                EmailGenerationType::AttachmentJacs,
+            )
+            .unwrap();
+
+        assert_eq!(signed.generation_type, EmailGenerationType::AttachmentJacs);
+        assert_eq!(
+            jacs::email::detect_signed_email_transport(signed.as_bytes()).unwrap(),
+            jacs::email::SignedEmailTransport::AttachmentJacs
+        );
+        let public_key =
+            crate::email::extract_public_key_bytes(&client.jacs.public_key_pem().unwrap()).unwrap();
+        let verified = client
+            .jacs
+            .verify_signed_email_transport(
+                signed.as_bytes(),
+                public_key,
+                jacs::email::VerificationMode::Strict,
+            )
+            .unwrap();
+        assert_eq!(
+            verified.status,
+            jacs::email::EmailVerificationStatus::Verified
+        );
+        assert!(String::from_utf8_lossy(signed.as_bytes()).contains("jacs-signature.json"));
     }
 
     #[test]

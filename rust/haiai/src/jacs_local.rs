@@ -39,6 +39,7 @@ pub struct LocalJacsProvider {
     jacs_id: String,
     algorithm: String,
     config_path: PathBuf,
+    load_config_path: PathBuf,
     document_service: Option<Arc<dyn DocumentService>>,
     /// The resolved storage backend label (e.g., "fs", "rusqlite").
     /// Used to report accurate capabilities per backend.
@@ -74,6 +75,8 @@ impl LocalJacsProvider {
         let saved_config_dir = config.config_dir().map(std::path::PathBuf::from);
         config.apply_env_overrides();
         config.set_config_dir(saved_config_dir);
+        canonicalize_config_dirs(&mut config, &config_path);
+        let load_config_path = materialize_resolved_config(&config_path, &config)?;
         let document_dir = resolve_config_relative_path(
             &config_path,
             config
@@ -140,7 +143,7 @@ impl LocalJacsProvider {
             })?;
             // Reload a fresh agent for the provider's own signing operations.
             let mut reload_config = jacs::config::Config::from_file(
-                &config_path.display().to_string(),
+                &load_config_path.display().to_string(),
             )
             .map_err(|e| {
                 HaiError::Provider(format!("failed to reload config for provider agent: {e}"))
@@ -148,6 +151,7 @@ impl LocalJacsProvider {
             let saved_dir = reload_config.config_dir().map(std::path::PathBuf::from);
             reload_config.apply_env_overrides();
             reload_config.set_config_dir(saved_dir);
+            canonicalize_config_dirs(&mut reload_config, &config_path);
             if let Some(label) = &validated_label {
                 reload_config.merge(default_storage_override(label));
             }
@@ -175,6 +179,7 @@ impl LocalJacsProvider {
             jacs_id,
             algorithm,
             config_path,
+            load_config_path,
             document_service,
             storage_label: validated_label,
             document_dir,
@@ -327,11 +332,11 @@ impl LocalJacsProvider {
     }
 
     fn load_simple_agent(&self) -> Result<SimpleAgent> {
-        let config_path_str = self.config_path.display().to_string();
+        let config_path_str = self.load_config_path.display().to_string();
         SimpleAgent::load(Some(&config_path_str), Some(false)).map_err(|e| {
             HaiError::Provider(format!(
                 "failed to load SimpleAgent from {}: {e}",
-                self.config_path.display()
+                self.load_config_path.display()
             ))
         })
     }
@@ -561,6 +566,72 @@ fn resolve_config_relative_path(config_path: &Path, candidate: &str) -> PathBuf 
             .unwrap_or_else(|| Path::new("."))
             .join(path)
     }
+}
+
+fn canonicalize_config_dirs(config: &mut jacs::config::Config, config_path: &Path) {
+    let data_dir = config
+        .jacs_data_directory()
+        .as_deref()
+        .map(|dir| canonicalize_config_dir(config_path, dir));
+    let key_dir = config
+        .jacs_key_directory()
+        .as_deref()
+        .map(|dir| canonicalize_config_dir(config_path, dir));
+
+    if data_dir.is_some() || key_dir.is_some() {
+        config.merge(jacs::config::Config::new(
+            None,
+            data_dir.clone(),
+            key_dir.clone(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ));
+        if let Some(raw) = config.raw_json.as_mut().and_then(|v| v.as_object_mut()) {
+            if let Some(data_dir) = data_dir {
+                raw.insert(
+                    "jacs_data_directory".to_string(),
+                    serde_json::json!(data_dir),
+                );
+            }
+            if let Some(key_dir) = key_dir {
+                raw.insert("jacs_key_directory".to_string(), serde_json::json!(key_dir));
+            }
+        }
+    }
+}
+
+fn canonicalize_config_dir(config_path: &Path, candidate: &str) -> String {
+    let path = resolve_config_relative_path(config_path, candidate);
+    std::fs::canonicalize(&path)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
+fn materialize_resolved_config(
+    config_path: &Path,
+    config: &jacs::config::Config,
+) -> Result<PathBuf> {
+    let Some(raw_json) = config.raw_json.as_ref() else {
+        return Ok(config_path.to_path_buf());
+    };
+    let Some(parent) = config_path.parent() else {
+        return Ok(config_path.to_path_buf());
+    };
+    let resolved_path = parent.join(".haiai_resolved_jacs.config.json");
+    let bytes = serde_json::to_vec_pretty(raw_json)
+        .map_err(|e| HaiError::Provider(format!("serialize resolved JACS config: {e}")))?;
+    std::fs::write(&resolved_path, bytes).map_err(|e| {
+        HaiError::Provider(format!(
+            "write resolved JACS config {}: {e}",
+            resolved_path.display()
+        ))
+    })?;
+    Ok(resolved_path)
 }
 
 // =============================================================================
@@ -1630,6 +1701,17 @@ impl JacsEmailProvider for LocalJacsProvider {
             .map_err(|e| HaiError::Provider(format!("serialize verify result: {e}")))
     }
 
+    fn verify_signed_email_transport(
+        &self,
+        raw: &[u8],
+        key: Vec<u8>,
+        mode: jacs::email::VerificationMode,
+    ) -> Result<jacs::email::SignedEmailVerificationResult> {
+        let simple = self.load_simple_agent()?;
+        jacs::email::verify_signed_email(raw, &simple, &key, mode)
+            .map_err(|e| HaiError::Provider(format!("verify_signed_email failed: {e}")))
+    }
+
     fn add_jacs_attachment(&self, email: &[u8], doc: &[u8]) -> Result<Vec<u8>> {
         jacs::email::add_jacs_attachment(email, doc)
             .map_err(|e| HaiError::Provider(format!("add_jacs_attachment failed: {e}")))
@@ -1832,18 +1914,20 @@ impl JacsMediaProvider for LocalJacsProvider {
 
 fn resolve_jacs_config_path(config_path: Option<&Path>) -> PathBuf {
     if let Some(path) = config_path {
-        return path.to_path_buf();
+        return std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     }
 
     if let Ok(path) = env::var("JACS_CONFIG") {
         if !path.is_empty() {
-            return PathBuf::from(path);
+            let path = PathBuf::from(path);
+            return std::fs::canonicalize(&path).unwrap_or(path);
         }
     }
 
     if let Ok(path) = env::var("JACS_CONFIG_PATH") {
         if !path.is_empty() {
-            return PathBuf::from(path);
+            let path = PathBuf::from(path);
+            return std::fs::canonicalize(&path).unwrap_or(path);
         }
     }
 

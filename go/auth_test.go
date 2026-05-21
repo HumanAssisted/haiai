@@ -4,7 +4,6 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -23,15 +22,16 @@ func TestBuildAuthHeader(t *testing.T) {
 		t.Fatalf("expected 'JACS ' prefix, got: %s", header)
 	}
 
-	// Parse: JACS {jacsId}:{timestamp}:{signature_base64}
-	parts := strings.SplitN(strings.TrimPrefix(header, "JACS "), ":", 3)
-	if len(parts) != 3 {
-		t.Fatalf("expected 3 parts, got %d: %v", len(parts), parts)
+	// Parse: JACS {jacsId}:{timestamp}:{nonce}:{signature_base64}
+	parts := strings.SplitN(strings.TrimPrefix(header, "JACS "), ":", 4)
+	if len(parts) != 4 {
+		t.Fatalf("expected 4 parts, got %d: %v", len(parts), parts)
 	}
 
 	jacsID := parts[0]
 	timestampStr := parts[1]
-	sigB64 := parts[2]
+	nonce := parts[2]
+	sigB64 := parts[3]
 
 	if jacsID != "test-agent" {
 		t.Errorf("expected jacsID 'test-agent', got '%s'", jacsID)
@@ -55,7 +55,11 @@ func TestBuildAuthHeader(t *testing.T) {
 		t.Fatalf("invalid base64 signature: %v", err)
 	}
 
-	message := fmt.Sprintf("%s:%s", jacsID, timestampStr)
+	if nonce == "" {
+		t.Fatal("nonce must be present")
+	}
+
+	message := authHeaderMessage(jacsID, timestampStr, nonce)
 	pub := priv.Public().(ed25519.PublicKey)
 	if !ed25519.Verify(pub, []byte(message), sig) {
 		t.Error("signature verification failed")
@@ -85,8 +89,8 @@ func TestBuildAuthHeaderSignatureChanges(t *testing.T) {
 	h2 := BuildAuthHeader("agent", priv)
 
 	// Timestamps should differ (or at least signatures will differ)
-	sig1 := strings.SplitN(strings.TrimPrefix(h1, "JACS "), ":", 3)[2]
-	sig2 := strings.SplitN(strings.TrimPrefix(h2, "JACS "), ":", 3)[2]
+	sig1 := strings.SplitN(strings.TrimPrefix(h1, "JACS "), ":", 4)[3]
+	sig2 := strings.SplitN(strings.TrimPrefix(h2, "JACS "), ":", 4)[3]
 
 	// They might be the same if both hit the same second, but timestamps should be close
 	_ = sig1
@@ -101,14 +105,15 @@ func TestAuthHeaderVerifiableByServer(t *testing.T) {
 
 	// Server-side: extract JACS credentials
 	token := strings.TrimPrefix(header, "JACS ")
-	parts := strings.SplitN(token, ":", 3)
-	if len(parts) != 3 {
+	parts := strings.SplitN(token, ":", 4)
+	if len(parts) != 4 {
 		t.Fatal("invalid JACS header format")
 	}
 
 	jacsID := parts[0]
 	timestampStr := parts[1]
-	sigB64 := parts[2]
+	nonce := parts[2]
+	sigB64 := parts[3]
 
 	// Verify timestamp is recent
 	ts, _ := strconv.ParseInt(timestampStr, 10, 64)
@@ -118,7 +123,7 @@ func TestAuthHeaderVerifiableByServer(t *testing.T) {
 	}
 
 	// Reconstruct message and verify signature
-	message := fmt.Sprintf("%s:%s", jacsID, timestampStr)
+	message := authHeaderMessage(jacsID, timestampStr, nonce)
 	sig, _ := base64.StdEncoding.DecodeString(sigB64)
 
 	if !ed25519.Verify(pub, []byte(message), sig) {
@@ -129,7 +134,7 @@ func TestAuthHeaderVerifiableByServer(t *testing.T) {
 func TestFFIBuildAuthHeader(t *testing.T) {
 	mockFFI := newMockFFIClient("http://localhost:9999", "backend-agent", "")
 	mockFFI.buildAuthHeaderFn = func() (string, error) {
-		return "JACS backend-agent:1234567890:c2lnbmF0dXJl", nil
+		return "JACS backend-agent:1234567890:nonce:c2lnbmF0dXJl", nil
 	}
 
 	header, err := mockFFI.BuildAuthHeader()
@@ -141,9 +146,9 @@ func TestFFIBuildAuthHeader(t *testing.T) {
 		t.Fatalf("expected 'JACS backend-agent:' prefix, got: %s", header)
 	}
 
-	parts := strings.SplitN(strings.TrimPrefix(header, "JACS "), ":", 3)
-	if len(parts) != 3 {
-		t.Fatalf("expected 3 parts, got %d", len(parts))
+	parts := strings.SplitN(strings.TrimPrefix(header, "JACS "), ":", 4)
+	if len(parts) != 4 {
+		t.Fatalf("expected 4 parts, got %d", len(parts))
 	}
 }
 

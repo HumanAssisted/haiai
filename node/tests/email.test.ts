@@ -42,6 +42,26 @@ describe('sendEmail server-side signing', () => {
     expect(capturedOptions!.jacs_signature).toBeUndefined();
     expect(capturedOptions!.jacs_timestamp).toBeUndefined();
   });
+
+  it('passes idempotencyKey to Rust core as idempotency_key', async () => {
+    const client = await makeClient();
+    let capturedOptions: Record<string, unknown> | null = null;
+
+    const sendEmailMock = vi.fn(async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return { message_id: 'msg-idem', status: 'queued' };
+    });
+    client._setFFIAdapter(createMockFFI({ sendEmail: sendEmailMock }));
+
+    await client.sendEmail({
+      to: 'bob@hai.ai',
+      subject: 'Hello',
+      body: 'World',
+      idempotencyKey: 'send-key-123',
+    });
+
+    expect(capturedOptions!.idempotency_key).toBe('send-key-123');
+  });
 });
 
 describe('getMessage', () => {
@@ -67,6 +87,24 @@ describe('getMessage', () => {
         created_at: '2026-02-24T00:00:00Z',
         read_at: null,
         jacs_verified: true,
+        jacs_signer_id: 'owner-agent-jacs-id',
+        jacs_key_is_owner: true,
+        owner_mail_auth_passed: true,
+        owner_mail_auth_method: 'dkim_spf',
+        owner_mail_auth_details: { dkim: 'pass', spf: 'pass' },
+        email_summary: 'Owner asked for recent bounces.',
+        musubi_summary: {
+          trust_vector: { phishing: 0.05, prompt_injection: 0.1 },
+          content_risk: 'low',
+          escalate: false,
+          explanation: 'Authenticated owner mail with low content risk.',
+        },
+        sender_reputation: {
+          score: 91.5,
+          tier: 'established',
+          email_score: 89.0,
+          hai_score: 94.0,
+        },
       };
     });
     client._setFFIAdapter(createMockFFI({ getMessage: getMessageMock }));
@@ -83,6 +121,71 @@ describe('getMessage', () => {
     expect(msg.deliveryStatus).toBe('delivered');
     expect(msg.readAt).toBeNull();
     expect(msg.jacsVerified).toBe(true);
+    expect(msg.jacsSignerId).toBe('owner-agent-jacs-id');
+    expect(msg.jacsKeyIsOwner).toBe(true);
+    expect(msg.ownerMailAuthPassed).toBe(true);
+    expect(msg.ownerMailAuthMethod).toBe('dkim_spf');
+    expect(msg.ownerMailAuthDetails).toEqual({ dkim: 'pass', spf: 'pass' });
+    expect(msg.emailSummary).toBe('Owner asked for recent bounces.');
+    expect(msg.musubiSummary).toEqual({
+      trustVector: { phishing: 0.05, prompt_injection: 0.1 },
+      contentRisk: 'low',
+      escalate: false,
+      explanation: 'Authenticated owner mail with low content risk.',
+    });
+    expect(msg.senderReputation).toEqual({
+      score: 91.5,
+      tier: 'established',
+      emailScore: 89.0,
+      haiScore: 94.0,
+    });
+  });
+});
+
+describe('listMessages', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns parsed hosted evidence fields from FFI', async () => {
+    const client = await makeClient();
+    const listMessagesMock = vi.fn(async () => ([{
+      id: 'msg-list',
+      direction: 'inbound',
+      from_address: 'owner@example.com',
+      to_address: 'agent@hai.ai',
+      subject: 'Status',
+      body_text: 'Show bounces',
+      is_read: false,
+      delivery_status: 'delivered',
+      created_at: '2026-05-14T10:00:00Z',
+      owner_mail_auth_passed: true,
+      owner_mail_auth_method: 'dkim_spf',
+      owner_mail_auth_details: { dkim: 'pass', spf: 'pass' },
+      email_summary: 'Owner asked for recent bounces.',
+      musubi_summary: {
+        trust_vector: { phishing: 0.05 },
+        content_risk: 'low',
+        escalate: false,
+        explanation: 'Authenticated owner mail with low content risk.',
+      },
+      sender_reputation: {
+        score: 91.5,
+        tier: 'established',
+        email_score: 89.0,
+        hai_score: 94.0,
+      },
+    }]));
+    client._setFFIAdapter(createMockFFI({ listMessages: listMessagesMock }));
+
+    const messages = await client.listMessages();
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].ownerMailAuthPassed).toBe(true);
+    expect(messages[0].ownerMailAuthMethod).toBe('dkim_spf');
+    expect(messages[0].emailSummary).toBe('Owner asked for recent bounces.');
+    expect(messages[0].musubiSummary?.trustVector).toEqual({ phishing: 0.05 });
+    expect(messages[0].senderReputation?.tier).toBe('established');
   });
 });
 
@@ -420,6 +523,47 @@ describe('sendSignedEmail', () => {
     vi.restoreAllMocks();
   });
 
+  it('defaults signed email generation to html_inline_jacs', async () => {
+    const client = await makeClient();
+    let capturedOptions: Record<string, unknown> | null = null;
+
+    const sendSignedEmailMock = vi.fn(async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return { message_id: 'msg-inline-1', status: 'sent' };
+    });
+    client._setFFIAdapter(createMockFFI({ sendSignedEmail: sendSignedEmailMock }));
+
+    const result = await client.sendSignedEmail({
+      to: 'bob@hai.ai',
+      subject: 'Hello Signed',
+      body: 'Signed body',
+    });
+
+    expect(result.messageId).toBe('msg-inline-1');
+    expect(result.status).toBe('sent');
+    expect(capturedOptions!.generation_type).toBe('html_inline_jacs');
+  });
+
+  it('passes idempotencyKey to Rust core for signed sends', async () => {
+    const client = await makeClient();
+    let capturedOptions: Record<string, unknown> | null = null;
+
+    const sendSignedEmailMock = vi.fn(async (options: Record<string, unknown>) => {
+      capturedOptions = options;
+      return { message_id: 'msg-idem-signed', status: 'sent' };
+    });
+    client._setFFIAdapter(createMockFFI({ sendSignedEmail: sendSignedEmailMock }));
+
+    await client.sendSignedEmail({
+      to: 'bob@hai.ai',
+      subject: 'Hello Signed',
+      body: 'Signed body',
+      idempotencyKey: 'signed-key-123',
+    });
+
+    expect(capturedOptions!.idempotency_key).toBe('signed-key-123');
+  });
+
   it('calls FFI sendSignedEmail for client-side JACS signing', async () => {
     const client = await makeClient();
     let capturedOptions: Record<string, unknown> | null = null;
@@ -434,12 +578,14 @@ describe('sendSignedEmail', () => {
       to: 'bob@hai.ai',
       subject: 'Hello Signed',
       body: 'Signed body',
+      generationType: 'attachment_jacs',
     });
 
     expect(result.messageId).toBe('msg-signed-1');
     expect(result.status).toBe('sent');
     expect(capturedOptions!.to).toBe('bob@hai.ai');
     expect(capturedOptions!.subject).toBe('Hello Signed');
+    expect(capturedOptions!.generation_type).toBe('attachment_jacs');
   });
 
   it('throws when agentEmail not set', async () => {

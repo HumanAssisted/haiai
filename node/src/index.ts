@@ -1,3 +1,10 @@
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 // Client
 export { HaiClient, DEFAULT_BASE_URL, registerNewAgent } from './client.js';
 
@@ -126,9 +133,11 @@ export type {
   DnsCertifiedRunOptions,
   FreeChaoticRunOptions,
   EmailAttachment,
+  EmailGenerationType,
   SendEmailOptions,
   SendEmailResult,
   EmailMessage,
+  MusubiSummary,
   RawEmailResult,
   ListMessagesOptions,
   SearchOptions,

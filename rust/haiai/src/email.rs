@@ -394,7 +394,12 @@ fn create_verification_agent() -> Result<SimpleAgent> {
             "Failed to create temp directory for verification agent: {e}"
         ))
     })?;
-    let tmp_path = tmp.path().to_string_lossy().to_string();
+    let tmp_path = tmp.path().canonicalize().map_err(|e| {
+        HaiError::Provider(format!(
+            "Failed to canonicalize verification agent temp directory: {e}"
+        ))
+    })?;
+    let tmp_path = tmp_path.to_string_lossy().to_string();
 
     let params = CreateAgentParams::builder()
         .name("hai-verifier")
@@ -564,11 +569,11 @@ fn extract_domain(email: &str) -> String {
 ///
 /// Detects the algorithm from the SPKI DER structure:
 /// - Ed25519 (OID 1.3.101.112): extracts the 32-byte raw public key
-/// - Everything else (RSA, PQ2025): returns the full DER-encoded SubjectPublicKeyInfo
+/// - Everything else (for example, PQ2025): returns the full DER-encoded SubjectPublicKeyInfo
 ///
 /// The JACS `SimpleAgent::verify_with_key()` handles per-algorithm format
 /// conversion internally, so callers can pass these bytes directly.
-fn extract_public_key_bytes(pem: &str) -> Result<Vec<u8>> {
+pub(crate) fn extract_public_key_bytes(pem: &str) -> Result<Vec<u8>> {
     let pem_lines: Vec<&str> = pem.lines().filter(|l| !l.starts_with("-----")).collect();
     let der_bytes = base64::engine::general_purpose::STANDARD
         .decode(pem_lines.join(""))
@@ -594,7 +599,7 @@ fn extract_public_key_bytes(pem: &str) -> Result<Vec<u8>> {
         }
         Ok(der_bytes[der_bytes.len() - 32..].to_vec())
     } else {
-        // RSA (or other algorithms): return full DER for the JACS verifier
+        // Non-Ed25519 algorithms: return full DER for the JACS verifier
         Ok(der_bytes)
     }
 }
@@ -633,14 +638,14 @@ mod tests {
     }
 
     #[test]
-    fn algorithms_match_rsa_variants() {
-        assert!(algorithms_match("rsa-pss", "rsa-pss"));
-        assert!(algorithms_match("rsa-pss", "rsa-pss-sha256"));
+    fn algorithms_match_pq2025_variants() {
+        assert!(algorithms_match("pq2025", "pq2025"));
+        assert!(algorithms_match("PQ2025", "pq2025"));
     }
 
     #[test]
     fn algorithms_mismatch() {
-        assert!(!algorithms_match("ed25519", "rsa-pss"));
+        assert!(!algorithms_match("ed25519", "pq2025"));
     }
 
     #[test]
@@ -766,7 +771,14 @@ mod tests {
         let jacs_doc: serde_json::Value = serde_json::from_slice(&doc_bytes).unwrap();
 
         // Verify JACS envelope structure
-        assert_eq!(jacs_doc["jacsType"].as_str(), Some("message"));
+        assert!(
+            matches!(
+                jacs_doc["jacsType"].as_str(),
+                Some("document") | Some("message")
+            ),
+            "unexpected jacsType: {:?}",
+            jacs_doc["jacsType"].as_str()
+        );
         assert!(jacs_doc.get("jacsId").is_some(), "should have jacsId");
         assert!(
             jacs_doc.get("jacsSignature").is_some(),

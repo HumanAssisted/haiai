@@ -28,7 +28,7 @@ use std::path::PathBuf;
 fn normalize_public_key_pem(raw: &[u8]) -> String {
     if let Ok(text) = std::str::from_utf8(raw) {
         let trimmed = text.trim();
-        if trimmed.contains("BEGIN PUBLIC KEY") || trimmed.contains("BEGIN RSA PUBLIC KEY") {
+        if trimmed.contains("BEGIN PUBLIC KEY") {
             let mut normalized = trimmed.replace("\r\n", "\n").replace('\r', "\n");
             if !normalized.ends_with('\n') {
                 normalized.push('\n');

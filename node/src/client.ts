@@ -1,3 +1,10 @@
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 import type {
   HaiClientOptions,
   AgentConfig,
@@ -55,6 +62,7 @@ import type {
   ExtractMediaSignatureOptions,
   ExtractMediaSignatureResult,
 } from './types.js';
+import * as nodeCrypto from 'node:crypto';
 import {
   HaiError,
   AuthenticationError,
@@ -225,8 +233,8 @@ export class HaiClient {
     privateKeyPem: string,
     options?: Omit<HaiClientOptions, 'configPath'> & {
       privateKeyPassphrase?: string;
-      /** Key algorithm. Defaults to 'ring-Ed25519'. Set to 'RSA-PSS' for RSA keys. */
-      algorithm?: 'ring-Ed25519' | 'RSA-PSS';
+      /** Key algorithm. Defaults to 'ring-Ed25519'. Use 'pq2025' for post-quantum signatures. */
+      algorithm?: 'ring-Ed25519' | 'pq2025';
     },
   ): Promise<HaiClient> {
     const { mkdir, mkdtemp, writeFile } = await import('node:fs/promises');
@@ -356,9 +364,10 @@ export class HaiClient {
     }
     // Fallback: local construction using JACS signStringSync
     const timestamp = Math.floor(Date.now() / 1000).toString();
-    const message = `${this.jacsId}:${timestamp}`;
+    const nonce = nodeCrypto.randomUUID().replace(/-/g, '');
+    const message = `${this.jacsId}:${timestamp}:${nonce}`;
     const signature = this.agent.signStringSync(message);
-    return `JACS ${this.jacsId}:${timestamp}:${signature}`;
+    return `JACS ${this.jacsId}:${timestamp}:${nonce}:${signature}`;
   }
 
   // ---------------------------------------------------------------------------
@@ -926,7 +935,7 @@ export class HaiClient {
         const raw = content as Buffer;
         const text = raw.toString('utf-8').trim();
         let publicKeyPem: string;
-        if (text.includes('BEGIN PUBLIC KEY') || text.includes('BEGIN RSA PUBLIC KEY')) {
+        if (text.includes('BEGIN PUBLIC KEY')) {
           publicKeyPem = text;
         } else {
           const base64 = raw.toString('base64');
@@ -1033,6 +1042,8 @@ export class HaiClient {
   // ---------------------------------------------------------------------------
 
   private parseEmailMessage(m: Record<string, unknown>): EmailMessage {
+    const musubiRaw = m.musubi_summary as Record<string, unknown> | undefined;
+    const reputationRaw = m.sender_reputation as Record<string, unknown> | undefined;
     return {
       id: (m.id as string) || '',
       direction: (m.direction as string) || '',
@@ -1047,10 +1058,32 @@ export class HaiClient {
       createdAt: (m.created_at as string) || '',
       readAt: (m.read_at as string | null) ?? null,
       jacsVerified: (m.jacs_verified as boolean) ?? false,
+      jacsSignerId: (m.jacs_signer_id as string) ?? undefined,
+      jacsKeyIsOwner: (m.jacs_key_is_owner as boolean) ?? false,
+      ownerMailAuthPassed: (m.owner_mail_auth_passed as boolean) ?? false,
+      ownerMailAuthMethod: (m.owner_mail_auth_method as string | null) ?? null,
+      ownerMailAuthDetails: (m.owner_mail_auth_details as Record<string, unknown> | null) ?? null,
+      emailSummary: (m.email_summary as string | null) ?? null,
+      musubiSummary: musubiRaw ? {
+        trustVector: (musubiRaw.trust_vector as Record<string, number>) || {},
+        contentRisk: (musubiRaw.content_risk as string | null) ?? null,
+        escalate: (musubiRaw.escalate as boolean) ?? false,
+        explanation: (musubiRaw.explanation as string | null) ?? null,
+      } : null,
+      senderReputation: reputationRaw ? this.parseEmailReputation(reputationRaw) : null,
       ccAddresses: (m.cc_addresses as string[]) || [],
       labels: (m.labels as string[]) || [],
       trustScore: (m.trust_score as number) ?? undefined,
       folder: (m.folder as string) || 'inbox',
+    };
+  }
+
+  private parseEmailReputation(raw: Record<string, unknown>) {
+    return {
+      score: (raw.score as number) || 0,
+      tier: (raw.tier as string) || '',
+      emailScore: (raw.email_score as number) || 0,
+      haiScore: raw.hai_score != null ? (raw.hai_score as number) : null,
     };
   }
 
@@ -1172,6 +1205,7 @@ export class HaiClient {
     if (options.cc?.length) emailOptions.cc = options.cc;
     if (options.bcc?.length) emailOptions.bcc = options.bcc;
     if (options.labels?.length) emailOptions.labels = options.labels;
+    if (options.idempotencyKey) emailOptions.idempotency_key = options.idempotencyKey;
 
     const data = await this.ffi.sendEmail(emailOptions);
 
@@ -1214,6 +1248,7 @@ export class HaiClient {
       to: options.to,
       subject: options.subject,
       body: options.body,
+      generation_type: options.generationType ?? 'html_inline_jacs',
     };
     if (options.inReplyTo) emailOptions.in_reply_to = options.inReplyTo;
     if (options.attachments?.length) {
@@ -1226,6 +1261,7 @@ export class HaiClient {
     if (options.cc?.length) emailOptions.cc = options.cc;
     if (options.bcc?.length) emailOptions.bcc = options.bcc;
     if (options.labels?.length) emailOptions.labels = options.labels;
+    if (options.idempotencyKey) emailOptions.idempotency_key = options.idempotencyKey;
 
     const data = await this.ffi.sendSignedEmail(emailOptions);
 
@@ -1433,12 +1469,7 @@ export class HaiClient {
         spamReportCount: (deliveryRaw.spam_report_count as number) || 0,
         deliveryRate: (deliveryRaw.delivery_rate as number) || 0,
       } : null,
-      reputation: reputationRaw ? {
-        score: (reputationRaw.score as number) || 0,
-        tier: (reputationRaw.tier as string) || '',
-        emailScore: (reputationRaw.email_score as number) || 0,
-        haiScore: reputationRaw.hai_score != null ? (reputationRaw.hai_score as number) : null,
-      } : null,
+      reputation: reputationRaw ? this.parseEmailReputation(reputationRaw) : null,
     };
   }
 

@@ -39,9 +39,7 @@ def _assert_fields_present(
         assert field in obj, f"{label}: missing required field '{field}'"
 
 
-def _assert_field_type(
-    label: str, field: str, expected_type: str, value: Any
-) -> None:
+def _assert_field_type(label: str, field: str, expected_type: str, value: Any) -> None:
     """Assert a value matches the expected type string from the schema."""
     if expected_type == "string":
         assert isinstance(value, str), (
@@ -98,9 +96,7 @@ class TestContractWrappedArtifact:
         schema = contract["wrappedArtifactSchema"]
         sig = wrapped["jacsSignature"]
         assert sig is not None
-        _assert_fields_present(
-            "A2AArtifactSignature", sig, schema["signatureFields"]
-        )
+        _assert_fields_present("A2AArtifactSignature", sig, schema["signatureFields"])
 
     def test_agent_id_uses_uppercase_id(self, contract: dict[str, Any]) -> None:
         """Signature field must be 'agentID' (uppercase ID), not 'agentId'."""
@@ -185,9 +181,7 @@ class TestContractTrustAssessment:
     def test_required_fields_present(self, contract: dict[str, Any]) -> None:
         schema = contract["trustAssessmentSchema"]
         example = contract["trustAssessmentExample"]
-        _assert_fields_present(
-            "A2ATrustAssessment", example, schema["requiredFields"]
-        )
+        _assert_fields_present("A2ATrustAssessment", example, schema["requiredFields"])
 
     def test_required_fields_types(self, contract: dict[str, Any]) -> None:
         schema = contract["trustAssessmentSchema"]
@@ -247,9 +241,7 @@ class TestContractAgentCard:
         for field, expected_type in schema["requiredFields"].items():
             if field == "_comment":
                 continue
-            _assert_field_type(
-                "A2AAgentCard", field, expected_type, card[field]
-            )
+            _assert_field_type("A2AAgentCard", field, expected_type, card[field])
 
     def test_camel_case_field_names(self, card: dict[str, Any]) -> None:
         """Fields must use camelCase, not snake_case."""
@@ -317,13 +309,9 @@ class TestContractChainOfCustody:
         for field, expected_type in entry_fields.items():
             if field == "_comment":
                 continue
-            _assert_field_type(
-                "A2AChainEntry", field, expected_type, entries[0][field]
-            )
+            _assert_field_type("A2AChainEntry", field, expected_type, entries[0][field])
 
-    def test_camel_case_entry_fields(
-        self, chain_expected: dict[str, Any]
-    ) -> None:
+    def test_camel_case_entry_fields(self, chain_expected: dict[str, Any]) -> None:
         """Chain entry fields must use camelCase, not snake_case."""
         entries = chain_expected["entries"]
         assert "artifactId" in entries[0]

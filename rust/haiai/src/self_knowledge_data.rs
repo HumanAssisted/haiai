@@ -204,31 +204,6 @@ pub static CHAPTERS: &[(&str, &str, &str)] = &[
         include_str!("../docs/knowledge/jacsbook/schemas/document.md"),
     ),
     (
-        "jacsbook/schemas/task.md",
-        "Task Schema",
-        include_str!("../docs/knowledge/jacsbook/schemas/task.md"),
-    ),
-    (
-        "jacsbook/schemas/agentstate.md",
-        "Agent State Schema",
-        include_str!("../docs/knowledge/jacsbook/schemas/agentstate.md"),
-    ),
-    (
-        "jacsbook/schemas/commitment.md",
-        "Commitment Schema",
-        include_str!("../docs/knowledge/jacsbook/schemas/commitment.md"),
-    ),
-    (
-        "jacsbook/schemas/todo.md",
-        "Todo List Schema",
-        include_str!("../docs/knowledge/jacsbook/schemas/todo.md"),
-    ),
-    (
-        "jacsbook/schemas/conversation.md",
-        "Conversation Schema",
-        include_str!("../docs/knowledge/jacsbook/schemas/conversation.md"),
-    ),
-    (
         "jacsbook/schemas/configuration.md",
         "Config File Schema",
         include_str!("../docs/knowledge/jacsbook/schemas/configuration.md"),
