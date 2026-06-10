@@ -62,6 +62,10 @@ pub struct RemoteJacsProvider<P: JacsProvider> {
     inner: P,
     http: HttpClient,
     base_url: String,
+    /// Lazily-built local verification state (ephemeral JACS agent + signer
+    /// key cache). Verification never needs the inner provider's keys.
+    #[cfg(feature = "jacs-crate")]
+    verifier: std::sync::OnceLock<RemoteVerifier>,
 }
 
 impl<P: JacsProvider> RemoteJacsProvider<P> {
@@ -84,6 +88,8 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
             inner,
             http,
             base_url: trimmed.to_string(),
+            #[cfg(feature = "jacs-crate")]
+            verifier: std::sync::OnceLock::new(),
         })
     }
 
@@ -1145,6 +1151,334 @@ fn b64_url_decode(s: &str) -> Result<Vec<u8>> {
     base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(s)
         .map_err(|e| HaiError::Provider(format!("base64url decode: {e}")))
+}
+
+// =============================================================================
+// Verification + media verification (feature `jacs-crate`)
+// =============================================================================
+//
+// JACS verification is a LOCAL operation: recompute the content hash and check
+// the Ed25519 signature against the SIGNER's public key. No private keys are
+// involved, so the remote provider verifies without the inner provider's key
+// material. Signer public keys come from hai-api's public key-lookup endpoint
+// (`GET /jacs/v1/agents/{jacs_id}/keys/{version}`) — the same `base_url` this
+// provider already talks to — and are cached per `(agent_id, version)`.
+//
+// Trust note: this trusts the key registry served by hai-api, the same trust
+// domain that operates hosted signing (signer-service). The signature still
+// binds doc bytes to the registered key (JACS rejects keys whose hash differs
+// from the signature's publicKeyHash), so storage-layer tampering is
+// detected. The key lookup is an unauthenticated GET on the same base_url as
+// the (authed) records API: an attacker who can forge those responses can
+// impersonate hai-api wholesale, which is outside this provider's threat
+// model — run it over TLS / in-cluster networking. DNS (L2) verification
+// remains the cross-domain upgrade path.
+
+/// Lazily-initialized verification state for [`RemoteJacsProvider`].
+#[cfg(feature = "jacs-crate")]
+struct RemoteVerifier {
+    /// Ephemeral verify-only `SimpleAgent` (key material is generated but
+    /// never used for signing; verification paths take explicit keys).
+    simple: jacs::simple::SimpleAgent,
+    /// Bare ephemeral agent for `jacs::protocol::unwrap_signed_event`, whose
+    /// `verify_string` is identity-stateless (explicit keys only).
+    agent: std::sync::Mutex<jacs::agent::Agent>,
+    /// `<signer_id>.public.pem` files materialized for the inline-text /
+    /// image `DefaultKeyResolver` chain (signer ids are UUIDs — filename-safe).
+    key_dir: tempfile::TempDir,
+    /// `agent_id:version` → PEM bytes.
+    keys: std::sync::RwLock<std::collections::HashMap<String, Vec<u8>>>,
+}
+
+/// JACS stores public keys as raw algorithm-specific bytes; PEM is base64
+/// armor over those exact bytes (`jacs::crypt::normalize_public_key_pem`).
+/// Signature blocks hash the RAW bytes, so verification must use them. This
+/// accepts either form and returns raw bytes.
+#[cfg(feature = "jacs-crate")]
+fn public_key_to_raw(bytes: &[u8]) -> Vec<u8> {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        let trimmed = text.trim();
+        if trimmed.contains("BEGIN PUBLIC KEY") {
+            let body: String = trimmed
+                .lines()
+                .filter(|line| !line.starts_with("-----"))
+                .collect();
+            if let Ok(raw) = jacs::crypt::base64_decode(&body) {
+                return raw;
+            }
+        }
+    }
+    bytes.to_vec()
+}
+
+#[cfg(feature = "jacs-crate")]
+impl<P: JacsProvider> RemoteJacsProvider<P> {
+    fn verifier(&self) -> Result<&RemoteVerifier> {
+        if let Some(existing) = self.verifier.get() {
+            return Ok(existing);
+        }
+        let (simple, _info) = jacs::simple::SimpleAgent::ephemeral(Some("ed25519"))
+            .map_err(|e| HaiError::Provider(format!("ephemeral verify agent: {e}")))?;
+        let agent = jacs::agent::Agent::ephemeral("ring-Ed25519")
+            .map_err(|e| HaiError::Provider(format!("ephemeral protocol agent: {e}")))?;
+        let key_dir = tempfile::Builder::new()
+            .prefix("haiai-remote-verify-keys")
+            .tempdir()
+            .map_err(|e| HaiError::Provider(format!("verify key dir: {e}")))?;
+        // First initializer wins on a race; ours is dropped.
+        let _ = self.verifier.set(RemoteVerifier {
+            simple,
+            agent: std::sync::Mutex::new(agent),
+            key_dir,
+            keys: std::sync::RwLock::new(std::collections::HashMap::new()),
+        });
+        Ok(self.verifier.get().expect("verifier initialized above"))
+    }
+
+    /// Fetch + cache a signer's public key (PEM bytes) from the public
+    /// key-lookup endpoint; also materialize `<agent_id>.public.pem` into the
+    /// verifier key_dir for the media/inline resolver. No auth header — the
+    /// endpoint is public and cache-friendly.
+    fn ensure_signer_key(&self, agent_id: &str, version: &str) -> Result<Vec<u8>> {
+        let verifier = self.verifier()?;
+        let cache_key = format!("{agent_id}:{version}");
+        if let Some(cached) = verifier
+            .keys
+            .read()
+            .ok()
+            .and_then(|map| map.get(&cache_key).cloned())
+        {
+            return Ok(cached);
+        }
+        let url = format!(
+            "{}/jacs/v1/agents/{}/keys/{}",
+            self.base_url,
+            encode_path_segment(agent_id),
+            encode_path_segment(version),
+        );
+        let response =
+            Self::block_on(async {
+                let resp =
+                    self.http.get(&url).send().await.map_err(|e| {
+                        HaiError::Provider(format!("key lookup network error: {e}"))
+                    })?;
+                Self::parse_response(resp).await
+            })?;
+        let pem = response
+            .get("public_key")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                HaiError::Provider(format!(
+                    "key lookup for {agent_id}:{version} returned no public_key"
+                ))
+            })?;
+        // Verification needs the RAW key bytes (the signature's publicKeyHash
+        // is computed over them). Prefer the explicit raw field; fall back to
+        // un-armoring the PEM.
+        let raw = match response.get("public_key_raw_b64").and_then(Value::as_str) {
+            Some(encoded) => jacs::crypt::base64_decode(encoded).map_err(|e| {
+                HaiError::Provider(format!(
+                    "key lookup for {agent_id}:{version}: bad public_key_raw_b64: {e}"
+                ))
+            })?,
+            None => public_key_to_raw(pem.as_bytes()),
+        };
+        // The media/inline DefaultKeyResolver reads PEM files. `agent_id`
+        // originates from the document under verification, so gate the
+        // filename on a strict charset (registry ids are UUIDs) — defense in
+        // depth against path traversal; the cache + return value are
+        // unaffected when skipped.
+        if agent_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
+            && !agent_id.contains("..")
+        {
+            let pem_path = verifier
+                .key_dir
+                .path()
+                .join(format!("{agent_id}.public.pem"));
+            if let Err(e) = std::fs::write(&pem_path, pem.as_bytes()) {
+                tracing::warn!(
+                    operation = "remote_verify_key_dir",
+                    error = %e,
+                    "failed to materialize signer key for media resolver"
+                );
+            }
+        } else {
+            tracing::warn!(
+                operation = "remote_verify_key_dir",
+                agent_id = %agent_id,
+                "signer id not filename-safe; skipping media-resolver key file"
+            );
+        }
+        if let Ok(mut map) = verifier.keys.write() {
+            map.insert(cache_key, raw.clone());
+        }
+        Ok(raw)
+    }
+
+    /// Best-effort seed of this provider's own signer key (hosted agents
+    /// mostly verify documents they signed themselves). Failures only WARN:
+    /// the resolver chain (trust store, DNS) may still resolve the signer.
+    fn seed_self_key(&self) {
+        let jacs_id = self.inner.jacs_id().to_string();
+        if jacs_id.is_empty() {
+            return;
+        }
+        if let Err(e) = self.ensure_signer_key(&jacs_id, "latest") {
+            tracing::warn!(
+                operation = "remote_verify_seed_self",
+                error = %e,
+                "self key seed failed; media verification falls back to the resolver chain"
+            );
+        }
+    }
+}
+
+#[cfg(feature = "jacs-crate")]
+impl<P: JacsProvider> crate::jacs::JacsVerificationProvider for RemoteJacsProvider<P> {
+    fn verify_document(&self, document: &str) -> Result<crate::types::DocVerificationResult> {
+        let value: Value = serde_json::from_str(document)
+            .map_err(|e| HaiError::Provider(format!("verify_document: malformed JSON: {e}")))?;
+        let signature = value.get("jacsSignature").ok_or_else(|| {
+            HaiError::Provider("verify_document: document has no jacsSignature".to_string())
+        })?;
+        let agent_id = signature
+            .get("agentID")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                HaiError::Provider("verify_document: jacsSignature missing agentID".to_string())
+            })?;
+        // Fail closed on a missing agentVersion: every JACS signing procedure
+        // records it, and "latest" could silently verify against a rotated
+        // key. (JACS itself additionally rejects any key whose hash does not
+        // match the signature's publicKeyHash.)
+        let version = signature
+            .get("agentVersion")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                HaiError::Provider(
+                    "verify_document: jacsSignature missing agentVersion".to_string(),
+                )
+            })?;
+        let key = self.ensure_signer_key(agent_id, version)?;
+        crate::jacs::JacsVerificationProvider::verify_with_key(self, document, key)
+    }
+
+    fn verify_with_key(
+        &self,
+        document: &str,
+        key: Vec<u8>,
+    ) -> Result<crate::types::DocVerificationResult> {
+        let verifier = self.verifier()?;
+        // Accept PEM or raw bytes; JACS signature hashes bind to the raw form.
+        let result = verifier
+            .simple
+            .verify_with_key(document, public_key_to_raw(&key))
+            .map_err(|e| HaiError::Provider(format!("verify_with_key failed: {e}")))?;
+        Ok(crate::jacs::map_verification_result(result))
+    }
+
+    fn verify_by_id(&self, doc_id: &str) -> Result<crate::types::DocVerificationResult> {
+        let document = self.get_latest_document(doc_id)?;
+        crate::jacs::JacsVerificationProvider::verify_document(self, &document)
+    }
+
+    fn verify_dns(&self, _domain: &str) -> Result<()> {
+        Err(HaiError::BackendUnsupported {
+            method: "verify_dns".to_string(),
+            detail: "DNS self-verification needs the local agent identity (own public key + \
+                     agent JSON); use LocalJacsProvider"
+                .to_string(),
+        })
+    }
+
+    fn build_auth_header_jacs(&self) -> Result<String> {
+        // Same `JACS {jacsId}:{ts}:{nonce}:{sig}` header this provider already
+        // sends on every records call.
+        self.build_auth_header()
+    }
+
+    fn unwrap_signed_event(
+        &self,
+        event: &Value,
+        server_public_keys: &std::collections::HashMap<String, Vec<u8>>,
+    ) -> Result<(Value, bool)> {
+        let verifier = self.verifier()?;
+        let agent = verifier
+            .agent
+            .lock()
+            .map_err(|e| HaiError::Provider(format!("verify agent lock: {e}")))?;
+        jacs::protocol::unwrap_signed_event(&agent, event, server_public_keys)
+            .map_err(|e| HaiError::Provider(format!("unwrap_signed_event failed: {e}")))
+    }
+}
+
+#[cfg(feature = "jacs-crate")]
+impl<P: JacsProvider> crate::jacs::JacsMediaProvider for RemoteJacsProvider<P> {
+    fn sign_text_file(
+        &self,
+        _path: &str,
+        _opts: crate::jacs::SignTextOptions,
+    ) -> Result<crate::jacs::SignTextOutcome> {
+        Err(HaiError::BackendUnsupported {
+            method: "sign_text_file".to_string(),
+            detail: "media signing requires local key material; hosted text signing goes \
+                     through JacsDocumentProvider::sign_text_document_create / _update"
+                .to_string(),
+        })
+    }
+
+    fn verify_text_file(
+        &self,
+        path: &str,
+        mut opts: crate::jacs::VerifyTextOptions,
+    ) -> Result<crate::jacs::VerifyTextResult> {
+        let verifier = self.verifier()?;
+        if opts.key_dir.is_none() {
+            self.seed_self_key();
+            opts.key_dir = Some(verifier.key_dir.path().to_path_buf());
+        }
+        jacs::simple::advanced::verify_text_file(&verifier.simple, path, opts)
+            .map_err(|e| HaiError::Provider(format!("verify_text_file failed: {e}")))
+    }
+
+    fn sign_image(
+        &self,
+        _in_path: &str,
+        _out_path: &str,
+        _opts: crate::jacs::SignImageOptions,
+    ) -> Result<crate::jacs::SignedMedia> {
+        Err(HaiError::BackendUnsupported {
+            method: "sign_image".to_string(),
+            detail: "media signing requires local key material; use LocalJacsProvider".to_string(),
+        })
+    }
+
+    fn verify_image(
+        &self,
+        path: &str,
+        mut opts: crate::jacs::VerifyImageOptions,
+    ) -> Result<crate::jacs::MediaVerificationResult> {
+        let verifier = self.verifier()?;
+        if opts.base.key_dir.is_none() {
+            self.seed_self_key();
+            opts.base.key_dir = Some(verifier.key_dir.path().to_path_buf());
+        }
+        jacs::simple::advanced::verify_image(&verifier.simple, path, opts)
+            .map_err(|e| HaiError::Provider(format!("verify_image failed: {e}")))
+    }
+
+    fn extract_media_signature(&self, path: &str, raw_payload: bool) -> Result<Option<String>> {
+        // Same dispatch as LocalJacsProvider — neither JACS free function
+        // consults an agent.
+        let result = if raw_payload {
+            jacs::simple::advanced::extract_media_signature_raw(path)
+        } else {
+            jacs::simple::advanced::extract_media_signature(path)
+        };
+        result.map_err(|e| HaiError::Provider(format!("extract_media_signature failed: {e}")))
+    }
 }
 
 #[cfg(test)]
@@ -2778,5 +3112,403 @@ mod tests {
         assert!(doc.json.contains("# New content"));
         assert!(doc.json.contains("-----BEGIN JACS SIGNATURE-----"));
         post_mock.assert_async().await;
+    }
+}
+
+/// Verification-trait tests: REAL Ed25519 signing via `LocalJacsProvider`,
+/// REAL verification through `RemoteJacsProvider`'s implementations, key
+/// lookups served by httpmock standing in for hai-api's public
+/// `GET /jacs/v1/agents/{jacs_id}/keys/{version}` endpoint. The inner
+/// provider is `StaticJacsProvider` wherever possible to prove verification
+/// never depends on inner key material.
+#[cfg(all(test, feature = "jacs-crate"))]
+mod verify_tests {
+    use super::*;
+    use crate::jacs::{
+        JacsMediaProvider, JacsVerificationProvider, SignTextOptions, StaticJacsProvider,
+        TextSignatureStatus, VerifyTextOptions, VerifyTextResult,
+    };
+    use crate::jacs_local::LocalJacsProvider;
+    use httpmock::{Method as HMethod, MockServer};
+    use serde_json::json;
+
+    fn remote_with_static(base_url: String) -> RemoteJacsProvider<StaticJacsProvider> {
+        RemoteJacsProvider::new(
+            StaticJacsProvider::new("agent-verify-test"),
+            RemoteJacsProviderOptions {
+                base_url,
+                ..Default::default()
+            },
+        )
+        .expect("provider")
+    }
+
+    /// Real local signer + a signed envelope, returning everything a key mock
+    /// needs: (tempdir guard, local provider, signed doc, agent_id, agent_version, pem).
+    fn signed_fixture(
+        name: &str,
+    ) -> (
+        tempfile::TempDir,
+        LocalJacsProvider,
+        String,
+        String,
+        String,
+        String,
+    ) {
+        // Env mutation (JACS_PRIVATE_KEY_PASSWORD + jenv globals during agent
+        // creation) is serialized here; the guard drops on return so async
+        // test bodies never hold it across awaits (clippy::await_holding_lock).
+        let _guard = crate::test_support::env_lock();
+        let (dir, config_path) = crate::test_support::create_test_agent(name);
+        let local = LocalJacsProvider::from_config_path(Some(config_path.as_path()), Some("fs"))
+            .expect("local provider");
+        let signed = local
+            .sign_envelope(
+                &json!({"statement": "the deadline is friday", "jacsType": "temporal-fact"}),
+            )
+            .expect("sign envelope");
+        let value: serde_json::Value = serde_json::from_str(&signed).expect("signed json");
+        let sig = &value["jacsSignature"];
+        let agent_id = sig["agentID"].as_str().expect("agentID").to_string();
+        let agent_version = sig["agentVersion"]
+            .as_str()
+            .expect("agentVersion")
+            .to_string();
+        let pem = local.public_key_pem().expect("pem");
+        (dir, local, signed, agent_id, agent_version, pem)
+    }
+
+    /// Un-armor a JACS PEM into raw key bytes, base64 (standard) encoded —
+    /// the `public_key_raw_b64` shape hai-api serves.
+    fn pem_raw_b64(pem: &str) -> String {
+        let body: String = pem
+            .lines()
+            .filter(|line| !line.starts_with("-----"))
+            .collect();
+        let raw = jacs::crypt::base64_decode(&body).expect("pem body decodes");
+        base64::engine::general_purpose::STANDARD.encode(raw)
+    }
+
+    fn raw_key(pem: &str) -> Vec<u8> {
+        let body: String = pem
+            .lines()
+            .filter(|line| !line.starts_with("-----"))
+            .collect();
+        jacs::crypt::base64_decode(&body).expect("pem body decodes")
+    }
+
+    fn mock_key_endpoint<'a>(
+        server: &'a MockServer,
+        agent_id: &str,
+        version: &str,
+        pem: &str,
+    ) -> httpmock::Mock<'a> {
+        server.mock(|when, then| {
+            when.method(HMethod::GET)
+                .path(format!("/jacs/v1/agents/{agent_id}/keys/{version}"));
+            then.status(200).json_body(json!({
+                "jacs_id": agent_id,
+                "version": version,
+                "public_key": pem,
+                "public_key_raw_b64": pem_raw_b64(pem),
+                "algorithm": "ed25519",
+                "status": "active",
+            }));
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn verify_document_validates_signed_doc_and_caches_key() {
+        let (_dir, _local, signed, agent_id, agent_version, pem) = signed_fixture("verify-ok");
+        let server = MockServer::start_async().await;
+        let key_mock = mock_key_endpoint(&server, &agent_id, &agent_version, &pem);
+
+        let remote = remote_with_static(server.base_url());
+        let result = remote.verify_document(&signed).expect("verify");
+        assert!(
+            result.valid,
+            "real signed doc must verify: {:?}",
+            result.error
+        );
+        assert_eq!(result.signer_id.as_deref(), Some(agent_id.as_str()));
+
+        // Second verification: served from the in-process key cache.
+        let again = remote.verify_document(&signed).expect("verify again");
+        assert!(again.valid);
+        key_mock.assert_calls_async(1).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn verify_document_rejects_tampered_payload() {
+        let (_dir, _local, signed, agent_id, agent_version, pem) = signed_fixture("verify-tamper");
+        let server = MockServer::start_async().await;
+        let _key_mock = mock_key_endpoint(&server, &agent_id, &agent_version, &pem);
+
+        let tampered = signed.replace("the deadline is friday", "the deadline is monday");
+        assert_ne!(tampered, signed, "tamper must change the payload");
+
+        let remote = remote_with_static(server.base_url());
+        let result = remote
+            .verify_document(&tampered)
+            .expect("soft verify result");
+        assert!(!result.valid, "tampered doc MUST fail verification");
+        assert!(result.error.is_some(), "failure must carry a reason");
+    }
+
+    /// The registry serving the WRONG key for the signer must fail
+    /// verification — pins JACS's publicKeyHash binding (the fetched key is
+    /// rehashed and compared against the signature's recorded hash).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn verify_document_rejects_wrong_registry_key() {
+        let (_dir_a, _local_a, signed, agent_id, agent_version, _pem_a) =
+            signed_fixture("wrong-key-signer");
+        // A different agent's real key, served under the signer's identity.
+        let (_dir_b, local_b, _signed_b, _id_b, _ver_b, pem_b) = signed_fixture("wrong-key-other");
+        drop(local_b);
+        let server = MockServer::start_async().await;
+        let _key_mock = mock_key_endpoint(&server, &agent_id, &agent_version, &pem_b);
+
+        let remote = remote_with_static(server.base_url());
+        let result = remote
+            .verify_document(&signed)
+            .expect("soft verification result");
+        assert!(!result.valid, "wrong registry key MUST fail verification");
+        assert!(result.error.is_some());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn verify_document_rejects_missing_agent_version() {
+        let (_dir, _local, signed, _agent_id, _agent_version, _pem) =
+            signed_fixture("no-agent-version");
+        let mut value: serde_json::Value = serde_json::from_str(&signed).unwrap();
+        value["jacsSignature"]
+            .as_object_mut()
+            .unwrap()
+            .remove("agentVersion");
+        let stripped = value.to_string();
+
+        let server = MockServer::start_async().await;
+        let remote = remote_with_static(server.base_url());
+        let result = remote.verify_document(&stripped);
+        assert!(
+            result.is_err(),
+            "missing agentVersion must fail closed, got {result:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn verify_document_fails_closed_when_signer_unknown() {
+        let (_dir, _local, signed, _agent_id, _agent_version, _pem) =
+            signed_fixture("verify-unknown");
+        let server = MockServer::start_async().await;
+        let not_found = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET);
+                then.status(404)
+                    .json_body(json!({"error": "agent_not_found"}));
+            })
+            .await;
+
+        let remote = remote_with_static(server.base_url());
+        let result = remote.verify_document(&signed);
+        assert!(
+            result.is_err(),
+            "unknown signer must fail closed, got {result:?}"
+        );
+        not_found.assert_calls_async(1).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn verify_with_key_is_pure_local() {
+        let (_dir, _local, signed, _agent_id, _agent_version, pem) = signed_fixture("verify-key");
+        let server = MockServer::start_async().await;
+        let no_traffic = server
+            .mock_async(|when, then| {
+                when.method(HMethod::GET);
+                then.status(500);
+            })
+            .await;
+
+        let remote = remote_with_static(server.base_url());
+        let result = remote
+            .verify_with_key(&signed, pem.into_bytes())
+            .expect("verify with key");
+        assert!(
+            result.valid,
+            "explicit-key verify failed: {:?}",
+            result.error
+        );
+        no_traffic.assert_calls_async(0).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn verify_by_id_fetches_record_then_verifies() {
+        let (_dir, _local, signed, agent_id, agent_version, pem) = signed_fixture("verify-by-id");
+        let value: serde_json::Value = serde_json::from_str(&signed).unwrap();
+        let doc_id = value["jacsId"].as_str().unwrap().to_string();
+        let server = MockServer::start_async().await;
+        let _key_mock = mock_key_endpoint(&server, &agent_id, &agent_version, &pem);
+        let record_mock = server.mock(|when, then| {
+            when.method(HMethod::GET)
+                .path(format!("/api/v1/records/{doc_id}"));
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(&signed);
+        });
+
+        let remote = remote_with_static(server.base_url());
+        let result = remote.verify_by_id(&doc_id).expect("verify by id");
+        assert!(result.valid, "verify_by_id failed: {:?}", result.error);
+        record_mock.assert_calls_async(1).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unwrap_signed_event_verifies_against_explicit_keys() {
+        let (_dir, local, _signed, agent_id, _agent_version, pem) = signed_fixture("unwrap");
+        let payload = json!({"verdict": "approved"});
+        let signed_event = local.sign_response(&payload).expect("sign_response");
+        let event: serde_json::Value =
+            serde_json::from_str(&signed_event.signed_document).expect("event json");
+
+        let server = MockServer::start_async().await;
+        let remote = remote_with_static(server.base_url());
+
+        // Protocol events carry a composite `agentID` (`{id}:{version}`), so
+        // key the map by what the event actually says, like prod callers do.
+        let event_agent_id = event["jacsSignature"]["agentID"]
+            .as_str()
+            .expect("event agentID")
+            .to_string();
+        assert!(
+            event_agent_id.starts_with(&agent_id),
+            "event agentID {event_agent_id} should derive from {agent_id}"
+        );
+        let mut known = std::collections::HashMap::new();
+        // Trait contract: raw bytes, the encoding KeyManager::verify_string expects.
+        known.insert(event_agent_id, raw_key(&pem));
+        let (data, verified) = remote
+            .unwrap_signed_event(&event, &known)
+            .expect("unwrap known");
+        assert!(verified, "known key must verify");
+        assert_eq!(data["verdict"], "approved");
+
+        let unknown: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+        let (_data, verified) = remote
+            .unwrap_signed_event(&event, &unknown)
+            .expect("unwrap unknown");
+        assert!(!verified, "unknown key must come back unverified, not Err");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn verify_dns_is_backend_unsupported() {
+        let server = MockServer::start_async().await;
+        let remote = remote_with_static(server.base_url());
+        match remote.verify_dns("hai.ai") {
+            Err(HaiError::BackendUnsupported { method, .. }) => {
+                assert_eq!(method, "verify_dns");
+            }
+            other => panic!("expected BackendUnsupported, got {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn build_auth_header_jacs_reuses_remote_header_builder() {
+        let server = MockServer::start_async().await;
+        let remote = remote_with_static(server.base_url());
+        let header = remote.build_auth_header_jacs().expect("auth header");
+        assert!(
+            header.starts_with("JACS "),
+            "JACS scheme expected, got: {header}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn media_signing_is_backend_unsupported() {
+        let server = MockServer::start_async().await;
+        let remote = remote_with_static(server.base_url());
+        let dir = tempfile::tempdir().unwrap();
+        let md = dir.path().join("note.md");
+        std::fs::write(&md, "# hello\n").unwrap();
+
+        match remote.sign_text_file(md.to_str().unwrap(), SignTextOptions::default()) {
+            Err(HaiError::BackendUnsupported { method, .. }) => {
+                assert_eq!(method, "sign_text_file")
+            }
+            other => panic!("expected BackendUnsupported, got {other:?}"),
+        }
+        match remote.sign_image(
+            md.to_str().unwrap(),
+            md.to_str().unwrap(),
+            crate::jacs::SignImageOptions::default(),
+        ) {
+            Err(HaiError::BackendUnsupported { method, .. }) => assert_eq!(method, "sign_image"),
+            other => panic!("expected BackendUnsupported, got {other:?}"),
+        }
+    }
+
+    /// The hosted store's inline-text read path: a text file signed by the
+    /// agent itself verifies through the remote provider, whose key_dir is
+    /// seeded from the key-lookup endpoint (self key via "latest").
+    #[tokio::test(flavor = "multi_thread")]
+    async fn verify_text_file_verifies_self_signed_file() {
+        let (_dir, local, _signed, agent_id, _agent_version, pem) = signed_fixture("verify-text");
+        let work = tempfile::tempdir().unwrap();
+        let md = work.path().join("memo.md");
+        std::fs::write(&md, "The contract deadline is Friday.\n").unwrap();
+        local
+            .sign_text_file(
+                md.to_str().unwrap(),
+                SignTextOptions {
+                    backup: false,
+                    ..Default::default()
+                },
+            )
+            .expect("local sign_text_file");
+
+        let server = MockServer::start_async().await;
+        let _key_mock = mock_key_endpoint(&server, &agent_id, "latest", &pem);
+
+        // The remote provider's identity IS the signer (hosted-agent shape):
+        // inner is a second handle onto the same local agent.
+        let remote = RemoteJacsProvider::new(
+            local,
+            RemoteJacsProviderOptions {
+                base_url: server.base_url(),
+                ..Default::default()
+            },
+        )
+        .expect("provider");
+
+        let result = remote
+            .verify_text_file(md.to_str().unwrap(), VerifyTextOptions::default())
+            .expect("verify_text_file");
+        match result {
+            VerifyTextResult::Signed { signatures } => {
+                assert!(!signatures.is_empty());
+                assert!(
+                    signatures
+                        .iter()
+                        .all(|s| matches!(s.status, TextSignatureStatus::Valid)),
+                    "all signature blocks must be Valid: {signatures:?}"
+                );
+            }
+            other => panic!("expected Signed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn extract_media_signature_needs_no_agent() {
+        let server = MockServer::start_async().await;
+        let remote = remote_with_static(server.base_url());
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("plain.png");
+        image::RgbImage::new(2, 2)
+            .save(&png)
+            .expect("write test png");
+
+        let extracted = remote
+            .extract_media_signature(png.to_str().unwrap(), false)
+            .expect("extract on unsigned png");
+        assert!(extracted.is_none(), "unsigned png has no signature payload");
     }
 }

@@ -1556,18 +1556,7 @@ impl JacsVerificationProvider for LocalJacsProvider {
         let result = simple
             .verify(document)
             .map_err(|e| HaiError::Provider(format!("verify_document failed: {e}")))?;
-        Ok(DocVerificationResult {
-            key: result.signer_id.clone(),
-            valid: result.valid,
-            error: if result.errors.is_empty() {
-                None
-            } else {
-                Some(result.errors.join("; "))
-            },
-            signer_id: Some(result.signer_id),
-            timestamp: Some(result.timestamp),
-            signer_name: result.signer_name,
-        })
+        Ok(crate::jacs::map_verification_result(result))
     }
 
     fn verify_with_key(&self, document: &str, key: Vec<u8>) -> Result<DocVerificationResult> {
@@ -1753,6 +1742,68 @@ impl JacsEmailProvider for LocalJacsProvider {
 
 #[cfg(feature = "agreements")]
 impl JacsAgreementProvider for LocalJacsProvider {
+    fn create_agreement_v2(&self, _input: Value) -> Result<SignedDocument> {
+        Err(HaiError::Provider(
+            "local JACS agreement v2 operations are deferred; use HAI agreement workflow APIs"
+                .to_string(),
+        ))
+    }
+
+    fn apply_agreement_v2(&self, _document: &str, _mutation: Value) -> Result<SignedDocument> {
+        Err(HaiError::Provider(
+            "local JACS agreement v2 operations are deferred; use HAI agreement workflow APIs"
+                .to_string(),
+        ))
+    }
+
+    fn sign_agreement_v2(&self, _document: &str, _role: &str) -> Result<SignedDocument> {
+        Err(HaiError::Provider(
+            "local JACS agreement v2 signing is deferred; use the human-owned HAI signing flow"
+                .to_string(),
+        ))
+    }
+
+    fn verify_agreement_v2(&self, _document: &str) -> Result<Value> {
+        Err(HaiError::Provider(
+            "local JACS agreement v2 verification is deferred; use HAI agreement verification APIs"
+                .to_string(),
+        ))
+    }
+
+    fn detect_agreement_branch_conflict(
+        &self,
+        _base_document: &str,
+        _left_document: &str,
+        _right_document: &str,
+    ) -> Result<Value> {
+        Err(HaiError::Provider(
+            "agreement branch-conflict detection is deferred for P1".to_string(),
+        ))
+    }
+
+    fn merge_agreement_transcript_branches(
+        &self,
+        _base_document: &str,
+        _left_document: &str,
+        _right_document: &str,
+    ) -> Result<SignedDocument> {
+        Err(HaiError::Provider(
+            "agreement branch merging is deferred for P1".to_string(),
+        ))
+    }
+
+    fn resolve_agreement_branch_conflict(
+        &self,
+        _base_document: &str,
+        _previous_document: &str,
+        _side_branch_document: &str,
+        _resolution: Value,
+    ) -> Result<SignedDocument> {
+        Err(HaiError::Provider(
+            "agreement branch-conflict resolution is deferred for P1".to_string(),
+        ))
+    }
+
     fn create_agreement(
         &self,
         doc: &str,

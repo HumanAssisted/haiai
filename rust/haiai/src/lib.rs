@@ -135,4 +135,29 @@ pub(crate) mod test_support {
             Err(poisoned) => poisoned.into_inner(),
         }
     }
+
+    /// Create a real Ed25519 JACS agent in an isolated tempdir and return the
+    /// tempdir guard plus the written `jacs.config.json` path. Shared by
+    /// `document_store` and `jacs_remote` tests (real signing, no fakes).
+    #[cfg(feature = "jacs-crate")]
+    pub(crate) fn create_test_agent(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let base = dir.path().canonicalize().expect("canonical tempdir");
+        let config_path = base.join("jacs.config.json");
+        let data_dir = base.join("jacs_data");
+        let key_dir = base.join("jacs_keys");
+        std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123");
+        crate::jacs_local::LocalJacsProvider::create_agent(jacs::simple::CreateAgentParams {
+            name: name.to_string(),
+            password: "TestPass!123".to_string(),
+            config_path: config_path.to_string_lossy().into_owned(),
+            data_directory: data_dir.to_string_lossy().into_owned(),
+            key_directory: key_dir.to_string_lossy().into_owned(),
+            algorithm: "ed25519".to_string(),
+            default_storage: "fs".to_string(),
+            ..jacs::simple::CreateAgentParams::default()
+        })
+        .expect("create agent");
+        (dir, config_path)
+    }
 }

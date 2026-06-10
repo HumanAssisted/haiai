@@ -82,29 +82,10 @@ pub fn build_document_provider_for_backend(
 
 #[cfg(test)]
 mod tests {
-    use jacs::simple::CreateAgentParams;
-
     use super::*;
 
     fn create_test_agent() -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let base = dir.path().canonicalize().expect("canonical tempdir");
-        let config_path = base.join("jacs.config.json");
-        let data_dir = base.join("jacs_data");
-        let key_dir = base.join("jacs_keys");
-        std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123");
-        LocalJacsProvider::create_agent(CreateAgentParams {
-            name: "doc-store-test".to_string(),
-            password: "TestPass!123".to_string(),
-            config_path: config_path.to_string_lossy().into_owned(),
-            data_directory: data_dir.to_string_lossy().into_owned(),
-            key_directory: key_dir.to_string_lossy().into_owned(),
-            algorithm: "ed25519".to_string(),
-            default_storage: "fs".to_string(),
-            ..CreateAgentParams::default()
-        })
-        .expect("create agent");
-        (dir, config_path)
+        crate::test_support::create_test_agent("doc-store-test")
     }
 
     #[test]

@@ -1155,6 +1155,27 @@ pub trait JacsBatchProvider: JacsProvider {
 // Layer 4: Verification (JacsVerificationProvider)
 // =============================================================================
 
+/// Map a JACS `VerificationResult` to haiai's `DocVerificationResult`.
+/// Single source of truth for the mapping — used by `LocalJacsProvider` and
+/// `RemoteJacsProvider` verification impls.
+#[cfg(feature = "jacs-crate")]
+pub(crate) fn map_verification_result(
+    result: jacs::simple::VerificationResult,
+) -> crate::types::DocVerificationResult {
+    crate::types::DocVerificationResult {
+        key: result.signer_id.clone(),
+        valid: result.valid,
+        error: if result.errors.is_empty() {
+            None
+        } else {
+            Some(result.errors.join("; "))
+        },
+        signer_id: Some(result.signer_id),
+        timestamp: Some(result.timestamp),
+        signer_name: result.signer_name,
+    }
+}
+
 /// Extension trait for document verification, DNS trust, and auth headers.
 pub trait JacsVerificationProvider: JacsProvider {
     /// Verify a signed document.
@@ -1277,6 +1298,43 @@ pub trait JacsMediaProvider: JacsProvider {
 /// Extension trait for multi-party agreements.
 #[cfg(feature = "agreements")]
 pub trait JacsAgreementProvider: JacsProvider {
+    /// Create a standalone JACS agreement v2 document.
+    fn create_agreement_v2(&self, input: Value) -> Result<SignedDocument>;
+
+    /// Apply a policy-controlled v2 agreement mutation.
+    fn apply_agreement_v2(&self, document: &str, mutation: Value) -> Result<SignedDocument>;
+
+    /// Add a signer, witness, or notary signature to a v2 agreement.
+    fn sign_agreement_v2(&self, document: &str, role: &str) -> Result<SignedDocument>;
+
+    /// Verify v2 agreement structure, hashes, policy, and signatures.
+    fn verify_agreement_v2(&self, document: &str) -> Result<Value>;
+
+    /// Compare two v2 agreement branches against their shared base.
+    fn detect_agreement_branch_conflict(
+        &self,
+        base_document: &str,
+        left_document: &str,
+        right_document: &str,
+    ) -> Result<Value>;
+
+    /// Auto-merge two transcript-only v2 agreement branches.
+    fn merge_agreement_transcript_branches(
+        &self,
+        base_document: &str,
+        left_document: &str,
+        right_document: &str,
+    ) -> Result<SignedDocument>;
+
+    /// Resolve a v2 agreement branch conflict with an explicit mutation.
+    fn resolve_agreement_branch_conflict(
+        &self,
+        base_document: &str,
+        previous_document: &str,
+        side_branch_document: &str,
+        resolution: Value,
+    ) -> Result<SignedDocument>;
+
     /// Create an agreement with specified agents and optional quorum.
     fn create_agreement(
         &self,
