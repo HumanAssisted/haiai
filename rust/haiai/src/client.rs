@@ -1354,6 +1354,186 @@ impl<P: JacsProvider> HaiClient<P> {
     }
 
     // =========================================================================
+    // Agreements (future HAI workflow API)
+    // =========================================================================
+
+    /// Save a signed agreement document in HAI.
+    ///
+    /// The `POST /api/v1/agreements` server endpoint is intentionally
+    /// documented before implementation (AGREEMENTS_FIRST_CLASS_API_PRD in
+    /// `hai/docs`); this SDK method gives language bindings one stable
+    /// contract, and callers get a 404 until the endpoint lands.
+    pub async fn save_agreement(&self, request: &Value) -> Result<Value> {
+        let url = self.url("/api/v1/agreements");
+        let response = self
+            .request_with_retry(|| {
+                let http = &self.http;
+                let url = &url;
+                async move {
+                    http.post(url.as_str())
+                        .header("Authorization", self.build_auth_header()?)
+                        .header("Content-Type", "application/json")
+                        .json(request)
+                        .send()
+                        .await
+                        .map_err(HaiError::from)
+                }
+            })
+            .await?;
+
+        response_json(response).await
+    }
+
+    /// Search agreement records visible to the authenticated agent.
+    ///
+    /// Like [`Self::save_agreement`], the `POST /api/v1/agreements/search`
+    /// endpoint is documented ahead of its server implementation
+    /// (AGREEMENTS_FIRST_CLASS_API_PRD); callers get a 404 until it lands.
+    pub async fn search_agreements(&self, request: &Value) -> Result<Value> {
+        let url = self.url("/api/v1/agreements/search");
+        let response = self
+            .request_with_retry(|| {
+                let http = &self.http;
+                let url = &url;
+                async move {
+                    http.post(url.as_str())
+                        .header("Authorization", self.build_auth_header()?)
+                        .header("Content-Type", "application/json")
+                        .json(request)
+                        .send()
+                        .await
+                        .map_err(HaiError::from)
+                }
+            })
+            .await?;
+
+        response_json(response).await
+    }
+
+    /// Retrieve one agreement record by HAI agreement id or JACS document id.
+    pub async fn get_agreement(&self, agreement_id: &str) -> Result<Value> {
+        let safe_agreement_id = encode_path_segment(agreement_id);
+        let url = self.url(&format!("/api/v1/agreements/{safe_agreement_id}"));
+        let response = self
+            .request_with_retry(|| {
+                let http = &self.http;
+                let url = &url;
+                async move {
+                    http.get(url.as_str())
+                        .header("Authorization", self.build_auth_header()?)
+                        .send()
+                        .await
+                        .map_err(HaiError::from)
+                }
+            })
+            .await?;
+
+        response_json(response).await
+    }
+
+    /// Request a HAI notary/countersignature for an agreement workflow.
+    pub async fn countersign_agreement(
+        &self,
+        agreement_id: &str,
+        request: &Value,
+    ) -> Result<Value> {
+        let safe_agreement_id = encode_path_segment(agreement_id);
+        let url = self.url(&format!(
+            "/api/v1/agreements/{safe_agreement_id}/countersign"
+        ));
+        let response = self
+            .request_with_retry(|| {
+                let http = &self.http;
+                let url = &url;
+                async move {
+                    http.post(url.as_str())
+                        .header("Authorization", self.build_auth_header()?)
+                        .header("Content-Type", "application/json")
+                        .json(request)
+                        .send()
+                        .await
+                        .map_err(HaiError::from)
+                }
+            })
+            .await?;
+
+        response_json(response).await
+    }
+
+    /// Retrieve an agreement intake visible to the authenticated party agent.
+    pub async fn get_agreement_intake(&self, intake_id: &str) -> Result<Value> {
+        let safe_intake_id = encode_path_segment(intake_id);
+        let url = self.url(&format!("/api/v1/agreements/intakes/{safe_intake_id}"));
+        let response = self
+            .request_with_retry(|| {
+                let http = &self.http;
+                let url = &url;
+                async move {
+                    http.get(url.as_str())
+                        .header("Authorization", self.build_auth_header()?)
+                        .send()
+                        .await
+                        .map_err(HaiError::from)
+                }
+            })
+            .await?;
+
+        response_json(response).await
+    }
+
+    /// Retrieve an agreement intake by the public id included in agreement email.
+    pub async fn get_agreement_intake_by_public_id(&self, public_intake_id: &str) -> Result<Value> {
+        let safe_public_intake_id = encode_path_segment(public_intake_id);
+        let url = self.url(&format!(
+            "/api/v1/agreements/intakes/by-public/{safe_public_intake_id}"
+        ));
+        let response = self
+            .request_with_retry(|| {
+                let http = &self.http;
+                let url = &url;
+                async move {
+                    http.get(url.as_str())
+                        .header("Authorization", self.build_auth_header()?)
+                        .send()
+                        .await
+                        .map_err(HaiError::from)
+                }
+            })
+            .await?;
+
+        response_json(response).await
+    }
+
+    /// Record one normalized interview turn for an agreement intake.
+    pub async fn record_agreement_interview_turn(
+        &self,
+        intake_id: &str,
+        request: &Value,
+    ) -> Result<Value> {
+        let safe_intake_id = encode_path_segment(intake_id);
+        let url = self.url(&format!(
+            "/api/v1/agreements/intakes/{safe_intake_id}/interview-turns"
+        ));
+        let response = self
+            .request_with_retry(|| {
+                let http = &self.http;
+                let url = &url;
+                async move {
+                    http.post(url.as_str())
+                        .header("Authorization", self.build_auth_header()?)
+                        .header("Content-Type", "application/json")
+                        .json(request)
+                        .send()
+                        .await
+                        .map_err(HaiError::from)
+                }
+            })
+            .await?;
+
+        response_json(response).await
+    }
+
+    // =========================================================================
     // Attestation Methods
     // =========================================================================
 
@@ -2619,6 +2799,118 @@ mod tests {
         )
         .expect("should accept URL with trailing slash");
         assert_eq!(client.base_url(), "https://hai.ai");
+    }
+
+    #[tokio::test]
+    async fn get_agreement_intake_uses_p1_uuid_route_and_jacs_auth() {
+        let server = httpmock::MockServer::start_async().await;
+        let intake_id = "11111111-1111-1111-1111-111111111111";
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::GET)
+                    .path("/api/v1/agreements/intakes/11111111-1111-1111-1111-111111111111")
+                    .header_exists("Authorization");
+                then.status(200).json_body(json!({
+                    "intake_id": intake_id,
+                    "status": "interviewing"
+                }));
+            })
+            .await;
+
+        let provider = StaticJacsProvider::new("agreement-route-agent");
+        let client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: server.base_url(),
+                max_retries: 1,
+                ..HaiClientOptions::default()
+            },
+        )
+        .expect("client");
+
+        let response = client
+            .get_agreement_intake(intake_id)
+            .await
+            .expect("intake");
+
+        assert_eq!(response["intake_id"], intake_id);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn get_agreement_intake_by_public_id_uses_p1_public_route_and_jacs_auth() {
+        let server = httpmock::MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::GET)
+                    .path("/api/v1/agreements/intakes/by-public/agree-public-123")
+                    .header_exists("Authorization");
+                then.status(200).json_body(json!({
+                    "public_intake_id": "agree-public-123",
+                    "status": "interviewing"
+                }));
+            })
+            .await;
+
+        let provider = StaticJacsProvider::new("agreement-public-route-agent");
+        let client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: server.base_url(),
+                max_retries: 1,
+                ..HaiClientOptions::default()
+            },
+        )
+        .expect("client");
+
+        let response = client
+            .get_agreement_intake_by_public_id("agree-public-123")
+            .await
+            .expect("intake");
+
+        assert_eq!(response["public_intake_id"], "agree-public-123");
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn record_agreement_interview_turn_uses_p1_route_and_json_body() {
+        let server = httpmock::MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path("/api/v1/agreements/intakes/11111111-1111-1111-1111-111111111111/interview-turns")
+                    .header_exists("Authorization")
+                    .header_exists("Content-Type");
+                then.status(200).json_body(json!({
+                    "recorded": true,
+                    "turn_id": "turn-123"
+                }));
+            })
+            .await;
+
+        let provider = StaticJacsProvider::new("agreement-turn-route-agent");
+        let client = HaiClient::new(
+            provider,
+            HaiClientOptions {
+                base_url: server.base_url(),
+                max_retries: 1,
+                ..HaiClientOptions::default()
+            },
+        )
+        .expect("client");
+        let payload = json!({
+            "party_role": "initiator",
+            "source": "email",
+            "sanitized_text": "I can meet Tuesday."
+        });
+
+        let response = client
+            .record_agreement_interview_turn("11111111-1111-1111-1111-111111111111", &payload)
+            .await
+            .expect("turn record");
+
+        assert_eq!(response["recorded"], true);
+        mock.assert_async().await;
     }
 
     // ── Issue #4: retry wrapper ───────────────────────────────────────

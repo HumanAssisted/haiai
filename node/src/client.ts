@@ -1308,6 +1308,78 @@ export class HaiClient {
   }
 
   // ===========================================================================
+  // Agreements
+  // ===========================================================================
+
+  async saveAgreement(request: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.ffi.saveAgreement(request);
+  }
+
+  async searchAgreements(request: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.ffi.searchAgreements(request);
+  }
+
+  async getAgreement(agreementId: string): Promise<Record<string, unknown>> {
+    return this.ffi.getAgreement(agreementId);
+  }
+
+  async countersignAgreement(
+    agreementId: string,
+    request: Record<string, unknown> = {},
+  ): Promise<Record<string, unknown>> {
+    return this.ffi.countersignAgreement(agreementId, request);
+  }
+
+  async createAgreementV2(input: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.ffi.createAgreementV2(input);
+  }
+
+  async applyAgreementV2(
+    document: string,
+    mutation: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return this.ffi.applyAgreementV2(document, mutation);
+  }
+
+  async signAgreementV2(document: string, role: string): Promise<Record<string, unknown>> {
+    return this.ffi.signAgreementV2(document, role);
+  }
+
+  async verifyAgreementV2(document: string): Promise<Record<string, unknown>> {
+    return this.ffi.verifyAgreementV2(document);
+  }
+
+  async detectAgreementBranchConflict(
+    baseDocument: string,
+    leftDocument: string,
+    rightDocument: string,
+  ): Promise<Record<string, unknown>> {
+    return this.ffi.detectAgreementBranchConflict(baseDocument, leftDocument, rightDocument);
+  }
+
+  async mergeAgreementTranscriptBranches(
+    baseDocument: string,
+    leftDocument: string,
+    rightDocument: string,
+  ): Promise<Record<string, unknown>> {
+    return this.ffi.mergeAgreementTranscriptBranches(baseDocument, leftDocument, rightDocument);
+  }
+
+  async resolveAgreementBranchConflict(
+    baseDocument: string,
+    previousDocument: string,
+    sideBranchDocument: string,
+    resolution: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return this.ffi.resolveAgreementBranchConflict(
+      baseDocument,
+      previousDocument,
+      sideBranchDocument,
+      resolution,
+    );
+  }
+
+  // ===========================================================================
   // Layer 8: Local Media Sign/Verify (TASK_008)
   // ===========================================================================
 

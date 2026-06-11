@@ -27,6 +27,19 @@
       {"name": "get_raw_email", "args": ["message_id:string"], "returns": "json"},
       {"name": "get_unread_count", "args": [], "returns": "json"}
     ],
+    "agreements": [
+      {"name": "save_agreement", "args": ["request_json:string"], "returns": "json"},
+      {"name": "search_agreements", "args": ["request_json:string"], "returns": "json"},
+      {"name": "get_agreement", "args": ["agreement_id:string"], "returns": "json"},
+      {"name": "countersign_agreement", "args": ["agreement_id:string", "request_json:string"], "returns": "json"},
+      {"name": "create_agreement_v2", "args": ["input_json:string"], "returns": "json"},
+      {"name": "apply_agreement_v2", "args": ["document:string", "mutation_json:string"], "returns": "json"},
+      {"name": "sign_agreement_v2", "args": ["document:string", "role:string"], "returns": "json"},
+      {"name": "verify_agreement_v2", "args": ["document:string"], "returns": "json"},
+      {"name": "detect_agreement_branch_conflict", "args": ["base_document:string", "left_document:string", "right_document:string"], "returns": "json"},
+      {"name": "merge_agreement_transcript_branches", "args": ["base_document:string", "left_document:string", "right_document:string"], "returns": "json"},
+      {"name": "resolve_agreement_branch_conflict", "args": ["base_document:string", "previous_document:string", "side_branch_document:string", "resolution_json:string"], "returns": "json"}
+    ],
     "email_actions": [
       {"name": "mark_read", "args": ["message_id:string"], "returns": "void"},
       {"name": "mark_unread", "args": ["message_id:string"], "returns": "void"},
@@ -139,5 +152,5 @@
     "ProviderError"
   ],
   "error_format": "{ErrorKind}: {message}",
-  "total_method_count": 94
+  "total_method_count": 105
 }

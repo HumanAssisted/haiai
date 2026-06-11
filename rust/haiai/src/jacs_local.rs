@@ -1740,68 +1740,120 @@ impl JacsEmailProvider for LocalJacsProvider {
 // JacsAgreementProvider implementation (feature-gated)
 // =============================================================================
 
+/// Map a JACS v2 `SignedDocument` (raw + document_id) to haiai's shape.
+#[cfg(feature = "agreements")]
+fn map_v2_signed(sd: jacs::simple::SignedDocument) -> SignedDocument {
+    SignedDocument {
+        key: sd.document_id.clone(),
+        json: sd.raw,
+    }
+}
+
+/// Parse an agreement v2 signature role. Mirrors JACS binding-core's
+/// `parse_role` so every surface rejects unknown roles with the same message.
+#[cfg(feature = "agreements")]
+fn parse_agreement_v2_role(role: &str) -> Result<jacs::agreements::v2::AgreementV2Role> {
+    match role {
+        "signer" => Ok(jacs::agreements::v2::AgreementV2Role::Signer),
+        "witness" => Ok(jacs::agreements::v2::AgreementV2Role::Witness),
+        "notary" => Ok(jacs::agreements::v2::AgreementV2Role::Notary),
+        other => Err(HaiError::Provider(format!(
+            "invalid agreement v2 signature role '{other}'; expected signer, witness, or notary"
+        ))),
+    }
+}
+
 #[cfg(feature = "agreements")]
 impl JacsAgreementProvider for LocalJacsProvider {
-    fn create_agreement_v2(&self, _input: Value) -> Result<SignedDocument> {
-        Err(HaiError::Provider(
-            "local JACS agreement v2 operations are deferred; use HAI agreement workflow APIs"
-                .to_string(),
-        ))
+    fn create_agreement_v2(&self, input: Value) -> Result<SignedDocument> {
+        let simple = self.load_simple_agent()?;
+        let input: jacs::agreements::v2::CreateAgreementV2 = serde_json::from_value(input)
+            .map_err(|e| HaiError::Provider(format!("invalid agreement v2 create input: {e}")))?;
+        jacs::agreements::v2::create(&simple, input)
+            .map(map_v2_signed)
+            .map_err(|e| HaiError::Provider(format!("create_agreement_v2 failed: {e}")))
     }
 
-    fn apply_agreement_v2(&self, _document: &str, _mutation: Value) -> Result<SignedDocument> {
-        Err(HaiError::Provider(
-            "local JACS agreement v2 operations are deferred; use HAI agreement workflow APIs"
-                .to_string(),
-        ))
+    fn apply_agreement_v2(&self, document: &str, mutation: Value) -> Result<SignedDocument> {
+        let simple = self.load_simple_agent()?;
+        let mutation: jacs::agreements::v2::AgreementV2Mutation = serde_json::from_value(mutation)
+            .map_err(|e| HaiError::Provider(format!("invalid agreement v2 mutation: {e}")))?;
+        jacs::agreements::v2::apply(&simple, document, mutation)
+            .map(map_v2_signed)
+            .map_err(|e| HaiError::Provider(format!("apply_agreement_v2 failed: {e}")))
     }
 
-    fn sign_agreement_v2(&self, _document: &str, _role: &str) -> Result<SignedDocument> {
-        Err(HaiError::Provider(
-            "local JACS agreement v2 signing is deferred; use the human-owned HAI signing flow"
-                .to_string(),
-        ))
+    fn sign_agreement_v2(&self, document: &str, role: &str) -> Result<SignedDocument> {
+        let simple = self.load_simple_agent()?;
+        let role = parse_agreement_v2_role(role)?;
+        jacs::agreements::v2::sign(&simple, document, role)
+            .map(map_v2_signed)
+            .map_err(|e| HaiError::Provider(format!("sign_agreement_v2 failed: {e}")))
     }
 
-    fn verify_agreement_v2(&self, _document: &str) -> Result<Value> {
-        Err(HaiError::Provider(
-            "local JACS agreement v2 verification is deferred; use HAI agreement verification APIs"
-                .to_string(),
-        ))
+    fn verify_agreement_v2(&self, document: &str) -> Result<Value> {
+        let simple = self.load_simple_agent()?;
+        let report = jacs::agreements::v2::verify(&simple, document)
+            .map_err(|e| HaiError::Provider(format!("verify_agreement_v2 failed: {e}")))?;
+        serde_json::to_value(&report)
+            .map_err(|e| HaiError::Provider(format!("serialize agreement v2 report: {e}")))
     }
 
     fn detect_agreement_branch_conflict(
         &self,
-        _base_document: &str,
-        _left_document: &str,
-        _right_document: &str,
+        base_document: &str,
+        left_document: &str,
+        right_document: &str,
     ) -> Result<Value> {
-        Err(HaiError::Provider(
-            "agreement branch-conflict detection is deferred for P1".to_string(),
-        ))
+        // Pure analysis over the three documents — no agent state involved.
+        let analysis = jacs::agreements::v2::detect_branch_conflict(
+            base_document,
+            left_document,
+            right_document,
+        )
+        .map_err(|e| HaiError::Provider(format!("detect_agreement_branch_conflict failed: {e}")))?;
+        serde_json::to_value(&analysis)
+            .map_err(|e| HaiError::Provider(format!("serialize merge analysis: {e}")))
     }
 
     fn merge_agreement_transcript_branches(
         &self,
-        _base_document: &str,
-        _left_document: &str,
-        _right_document: &str,
+        base_document: &str,
+        left_document: &str,
+        right_document: &str,
     ) -> Result<SignedDocument> {
-        Err(HaiError::Provider(
-            "agreement branch merging is deferred for P1".to_string(),
-        ))
+        let simple = self.load_simple_agent()?;
+        jacs::agreements::v2::merge_transcript_branches(
+            &simple,
+            base_document,
+            left_document,
+            right_document,
+        )
+        .map(map_v2_signed)
+        .map_err(|e| HaiError::Provider(format!("merge_agreement_transcript_branches failed: {e}")))
     }
 
     fn resolve_agreement_branch_conflict(
         &self,
-        _base_document: &str,
-        _previous_document: &str,
-        _side_branch_document: &str,
-        _resolution: Value,
+        base_document: &str,
+        previous_document: &str,
+        side_branch_document: &str,
+        resolution: Value,
     ) -> Result<SignedDocument> {
-        Err(HaiError::Provider(
-            "agreement branch-conflict resolution is deferred for P1".to_string(),
-        ))
+        let simple = self.load_simple_agent()?;
+        let resolution: jacs::agreements::v2::AgreementV2Mutation =
+            serde_json::from_value(resolution).map_err(|e| {
+                HaiError::Provider(format!("invalid agreement v2 resolution mutation: {e}"))
+            })?;
+        jacs::agreements::v2::resolve_branch_conflict(
+            &simple,
+            base_document,
+            previous_document,
+            side_branch_document,
+            resolution,
+        )
+        .map(map_v2_signed)
+        .map_err(|e| HaiError::Provider(format!("resolve_agreement_branch_conflict failed: {e}")))
     }
 
     fn create_agreement(
@@ -1857,6 +1909,199 @@ impl JacsAgreementProvider for LocalJacsProvider {
             .map_err(|e| HaiError::Provider(format!("check_agreement failed: {e}")))?;
         serde_json::to_value(&status)
             .map_err(|e| HaiError::Provider(format!("serialize agreement status: {e}")))
+    }
+}
+
+#[cfg(all(test, feature = "agreements"))]
+mod agreement_v2_tests {
+    use serde_json::{json, Value};
+
+    use super::*;
+    use crate::jacs::JacsAgreementProvider;
+
+    /// These tests are synchronous, so the env guard is held for the WHOLE
+    /// test: JACS agent creation/loading reads process-global jenv state
+    /// (key/data directories), and every provider call re-loads the agent.
+    fn agreement_provider(
+        name: &str,
+    ) -> (
+        std::sync::MutexGuard<'static, ()>,
+        tempfile::TempDir,
+        LocalJacsProvider,
+    ) {
+        let guard = crate::test_support::env_lock();
+        let (dir, config_path) = crate::test_support::create_test_agent(name);
+        let provider = LocalJacsProvider::from_config_path(Some(config_path.as_path()), Some("fs"))
+            .expect("local provider");
+        (guard, dir, provider)
+    }
+
+    /// Mirrors JACS `binding-core/tests/fixtures/agreement_v2_scenarios.json`
+    /// `base_input` so haiai exercises the same workflow data as the JACS
+    /// binding/CLI/MCP parity suites.
+    fn base_input(agent_id: &str) -> Value {
+        json!({
+            "title": "Agreement v2 parity",
+            "description": "Portable agreement v2 workflow test.",
+            "terms": "The public surface must delegate agreement v2 behavior to Rust core.",
+            "termsFormat": "text/plain",
+            "status": "proposed",
+            "parties": [{"agentId": agent_id, "agentType": "ai", "role": "signer"}],
+            "signaturePolicy": {
+                "partyQuorum": "all",
+                "witnessRequired": 0,
+                "notaryRequired": 0,
+                "requiredAlgorithms": ["ring-Ed25519"],
+                "minimumStrength": "classical"
+            }
+        })
+    }
+
+    fn transcript_ref(suffix: u8) -> Value {
+        json!({
+            "jacsId": format!("00000000-0000-4000-8000-00000000000{suffix}"),
+            "jacsVersion": format!("10000000-0000-4000-8000-00000000000{suffix}"),
+            "jacsSha256": format!("agreement-v2-transcript-ref-{suffix}")
+        })
+    }
+
+    fn doc_value(doc: &SignedDocument) -> Value {
+        serde_json::from_str(&doc.json).expect("agreement document is JSON")
+    }
+
+    #[test]
+    fn create_apply_sign_verify_round_trip() {
+        let (_guard, _dir, provider) = agreement_provider("agr-v2-round-trip");
+        let agent_id = provider.jacs_id().to_string();
+
+        let created = provider
+            .create_agreement_v2(base_input(&agent_id))
+            .expect("create agreement v2");
+        let created_value = doc_value(&created);
+        assert_eq!(created_value["status"], "proposed");
+        assert_eq!(created_value["parties"][0]["agentId"], agent_id.as_str());
+
+        let appended = provider
+            .apply_agreement_v2(
+                &created.json,
+                json!({"type": "appendTranscript", "entry": transcript_ref(1)}),
+            )
+            .expect("append transcript");
+        let appended_value = doc_value(&appended);
+        assert_eq!(
+            appended_value["transcript"].as_array().map(Vec::len),
+            Some(1)
+        );
+
+        let signed = provider
+            .sign_agreement_v2(&appended.json, "signer")
+            .expect("sign agreement v2");
+        let report = provider
+            .verify_agreement_v2(&signed.json)
+            .expect("verify agreement v2");
+        assert_eq!(report["valid"], true, "report: {report}");
+        assert_eq!(report["signerCount"], 1, "report: {report}");
+    }
+
+    #[test]
+    fn transcript_branches_detect_and_auto_merge() {
+        let (_guard, _dir, provider) = agreement_provider("agr-v2-merge");
+        let agent_id = provider.jacs_id().to_string();
+        let base = provider
+            .create_agreement_v2(base_input(&agent_id))
+            .expect("create");
+
+        let left = provider
+            .apply_agreement_v2(
+                &base.json,
+                json!({"type": "appendTranscript", "entry": transcript_ref(1)}),
+            )
+            .expect("left branch");
+        let right = provider
+            .apply_agreement_v2(
+                &base.json,
+                json!({"type": "appendTranscript", "entry": transcript_ref(2)}),
+            )
+            .expect("right branch");
+
+        let analysis = provider
+            .detect_agreement_branch_conflict(&base.json, &left.json, &right.json)
+            .expect("detect");
+        assert_eq!(
+            analysis["autoMergeable"], true,
+            "transcript-only branches must auto-merge: {analysis}"
+        );
+
+        let merged = provider
+            .merge_agreement_transcript_branches(&base.json, &left.json, &right.json)
+            .expect("merge");
+        let merged_value = doc_value(&merged);
+        assert_eq!(
+            merged_value["transcript"].as_array().map(Vec::len),
+            Some(2),
+            "merged transcript carries both branch entries"
+        );
+    }
+
+    #[test]
+    fn conflicting_terms_detect_then_resolve() {
+        let (_guard, _dir, provider) = agreement_provider("agr-v2-resolve");
+        let agent_id = provider.jacs_id().to_string();
+        let base = provider
+            .create_agreement_v2(base_input(&agent_id))
+            .expect("create");
+
+        let left = provider
+            .apply_agreement_v2(
+                &base.json,
+                json!({"type": "updateTerms", "terms": "Left branch terms."}),
+            )
+            .expect("left terms");
+        let right = provider
+            .apply_agreement_v2(
+                &base.json,
+                json!({"type": "updateTerms", "terms": "Right branch terms."}),
+            )
+            .expect("right terms");
+
+        let analysis = provider
+            .detect_agreement_branch_conflict(&base.json, &left.json, &right.json)
+            .expect("detect");
+        assert_eq!(analysis["autoMergeable"], false, "{analysis}");
+        let conflicts = analysis["conflictFields"]
+            .as_array()
+            .expect("conflictFields array");
+        assert!(
+            conflicts.iter().any(|f| f == "terms"),
+            "terms must be a conflict field: {analysis}"
+        );
+
+        let resolved = provider
+            .resolve_agreement_branch_conflict(
+                &base.json,
+                &left.json,
+                &right.json,
+                json!({"type": "updateTerms", "terms": "Resolved terms."}),
+            )
+            .expect("resolve");
+        assert_eq!(doc_value(&resolved)["terms"], "Resolved terms.");
+    }
+
+    #[test]
+    fn sign_rejects_unknown_role() {
+        let (_guard, _dir, provider) = agreement_provider("agr-v2-role");
+        let agent_id = provider.jacs_id().to_string();
+        let base = provider
+            .create_agreement_v2(base_input(&agent_id))
+            .expect("create");
+        let err = provider
+            .sign_agreement_v2(&base.json, "owner")
+            .expect_err("unknown role must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("signer") && msg.contains("witness") && msg.contains("notary"),
+            "error should list valid roles: {msg}"
+        );
     }
 }
 

@@ -85,6 +85,19 @@ type FFIClient interface {
 	SignEmailRaw(rawEmailB64 string) (json.RawMessage, error)
 	VerifyEmailRaw(rawEmailB64 string) (json.RawMessage, error)
 
+	// Agreements
+	SaveAgreement(requestJSON string) (json.RawMessage, error)
+	SearchAgreements(requestJSON string) (json.RawMessage, error)
+	GetAgreement(agreementID string) (json.RawMessage, error)
+	CountersignAgreement(agreementID, requestJSON string) (json.RawMessage, error)
+	CreateAgreementV2(inputJSON string) (json.RawMessage, error)
+	ApplyAgreementV2(document, mutationJSON string) (json.RawMessage, error)
+	SignAgreementV2(document, role string) (json.RawMessage, error)
+	VerifyAgreementV2(document string) (json.RawMessage, error)
+	DetectAgreementBranchConflict(baseDocument, leftDocument, rightDocument string) (json.RawMessage, error)
+	MergeAgreementTranscriptBranches(baseDocument, leftDocument, rightDocument string) (json.RawMessage, error)
+	ResolveAgreementBranchConflict(baseDocument, previousDocument, sideBranchDocument, resolutionJSON string) (json.RawMessage, error)
+
 	// Local Media (Layer 8 / TASK_009)
 	SignText(path, optsJSON string) (json.RawMessage, error)
 	VerifyText(path, optsJSON string) (json.RawMessage, error)

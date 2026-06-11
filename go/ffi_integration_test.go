@@ -504,6 +504,50 @@ func (r *recordingFFIClient) VerifyEmailRaw(rawEmailB64 string) (json.RawMessage
 	*r.calls = append(*r.calls, "VerifyEmailRaw")
 	return r.inner.VerifyEmailRaw(rawEmailB64)
 }
+func (r *recordingFFIClient) SaveAgreement(requestJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "SaveAgreement")
+	return r.inner.SaveAgreement(requestJSON)
+}
+func (r *recordingFFIClient) SearchAgreements(requestJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "SearchAgreements")
+	return r.inner.SearchAgreements(requestJSON)
+}
+func (r *recordingFFIClient) GetAgreement(agreementID string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "GetAgreement")
+	return r.inner.GetAgreement(agreementID)
+}
+func (r *recordingFFIClient) CountersignAgreement(agreementID, requestJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "CountersignAgreement")
+	return r.inner.CountersignAgreement(agreementID, requestJSON)
+}
+func (r *recordingFFIClient) CreateAgreementV2(inputJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "CreateAgreementV2")
+	return r.inner.CreateAgreementV2(inputJSON)
+}
+func (r *recordingFFIClient) ApplyAgreementV2(document, mutationJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "ApplyAgreementV2")
+	return r.inner.ApplyAgreementV2(document, mutationJSON)
+}
+func (r *recordingFFIClient) SignAgreementV2(document, role string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "SignAgreementV2")
+	return r.inner.SignAgreementV2(document, role)
+}
+func (r *recordingFFIClient) VerifyAgreementV2(document string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "VerifyAgreementV2")
+	return r.inner.VerifyAgreementV2(document)
+}
+func (r *recordingFFIClient) DetectAgreementBranchConflict(baseDocument, leftDocument, rightDocument string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "DetectAgreementBranchConflict")
+	return r.inner.DetectAgreementBranchConflict(baseDocument, leftDocument, rightDocument)
+}
+func (r *recordingFFIClient) MergeAgreementTranscriptBranches(baseDocument, leftDocument, rightDocument string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "MergeAgreementTranscriptBranches")
+	return r.inner.MergeAgreementTranscriptBranches(baseDocument, leftDocument, rightDocument)
+}
+func (r *recordingFFIClient) ResolveAgreementBranchConflict(baseDocument, previousDocument, sideBranchDocument, resolutionJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "ResolveAgreementBranchConflict")
+	return r.inner.ResolveAgreementBranchConflict(baseDocument, previousDocument, sideBranchDocument, resolutionJSON)
+}
 func (r *recordingFFIClient) CreateAttestation(paramsJSON string) (json.RawMessage, error) {
 	*r.calls = append(*r.calls, "CreateAttestation")
 	return r.inner.CreateAttestation(paramsJSON)

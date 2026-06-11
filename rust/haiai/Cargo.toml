@@ -39,7 +39,9 @@ uuid.workspace = true
 tracing = "0.1"
 tempfile = "3"
 bm25 = { version = "2.3", features = ["default_tokenizer"] }
-jacs = { version = "0.11", optional = true, features = ["a2a"] }
+# 0.11.2 minimum: the `agreements` feature binds to jacs::agreements::v2,
+# introduced in 0.11.2.
+jacs = { version = "0.11.2", optional = true, features = ["a2a"] }
 # Issue 014: real JACS-chunk parser for `store_image_file` pre-flight check.
 # The previous substring heuristic accepted any unsigned bytes containing the
 # literal `jacsSignature` substring, leading to wasted round-trips and a

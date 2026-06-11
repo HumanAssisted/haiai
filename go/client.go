@@ -794,6 +794,98 @@ func (c *Client) VerifyEmail(ctx context.Context, rawEmail []byte) (*EmailVerifi
 }
 
 // =============================================================================
+// Agreements
+// =============================================================================
+
+// SaveAgreement saves a signed agreement through the HAI agreement workflow API.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SaveAgreement(_ctx context.Context, requestJSON string) (json.RawMessage, error) {
+	return c.ffi.SaveAgreement(requestJSON)
+}
+
+// SearchAgreements searches agreements visible to this agent.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SearchAgreements(_ctx context.Context, requestJSON string) (json.RawMessage, error) {
+	return c.ffi.SearchAgreements(requestJSON)
+}
+
+// GetAgreement retrieves one agreement by HAI agreement id or JACS document id.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) GetAgreement(_ctx context.Context, agreementID string) (json.RawMessage, error) {
+	return c.ffi.GetAgreement(agreementID)
+}
+
+// CountersignAgreement requests HAI notary/countersignature workflow for an agreement.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) CountersignAgreement(_ctx context.Context, agreementID, requestJSON string) (json.RawMessage, error) {
+	return c.ffi.CountersignAgreement(agreementID, requestJSON)
+}
+
+// CreateAgreementV2 creates a standalone JACS agreement v2 document locally.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) CreateAgreementV2(_ctx context.Context, inputJSON string) (json.RawMessage, error) {
+	return c.ffi.CreateAgreementV2(inputJSON)
+}
+
+// ApplyAgreementV2 applies a JACS agreement v2 mutation locally.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ApplyAgreementV2(_ctx context.Context, document, mutationJSON string) (json.RawMessage, error) {
+	return c.ffi.ApplyAgreementV2(document, mutationJSON)
+}
+
+// SignAgreementV2 adds a signer, witness, or notary signature locally.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SignAgreementV2(_ctx context.Context, document, role string) (json.RawMessage, error) {
+	return c.ffi.SignAgreementV2(document, role)
+}
+
+// VerifyAgreementV2 verifies a JACS agreement v2 document locally.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) VerifyAgreementV2(_ctx context.Context, document string) (json.RawMessage, error) {
+	return c.ffi.VerifyAgreementV2(document)
+}
+
+// DetectAgreementBranchConflict compares two agreement branches against a shared base.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) DetectAgreementBranchConflict(_ctx context.Context, baseDocument, leftDocument, rightDocument string) (json.RawMessage, error) {
+	return c.ffi.DetectAgreementBranchConflict(baseDocument, leftDocument, rightDocument)
+}
+
+// MergeAgreementTranscriptBranches auto-merges two transcript-only agreement branches.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) MergeAgreementTranscriptBranches(_ctx context.Context, baseDocument, leftDocument, rightDocument string) (json.RawMessage, error) {
+	return c.ffi.MergeAgreementTranscriptBranches(baseDocument, leftDocument, rightDocument)
+}
+
+// ResolveAgreementBranchConflict resolves a branch conflict with an explicit mutation.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ResolveAgreementBranchConflict(_ctx context.Context, baseDocument, previousDocument, sideBranchDocument, resolutionJSON string) (json.RawMessage, error) {
+	return c.ffi.ResolveAgreementBranchConflict(baseDocument, previousDocument, sideBranchDocument, resolutionJSON)
+}
+
+// =============================================================================
 // Layer 8: Local Media Sign/Verify (TASK_009)
 // =============================================================================
 

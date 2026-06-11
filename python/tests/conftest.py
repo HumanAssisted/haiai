@@ -349,6 +349,66 @@ class MockFFIAdapter:
     def verify_email_raw(self, raw_email_b64: str) -> dict:
         return self._record("verify_email_raw", raw_email_b64)
 
+    # Agreements
+    def save_agreement(self, request: dict) -> dict:
+        return self._record("save_agreement", request)
+
+    def search_agreements(self, request: dict) -> dict:
+        return self._record("search_agreements", request)
+
+    def get_agreement(self, agreement_id: str) -> dict:
+        return self._record("get_agreement", agreement_id)
+
+    def countersign_agreement(self, agreement_id: str, request: dict) -> dict:
+        return self._record("countersign_agreement", agreement_id, request)
+
+    def create_agreement_v2(self, input_data: dict) -> dict:
+        return self._record("create_agreement_v2", input_data)
+
+    def apply_agreement_v2(self, document: str, mutation: dict) -> dict:
+        return self._record("apply_agreement_v2", document, mutation)
+
+    def sign_agreement_v2(self, document: str, role: str) -> dict:
+        return self._record("sign_agreement_v2", document, role)
+
+    def verify_agreement_v2(self, document: str) -> dict:
+        return self._record("verify_agreement_v2", document)
+
+    def detect_agreement_branch_conflict(
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict:
+        return self._record(
+            "detect_agreement_branch_conflict",
+            base_document,
+            left_document,
+            right_document,
+        )
+
+    def merge_agreement_transcript_branches(
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict:
+        return self._record(
+            "merge_agreement_transcript_branches",
+            base_document,
+            left_document,
+            right_document,
+        )
+
+    def resolve_agreement_branch_conflict(
+        self,
+        base_document: str,
+        previous_document: str,
+        side_branch_document: str,
+        resolution: dict,
+    ) -> dict:
+        return self._record(
+            "resolve_agreement_branch_conflict",
+            base_document,
+            previous_document,
+            side_branch_document,
+            resolution,
+        )
+
     # Local Media (Layer 8 / TASK_007)
     def sign_text(self, path: str, opts: dict) -> dict:
         return self._record("sign_text", path, opts)
@@ -636,6 +696,74 @@ class MockAsyncFFIAdapter(MockFFIAdapter):
 
     async def verify_email_raw(self, raw_email_b64: str) -> dict:  # type: ignore[override]
         return self._record("verify_email_raw", raw_email_b64)
+
+    # Agreements
+    async def save_agreement(self, request: dict) -> dict:  # type: ignore[override]
+        return self._record("save_agreement", request)
+
+    async def search_agreements(self, request: dict) -> dict:  # type: ignore[override]
+        return self._record("search_agreements", request)
+
+    async def get_agreement(self, agreement_id: str) -> dict:  # type: ignore[override]
+        return self._record("get_agreement", agreement_id)
+
+    async def countersign_agreement(  # type: ignore[override]
+        self, agreement_id: str, request: dict
+    ) -> dict:
+        return self._record("countersign_agreement", agreement_id, request)
+
+    async def create_agreement_v2(  # type: ignore[override]
+        self, input_data: dict
+    ) -> dict:
+        return self._record("create_agreement_v2", input_data)
+
+    async def apply_agreement_v2(  # type: ignore[override]
+        self, document: str, mutation: dict
+    ) -> dict:
+        return self._record("apply_agreement_v2", document, mutation)
+
+    async def sign_agreement_v2(  # type: ignore[override]
+        self, document: str, role: str
+    ) -> dict:
+        return self._record("sign_agreement_v2", document, role)
+
+    async def verify_agreement_v2(self, document: str) -> dict:  # type: ignore[override]
+        return self._record("verify_agreement_v2", document)
+
+    async def detect_agreement_branch_conflict(  # type: ignore[override]
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict:
+        return self._record(
+            "detect_agreement_branch_conflict",
+            base_document,
+            left_document,
+            right_document,
+        )
+
+    async def merge_agreement_transcript_branches(  # type: ignore[override]
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict:
+        return self._record(
+            "merge_agreement_transcript_branches",
+            base_document,
+            left_document,
+            right_document,
+        )
+
+    async def resolve_agreement_branch_conflict(  # type: ignore[override]
+        self,
+        base_document: str,
+        previous_document: str,
+        side_branch_document: str,
+        resolution: dict,
+    ) -> dict:
+        return self._record(
+            "resolve_agreement_branch_conflict",
+            base_document,
+            previous_document,
+            side_branch_document,
+            resolution,
+        )
 
     # Local Media (Layer 8 / TASK_007)
     async def sign_text(self, path: str, opts: dict) -> dict:  # type: ignore[override]

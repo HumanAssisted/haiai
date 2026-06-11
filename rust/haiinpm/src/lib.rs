@@ -294,6 +294,127 @@ impl HaiClient {
     }
 
     // =========================================================================
+    // Agreements
+    // =========================================================================
+
+    #[napi]
+    pub async fn save_agreement(&self, request_json: String) -> Result<String> {
+        self.inner
+            .save_agreement(&request_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn search_agreements(&self, request_json: String) -> Result<String> {
+        self.inner
+            .search_agreements(&request_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn get_agreement(&self, agreement_id: String) -> Result<String> {
+        self.inner
+            .get_agreement(&agreement_id)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn countersign_agreement(
+        &self,
+        agreement_id: String,
+        request_json: String,
+    ) -> Result<String> {
+        self.inner
+            .countersign_agreement(&agreement_id, &request_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn create_agreement_v2(&self, input_json: String) -> Result<String> {
+        self.inner
+            .create_agreement_v2(&input_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn apply_agreement_v2(
+        &self,
+        document: String,
+        mutation_json: String,
+    ) -> Result<String> {
+        self.inner
+            .apply_agreement_v2(&document, &mutation_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn sign_agreement_v2(&self, document: String, role: String) -> Result<String> {
+        self.inner
+            .sign_agreement_v2(&document, &role)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn verify_agreement_v2(&self, document: String) -> Result<String> {
+        self.inner
+            .verify_agreement_v2(&document)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn detect_agreement_branch_conflict(
+        &self,
+        base_document: String,
+        left_document: String,
+        right_document: String,
+    ) -> Result<String> {
+        self.inner
+            .detect_agreement_branch_conflict(&base_document, &left_document, &right_document)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn merge_agreement_transcript_branches(
+        &self,
+        base_document: String,
+        left_document: String,
+        right_document: String,
+    ) -> Result<String> {
+        self.inner
+            .merge_agreement_transcript_branches(&base_document, &left_document, &right_document)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn resolve_agreement_branch_conflict(
+        &self,
+        base_document: String,
+        previous_document: String,
+        side_branch_document: String,
+        resolution_json: String,
+    ) -> Result<String> {
+        self.inner
+            .resolve_agreement_branch_conflict(
+                &base_document,
+                &previous_document,
+                &side_branch_document,
+                &resolution_json,
+            )
+            .await
+            .map_err(to_napi_err)
+    }
+
+    // =========================================================================
     // Local Media Sign/Verify (Layer 8 / TASK_008)
     // =========================================================================
 

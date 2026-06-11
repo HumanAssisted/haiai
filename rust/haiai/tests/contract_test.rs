@@ -334,7 +334,7 @@ fn ffi_method_parity_includes_media_local_section() {
 }
 
 #[test]
-fn ffi_method_parity_total_count_is_94() {
+fn ffi_method_parity_total_count_is_105() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/ffi_method_parity.json");
     let raw =
@@ -344,11 +344,12 @@ fn ffi_method_parity_total_count_is_94() {
     let total = val["total_method_count"]
         .as_u64()
         .expect("total_method_count must be a number");
-    // Bumped to 94: adds generic `save_document` alongside the document-store
-    // trait methods, MEMORY/SOUL wrappers (D5), and D9 helpers.
+    // Bumped to 105: adds the 11-method `agreements` section (save/search/
+    // get/countersign + v2 create/apply/sign/verify + branch-conflict
+    // detect/merge/resolve) on top of the 94 from the document-store work.
     assert_eq!(
-        total, 94,
-        "total_method_count must include generic save_document"
+        total, 105,
+        "total_method_count must include the agreements section"
     );
 
     let methods = val["methods"]
@@ -359,7 +360,7 @@ fn ffi_method_parity_total_count_is_94() {
         sum += arr.as_array().expect("section must be an array").len() as u64;
     }
     assert_eq!(
-        sum, 94,
+        sum, 105,
         "Sum of method counts across all sections must equal total_method_count"
     );
 
@@ -402,6 +403,38 @@ fn ffi_method_parity_total_count_is_94() {
         assert!(
             names.contains(*required),
             "jacs_document_store missing entry: {required}"
+        );
+    }
+
+    // Pin the agreements section's exact membership too.
+    let agreements_section = val["methods"]["agreements"]
+        .as_array()
+        .expect("agreements section must exist");
+    assert_eq!(
+        agreements_section.len(),
+        11,
+        "agreements must have 11 methods"
+    );
+    let agreement_names: std::collections::HashSet<String> = agreements_section
+        .iter()
+        .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
+        .collect();
+    for required in &[
+        "save_agreement",
+        "search_agreements",
+        "get_agreement",
+        "countersign_agreement",
+        "create_agreement_v2",
+        "apply_agreement_v2",
+        "sign_agreement_v2",
+        "verify_agreement_v2",
+        "detect_agreement_branch_conflict",
+        "merge_agreement_transcript_branches",
+        "resolve_agreement_branch_conflict",
+    ] {
+        assert!(
+            agreement_names.contains(*required),
+            "agreements missing entry: {required}"
         );
     }
 }

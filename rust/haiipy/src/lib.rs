@@ -626,6 +626,330 @@ impl HaiClient {
     }
 
     // =========================================================================
+    // Agreements
+    // =========================================================================
+
+    fn save_agreement<'py>(
+        &self,
+        py: Python<'py>,
+        request_json: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client
+                .save_agreement(&request_json)
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    fn save_agreement_sync(&self, py: Python, request_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| RT.block_on(async { client.save_agreement(&request_json).await }))
+            .map_err(to_py_err)
+    }
+
+    fn search_agreements<'py>(
+        &self,
+        py: Python<'py>,
+        request_json: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client
+                .search_agreements(&request_json)
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    fn search_agreements_sync(&self, py: Python, request_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| RT.block_on(async { client.search_agreements(&request_json).await }))
+            .map_err(to_py_err)
+    }
+
+    fn get_agreement<'py>(
+        &self,
+        py: Python<'py>,
+        agreement_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.get_agreement(&agreement_id).await.map_err(to_py_err)
+        })
+    }
+
+    fn get_agreement_sync(&self, py: Python, agreement_id: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| RT.block_on(async { client.get_agreement(&agreement_id).await }))
+            .map_err(to_py_err)
+    }
+
+    fn countersign_agreement<'py>(
+        &self,
+        py: Python<'py>,
+        agreement_id: String,
+        request_json: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client
+                .countersign_agreement(&agreement_id, &request_json)
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    fn countersign_agreement_sync(
+        &self,
+        py: Python,
+        agreement_id: String,
+        request_json: String,
+    ) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async {
+                client
+                    .countersign_agreement(&agreement_id, &request_json)
+                    .await
+            })
+        })
+        .map_err(to_py_err)
+    }
+
+    fn create_agreement_v2<'py>(
+        &self,
+        py: Python<'py>,
+        input_json: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client
+                .create_agreement_v2(&input_json)
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    fn create_agreement_v2_sync(&self, py: Python, input_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| RT.block_on(async { client.create_agreement_v2(&input_json).await }))
+            .map_err(to_py_err)
+    }
+
+    fn apply_agreement_v2<'py>(
+        &self,
+        py: Python<'py>,
+        document: String,
+        mutation_json: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client
+                .apply_agreement_v2(&document, &mutation_json)
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    fn apply_agreement_v2_sync(
+        &self,
+        py: Python,
+        document: String,
+        mutation_json: String,
+    ) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async { client.apply_agreement_v2(&document, &mutation_json).await })
+        })
+        .map_err(to_py_err)
+    }
+
+    fn sign_agreement_v2<'py>(
+        &self,
+        py: Python<'py>,
+        document: String,
+        role: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client
+                .sign_agreement_v2(&document, &role)
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    fn sign_agreement_v2_sync(
+        &self,
+        py: Python,
+        document: String,
+        role: String,
+    ) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| RT.block_on(async { client.sign_agreement_v2(&document, &role).await }))
+            .map_err(to_py_err)
+    }
+
+    fn verify_agreement_v2<'py>(
+        &self,
+        py: Python<'py>,
+        document: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client
+                .verify_agreement_v2(&document)
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    fn verify_agreement_v2_sync(&self, py: Python, document: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| RT.block_on(async { client.verify_agreement_v2(&document).await }))
+            .map_err(to_py_err)
+    }
+
+    fn detect_agreement_branch_conflict<'py>(
+        &self,
+        py: Python<'py>,
+        base_document: String,
+        left_document: String,
+        right_document: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client
+                .detect_agreement_branch_conflict(&base_document, &left_document, &right_document)
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    fn detect_agreement_branch_conflict_sync(
+        &self,
+        py: Python,
+        base_document: String,
+        left_document: String,
+        right_document: String,
+    ) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async {
+                client
+                    .detect_agreement_branch_conflict(
+                        &base_document,
+                        &left_document,
+                        &right_document,
+                    )
+                    .await
+            })
+        })
+        .map_err(to_py_err)
+    }
+
+    fn merge_agreement_transcript_branches<'py>(
+        &self,
+        py: Python<'py>,
+        base_document: String,
+        left_document: String,
+        right_document: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client
+                .merge_agreement_transcript_branches(
+                    &base_document,
+                    &left_document,
+                    &right_document,
+                )
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    fn merge_agreement_transcript_branches_sync(
+        &self,
+        py: Python,
+        base_document: String,
+        left_document: String,
+        right_document: String,
+    ) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async {
+                client
+                    .merge_agreement_transcript_branches(
+                        &base_document,
+                        &left_document,
+                        &right_document,
+                    )
+                    .await
+            })
+        })
+        .map_err(to_py_err)
+    }
+
+    fn resolve_agreement_branch_conflict<'py>(
+        &self,
+        py: Python<'py>,
+        base_document: String,
+        previous_document: String,
+        side_branch_document: String,
+        resolution_json: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client
+                .resolve_agreement_branch_conflict(
+                    &base_document,
+                    &previous_document,
+                    &side_branch_document,
+                    &resolution_json,
+                )
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    fn resolve_agreement_branch_conflict_sync(
+        &self,
+        py: Python,
+        base_document: String,
+        previous_document: String,
+        side_branch_document: String,
+        resolution_json: String,
+    ) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| {
+            RT.block_on(async {
+                client
+                    .resolve_agreement_branch_conflict(
+                        &base_document,
+                        &previous_document,
+                        &side_branch_document,
+                        &resolution_json,
+                    )
+                    .await
+            })
+        })
+        .map_err(to_py_err)
+    }
+
+    // =========================================================================
     // Local Media Sign/Verify (Layer 8 / TASK_007)
     // =========================================================================
 

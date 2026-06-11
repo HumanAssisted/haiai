@@ -28,6 +28,8 @@ use std::path::Path;
 use haiai::client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
 use haiai::document_store::build_document_provider;
 use haiai::error::HaiError;
+#[cfg(feature = "agreements")]
+use haiai::jacs::JacsAgreementProvider;
 use haiai::jacs::{
     media_verify_result_to_json, verify_text_result_to_json, JacsDocumentProvider,
     JacsMediaProvider, JacsProvider, SaveDocumentRequest, SaveIntent, SignImageOptions,
@@ -1016,6 +1018,143 @@ impl HaiClientWrapper {
     }
 
     // =========================================================================
+    // Agreements (local JACS v2 + future HAI workflow API)
+    // =========================================================================
+
+    /// Save a signed agreement document through the future HAI agreement API.
+    pub async fn save_agreement(&self, request_json: &str) -> HaiBindingResult<String> {
+        let request: Value = serde_json::from_str(request_json)?;
+        let client = self.inner.read().await;
+        let result = client.save_agreement(&request).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    /// Search agreements through the future HAI agreement API.
+    pub async fn search_agreements(&self, request_json: &str) -> HaiBindingResult<String> {
+        let request: Value = serde_json::from_str(request_json)?;
+        let client = self.inner.read().await;
+        let result = client.search_agreements(&request).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    /// Retrieve one agreement through the future HAI agreement API.
+    pub async fn get_agreement(&self, agreement_id: &str) -> HaiBindingResult<String> {
+        let client = self.inner.read().await;
+        let result = client.get_agreement(agreement_id).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    /// Ask HAI to countersign/notarize an agreement workflow.
+    pub async fn countersign_agreement(
+        &self,
+        agreement_id: &str,
+        request_json: &str,
+    ) -> HaiBindingResult<String> {
+        let request: Value = serde_json::from_str(request_json)?;
+        let client = self.inner.read().await;
+        let result = client.countersign_agreement(agreement_id, &request).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    /// Create a standalone JACS agreement v2 document locally.
+    #[cfg(feature = "agreements")]
+    pub async fn create_agreement_v2(&self, input_json: &str) -> HaiBindingResult<String> {
+        let provider = self.build_agreement_provider()?;
+        let input: Value = serde_json::from_str(input_json)?;
+        let signed = provider
+            .create_agreement_v2(input)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&signed)?)
+    }
+
+    /// Apply a JACS agreement v2 mutation locally.
+    #[cfg(feature = "agreements")]
+    pub async fn apply_agreement_v2(
+        &self,
+        document: &str,
+        mutation_json: &str,
+    ) -> HaiBindingResult<String> {
+        let provider = self.build_agreement_provider()?;
+        let mutation: Value = serde_json::from_str(mutation_json)?;
+        let signed = provider
+            .apply_agreement_v2(document, mutation)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&signed)?)
+    }
+
+    /// Add a signer, witness, or notary signature to a v2 agreement locally.
+    #[cfg(feature = "agreements")]
+    pub async fn sign_agreement_v2(&self, document: &str, role: &str) -> HaiBindingResult<String> {
+        let provider = self.build_agreement_provider()?;
+        let signed = provider
+            .sign_agreement_v2(document, role)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&signed)?)
+    }
+
+    /// Verify a v2 agreement locally.
+    #[cfg(feature = "agreements")]
+    pub async fn verify_agreement_v2(&self, document: &str) -> HaiBindingResult<String> {
+        let provider = self.build_agreement_provider()?;
+        let report = provider
+            .verify_agreement_v2(document)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&report)?)
+    }
+
+    /// Compare two v2 agreement branches against a shared base locally.
+    #[cfg(feature = "agreements")]
+    pub async fn detect_agreement_branch_conflict(
+        &self,
+        base_document: &str,
+        left_document: &str,
+        right_document: &str,
+    ) -> HaiBindingResult<String> {
+        let provider = self.build_agreement_provider()?;
+        let analysis = provider
+            .detect_agreement_branch_conflict(base_document, left_document, right_document)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&analysis)?)
+    }
+
+    /// Auto-merge two transcript-only v2 agreement branches locally.
+    #[cfg(feature = "agreements")]
+    pub async fn merge_agreement_transcript_branches(
+        &self,
+        base_document: &str,
+        left_document: &str,
+        right_document: &str,
+    ) -> HaiBindingResult<String> {
+        let provider = self.build_agreement_provider()?;
+        let signed = provider
+            .merge_agreement_transcript_branches(base_document, left_document, right_document)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&signed)?)
+    }
+
+    /// Resolve a v2 agreement branch conflict with an explicit mutation locally.
+    #[cfg(feature = "agreements")]
+    pub async fn resolve_agreement_branch_conflict(
+        &self,
+        base_document: &str,
+        previous_document: &str,
+        side_branch_document: &str,
+        resolution_json: &str,
+    ) -> HaiBindingResult<String> {
+        let provider = self.build_agreement_provider()?;
+        let resolution: Value = serde_json::from_str(resolution_json)?;
+        let signed = provider
+            .resolve_agreement_branch_conflict(
+                base_document,
+                previous_document,
+                side_branch_document,
+                resolution,
+            )
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&signed)?)
+    }
+
+    // =========================================================================
     // Local Media Sign/Verify (Layer 8 / TASK_003)
     // =========================================================================
     //
@@ -1459,6 +1598,27 @@ impl HaiClientWrapper {
                 ),
             )
         })
+    }
+
+    /// Build a local JACS provider for agreement v2 operations.
+    #[cfg(feature = "agreements")]
+    fn build_agreement_provider(&self) -> HaiBindingResult<LocalJacsProvider> {
+        let path = self.jacs_config_path.as_deref().ok_or_else(|| {
+            HaiBindingError::new(
+                ErrorKind::ProviderError,
+                "jacs_config_path required for agreement operations",
+            )
+        })?;
+        LocalJacsProvider::from_config_path(Some(path), self.jacs_storage_backend.as_deref())
+            .map_err(|e| {
+                HaiBindingError::new(
+                    ErrorKind::ConfigFailed,
+                    format!(
+                        "failed to build agreement provider from {}: {e}",
+                        path.display()
+                    ),
+                )
+            })
     }
 
     // ---- 13 trait CRUD/query methods ----
@@ -3278,10 +3438,10 @@ mod tests {
             );
         }
         let summary = val.get("summary").unwrap();
-        // 55 base + 21 jacs_document_store methods = 76 async methods.
-        assert_eq!(summary["async_methods"].as_u64(), Some(76));
-        // 82 base + 21 doc-store methods = 103 total public methods.
-        assert_eq!(summary["total_public_methods"].as_u64(), Some(103));
+        // 55 base + 11 agreement + 21 jacs_document_store methods = 87 async methods.
+        assert_eq!(summary["async_methods"].as_u64(), Some(87));
+        // 82 base + 11 agreement + 21 doc-store methods = 114 total public methods.
+        assert_eq!(summary["total_public_methods"].as_u64(), Some(114));
     }
 
     #[tokio::test]

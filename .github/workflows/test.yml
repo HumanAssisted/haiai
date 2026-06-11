@@ -11,7 +11,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  JACS_REF: v0.10.2
+  # 0.11.2 carries jacs::agreements::v2 (haiai `agreements` feature). The tag
+  # must exist on HumanAssisted/JACS before this CI can green.
+  JACS_REF: v0.11.2
 
 jobs:
   crypto-policy:

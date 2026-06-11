@@ -34,6 +34,19 @@ type mockFFIClient struct {
 	// rotateKeysFn overrides RotateKeys for unit tests. If nil, falls back to doPost.
 	rotateKeysFn func(optionsJSON string) (json.RawMessage, error)
 
+	// Agreement overrides.
+	saveAgreementFn                    func(requestJSON string) (json.RawMessage, error)
+	searchAgreementsFn                 func(requestJSON string) (json.RawMessage, error)
+	getAgreementFn                     func(agreementID string) (json.RawMessage, error)
+	countersignAgreementFn             func(agreementID, requestJSON string) (json.RawMessage, error)
+	createAgreementV2Fn                func(inputJSON string) (json.RawMessage, error)
+	applyAgreementV2Fn                 func(document, mutationJSON string) (json.RawMessage, error)
+	signAgreementV2Fn                  func(document, role string) (json.RawMessage, error)
+	verifyAgreementV2Fn                func(document string) (json.RawMessage, error)
+	detectAgreementBranchConflictFn    func(baseDocument, leftDocument, rightDocument string) (json.RawMessage, error)
+	mergeAgreementTranscriptBranchesFn func(baseDocument, leftDocument, rightDocument string) (json.RawMessage, error)
+	resolveAgreementBranchConflictFn   func(baseDocument, previousDocument, sideBranchDocument, resolutionJSON string) (json.RawMessage, error)
+
 	// JACS Document Store overrides.
 	storeDocumentFn       func(signedJSON string) (string, error)
 	signAndStoreFn        func(dataJSON string) (json.RawMessage, error)
@@ -581,6 +594,85 @@ func (m *mockFFIClient) VerifyEmailRaw(rawEmailB64 string) (json.RawMessage, err
 		req.Header.Set("Authorization", m.authHeader)
 	}
 	return m.doHTTP(req)
+}
+
+// --- Agreements ---
+
+func (m *mockFFIClient) SaveAgreement(requestJSON string) (json.RawMessage, error) {
+	if m.saveAgreementFn != nil {
+		return m.saveAgreementFn(requestJSON)
+	}
+	return nil, fmt.Errorf("mock: SaveAgreement not stubbed")
+}
+
+func (m *mockFFIClient) SearchAgreements(requestJSON string) (json.RawMessage, error) {
+	if m.searchAgreementsFn != nil {
+		return m.searchAgreementsFn(requestJSON)
+	}
+	return nil, fmt.Errorf("mock: SearchAgreements not stubbed")
+}
+
+func (m *mockFFIClient) GetAgreement(agreementID string) (json.RawMessage, error) {
+	if m.getAgreementFn != nil {
+		return m.getAgreementFn(agreementID)
+	}
+	return nil, fmt.Errorf("mock: GetAgreement not stubbed")
+}
+
+func (m *mockFFIClient) CountersignAgreement(agreementID, requestJSON string) (json.RawMessage, error) {
+	if m.countersignAgreementFn != nil {
+		return m.countersignAgreementFn(agreementID, requestJSON)
+	}
+	return nil, fmt.Errorf("mock: CountersignAgreement not stubbed")
+}
+
+func (m *mockFFIClient) CreateAgreementV2(inputJSON string) (json.RawMessage, error) {
+	if m.createAgreementV2Fn != nil {
+		return m.createAgreementV2Fn(inputJSON)
+	}
+	return nil, fmt.Errorf("mock: CreateAgreementV2 not stubbed")
+}
+
+func (m *mockFFIClient) ApplyAgreementV2(document, mutationJSON string) (json.RawMessage, error) {
+	if m.applyAgreementV2Fn != nil {
+		return m.applyAgreementV2Fn(document, mutationJSON)
+	}
+	return nil, fmt.Errorf("mock: ApplyAgreementV2 not stubbed")
+}
+
+func (m *mockFFIClient) SignAgreementV2(document, role string) (json.RawMessage, error) {
+	if m.signAgreementV2Fn != nil {
+		return m.signAgreementV2Fn(document, role)
+	}
+	return nil, fmt.Errorf("mock: SignAgreementV2 not stubbed")
+}
+
+func (m *mockFFIClient) VerifyAgreementV2(document string) (json.RawMessage, error) {
+	if m.verifyAgreementV2Fn != nil {
+		return m.verifyAgreementV2Fn(document)
+	}
+	return nil, fmt.Errorf("mock: VerifyAgreementV2 not stubbed")
+}
+
+func (m *mockFFIClient) DetectAgreementBranchConflict(baseDocument, leftDocument, rightDocument string) (json.RawMessage, error) {
+	if m.detectAgreementBranchConflictFn != nil {
+		return m.detectAgreementBranchConflictFn(baseDocument, leftDocument, rightDocument)
+	}
+	return nil, fmt.Errorf("mock: DetectAgreementBranchConflict not stubbed")
+}
+
+func (m *mockFFIClient) MergeAgreementTranscriptBranches(baseDocument, leftDocument, rightDocument string) (json.RawMessage, error) {
+	if m.mergeAgreementTranscriptBranchesFn != nil {
+		return m.mergeAgreementTranscriptBranchesFn(baseDocument, leftDocument, rightDocument)
+	}
+	return nil, fmt.Errorf("mock: MergeAgreementTranscriptBranches not stubbed")
+}
+
+func (m *mockFFIClient) ResolveAgreementBranchConflict(baseDocument, previousDocument, sideBranchDocument, resolutionJSON string) (json.RawMessage, error) {
+	if m.resolveAgreementBranchConflictFn != nil {
+		return m.resolveAgreementBranchConflictFn(baseDocument, previousDocument, sideBranchDocument, resolutionJSON)
+	}
+	return nil, fmt.Errorf("mock: ResolveAgreementBranchConflict not stubbed")
 }
 
 // --- Attestations ---

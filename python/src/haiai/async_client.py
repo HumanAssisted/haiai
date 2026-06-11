@@ -613,6 +613,74 @@ class AsyncHaiClient:
         return base64.b64decode(b64_result)
 
     # =========================================================================
+    # Agreements
+    # =========================================================================
+
+    async def save_agreement(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Save a signed agreement through the HAI agreement workflow API."""
+        return await self._get_ffi().save_agreement(request)
+
+    async def search_agreements(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Search agreements visible to this agent."""
+        return await self._get_ffi().search_agreements(request)
+
+    async def get_agreement(self, agreement_id: str) -> dict[str, Any]:
+        """Retrieve one agreement by HAI agreement id or JACS document id."""
+        return await self._get_ffi().get_agreement(agreement_id)
+
+    async def countersign_agreement(
+        self, agreement_id: str, request: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        """Request HAI notary/countersignature workflow for an agreement."""
+        return await self._get_ffi().countersign_agreement(agreement_id, request or {})
+
+    async def create_agreement_v2(self, input_data: dict[str, Any]) -> dict[str, Any]:
+        """Create a standalone JACS agreement v2 document locally."""
+        return await self._get_ffi().create_agreement_v2(input_data)
+
+    async def apply_agreement_v2(
+        self, document: str, mutation: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Apply a JACS agreement v2 mutation locally."""
+        return await self._get_ffi().apply_agreement_v2(document, mutation)
+
+    async def sign_agreement_v2(self, document: str, role: str) -> dict[str, Any]:
+        """Add a signer, witness, or notary signature locally."""
+        return await self._get_ffi().sign_agreement_v2(document, role)
+
+    async def verify_agreement_v2(self, document: str) -> dict[str, Any]:
+        """Verify a JACS agreement v2 document locally."""
+        return await self._get_ffi().verify_agreement_v2(document)
+
+    async def detect_agreement_branch_conflict(
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict[str, Any]:
+        """Compare two v2 agreement branches against a shared base."""
+        return await self._get_ffi().detect_agreement_branch_conflict(
+            base_document, left_document, right_document
+        )
+
+    async def merge_agreement_transcript_branches(
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict[str, Any]:
+        """Auto-merge two transcript-only v2 agreement branches locally."""
+        return await self._get_ffi().merge_agreement_transcript_branches(
+            base_document, left_document, right_document
+        )
+
+    async def resolve_agreement_branch_conflict(
+        self,
+        base_document: str,
+        previous_document: str,
+        side_branch_document: str,
+        resolution: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Resolve a v2 agreement branch conflict with an explicit mutation."""
+        return await self._get_ffi().resolve_agreement_branch_conflict(
+            base_document, previous_document, side_branch_document, resolution
+        )
+
+    # =========================================================================
     # Layer 8: Local Media Sign/Verify (TASK_007)
     # =========================================================================
 

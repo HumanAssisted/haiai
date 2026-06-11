@@ -435,6 +435,137 @@
       "notes": "Base64 encoding/decoding crosses FFI boundary. Content-Type: message/rfc822."
     },
     {
+      "name": "save_agreement",
+      "category": "async",
+      "group": "agreements",
+      "params": {
+        "request_json": "SaveAgreementRequest (JSON)"
+      },
+      "returns": "Value (JSON)",
+      "auth_required": true,
+      "notes": "Future HAI workflow API: POST /api/v1/agreements."
+    },
+    {
+      "name": "search_agreements",
+      "category": "async",
+      "group": "agreements",
+      "params": {
+        "request_json": "SearchAgreementsRequest (JSON)"
+      },
+      "returns": "Value (JSON)",
+      "auth_required": true,
+      "notes": "Future HAI workflow API: POST /api/v1/agreements/search."
+    },
+    {
+      "name": "get_agreement",
+      "category": "async",
+      "group": "agreements",
+      "params": {
+        "agreement_id": "string"
+      },
+      "returns": "Value (JSON)",
+      "auth_required": true,
+      "notes": "Future HAI workflow API: GET /api/v1/agreements/{agreement_id}."
+    },
+    {
+      "name": "countersign_agreement",
+      "category": "async",
+      "group": "agreements",
+      "params": {
+        "agreement_id": "string",
+        "request_json": "CountersignAgreementRequest (JSON)"
+      },
+      "returns": "Value (JSON)",
+      "auth_required": true,
+      "notes": "Future HAI workflow API: POST /api/v1/agreements/{agreement_id}/countersign."
+    },
+    {
+      "name": "create_agreement_v2",
+      "category": "async",
+      "group": "agreements",
+      "params": {
+        "input_json": "CreateAgreementV2 (JSON)"
+      },
+      "returns": "SignedDocument JSON",
+      "auth_required": false,
+      "notes": "Local-only. Delegates to jacs::agreements::v2::create."
+    },
+    {
+      "name": "apply_agreement_v2",
+      "category": "async",
+      "group": "agreements",
+      "params": {
+        "document": "string",
+        "mutation_json": "AgreementV2Mutation (JSON)"
+      },
+      "returns": "SignedDocument JSON",
+      "auth_required": false,
+      "notes": "Local-only. Delegates to jacs::agreements::v2::apply."
+    },
+    {
+      "name": "sign_agreement_v2",
+      "category": "async",
+      "group": "agreements",
+      "params": {
+        "document": "string",
+        "role": "signer|witness|notary"
+      },
+      "returns": "SignedDocument JSON",
+      "auth_required": false,
+      "notes": "Local-only. Delegates to jacs::agreements::v2::sign."
+    },
+    {
+      "name": "verify_agreement_v2",
+      "category": "async",
+      "group": "agreements",
+      "params": {
+        "document": "string"
+      },
+      "returns": "AgreementV2VerificationReport JSON",
+      "auth_required": false,
+      "notes": "Local-only. Delegates to jacs::agreements::v2::verify."
+    },
+    {
+      "name": "detect_agreement_branch_conflict",
+      "category": "async",
+      "group": "agreements",
+      "params": {
+        "base_document": "string",
+        "left_document": "string",
+        "right_document": "string"
+      },
+      "returns": "AgreementV2MergeAnalysis JSON",
+      "auth_required": false,
+      "notes": "Local-only. Detects branch conflicts without signing."
+    },
+    {
+      "name": "merge_agreement_transcript_branches",
+      "category": "async",
+      "group": "agreements",
+      "params": {
+        "base_document": "string",
+        "left_document": "string",
+        "right_document": "string"
+      },
+      "returns": "SignedDocument JSON",
+      "auth_required": false,
+      "notes": "Local-only. Auto-merges transcript-only branches."
+    },
+    {
+      "name": "resolve_agreement_branch_conflict",
+      "category": "async",
+      "group": "agreements",
+      "params": {
+        "base_document": "string",
+        "previous_document": "string",
+        "side_branch_document": "string",
+        "resolution_json": "AgreementV2Mutation (JSON)"
+      },
+      "returns": "SignedDocument JSON",
+      "auth_required": false,
+      "notes": "Local-only. Resolves a branch conflict with an explicit mutation."
+    },
+    {
       "name": "sign_text",
       "category": "async",
       "group": "media_local",
@@ -1020,13 +1151,13 @@
     }
   ],
   "summary": {
-    "async_methods": 76,
+    "async_methods": 87,
     "streaming_methods": 6,
     "callback_methods": 2,
     "sync_methods": 12,
     "mutating_methods": 2,
     "excluded_methods": 5,
-    "total_public_methods": 103,
-    "binding_core_scope": "76 async + 6 streaming + 2 callback + 12 sync + 2 mutating = 98 methods"
+    "total_public_methods": 114,
+    "binding_core_scope": "87 async + 6 streaming + 2 callback + 12 sync + 2 mutating = 109 methods"
   }
 }

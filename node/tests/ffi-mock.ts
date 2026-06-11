@@ -42,6 +42,18 @@ export function createMockFFI(overrides?: Partial<MockFFI>): FFIClientAdapter {
     getMessage: defaultReject,
     getRawEmail: defaultReject,
     getUnreadCount: defaultReject,
+    // Agreements
+    saveAgreement: defaultReject,
+    searchAgreements: defaultReject,
+    getAgreement: defaultReject,
+    countersignAgreement: defaultReject,
+    createAgreementV2: defaultReject,
+    applyAgreementV2: defaultReject,
+    signAgreementV2: defaultReject,
+    verifyAgreementV2: defaultReject,
+    detectAgreementBranchConflict: defaultReject,
+    mergeAgreementTranscriptBranches: defaultReject,
+    resolveAgreementBranchConflict: defaultReject,
     // Email Actions
     markRead: defaultReject,
     markUnread: defaultReject,
