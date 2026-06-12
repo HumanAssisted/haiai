@@ -1,6 +1,6 @@
 {
   "description": "MCP-to-CLI parity contract. Maps MCP tools to CLI commands and declares intentional asymmetries. Tests verify bidirectional coverage: every MCP tool and every CLI command must appear in exactly one of the three sections.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "paired": [
     { "mcp_tool": "hai_hello", "cli_command": "hello" },
     { "mcp_tool": "hai_agent_status", "cli_command": "status" },
@@ -33,7 +33,12 @@
     { "mcp_tool": "hai_get_soul", "cli_command": "soul" },
     { "mcp_tool": "hai_store_text_file", "cli_command": "records" },
     { "mcp_tool": "hai_store_image_file", "cli_command": "records" },
-    { "mcp_tool": "hai_get_record_bytes", "cli_command": "records" }
+    { "mcp_tool": "hai_get_record_bytes", "cli_command": "records" },
+    { "mcp_tool": "hai_conflict_create", "cli_command": "conflict" },
+    { "mcp_tool": "hai_conflict_update", "cli_command": "conflict" },
+    { "mcp_tool": "hai_conflict_get", "cli_command": "conflict" },
+    { "mcp_tool": "hai_conflict_list", "cli_command": "conflict" },
+    { "mcp_tool": "hai_conflict_check_readiness", "cli_command": "conflict" }
   ],
   "mcp_only": [
     { "name": "hai_verify_status", "reason": "MCP exposes per-agent lookup; CLI 'status' is self-only" },
