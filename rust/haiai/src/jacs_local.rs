@@ -16,6 +16,8 @@ use crate::error::{HaiError, Result};
 use crate::jacs::JacsAgreementProvider;
 #[cfg(feature = "attestation")]
 use crate::jacs::JacsAttestationProvider;
+#[cfg(feature = "conflict")]
+use crate::jacs::JacsConflictProvider;
 use crate::jacs::{
     DocSummary, JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider,
     JacsMediaProvider, JacsProvider, JacsVerificationProvider, MediaVerificationResult,
@@ -468,6 +470,33 @@ impl LocalJacsProvider {
         })
     }
 
+    fn filesystem_version_keys_for_id(&self, doc_id: &str) -> Result<Vec<String>> {
+        let keys = self.list_filesystem_document_keys()?;
+        let mut matches = Vec::new();
+        for key in keys {
+            let Some((id, _version)) = key.split_once(':') else {
+                continue;
+            };
+            if id != doc_id {
+                continue;
+            }
+            let created_at = self
+                .get_document(&key)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                .and_then(|value| {
+                    value
+                        .get("jacsVersionDate")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .unwrap_or_default();
+            matches.push((created_at, key));
+        }
+        matches.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        Ok(matches.into_iter().map(|(_, key)| key).collect())
+    }
+
     fn latest_filesystem_key_for_id(&self, doc_id: &str) -> Result<Option<String>> {
         let keys = self.list_filesystem_document_keys()?;
         let mut matches = Vec::new();
@@ -482,6 +511,22 @@ impl LocalJacsProvider {
             if let Ok(text) = std::fs::read_to_string(&path) {
                 if let Some(summary) = extract_summary_from_signed_text(&text, &key) {
                     matches.push((summary.created_at, summary.version, key));
+                    continue;
+                }
+            }
+            if let Ok(raw) = self.get_document(&key) {
+                if let Ok(value) = serde_json::from_str::<Value>(&raw) {
+                    let created_at = value
+                        .get("jacsVersionDate")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let version = value
+                        .get("jacsVersion")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    matches.push((created_at, version, key));
                 }
             }
         }
@@ -1136,6 +1181,9 @@ impl JacsDocumentProvider for LocalJacsProvider {
     }
 
     fn get_document_versions(&self, doc_id: &str) -> Result<Vec<String>> {
+        if self.storage_label.as_deref() == Some("fs") {
+            return self.filesystem_version_keys_for_id(doc_id);
+        }
         let service = self.require_document_service()?;
         let versions = service
             .versions(doc_id)
@@ -1737,6 +1785,140 @@ impl JacsEmailProvider for LocalJacsProvider {
 }
 
 // =============================================================================
+// JacsConflictProvider implementation (feature-gated)
+// =============================================================================
+
+#[cfg(feature = "conflict")]
+fn map_conflict_signed(sd: jacs::simple::SignedDocument) -> Result<SignedDocument> {
+    let value: Value = serde_json::from_str(&sd.raw)?;
+    ensure_conflict_value(&value)?;
+    let id = value
+        .get("jacsId")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .unwrap_or(sd.document_id.as_str());
+    let version = value
+        .get("jacsVersion")
+        .and_then(Value::as_str)
+        .filter(|version| !version.is_empty())
+        .ok_or_else(|| {
+            HaiError::Provider("conflict signed document missing jacsVersion".to_string())
+        })?;
+    Ok(SignedDocument {
+        key: format!("{id}:{version}"),
+        json: sd.raw,
+    })
+}
+
+#[cfg(feature = "conflict")]
+fn parse_conflict_json(raw: &str) -> Result<Value> {
+    let value: Value = serde_json::from_str(raw)?;
+    ensure_conflict_value(&value)?;
+    Ok(value)
+}
+
+#[cfg(feature = "conflict")]
+fn ensure_conflict_value(value: &Value) -> Result<()> {
+    if value.get("jacsType").and_then(Value::as_str) == Some("conflict") {
+        Ok(())
+    } else {
+        Err(HaiError::Provider(
+            "expected conflict document (jacsType=conflict)".to_string(),
+        ))
+    }
+}
+
+#[cfg(feature = "conflict")]
+fn conflict_document_id(value: &Value) -> Result<&str> {
+    value
+        .get("jacsId")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| HaiError::Provider("conflict document missing jacsId".to_string()))
+}
+
+#[cfg(feature = "conflict")]
+fn conflict_document_for_ref(provider: &LocalJacsProvider, key_or_id: &str) -> Result<String> {
+    let raw = if key_or_id.contains(':') {
+        provider.get_document(key_or_id)?
+    } else {
+        provider.get_latest_document(key_or_id)?
+    };
+    parse_conflict_json(&raw)?;
+    Ok(raw)
+}
+
+#[cfg(feature = "conflict")]
+impl JacsConflictProvider for LocalJacsProvider {
+    fn create_conflict(&self, body: Value) -> Result<SignedDocument> {
+        let simple = self.load_simple_agent()?;
+        let sd = jacs::conflict::create(&simple, body)
+            .map_err(|e| HaiError::Provider(format!("create_conflict failed: {e}")))?;
+        map_conflict_signed(sd)
+    }
+
+    fn update_conflict(&self, key_or_id: &str, mutation: Value) -> Result<SignedDocument> {
+        let simple = self.load_simple_agent()?;
+        let document = conflict_document_for_ref(self, key_or_id)?;
+        let mutation: jacs::conflict::Mutation = serde_json::from_value(mutation)
+            .map_err(|e| HaiError::Provider(format!("invalid conflict mutation: {e}")))?;
+        let sd = jacs::conflict::update(&simple, &document, mutation)
+            .map_err(|e| HaiError::Provider(format!("update_conflict failed: {e}")))?;
+        map_conflict_signed(sd)
+    }
+
+    fn get_conflict(&self, key: &str) -> Result<String> {
+        let raw = self.get_document(key)?;
+        parse_conflict_json(&raw)?;
+        Ok(raw)
+    }
+
+    fn get_latest_conflict(&self, id: &str) -> Result<String> {
+        let raw = self.get_latest_document(id)?;
+        parse_conflict_json(&raw)?;
+        Ok(raw)
+    }
+
+    fn list_conflicts(&self, limit: usize, offset: usize) -> Result<Vec<String>> {
+        self.query_by_type("conflict", limit, offset)
+    }
+
+    fn check_conflict_readiness(&self, key_or_id: &str) -> Result<Value> {
+        let current_raw = conflict_document_for_ref(self, key_or_id)?;
+        let current = parse_conflict_json(&current_raw)?;
+        let doc_id = conflict_document_id(&current)?.to_string();
+        let version_values = self
+            .get_document_versions(&doc_id)?
+            .into_iter()
+            .map(|key| {
+                self.get_document(&key)
+                    .and_then(|raw| parse_conflict_json(&raw))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut report = jacs::conflict::check_readiness(&current);
+        let consistency = jacs::conflict::check_consistency(&version_values);
+        if !consistency.stable {
+            report.ready = false;
+            report
+                .blockers
+                .extend(
+                    consistency
+                        .issues
+                        .into_iter()
+                        .map(|issue| jacs::conflict::Blocker {
+                            divergence_id: "__document__".to_string(),
+                            reason: format!("inconsistent:{issue}"),
+                        }),
+                );
+        }
+
+        serde_json::to_value(&report)
+            .map_err(|e| HaiError::Provider(format!("serialize conflict readiness: {e}")))
+    }
+}
+
+// =============================================================================
 // JacsAgreementProvider implementation (feature-gated)
 // =============================================================================
 
@@ -2102,6 +2284,236 @@ mod agreement_v2_tests {
             msg.contains("signer") && msg.contains("witness") && msg.contains("notary"),
             "error should list valid roles: {msg}"
         );
+    }
+}
+
+#[cfg(all(test, feature = "conflict"))]
+mod conflict_tests {
+    use serde_json::{json, Value};
+
+    use super::*;
+    use crate::jacs::{JacsConflictProvider, JacsDocumentProvider};
+
+    fn conflict_provider(
+        name: &str,
+    ) -> (
+        std::sync::MutexGuard<'static, ()>,
+        tempfile::TempDir,
+        LocalJacsProvider,
+    ) {
+        let guard = crate::test_support::env_lock();
+        let (dir, config_path) = crate::test_support::create_test_agent(name);
+        let provider = LocalJacsProvider::from_config_path(Some(config_path.as_path()), Some("fs"))
+            .expect("local provider");
+        (guard, dir, provider)
+    }
+
+    fn sparse_body() -> Value {
+        json!({
+            "title": "GPU scheduling disagreement",
+            "description": "Two parties disagree about who gets a shared GPU window.",
+            "participants": [
+                {
+                    "agentId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100010",
+                    "agentType": "human",
+                    "displayName": "Alice",
+                    "role": "party"
+                },
+                {
+                    "agentId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100011",
+                    "agentType": "human",
+                    "displayName": "Bob",
+                    "role": "party"
+                }
+            ],
+            "positions": [],
+            "divergences": [],
+            "phase": "surfacing"
+        })
+    }
+
+    fn confirmation_ref() -> Value {
+        json!({
+            "jacsId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100101",
+            "jacsVersion": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100102",
+            "jacsSha256": "confirmed-answer-hash"
+        })
+    }
+
+    fn ready_body() -> Value {
+        json!({
+            "title": "GPU scheduling agreement",
+            "description": "The parties converged on a shared GPU window.",
+            "participants": [
+                {
+                    "agentId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100010",
+                    "agentType": "human",
+                    "displayName": "Alice",
+                    "role": "party"
+                },
+                {
+                    "agentId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100011",
+                    "agentType": "human",
+                    "displayName": "Bob",
+                    "role": "party"
+                },
+                {
+                    "agentId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100012",
+                    "agentType": "ai",
+                    "displayName": "Mediator",
+                    "role": "mediator"
+                }
+            ],
+            "positions": [
+                {
+                    "id": "pos-alice",
+                    "participantId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100010",
+                    "statement": "Alice can use the GPU Monday morning.",
+                    "kind": "resource",
+                    "statedAt": "2026-06-11T12:01:00Z",
+                    "confirmed": true,
+                    "confirmationRef": confirmation_ref()
+                },
+                {
+                    "id": "pos-bob",
+                    "participantId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100011",
+                    "statement": "Bob can use the GPU Monday afternoon.",
+                    "kind": "resource",
+                    "statedAt": "2026-06-11T12:02:00Z",
+                    "confirmed": true,
+                    "confirmationRef": confirmation_ref()
+                }
+            ],
+            "divergences": [
+                {
+                    "id": "div-1",
+                    "type": "resource",
+                    "summary": "The parties found a non-overlapping GPU schedule.",
+                    "participantPositions": ["pos-alice", "pos-bob"],
+                    "zeroSum": false,
+                    "phase": "converging"
+                }
+            ],
+            "phase": "converging",
+            "linkedAgreements": [],
+            "allPreviousVersions": []
+        })
+    }
+
+    fn doc_value(doc: &SignedDocument) -> Value {
+        serde_json::from_str(&doc.json).expect("conflict document is JSON")
+    }
+
+    fn raw_value(raw: &str) -> Value {
+        serde_json::from_str(raw).expect("conflict document is JSON")
+    }
+
+    #[test]
+    fn create_conflict_round_trips_by_key() {
+        let (_guard, _dir, provider) = conflict_provider("conflict-create-get");
+
+        let created = provider
+            .create_conflict(sparse_body())
+            .expect("create conflict");
+        assert!(created.key.contains(':'), "key should be id:version");
+
+        let fetched = provider
+            .get_conflict(&created.key)
+            .expect("get conflict by key");
+        let fetched_value = raw_value(&fetched);
+
+        assert_eq!(fetched_value["jacsType"], "conflict");
+        assert_eq!(fetched_value["title"], "GPU scheduling disagreement");
+        assert_eq!(fetched_value["jacsId"], doc_value(&created)["jacsId"]);
+    }
+
+    #[test]
+    fn update_conflict_creates_version_chain() {
+        let (_guard, _dir, provider) = conflict_provider("conflict-update-chain");
+        let created = provider
+            .create_conflict(sparse_body())
+            .expect("create conflict");
+        let before = doc_value(&created);
+        let doc_id = before["jacsId"].as_str().expect("jacsId").to_string();
+        let previous_version = before["jacsVersion"].as_str().expect("version").to_string();
+
+        let updated = provider
+            .update_conflict(
+                &created.key,
+                json!({
+                    "type": "addPosition",
+                    "value": {
+                        "id": "pos-alice",
+                        "participantId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100010",
+                        "statement": "Alice needs the shared GPU on Monday.",
+                        "kind": "resource",
+                        "statedAt": "2026-06-11T12:01:00Z",
+                        "confirmed": false
+                    }
+                }),
+            )
+            .expect("update conflict");
+        let after = doc_value(&updated);
+
+        assert_eq!(after["jacsId"], before["jacsId"]);
+        assert_eq!(
+            after["jacsPreviousVersion"].as_str(),
+            Some(previous_version.as_str())
+        );
+        assert_ne!(updated.key, created.key);
+
+        let versions = provider
+            .get_document_versions(&doc_id)
+            .expect("get conflict versions");
+        assert!(
+            versions.len() >= 2,
+            "expected at least two versions, got {versions:?}"
+        );
+        assert!(versions.iter().any(|key| key == &created.key));
+        assert!(versions.iter().any(|key| key == &updated.key));
+    }
+
+    #[test]
+    fn list_conflicts_returns_created_key() {
+        let (_guard, _dir, provider) = conflict_provider("conflict-list");
+        let created = provider
+            .create_conflict(sparse_body())
+            .expect("create conflict");
+
+        let keys = provider.list_conflicts(10, 0).expect("list conflicts");
+
+        assert!(
+            keys.iter().any(|key| key == &created.key),
+            "created conflict key should be listed, got {keys:?}"
+        );
+    }
+
+    #[test]
+    fn readiness_delegates_to_jacs_checker() {
+        let (_guard, _dir, provider) = conflict_provider("conflict-readiness");
+        let sparse = provider
+            .create_conflict(sparse_body())
+            .expect("create sparse conflict");
+        let sparse_report = provider
+            .check_conflict_readiness(&sparse.key)
+            .expect("check sparse readiness");
+        assert_eq!(sparse_report["ready"], false, "{sparse_report}");
+        assert!(
+            sparse_report["blockers"]
+                .as_array()
+                .map(|blockers| !blockers.is_empty())
+                .unwrap_or(false),
+            "sparse conflict should report blockers: {sparse_report}"
+        );
+
+        let ready = provider
+            .create_conflict(ready_body())
+            .expect("create ready conflict");
+        let ready_report = provider
+            .check_conflict_readiness(&ready.key)
+            .expect("check ready readiness");
+        assert_eq!(ready_report["ready"], true, "{ready_report}");
+        assert_eq!(ready_report["blockers"].as_array().map(Vec::len), Some(0));
     }
 }
 

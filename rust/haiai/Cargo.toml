@@ -18,6 +18,7 @@ native-tls = ["reqwest/native-tls"]
 jacs-crate = ["dep:jacs"]
 agreements = ["jacs-crate", "jacs/agreements"]
 attestation = ["jacs-crate", "jacs/attestation"]
+conflict = ["jacs-crate", "jacs/conflict"]
 
 [dependencies]
 async-trait.workspace = true

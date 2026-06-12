@@ -1139,6 +1139,32 @@ fn extract_jacs_type_from_text(text: &str) -> Option<String> {
 }
 
 // =============================================================================
+// Layer 2a: Conflict Documents (feature-gated)
+// =============================================================================
+
+/// Extension trait for signed, versioned conflict documents.
+#[cfg(feature = "conflict")]
+pub trait JacsConflictProvider: JacsDocumentProvider {
+    /// Create and persist a standalone `conflict/v1` document.
+    fn create_conflict(&self, body: Value) -> Result<SignedDocument>;
+
+    /// Apply a typed conflict mutation to a key or document id, producing a new version.
+    fn update_conflict(&self, key_or_id: &str, mutation: Value) -> Result<SignedDocument>;
+
+    /// Fetch a specific conflict version by key (`id:version`).
+    fn get_conflict(&self, key: &str) -> Result<String>;
+
+    /// Fetch the latest conflict version by document id.
+    fn get_latest_conflict(&self, id: &str) -> Result<String>;
+
+    /// List conflict document keys via the shared document store.
+    fn list_conflicts(&self, limit: usize, offset: usize) -> Result<Vec<String>>;
+
+    /// Run the deterministic JACS readiness checker for a conflict key or id.
+    fn check_conflict_readiness(&self, key_or_id: &str) -> Result<Value>;
+}
+
+// =============================================================================
 // Layer 3: Batch Operations (JacsBatchProvider)
 // =============================================================================
 

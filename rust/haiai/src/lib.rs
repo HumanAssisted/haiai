@@ -102,6 +102,8 @@ pub use error::{HaiError, Result};
 pub use jacs::JacsAgreementProvider;
 #[cfg(feature = "attestation")]
 pub use jacs::JacsAttestationProvider;
+#[cfg(feature = "conflict")]
+pub use jacs::JacsConflictProvider;
 #[cfg(feature = "jacs-crate")]
 pub use jacs::{
     media_verify_result_to_json, media_verify_status_to_str, text_signature_status_to_str,
