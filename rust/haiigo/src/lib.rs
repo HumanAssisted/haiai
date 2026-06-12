@@ -1575,6 +1575,120 @@ pub extern "C" fn hai_get_record_bytes(
     ptr
 }
 
+#[no_mangle]
+pub extern "C" fn hai_conflict_create(
+    handle: HaiClientHandle,
+    body_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(
+            r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string(),
+        );
+    }
+    let client = unsafe { &*handle }.clone();
+    let arg = unsafe { c_str_to_string(body_json) };
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.conflict_create(arg).await;
+            let _ = tx.send(r);
+        });
+        to_c_string(result_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+#[no_mangle]
+pub extern "C" fn hai_conflict_update(
+    handle: HaiClientHandle,
+    key_or_id: *const c_char,
+    mutation_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(
+            r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string(),
+        );
+    }
+    let client = unsafe { &*handle }.clone();
+    let key_or_id = unsafe { c_str_to_string(key_or_id) };
+    let mutation_json = unsafe { c_str_to_string(mutation_json) };
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.conflict_update(key_or_id, mutation_json).await;
+            let _ = tx.send(r);
+        });
+        to_c_string(result_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+#[no_mangle]
+pub extern "C" fn hai_conflict_get(handle: HaiClientHandle, key: *const c_char) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(
+            r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string(),
+        );
+    }
+    let client = unsafe { &*handle }.clone();
+    let key = unsafe { c_str_to_string(key) };
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.conflict_get(key).await;
+            let _ = tx.send(r);
+        });
+        to_c_string(result_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+#[no_mangle]
+pub extern "C" fn hai_conflict_list(
+    handle: HaiClientHandle,
+    limit: usize,
+    offset: usize,
+) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(
+            r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string(),
+        );
+    }
+    let client = unsafe { &*handle }.clone();
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.conflict_list(limit, offset).await;
+            let _ = tx.send(r);
+        });
+        to_c_string(result_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+#[no_mangle]
+pub extern "C" fn hai_conflict_check_readiness(
+    handle: HaiClientHandle,
+    key_or_id: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(
+            r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string(),
+        );
+    }
+    let client = unsafe { &*handle }.clone();
+    let key_or_id = unsafe { c_str_to_string(key_or_id) };
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.conflict_check_readiness(key_or_id).await;
+            let _ = tx.send(r);
+        });
+        to_c_string(result_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
 /// Free a byte buffer returned by `hai_get_record_bytes`.
 #[no_mangle]
 pub extern "C" fn hai_free_bytes(ptr: *mut u8, len: usize) {

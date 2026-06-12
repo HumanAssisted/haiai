@@ -2219,6 +2219,110 @@ impl HaiClient {
         py.detach(|| RT.block_on(async { client.get_record_bytes(key).await }))
             .map_err(to_py_err)
     }
+
+    // ---- conflict_create ----
+    fn conflict_create<'py>(
+        &self,
+        py: Python<'py>,
+        body_json: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.conflict_create(body_json).await.map_err(to_py_err)
+        })
+    }
+
+    fn conflict_create_sync(&self, py: Python, body_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| RT.block_on(async { client.conflict_create(body_json).await }))
+            .map_err(to_py_err)
+    }
+
+    // ---- conflict_update ----
+    fn conflict_update<'py>(
+        &self,
+        py: Python<'py>,
+        key_or_id: String,
+        mutation_json: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client
+                .conflict_update(key_or_id, mutation_json)
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    fn conflict_update_sync(
+        &self,
+        py: Python,
+        key_or_id: String,
+        mutation_json: String,
+    ) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| RT.block_on(async { client.conflict_update(key_or_id, mutation_json).await }))
+            .map_err(to_py_err)
+    }
+
+    // ---- conflict_get ----
+    fn conflict_get<'py>(&self, py: Python<'py>, key: String) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.conflict_get(key).await.map_err(to_py_err)
+        })
+    }
+
+    fn conflict_get_sync(&self, py: Python, key: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| RT.block_on(async { client.conflict_get(key).await }))
+            .map_err(to_py_err)
+    }
+
+    // ---- conflict_list ----
+    fn conflict_list<'py>(
+        &self,
+        py: Python<'py>,
+        limit: usize,
+        offset: usize,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client.conflict_list(limit, offset).await.map_err(to_py_err)
+        })
+    }
+
+    fn conflict_list_sync(&self, py: Python, limit: usize, offset: usize) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| RT.block_on(async { client.conflict_list(limit, offset).await }))
+            .map_err(to_py_err)
+    }
+
+    // ---- conflict_check_readiness ----
+    fn conflict_check_readiness<'py>(
+        &self,
+        py: Python<'py>,
+        key_or_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client
+                .conflict_check_readiness(key_or_id)
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    fn conflict_check_readiness_sync(&self, py: Python, key_or_id: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| RT.block_on(async { client.conflict_check_readiness(key_or_id).await }))
+            .map_err(to_py_err)
+    }
 }
 
 // =============================================================================

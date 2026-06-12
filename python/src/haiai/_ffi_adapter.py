@@ -821,6 +821,41 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
+    # Conflict documents
+    def conflict_create(self, body_json: str) -> dict[str, Any]:
+        try:
+            raw = self._native.conflict_create_sync(body_json)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def conflict_update(self, key_or_id: str, mutation_json: str) -> dict[str, Any]:
+        try:
+            raw = self._native.conflict_update_sync(key_or_id, mutation_json)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def conflict_get(self, key: str) -> str:
+        try:
+            return self._native.conflict_get_sync(key)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def conflict_list(self, limit: int = 25, offset: int = 0) -> list[str]:
+        try:
+            raw = self._native.conflict_list_sync(limit, offset)
+            return list(json.loads(raw))
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def conflict_check_readiness(self, key_or_id: str) -> dict[str, Any]:
+        try:
+            raw = self._native.conflict_check_readiness_sync(key_or_id)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
     # --- Client State ---
 
     def jacs_id(self) -> str:
@@ -1644,6 +1679,43 @@ class AsyncFFIAdapter:
     async def get_record_bytes(self, key: str) -> bytes:
         try:
             return await self._native.get_record_bytes(key)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # Conflict documents
+    async def conflict_create(self, body_json: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.conflict_create(body_json)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def conflict_update(
+        self, key_or_id: str, mutation_json: str
+    ) -> dict[str, Any]:
+        try:
+            raw = await self._native.conflict_update(key_or_id, mutation_json)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def conflict_get(self, key: str) -> str:
+        try:
+            return await self._native.conflict_get(key)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def conflict_list(self, limit: int = 25, offset: int = 0) -> list[str]:
+        try:
+            raw = await self._native.conflict_list(limit, offset)
+            return list(json.loads(raw))
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def conflict_check_readiness(self, key_or_id: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.conflict_check_readiness(key_or_id)
+            return json.loads(raw)
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 

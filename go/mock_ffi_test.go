@@ -69,6 +69,11 @@ type mockFFIClient struct {
 	storeTextFileFn       func(path string) (string, error)
 	storeImageFileFn      func(path string) (string, error)
 	getRecordBytesFn      func(key string) ([]byte, error)
+	conflictCreateFn      func(bodyJSON string) (json.RawMessage, error)
+	conflictUpdateFn      func(keyOrID, mutationJSON string) (json.RawMessage, error)
+	conflictGetFn         func(key string) (string, error)
+	conflictListFn        func(limit, offset int) ([]string, error)
+	conflictReadinessFn   func(keyOrID string) (json.RawMessage, error)
 }
 
 func newMockFFIClient(baseURL, jacsID, authHeader string) *mockFFIClient {
@@ -931,6 +936,42 @@ func (m *mockFFIClient) GetRecordBytes(key string) ([]byte, error) {
 		return m.getRecordBytesFn(key)
 	}
 	return nil, fmt.Errorf("mock: GetRecordBytes not stubbed")
+}
+
+// Conflict documents
+func (m *mockFFIClient) ConflictCreate(bodyJSON string) (json.RawMessage, error) {
+	if m.conflictCreateFn != nil {
+		return m.conflictCreateFn(bodyJSON)
+	}
+	return nil, fmt.Errorf("mock: ConflictCreate not stubbed")
+}
+
+func (m *mockFFIClient) ConflictUpdate(keyOrID, mutationJSON string) (json.RawMessage, error) {
+	if m.conflictUpdateFn != nil {
+		return m.conflictUpdateFn(keyOrID, mutationJSON)
+	}
+	return nil, fmt.Errorf("mock: ConflictUpdate not stubbed")
+}
+
+func (m *mockFFIClient) ConflictGet(key string) (string, error) {
+	if m.conflictGetFn != nil {
+		return m.conflictGetFn(key)
+	}
+	return "", fmt.Errorf("mock: ConflictGet not stubbed")
+}
+
+func (m *mockFFIClient) ConflictList(limit, offset int) ([]string, error) {
+	if m.conflictListFn != nil {
+		return m.conflictListFn(limit, offset)
+	}
+	return nil, fmt.Errorf("mock: ConflictList not stubbed")
+}
+
+func (m *mockFFIClient) ConflictCheckReadiness(keyOrID string) (json.RawMessage, error) {
+	if m.conflictReadinessFn != nil {
+		return m.conflictReadinessFn(keyOrID)
+	}
+	return nil, fmt.Errorf("mock: ConflictCheckReadiness not stubbed")
 }
 
 // --- Helpers ---

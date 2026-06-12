@@ -945,6 +945,63 @@
       "returns": "Vec<u8> (raw bytes \u2014 NOT base64 across the FFI boundary, PRD Sec 3.6)",
       "auth_required": true,
       "notes": "Native bytes per language: Python bytes, Node Buffer, Go []byte."
+    },
+    {
+      "name": "conflict_create",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "body_json": "string (Conflict body JSON)"
+      },
+      "returns": "string (SignedDocument JSON: {key, json})",
+      "auth_required": false,
+      "notes": "Routed through local JACS conflict provider; creates a signed conflict version."
+    },
+    {
+      "name": "conflict_update",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "key_or_id": "string",
+        "mutation_json": "string (Conflict Mutation JSON)"
+      },
+      "returns": "string (SignedDocument JSON: {key, json})",
+      "auth_required": false,
+      "notes": "Routed through local JACS conflict provider; updates a conflict and signs the new version."
+    },
+    {
+      "name": "conflict_get",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "key": "string (id:version)"
+      },
+      "returns": "string (signed conflict document JSON)",
+      "auth_required": false,
+      "notes": "Routed through local JACS conflict provider."
+    },
+    {
+      "name": "conflict_list",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "limit": "usize",
+        "offset": "usize"
+      },
+      "returns": "string (JSON array of conflict keys)",
+      "auth_required": false,
+      "notes": "Routed through local JACS conflict provider."
+    },
+    {
+      "name": "conflict_check_readiness",
+      "category": "async",
+      "group": "jacs_document_store",
+      "params": {
+        "key_or_id": "string"
+      },
+      "returns": "string (Conflict readiness report JSON)",
+      "auth_required": false,
+      "notes": "Routed through local JACS conflict provider; delegates readiness logic to JACS."
     }
   ],
   "streaming": [
@@ -1151,13 +1208,13 @@
     }
   ],
   "summary": {
-    "async_methods": 87,
+    "async_methods": 92,
     "streaming_methods": 6,
     "callback_methods": 2,
     "sync_methods": 12,
     "mutating_methods": 2,
     "excluded_methods": 5,
-    "total_public_methods": 114,
-    "binding_core_scope": "87 async + 6 streaming + 2 callback + 12 sync + 2 mutating = 109 methods"
+    "total_public_methods": 119,
+    "binding_core_scope": "92 async + 6 streaming + 2 callback + 12 sync + 2 mutating = 114 methods"
   }
 }

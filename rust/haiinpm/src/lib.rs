@@ -940,6 +940,47 @@ impl HaiClient {
             .map_err(to_napi_err)?;
         Ok(Buffer::from(bytes))
     }
+
+    #[napi]
+    pub async fn conflict_create(&self, body_json: String) -> Result<String> {
+        self.inner
+            .conflict_create(body_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn conflict_update(
+        &self,
+        key_or_id: String,
+        mutation_json: String,
+    ) -> Result<String> {
+        self.inner
+            .conflict_update(key_or_id, mutation_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn conflict_get(&self, key: String) -> Result<String> {
+        self.inner.conflict_get(key).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn conflict_list(&self, limit: u32, offset: u32) -> Result<String> {
+        self.inner
+            .conflict_list(limit as usize, offset as usize)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn conflict_check_readiness(&self, key_or_id: String) -> Result<String> {
+        self.inner
+            .conflict_check_readiness(key_or_id)
+            .await
+            .map_err(to_napi_err)
+    }
 }
 
 // =============================================================================

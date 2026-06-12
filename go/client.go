@@ -1705,7 +1705,7 @@ func parseRawEmailJSON(raw json.RawMessage) (*RawEmailResult, error) {
 }
 
 // =============================================================================
-// JACS Document Store (21 methods)
+// JACS Document Store (26 methods)
 //
 // Thin delegations to the FFI client.
 //
@@ -1896,4 +1896,44 @@ func (c *Client) StoreImageFile(_ctx context.Context, path string) (string, erro
 // cgo FFI boundary. See Issue 015.
 func (c *Client) GetRecordBytes(_ctx context.Context, key string) ([]byte, error) {
 	return c.ffi.GetRecordBytes(key)
+}
+
+// ConflictCreate creates and signs a conflict document from body JSON.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ConflictCreate(_ctx context.Context, bodyJSON string) (json.RawMessage, error) {
+	return c.ffi.ConflictCreate(bodyJSON)
+}
+
+// ConflictUpdate applies a conflict mutation by key or document id.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ConflictUpdate(_ctx context.Context, keyOrID, mutationJSON string) (json.RawMessage, error) {
+	return c.ffi.ConflictUpdate(keyOrID, mutationJSON)
+}
+
+// ConflictGet fetches a signed conflict document by key.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ConflictGet(_ctx context.Context, key string) (string, error) {
+	return c.ffi.ConflictGet(key)
+}
+
+// ConflictList returns signed conflict document keys.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ConflictList(_ctx context.Context, limit, offset int) ([]string, error) {
+	return c.ffi.ConflictList(limit, offset)
+}
+
+// ConflictCheckReadiness checks whether a conflict key or id is ready.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ConflictCheckReadiness(_ctx context.Context, keyOrID string) (json.RawMessage, error) {
+	return c.ffi.ConflictCheckReadiness(keyOrID)
 }

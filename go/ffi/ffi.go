@@ -173,7 +173,7 @@ extern void hai_ws_close(unsigned long long handle_id);
 // Error retrieval for hai_client_new
 extern char* hai_last_error();
 
-// JACS Document Store (21 methods + 2 helpers for the bytes-return convention)
+// JACS Document Store (26 methods + 2 helpers for the bytes-return convention)
 extern char* hai_store_document(HaiClientHandle handle, const char* signed_json);
 extern char* hai_sign_and_store(HaiClientHandle handle, const char* data_json);
 extern char* hai_get_document(HaiClientHandle handle, const char* key);
@@ -195,6 +195,11 @@ extern char* hai_get_memory(HaiClientHandle handle);
 extern char* hai_get_soul(HaiClientHandle handle);
 extern char* hai_store_text_file(HaiClientHandle handle, const char* path);
 extern char* hai_store_image_file(HaiClientHandle handle, const char* path);
+extern char* hai_conflict_create(HaiClientHandle handle, const char* body_json);
+extern char* hai_conflict_update(HaiClientHandle handle, const char* key_or_id, const char* mutation_json);
+extern char* hai_conflict_get(HaiClientHandle handle, const char* key);
+extern char* hai_conflict_list(HaiClientHandle handle, size_t limit, size_t offset);
+extern char* hai_conflict_check_readiness(HaiClientHandle handle, const char* key_or_id);
 // Bytes-return convention — caller frees with hai_free_bytes(ptr, len).
 // On error, returns NULL and sets *out_len = 0; call hai_last_error() to retrieve
 // the JSON error envelope (matching hai_client_new).
@@ -1373,13 +1378,13 @@ func (c *Client) WSClose(handleID uint64) {
 }
 
 // =============================================================================
-// JACS Document Store (21 methods)
+// JACS Document Store (26 methods)
 //
-// All 21 methods now route through libhaiigo. Five of the trait methods
+// All 26 methods now route through libhaiigo. Six of the trait methods
 // (`ListDocuments`, `GetDocumentVersions`, `QueryByType`, `QueryByField`,
-// `QueryByAgent`) return `[]string` because `RemoteJacsProvider` produces
-// `Vec<String>`; binding-core JSON-serialises that to `["k1","k2"]` which
-// the Go side decodes into `[]string`.
+// `QueryByAgent`, `ConflictList`) return `[]string`; binding-core
+// JSON-serialises that to `["k1","k2"]` which the Go side decodes into
+// `[]string`.
 //
 // `GetMemory` / `GetSoul` use the `result_option_to_json` envelope —
 // `{"ok":null}` for `None` maps to `("", nil)`, `{"ok":"<envelope>"}` maps
@@ -1679,6 +1684,67 @@ func (c *Client) StoreImageFile(path string) (string, error) {
 	cs := cString(path)
 	defer C.free(unsafe.Pointer(cs))
 	return parseStringResponse(goString(C.hai_store_image_file(c.handle, cs)))
+}
+
+// ---- 5 conflict document methods ----
+
+func (c *Client) ConflictCreate(bodyJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(bodyJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_conflict_create(c.handle, cs)))
+}
+
+func (c *Client) ConflictUpdate(keyOrID, mutationJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	ck := cString(keyOrID)
+	defer C.free(unsafe.Pointer(ck))
+	cm := cString(mutationJSON)
+	defer C.free(unsafe.Pointer(cm))
+	return parseEnvelope(goString(C.hai_conflict_update(c.handle, ck, cm)))
+}
+
+func (c *Client) ConflictGet(key string) (string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return "", err
+	}
+	cs := cString(key)
+	defer C.free(unsafe.Pointer(cs))
+	raw, err := parseEnvelope(goString(C.hai_conflict_get(c.handle, cs)))
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func (c *Client) ConflictList(limit, offset int) ([]string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	return parseStringSliceResponse(goString(C.hai_conflict_list(c.handle, C.size_t(limit), C.size_t(offset))))
+}
+
+func (c *Client) ConflictCheckReadiness(keyOrID string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(keyOrID)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_conflict_check_readiness(c.handle, cs)))
 }
 
 // GetRecordBytes uses the bytes-return convention (PRD §3.6: native bytes,

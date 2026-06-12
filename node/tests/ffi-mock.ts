@@ -119,7 +119,7 @@ export function createMockFFI(overrides?: Partial<MockFFI>): FFIClientAdapter {
     signImage: defaultReject,
     verifyImage: defaultReject,
     extractMediaSignature: defaultReject,
-    // JACS Document Store — 14 generic + 4 D5 + 3 D9 = 21 methods.
+    // JACS Document Store — 14 generic + 4 D5 + 3 D9 + 5 conflict = 26 methods.
     storeDocument: defaultReject,
     signAndStore: defaultReject,
     getDocument: defaultReject,
@@ -143,6 +143,12 @@ export function createMockFFI(overrides?: Partial<MockFFI>): FFIClientAdapter {
     storeTextFile: defaultReject,
     storeImageFile: defaultReject,
     getRecordBytes: defaultReject,
+    // Conflict documents
+    conflictCreate: defaultReject,
+    conflictUpdate: defaultReject,
+    conflictGet: defaultReject,
+    conflictList: defaultReject,
+    conflictCheckReadiness: defaultReject,
   };
 
   if (overrides) {

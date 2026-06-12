@@ -1445,3 +1445,29 @@ class AsyncHaiClient:
     async def get_record_bytes(self, key: str) -> bytes:
         """Fetch raw record bytes (no decode)."""
         return await self._get_ffi().get_record_bytes(key)
+
+    # Conflict documents
+
+    async def conflict_create(self, body: dict[str, Any] | str) -> dict[str, Any]:
+        """Create and sign a conflict document."""
+        body_json = body if isinstance(body, str) else json.dumps(body)
+        return await self._get_ffi().conflict_create(body_json)
+
+    async def conflict_update(
+        self, key_or_id: str, mutation: dict[str, Any] | str
+    ) -> dict[str, Any]:
+        """Apply a conflict mutation and return the new signed document."""
+        mutation_json = mutation if isinstance(mutation, str) else json.dumps(mutation)
+        return await self._get_ffi().conflict_update(key_or_id, mutation_json)
+
+    async def conflict_get(self, key: str) -> str:
+        """Fetch a signed conflict document by key."""
+        return await self._get_ffi().conflict_get(key)
+
+    async def conflict_list(self, limit: int = 25, offset: int = 0) -> list[str]:
+        """List signed conflict document keys."""
+        return await self._get_ffi().conflict_list(limit, offset)
+
+    async def conflict_check_readiness(self, key_or_id: str) -> dict[str, Any]:
+        """Run the JACS conflict readiness checker for a key or id."""
+        return await self._get_ffi().conflict_check_readiness(key_or_id)

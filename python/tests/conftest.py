@@ -578,6 +578,23 @@ class MockFFIAdapter:
         result = self._record("get_record_bytes", key)
         return result if isinstance(result, bytes) else b""
 
+    def conflict_create(self, body_json: str) -> dict:
+        return self._record("conflict_create", body_json)
+
+    def conflict_update(self, key_or_id: str, mutation_json: str) -> dict:
+        return self._record("conflict_update", key_or_id, mutation_json)
+
+    def conflict_get(self, key: str) -> str:
+        result = self._record("conflict_get", key)
+        return result if isinstance(result, str) else ""
+
+    def conflict_list(self, limit: int, offset: int) -> list[str]:
+        result = self._record("conflict_list", limit, offset)
+        return list(result) if isinstance(result, list) else []
+
+    def conflict_check_readiness(self, key_or_id: str) -> dict:
+        return self._record("conflict_check_readiness", key_or_id)
+
 
 class MockAsyncFFIAdapter(MockFFIAdapter):
     """Async version of MockFFIAdapter for AsyncHaiClient tests."""
@@ -830,6 +847,23 @@ class MockAsyncFFIAdapter(MockFFIAdapter):
 
     async def ws_close(self, handle: int) -> None:  # type: ignore[override]
         self._record("ws_close", handle)
+
+    async def conflict_create(self, body_json: str) -> dict:  # type: ignore[override]
+        return self._record("conflict_create", body_json)
+
+    async def conflict_update(self, key_or_id: str, mutation_json: str) -> dict:  # type: ignore[override]
+        return self._record("conflict_update", key_or_id, mutation_json)
+
+    async def conflict_get(self, key: str) -> str:  # type: ignore[override]
+        result = self._record("conflict_get", key)
+        return result if isinstance(result, str) else ""
+
+    async def conflict_list(self, limit: int, offset: int) -> list[str]:  # type: ignore[override]
+        result = self._record("conflict_list", limit, offset)
+        return list(result) if isinstance(result, list) else []
+
+    async def conflict_check_readiness(self, key_or_id: str) -> dict:  # type: ignore[override]
+        return self._record("conflict_check_readiness", key_or_id)
 
     async def base_url(self) -> str:  # type: ignore[override]
         result = self._record("base_url")

@@ -162,7 +162,7 @@ interface NativeHaiClient {
   wsNextEvent(handle: number): Promise<string | null>;
   wsClose(handle: number): Promise<void>;
 
-  // JACS Document Store — 14 generic + 4 D5 + 3 D9 = 21 methods.
+  // JACS Document Store — 14 generic + 4 D5 + 3 D9 + 5 conflict = 26 methods.
   storeDocument(signedJson: string): Promise<string>;
   signAndStore(dataJson: string): Promise<string>;
   getDocument(key: string): Promise<string>;
@@ -188,6 +188,13 @@ interface NativeHaiClient {
   storeTextFile(path: string): Promise<string>;
   storeImageFile(path: string): Promise<string>;
   getRecordBytes(key: string): Promise<Uint8Array>;
+
+  // Conflict documents
+  conflictCreate(bodyJson: string): Promise<string>;
+  conflictUpdate(keyOrId: string, mutationJson: string): Promise<string>;
+  conflictGet(key: string): Promise<string>;
+  conflictList(limit: number, offset: number): Promise<string>;
+  conflictCheckReadiness(keyOrId: string): Promise<string>;
 }
 
 interface NativeHaiClientConstructor {
@@ -1366,6 +1373,53 @@ export class FFIClientAdapter {
   async getRecordBytes(key: string): Promise<Uint8Array> {
     try {
       return await this.native.getRecordBytes(key);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async conflictCreate(bodyJson: string): Promise<Record<string, unknown>> {
+    try {
+      const raw = await this.native.conflictCreate(bodyJson);
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async conflictUpdate(
+    keyOrId: string,
+    mutationJson: string,
+  ): Promise<Record<string, unknown>> {
+    try {
+      const raw = await this.native.conflictUpdate(keyOrId, mutationJson);
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async conflictGet(key: string): Promise<string> {
+    try {
+      return await this.native.conflictGet(key);
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async conflictList(limit: number, offset: number): Promise<string[]> {
+    try {
+      const raw = await this.native.conflictList(limit, offset);
+      return JSON.parse(raw) as string[];
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async conflictCheckReadiness(keyOrId: string): Promise<Record<string, unknown>> {
+    try {
+      const raw = await this.native.conflictCheckReadiness(keyOrId);
+      return JSON.parse(raw) as Record<string, unknown>;
     } catch (err) {
       throw mapFFIError(err);
     }

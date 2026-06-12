@@ -72,6 +72,11 @@ MCP_TOOL_TO_FFI_METHODS: dict[str, list[str]] = {
     "hai_store_text_file": ["store_text_file"],
     "hai_store_image_file": ["store_image_file"],
     "hai_get_record_bytes": ["get_record_bytes"],
+    "hai_conflict_create": ["conflict_create"],
+    "hai_conflict_update": ["conflict_update"],
+    "hai_conflict_get": ["conflict_get"],
+    "hai_conflict_list": ["conflict_list"],
+    "hai_conflict_check_readiness": ["conflict_check_readiness"],
 }
 
 

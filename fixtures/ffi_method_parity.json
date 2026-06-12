@@ -1,6 +1,6 @@
 {
   "description": "FFI method surface area parity contract. Every SDK must expose exactly these FFI methods. Tests verify that the FFI interface/adapter in each language covers the full method set.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "methods": {
     "registration_and_identity": [
       {"name": "hello", "args": ["include_test:bool"], "returns": "json"},
@@ -137,7 +137,12 @@
       {"name": "get_soul", "args": [], "returns": "string?"},
       {"name": "store_text_file", "args": ["path:string"], "returns": "string"},
       {"name": "store_image_file", "args": ["path:string"], "returns": "string"},
-      {"name": "get_record_bytes", "args": ["key:string"], "returns": "bytes"}
+      {"name": "get_record_bytes", "args": ["key:string"], "returns": "bytes"},
+      {"name": "conflict_create", "args": ["body_json:string"], "returns": "json"},
+      {"name": "conflict_update", "args": ["key_or_id:string", "mutation_json:string"], "returns": "json"},
+      {"name": "conflict_get", "args": ["key:string"], "returns": "string"},
+      {"name": "conflict_list", "args": ["limit:usize", "offset:usize"], "returns": "json"},
+      {"name": "conflict_check_readiness", "args": ["key_or_id:string"], "returns": "json"}
     ]
   },
   "error_kinds": [
@@ -152,5 +157,5 @@
     "ProviderError"
   ],
   "error_format": "{ErrorKind}: {message}",
-  "total_method_count": 105
+  "total_method_count": 110
 }

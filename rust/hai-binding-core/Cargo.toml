@@ -12,7 +12,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-haiai = { version = "=0.4.1", path = "../haiai" }
+haiai = { version = "=0.4.1", path = "../haiai", features = ["conflict"] }
 serde = { workspace = true }
 serde_json.workspace = true
 thiserror.workspace = true
@@ -23,8 +23,9 @@ tokio.workspace = true
 # Agreements ride along by default so the FFI parity surface (fixture's
 # `agreements` section) is complete in every shipped binding; opting out
 # compiles cleanly because every agreement item is cfg-gated.
-default = ["agreements"]
+default = ["agreements", "conflict"]
 agreements = ["haiai/agreements"]
+conflict = ["haiai/conflict"]
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

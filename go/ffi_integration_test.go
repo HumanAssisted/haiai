@@ -723,6 +723,26 @@ func (r *recordingFFIClient) GetRecordBytes(key string) ([]byte, error) {
 	*r.calls = append(*r.calls, "GetRecordBytes")
 	return r.inner.GetRecordBytes(key)
 }
+func (r *recordingFFIClient) ConflictCreate(bodyJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "ConflictCreate")
+	return r.inner.ConflictCreate(bodyJSON)
+}
+func (r *recordingFFIClient) ConflictUpdate(keyOrID, mutationJSON string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "ConflictUpdate")
+	return r.inner.ConflictUpdate(keyOrID, mutationJSON)
+}
+func (r *recordingFFIClient) ConflictGet(key string) (string, error) {
+	*r.calls = append(*r.calls, "ConflictGet")
+	return r.inner.ConflictGet(key)
+}
+func (r *recordingFFIClient) ConflictList(limit, offset int) ([]string, error) {
+	*r.calls = append(*r.calls, "ConflictList")
+	return r.inner.ConflictList(limit, offset)
+}
+func (r *recordingFFIClient) ConflictCheckReadiness(keyOrID string) (json.RawMessage, error) {
+	*r.calls = append(*r.calls, "ConflictCheckReadiness")
+	return r.inner.ConflictCheckReadiness(keyOrID)
+}
 
 // Compile-time check: recordingFFIClient satisfies FFIClient.
 var _ FFIClient = (*recordingFFIClient)(nil)

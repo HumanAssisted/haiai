@@ -334,7 +334,7 @@ fn ffi_method_parity_includes_media_local_section() {
 }
 
 #[test]
-fn ffi_method_parity_total_count_is_105() {
+fn ffi_method_parity_total_count_is_110() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/ffi_method_parity.json");
     let raw =
@@ -344,12 +344,11 @@ fn ffi_method_parity_total_count_is_105() {
     let total = val["total_method_count"]
         .as_u64()
         .expect("total_method_count must be a number");
-    // Bumped to 105: adds the 11-method `agreements` section (save/search/
-    // get/countersign + v2 create/apply/sign/verify + branch-conflict
-    // detect/merge/resolve) on top of the 94 from the document-store work.
+    // Conflict memory MVP bumps 105 -> 110 by adding five conflict methods
+    // to the jacs_document_store section.
     assert_eq!(
-        total, 105,
-        "total_method_count must include the agreements section"
+        total, 110,
+        "total_method_count must include the conflict methods"
     );
 
     let methods = val["methods"]
@@ -360,7 +359,7 @@ fn ffi_method_parity_total_count_is_105() {
         sum += arr.as_array().expect("section must be an array").len() as u64;
     }
     assert_eq!(
-        sum, 105,
+        sum, 110,
         "Sum of method counts across all sections must equal total_method_count"
     );
 
@@ -370,8 +369,8 @@ fn ffi_method_parity_total_count_is_105() {
         .expect("jacs_document_store section must exist");
     assert_eq!(
         store_section.len(),
-        21,
-        "jacs_document_store must have 21 methods"
+        26,
+        "jacs_document_store must have 26 methods"
     );
     let names: std::collections::HashSet<String> = store_section
         .iter()
@@ -399,6 +398,11 @@ fn ffi_method_parity_total_count_is_105() {
         "store_text_file",
         "store_image_file",
         "get_record_bytes",
+        "conflict_create",
+        "conflict_update",
+        "conflict_get",
+        "conflict_list",
+        "conflict_check_readiness",
     ] {
         assert!(
             names.contains(*required),

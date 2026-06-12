@@ -2208,6 +2208,36 @@ export class HaiClient {
   async getRecordBytes(key: string): Promise<Uint8Array> {
     return this.ffi.getRecordBytes(key);
   }
+
+  /** Create and sign a conflict document. */
+  async conflictCreate(body: Record<string, unknown> | string): Promise<Record<string, unknown>> {
+    const bodyJson = typeof body === 'string' ? body : JSON.stringify(body);
+    return this.ffi.conflictCreate(bodyJson);
+  }
+
+  /** Apply a conflict mutation and return the new signed document. */
+  async conflictUpdate(
+    keyOrId: string,
+    mutation: Record<string, unknown> | string,
+  ): Promise<Record<string, unknown>> {
+    const mutationJson = typeof mutation === 'string' ? mutation : JSON.stringify(mutation);
+    return this.ffi.conflictUpdate(keyOrId, mutationJson);
+  }
+
+  /** Fetch a signed conflict document by key. */
+  async conflictGet(key: string): Promise<string> {
+    return this.ffi.conflictGet(key);
+  }
+
+  /** List signed conflict document keys. */
+  async conflictList(limit = 25, offset = 0): Promise<string[]> {
+    return this.ffi.conflictList(limit, offset);
+  }
+
+  /** Run the JACS conflict readiness checker for a key or id. */
+  async conflictCheckReadiness(keyOrId: string): Promise<Record<string, unknown>> {
+    return this.ffi.conflictCheckReadiness(keyOrId);
+  }
 }
 
 // =============================================================================
