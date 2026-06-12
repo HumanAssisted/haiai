@@ -10,9 +10,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 use hai_mcp::{HaiMcpServer, HaiServerContext, LoadedSharedAgent};
 use haiai::{
     build_document_provider, CreateAgentOptions, CreateEmailTemplateOptions, EmailGenerationType,
-    HaiClient, HaiClientOptions, JacsAgentLifecycle, JacsDocumentProvider, JacsProvider,
-    ListEmailTemplatesOptions, ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions,
-    SaveDocumentRequest, SaveIntent, SearchOptions, SendEmailOptions, UpdateEmailTemplateOptions,
+    HaiClient, HaiClientOptions, JacsAgentLifecycle, JacsConflictProvider, JacsDocumentProvider,
+    JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions, LocalJacsProvider,
+    RegisterAgentOptions, SaveDocumentRequest, SaveIntent, SearchOptions, SendEmailOptions,
+    UpdateEmailTemplateOptions,
 };
 use jacs_mcp::JacsMcpServer;
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
@@ -532,6 +533,12 @@ enum Commands {
         #[command(subcommand)]
         command: RecordsCommands,
     },
+
+    /// Manage signed conflict documents
+    Conflict {
+        #[command(subcommand)]
+        command: ConflictCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -559,6 +566,65 @@ enum MemoryCommands {
         /// Push local MEMORY.md to the remote store
         #[arg(long, group = "direction")]
         push: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConflictCommands {
+    /// Create and sign a conflict document from a JSON file.
+    Create {
+        /// Path to conflict body JSON.
+        #[arg(long)]
+        body: String,
+
+        /// Emit machine-readable JSON instead of the conflict key.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Apply a typed mutation to a conflict key or id.
+    Update {
+        /// Conflict key (id:version) or document id.
+        key: String,
+
+        /// Mutation JSON string.
+        #[arg(long)]
+        mutation: String,
+
+        /// Emit machine-readable JSON instead of the new conflict key.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Fetch a signed conflict document by key.
+    Get {
+        /// Conflict key in id:version format.
+        key: String,
+    },
+
+    /// List signed conflict document keys.
+    List {
+        /// Maximum number of keys to return.
+        #[arg(long, default_value = "20")]
+        limit: usize,
+
+        /// Offset for pagination.
+        #[arg(long, default_value = "0")]
+        offset: usize,
+
+        /// Emit machine-readable JSON instead of one key per line.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Run the JACS readiness checker for a conflict key or id.
+    CheckReadiness {
+        /// Conflict key (id:version) or document id.
+        key: String,
+
+        /// Emit machine-readable JSON instead of a human summary.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1275,6 +1341,30 @@ fn load_document_provider(
 ) -> anyhow::Result<Box<dyn JacsDocumentProvider>> {
     build_document_provider(None, storage_flag, Some(hai_url()))
         .context("failed to load routed JACS document provider")
+}
+
+fn load_conflict_provider(
+    storage_flag: Option<&str>,
+) -> anyhow::Result<Box<dyn JacsConflictProvider>> {
+    let backend = haiai::config::resolve_storage_backend(storage_flag, None)
+        .context("failed to resolve routed JACS conflict storage")?;
+
+    match backend.as_str() {
+        "fs" | "rusqlite" | "sqlite" => {
+            let provider = LocalJacsProvider::from_config_path(None, Some(backend.as_str()))
+                .with_context(|| {
+                    format!("failed to load routed JACS conflict provider '{}'", backend)
+                })?;
+            Ok(Box::new(provider))
+        }
+        "remote" => anyhow::bail!(
+            "conflict commands require a local JACS conflict provider; remote conflict storage is not implemented"
+        ),
+        other => anyhow::bail!(
+            "Unsupported storage backend '{}'. Valid routed labels: fs, rusqlite, sqlite, remote",
+            other
+        ),
+    }
 }
 
 fn load_local_sync_provider(storage_flag: Option<&str>) -> anyhow::Result<LocalJacsProvider> {
@@ -2833,6 +2923,86 @@ async fn main() -> anyhow::Result<()> {
                 println!("Wrote {} bytes to {}", bytes.len(), out);
             }
         },
+        Commands::Conflict { command } => match command {
+            ConflictCommands::Create { body, json } => {
+                let body = read_json_file(&body)?;
+                let provider = load_conflict_provider(effective_storage.as_deref())?;
+                let signed = provider
+                    .create_conflict(body)
+                    .context("create_conflict failed")?;
+                print_conflict_signed("created", &signed, json)?;
+            }
+            ConflictCommands::Update {
+                key,
+                mutation,
+                json,
+            } => {
+                let mutation: Value =
+                    serde_json::from_str(&mutation).context("--mutation must be valid JSON")?;
+                let provider = load_conflict_provider(effective_storage.as_deref())?;
+                let signed = provider
+                    .update_conflict(&key, mutation)
+                    .context("update_conflict failed")?;
+                print_conflict_signed("updated", &signed, json)?;
+            }
+            ConflictCommands::Get { key } => {
+                let provider = load_conflict_provider(effective_storage.as_deref())?;
+                let document = provider.get_conflict(&key).context("get_conflict failed")?;
+                println!("{}", document);
+            }
+            ConflictCommands::List {
+                limit,
+                offset,
+                json,
+            } => {
+                let provider = load_conflict_provider(effective_storage.as_deref())?;
+                let keys = provider
+                    .list_conflicts(limit, offset)
+                    .context("list_conflicts failed")?;
+                if json {
+                    let count = keys.len();
+                    println!(
+                        "{}",
+                        serde_json::to_string(&serde_json::json!({
+                            "keys": keys,
+                            "count": count,
+                            "limit": limit,
+                            "offset": offset
+                        }))
+                        .context("serialize conflict list")?
+                    );
+                } else {
+                    for key in keys {
+                        println!("{}", key);
+                    }
+                }
+            }
+            ConflictCommands::CheckReadiness { key, json } => {
+                let provider = load_conflict_provider(effective_storage.as_deref())?;
+                let readiness = provider
+                    .check_conflict_readiness(&key)
+                    .context("check_conflict_readiness failed")?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&readiness)
+                            .context("serialize conflict readiness")?
+                    );
+                } else {
+                    let ready = readiness
+                        .get("ready")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let blockers = readiness
+                        .get("blockers")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or(0);
+                    println!("ready: {}", ready);
+                    println!("blockers: {}", blockers);
+                }
+            }
+        },
     }
 
     Ok(())
@@ -2952,6 +3122,34 @@ fn resolve_typed_body(
     }
     let path = from.unwrap_or_else(|| default_filename.to_string());
     std::fs::read_to_string(&path).with_context(|| format!("failed to read {}", path))
+}
+
+fn read_json_file(path: &str) -> anyhow::Result<Value> {
+    let raw = std::fs::read_to_string(path).with_context(|| format!("failed to read {}", path))?;
+    serde_json::from_str(&raw).with_context(|| format!("{} must contain valid JSON", path))
+}
+
+fn print_conflict_signed(
+    action: &str,
+    signed: &haiai::SignedDocument,
+    json_output: bool,
+) -> anyhow::Result<()> {
+    if json_output {
+        let document: Value =
+            serde_json::from_str(&signed.json).context("signed conflict document is not JSON")?;
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "key": signed.key,
+                "document": document
+            }))
+            .context("serialize conflict signed document")?
+        );
+    } else {
+        tracing::info!(action, key = %signed.key, "conflict_document");
+        println!("{}", signed.key);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -3474,9 +3672,10 @@ mod tests {
     }
 
     #[test]
-    fn cli_command_parity_total_count_is_36() {
+    fn cli_command_parity_total_count_is_37() {
         // Issue 005: bumped from 33 to 36 with the three D5/D9 record-store
         // command groups (memory, soul, records).
+        // Conflict memory MVP then bumps 36 to 37 with the conflict group.
         let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/cli_command_parity.json");
         let raw = std::fs::read_to_string(&fixture_path).expect("read parity fixture");
@@ -3485,8 +3684,67 @@ mod tests {
             .as_u64()
             .expect("total_command_count");
         let count = fixture["commands"].as_array().expect("commands").len() as u64;
-        assert_eq!(total, 36, "total_command_count must be 36 after Issue 005");
-        assert_eq!(count, 36, "commands array length must be 36");
+        assert_eq!(
+            total, 37,
+            "total_command_count must be 37 after conflict group"
+        );
+        assert_eq!(count, 37, "commands array length must be 37");
+    }
+
+    #[test]
+    fn parse_conflict_commands() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "conflict",
+            "create",
+            "--body",
+            "conflict.json",
+            "--json",
+        ]);
+        match cli.command {
+            Commands::Conflict {
+                command: ConflictCommands::Create { body, json },
+            } => {
+                assert_eq!(body, "conflict.json");
+                assert!(json);
+            }
+            _ => panic!("expected conflict create"),
+        }
+
+        let cli = Cli::parse_from([
+            "haiai",
+            "conflict",
+            "update",
+            "abc:1",
+            "--mutation",
+            r#"{"type":"noop"}"#,
+        ]);
+        match cli.command {
+            Commands::Conflict {
+                command:
+                    ConflictCommands::Update {
+                        key,
+                        mutation,
+                        json,
+                    },
+            } => {
+                assert_eq!(key, "abc:1");
+                assert_eq!(mutation, r#"{"type":"noop"}"#);
+                assert!(!json);
+            }
+            _ => panic!("expected conflict update"),
+        }
+
+        let cli = Cli::parse_from(["haiai", "conflict", "check-readiness", "abc:1", "--json"]);
+        match cli.command {
+            Commands::Conflict {
+                command: ConflictCommands::CheckReadiness { key, json },
+            } => {
+                assert_eq!(key, "abc:1");
+                assert!(json);
+            }
+            _ => panic!("expected conflict check-readiness"),
+        }
     }
 
     #[test]
