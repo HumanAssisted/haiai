@@ -410,6 +410,7 @@ fn create_verification_agent() -> Result<SimpleAgent> {
         .config_path(&format!("{}/jacs.config.json", tmp_path))
         .build();
 
+    let _config_env_lock = crate::jacs_local::lock_jacs_config_env();
     let (agent, _info) = SimpleAgent::create_with_params(params)
         .map_err(|e| HaiError::Provider(format!("Failed to create verification agent: {e}")))?;
 
@@ -746,6 +747,7 @@ mod tests {
             .config_path(&format!("{}/jacs.config.json", tmp_path))
             .build();
 
+        let _config_env_lock = crate::jacs_local::lock_jacs_config_env();
         let (agent, _info) = SimpleAgent::create_with_params(params).expect("create test agent");
 
         // Set env vars needed by the keystore at signing time.

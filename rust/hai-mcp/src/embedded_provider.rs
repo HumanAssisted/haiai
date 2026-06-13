@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::{anyhow, Context as _};
+use haiai::jacs_local::{lock_jacs_config_env, JacsConfigEnvOverrideGuard, JacsConfigEnvSnapshot};
 use haiai::key_format::normalize_public_key_pem;
 use haiai::{
     HaiError, JacsMediaProvider, JacsProvider, MediaVerificationResult, Result as HaiResult,
@@ -29,6 +30,7 @@ Alternatively, run from a directory that contains jacs.config.json (current dire
 pub struct LoadedSharedAgent {
     inner: Arc<StdMutex<Agent>>,
     config_path: PathBuf,
+    jacs_config_env: JacsConfigEnvSnapshot,
     /// `agent_email` extracted from the config file at load time.
     agent_email: Option<String>,
 }
@@ -66,6 +68,7 @@ impl LoadedSharedAgent {
             ));
         }
 
+        let _config_env_lock = lock_jacs_config_env();
         let mut config =
             jacs::config::Config::from_file(&config_path.to_string_lossy()).map_err(|error| {
                 anyhow!("Invalid config file '{}': {}", config_path.display(), error)
@@ -77,6 +80,7 @@ impl LoadedSharedAgent {
 
         // Extract agent_email before config is consumed by Agent::from_config.
         let agent_email = config.agent_email.clone();
+        let jacs_config_env = JacsConfigEnvSnapshot::from_config(&config);
 
         let agent = Agent::from_config(config, None)
             .map_err(|error| anyhow!("Failed to load agent: {}", error))?;
@@ -84,6 +88,7 @@ impl LoadedSharedAgent {
         Ok(Self {
             inner: Arc::new(StdMutex::new(agent)),
             config_path,
+            jacs_config_env,
             agent_email,
         })
     }
@@ -102,7 +107,11 @@ impl LoadedSharedAgent {
     }
 
     pub fn embedded_provider(&self) -> HaiResult<EmbeddedJacsProvider> {
-        EmbeddedJacsProvider::new(Arc::clone(&self.inner), self.config_path.clone())
+        EmbeddedJacsProvider::new(
+            Arc::clone(&self.inner),
+            self.config_path.clone(),
+            self.jacs_config_env.clone(),
+        )
     }
 }
 
@@ -117,10 +126,15 @@ pub struct EmbeddedJacsProvider {
     /// constructor — media operations reload a `SimpleAgent` view from this
     /// path on each call. Cost is negligible (local file IO).
     config_path: PathBuf,
+    jacs_config_env: JacsConfigEnvSnapshot,
 }
 
 impl EmbeddedJacsProvider {
-    pub fn new(inner: Arc<StdMutex<Agent>>, config_path: PathBuf) -> HaiResult<Self> {
+    pub fn new(
+        inner: Arc<StdMutex<Agent>>,
+        config_path: PathBuf,
+        jacs_config_env: JacsConfigEnvSnapshot,
+    ) -> HaiResult<Self> {
         let (jacs_id, algorithm, public_key_pem) = {
             let agent = inner.lock().map_err(|error| {
                 HaiError::Provider(format!("failed to lock JACS agent: {error}"))
@@ -145,6 +159,7 @@ impl EmbeddedJacsProvider {
             algorithm,
             public_key_pem,
             config_path,
+            jacs_config_env,
         })
     }
 
@@ -157,6 +172,7 @@ impl EmbeddedJacsProvider {
             public_key_pem: "-----BEGIN PUBLIC KEY-----\nTEST\n-----END PUBLIC KEY-----\n"
                 .to_string(),
             config_path: PathBuf::from("/dev/null"),
+            jacs_config_env: JacsConfigEnvSnapshot::empty(),
         }
     }
 
@@ -166,6 +182,7 @@ impl EmbeddedJacsProvider {
     /// (local file IO; same approach `LocalJacsProvider::load_simple_agent`
     /// already takes).
     fn simple_agent(&self) -> HaiResult<SimpleAgent> {
+        let _env_guard = JacsConfigEnvOverrideGuard::apply(&self.jacs_config_env)?;
         SimpleAgent::load(Some(&self.config_path.to_string_lossy()), Some(false)).map_err(|e| {
             HaiError::Provider(format!(
                 "failed to load SimpleAgent for media op from {}: {e}",

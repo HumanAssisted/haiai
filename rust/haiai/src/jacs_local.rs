@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use jacs::agent::boilerplate::BoilerPlate;
 use jacs::agent::document::DocumentTraits;
@@ -42,11 +42,143 @@ pub struct LocalJacsProvider {
     algorithm: String,
     config_path: PathBuf,
     load_config_path: PathBuf,
+    jacs_config_env: JacsConfigEnvSnapshot,
     document_service: Option<Arc<dyn DocumentService>>,
     /// The resolved storage backend label (e.g., "fs", "rusqlite").
     /// Used to report accurate capabilities per backend.
     storage_label: Option<String>,
     document_dir: PathBuf,
+}
+
+static JACS_CONFIG_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Clone, Debug)]
+#[doc(hidden)]
+pub struct JacsConfigEnvSnapshot {
+    entries: Vec<(&'static str, String)>,
+}
+
+impl JacsConfigEnvSnapshot {
+    #[doc(hidden)]
+    pub fn empty() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn from_config(config: &jacs::config::Config) -> Self {
+        let use_security = env_string(config.jacs_use_security());
+        Self {
+            entries: vec![
+                ("JACS_ENABLE_FILESYSTEM_QUARANTINE", use_security.clone()),
+                ("JACS_USE_SECURITY", use_security),
+                (
+                    "JACS_DATA_DIRECTORY",
+                    env_string(config.jacs_data_directory()),
+                ),
+                (
+                    "JACS_KEY_DIRECTORY",
+                    env_string(config.jacs_key_directory()),
+                ),
+                (
+                    "JACS_AGENT_PRIVATE_KEY_FILENAME",
+                    env_string(config.jacs_agent_private_key_filename()),
+                ),
+                (
+                    "JACS_AGENT_PUBLIC_KEY_FILENAME",
+                    env_string(config.jacs_agent_public_key_filename()),
+                ),
+                (
+                    "JACS_AGENT_KEY_ALGORITHM",
+                    env_string(config.jacs_agent_key_algorithm()),
+                ),
+                (
+                    "JACS_AGENT_ID_AND_VERSION",
+                    env_string(config.jacs_agent_id_and_version()),
+                ),
+                (
+                    "JACS_DEFAULT_STORAGE",
+                    env_string(config.jacs_default_storage()),
+                ),
+                ("JACS_AGENT_DOMAIN", env_string(config.jacs_agent_domain())),
+                ("JACS_DNS_VALIDATE", env_bool(config.jacs_dns_validate())),
+                ("JACS_DNS_STRICT", env_bool(config.jacs_dns_strict())),
+                ("JACS_DNS_REQUIRED", env_bool(config.jacs_dns_required())),
+                ("JACS_DATABASE_URL", env_string(config.jacs_database_url())),
+            ],
+        }
+    }
+}
+
+#[doc(hidden)]
+pub struct JacsConfigEnvLockGuard {
+    _guard: MutexGuard<'static, ()>,
+}
+
+#[doc(hidden)]
+pub struct JacsConfigEnvOverrideGuard {
+    _lock: JacsConfigEnvLockGuard,
+    saved: Vec<(&'static str, bool, Option<String>)>,
+}
+
+impl JacsConfigEnvOverrideGuard {
+    #[doc(hidden)]
+    pub fn apply(snapshot: &JacsConfigEnvSnapshot) -> Result<Self> {
+        let lock = lock_jacs_config_env();
+        let mut saved = Vec::with_capacity(snapshot.entries.len());
+        for (key, value) in &snapshot.entries {
+            let had_override = jacs::storage::jenv::has_jenv_override(key);
+            let previous = if had_override {
+                jacs::storage::jenv::get_env_var(key, false)
+                    .map_err(|e| HaiError::Provider(format!("read JACS env override {key}: {e}")))?
+            } else {
+                None
+            };
+            saved.push((*key, had_override, previous));
+            jacs::storage::jenv::set_env_var(key, value)
+                .map_err(|e| HaiError::Provider(format!("set JACS env override {key}: {e}")))?;
+        }
+        Ok(Self { _lock: lock, saved })
+    }
+}
+
+impl Drop for JacsConfigEnvOverrideGuard {
+    fn drop(&mut self) {
+        for (key, had_override, previous) in self.saved.drain(..).rev() {
+            if had_override {
+                if let Some(value) = previous {
+                    let _ = jacs::storage::jenv::set_env_var(key, &value);
+                } else {
+                    let _ = jacs::storage::jenv::clear_env_var(key);
+                }
+            } else {
+                let _ = jacs::storage::jenv::clear_env_var(key);
+            }
+        }
+    }
+}
+
+fn env_string(value: &Option<String>) -> String {
+    value.clone().unwrap_or_default()
+}
+
+fn env_bool(value: &Option<bool>) -> String {
+    match value {
+        Some(true) => "true".to_string(),
+        Some(false) => "false".to_string(),
+        None => String::new(),
+    }
+}
+
+#[doc(hidden)]
+pub fn lock_jacs_config_env() -> JacsConfigEnvLockGuard {
+    JacsConfigEnvLockGuard {
+        _guard: match JACS_CONFIG_ENV_LOCK.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        },
+    }
 }
 
 impl LocalJacsProvider {
@@ -62,6 +194,7 @@ impl LocalJacsProvider {
         config_path: Option<&Path>,
         storage_label: Option<&str>,
     ) -> Result<Self> {
+        let _config_env_lock = lock_jacs_config_env();
         let config_path = resolve_jacs_config_path(config_path);
         let mut config = jacs::config::Config::from_file(&config_path.display().to_string())
             .map_err(|e| {
@@ -109,6 +242,7 @@ impl LocalJacsProvider {
             }
             None
         };
+        let jacs_config_env = JacsConfigEnvSnapshot::from_config(&config);
 
         let agent = jacs::agent::Agent::from_config(config, None).map_err(|e| {
             HaiError::Provider(format!(
@@ -182,6 +316,7 @@ impl LocalJacsProvider {
             algorithm,
             config_path,
             load_config_path,
+            jacs_config_env,
             document_service,
             storage_label: validated_label,
             document_dir,
@@ -209,6 +344,7 @@ impl LocalJacsProvider {
     }
 
     pub fn create_agent(params: CreateAgentParams) -> Result<simple::AgentInfo> {
+        let _config_env_lock = lock_jacs_config_env();
         SimpleAgent::create_with_params(params)
             .map(|(_, info)| info)
             .map_err(|e| HaiError::Provider(format!("failed to create JACS agent: {e}")))
@@ -335,6 +471,7 @@ impl LocalJacsProvider {
 
     fn load_simple_agent(&self) -> Result<SimpleAgent> {
         let config_path_str = self.load_config_path.display().to_string();
+        let _env_guard = JacsConfigEnvOverrideGuard::apply(&self.jacs_config_env)?;
         SimpleAgent::load(Some(&config_path_str), Some(false)).map_err(|e| {
             HaiError::Provider(format!(
                 "failed to load SimpleAgent from {}: {e}",
@@ -2645,6 +2782,76 @@ fn resolve_jacs_config_path(config_path: Option<&Path>) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::jacs::JacsMediaProvider;
+
+    struct TestJacsEnvOverrideGuard(Vec<(&'static str, bool, Option<String>)>);
+
+    impl TestJacsEnvOverrideGuard {
+        fn set(entries: &[(&'static str, String)]) -> Self {
+            let mut saved = Vec::with_capacity(entries.len());
+            for (key, value) in entries {
+                let had_override = jacs::storage::jenv::has_jenv_override(key);
+                let previous = if had_override {
+                    jacs::storage::jenv::get_env_var(key, false).ok().flatten()
+                } else {
+                    None
+                };
+                saved.push((*key, had_override, previous));
+                jacs::storage::jenv::set_env_var(key, value).expect("set stale jenv override");
+            }
+            Self(saved)
+        }
+    }
+
+    impl Drop for TestJacsEnvOverrideGuard {
+        fn drop(&mut self) {
+            for (key, had_override, previous) in self.0.drain(..).rev() {
+                if had_override {
+                    if let Some(value) = previous {
+                        let _ = jacs::storage::jenv::set_env_var(key, &value);
+                    } else {
+                        let _ = jacs::storage::jenv::clear_env_var(key);
+                    }
+                } else {
+                    let _ = jacs::storage::jenv::clear_env_var(key);
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "jacs-crate")]
+    #[test]
+    fn simple_agent_reload_uses_provider_resolved_config_over_stale_jacs_env() {
+        let _guard = crate::test_support::env_lock();
+        let (_dir, config_path) = crate::test_support::create_test_agent("reload-isolated");
+        let provider = LocalJacsProvider::from_config_path(Some(config_path.as_path()), Some("fs"))
+            .expect("local provider");
+
+        let stale = tempfile::tempdir().expect("stale tempdir");
+        let _stale_env = TestJacsEnvOverrideGuard::set(&[
+            (
+                "JACS_DATA_DIRECTORY",
+                stale.path().join("missing_data").display().to_string(),
+            ),
+            (
+                "JACS_KEY_DIRECTORY",
+                stale.path().join("missing_keys").display().to_string(),
+            ),
+        ]);
+        let work = tempfile::tempdir().expect("work tempdir");
+        let md = work.path().join("memo.md");
+        std::fs::write(&md, "The contract deadline is Friday.\n").expect("write memo");
+
+        provider
+            .sign_text_file(
+                md.to_str().expect("utf8 path"),
+                SignTextOptions {
+                    backup: false,
+                    ..Default::default()
+                },
+            )
+            .expect("sign_text_file should ignore stale JACS config env");
+    }
 
     #[test]
     fn extract_summary_from_signed_text_parses_footer() {
