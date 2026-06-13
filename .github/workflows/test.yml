@@ -11,9 +11,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # 0.11.2 carries jacs::agreements::v2 (haiai `agreements` feature). The tag
-  # must exist on HumanAssisted/JACS before this CI can green.
-  JACS_REF: v0.11.3
+  # JACS `make release-everything` creates package-scoped tags, not bare v* tags.
+  # Use crate/v* as the canonical source/API release ref; the JACS release
+  # workflow verifies it against jacs-core, jacs-media, jacs, binding-core,
+  # jacs-mcp, and jacs-cli.
+  JACS_REF: crate/v0.11.3
 
 jobs:
   crypto-policy:

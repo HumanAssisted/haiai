@@ -2,7 +2,7 @@
         smoke smoke-python smoke-node smoke-go \
         build-python-ffi build-node-ffi build-haiigo \
         versions check-versions check-jacs-versions \
-        bump-version bump-jacs-version \
+        bump-version bump-jacs-version bump-jacs-versions \
         generate-knowledge check-knowledge \
         release-node release-python release-rust release-all \
         release-delete-tags \
@@ -31,7 +31,8 @@ JACS_RUST_MCP := $(shell grep '^jacs ' rust/hai-mcp/Cargo.toml | sed 's/.*"\(=*[
 # Matches both pinned (jacs==X.Y.Z) and range floor (jacs>=X.Y.Z,<X.Y) forms.
 JACS_PYTHON := $(shell grep -o 'jacs[>=]=[0-9][0-9.]*' python/pyproject.toml | head -1 | sed 's/jacs[>=]=//')
 JACS_NODE := $(shell grep '@hai.ai/jacs' node/package.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
-JACS_CI_REF := $(shell grep '^  JACS_REF:' .github/workflows/test.yml | head -1 | sed 's/.*v\([0-9][^ ]*\).*/\1/')
+JACS_CI_REF := $(shell grep '^  JACS_REF:' .github/workflows/test.yml | head -1 | sed 's/^  JACS_REF: *//')
+JACS_CI_VERSION := $(shell echo "$(JACS_CI_REF)" | sed 's|.*/v||; s|^v||')
 
 # ============================================================================
 # TEST
@@ -169,21 +170,23 @@ bump-jacs-version:
 	@if [ -z "$(V)" ]; then echo "Usage: make bump-jacs-version V=0.9.10"; exit 1; fi
 	./scripts/bump-jacs-version.sh $(V)
 
+bump-jacs-versions: bump-jacs-version
+
 check-jacs-versions:
 	@echo "JACS dependency versions:"
 	@echo "  rust/haiai      $(JACS_RUST)"
 	@echo "  rust/haiai-cli  $(JACS_RUST_CLI)"
 	@echo "  rust/hai-mcp    $(JACS_RUST_MCP)"
 	@echo "  python          $(JACS_PYTHON)"
-	@echo "  ci JACS_REF     $(JACS_CI_REF)"
+	@echo "  ci JACS_REF     $(JACS_CI_REF) ($(JACS_CI_VERSION))"
 	@if [ "$(JACS_RUST)" != "$(JACS_RUST_CLI)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != haiai-cli ($(JACS_RUST_CLI))"; exit 1; fi
 	@if [ "$(JACS_RUST)" != "$(JACS_RUST_MCP)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != hai-mcp ($(JACS_RUST_MCP))"; exit 1; fi
 	@if [ "$(JACS_RUST)" != "$(JACS_PYTHON)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != python ($(JACS_PYTHON))"; exit 1; fi
-	@if [ "$(JACS_RUST)" != "$(JACS_CI_REF)" ]; then \
-		echo "ERROR: jacs in haiai ($(JACS_RUST)) != CI JACS_REF ($(JACS_CI_REF))"; exit 1; fi
+	@if [ "$(JACS_RUST)" != "$(JACS_CI_VERSION)" ]; then \
+		echo "ERROR: jacs in haiai ($(JACS_RUST)) != CI JACS_REF $(JACS_CI_REF) ($(JACS_CI_VERSION))"; exit 1; fi
 	@case "$(JACS_NODE)" in \
 		file:*) echo "  node            $(JACS_NODE) (local path, skipping match check)" ;; \
 		*) if [ "$(JACS_RUST)" != "$(JACS_NODE)" ]; then \

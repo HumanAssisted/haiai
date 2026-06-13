@@ -75,7 +75,7 @@ esac
 
 echo ""
 echo "CI:"
-sed -i '' "s/JACS_REF: v$CURRENT/JACS_REF: v$NEW_VERSION/" .github/workflows/test.yml
+sed -i '' -E "s|JACS_REF: ([^ ]*/)?v$CURRENT|JACS_REF: crate/v$NEW_VERSION|" .github/workflows/test.yml
 echo "  .github/workflows/test.yml"
 
 # --- Regenerate lockfiles ---
