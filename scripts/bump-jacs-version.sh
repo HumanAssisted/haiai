@@ -30,7 +30,7 @@ fi
 echo "JACS dependency: $CURRENT -> $NEW_VERSION"
 echo ""
 
-# --- Rust crates (pinned =X.Y.Z for jacs, jacs-mcp, jacs-binding-core) ---
+# --- Rust crates (caret floor X.Y.Z for jacs, jacs-mcp, jacs-binding-core, jacs-media) ---
 
 echo "Rust crates:"
 
@@ -41,8 +41,10 @@ RUST_JACS_FILES=(
 )
 
 for f in "${RUST_JACS_FILES[@]}"; do
-  # Update jacs = { version = "=X.Y.Z", ... } and jacs-* deps
-  sed -i '' "s/\"=$CURRENT\"/\"=$NEW_VERSION\"/g" "$f"
+  # Inline-table form: jacs* = { version = "X.Y.Z", ... }
+  sed -i '' -E "s|^(jacs[a-z-]* = \{ version = )\"$CURRENT\"|\1\"$NEW_VERSION\"|" "$f"
+  # Plain form: jacs* = "X.Y.Z"
+  sed -i '' -E "s|^(jacs[a-z-]* = )\"$CURRENT\"|\1\"$NEW_VERSION\"|" "$f"
   echo "  $f"
 done
 
@@ -50,7 +52,8 @@ done
 
 echo ""
 echo "Python:"
-sed -i '' "s/jacs==$CURRENT/jacs==$NEW_VERSION/" python/pyproject.toml
+# Handles both pinned (jacs==X.Y.Z) and range floor (jacs>=X.Y.Z,<X.Y) forms.
+sed -i '' -E "s/jacs([>=])=$CURRENT/jacs\1=$NEW_VERSION/" python/pyproject.toml
 echo "  python/pyproject.toml"
 
 # --- Node ---
@@ -84,6 +87,10 @@ echo "Regenerating Cargo.lock..."
 echo ""
 echo "Regenerating package-lock.json..."
 (cd node && npm install --package-lock-only 2>/dev/null) || echo "  (skipped — npm not available or package not yet published)"
+
+echo ""
+echo "Regenerating uv.lock..."
+(cd python && uv lock 2>/dev/null) || echo "  (skipped — uv not available or package not yet published)"
 
 # --- Verify ---
 

@@ -28,7 +28,8 @@ PLUGIN_VERSION := $(shell grep '"version"' .claude-plugin/plugin.json | head -1 
 JACS_RUST := $(shell grep '^jacs ' rust/haiai/Cargo.toml | sed 's/.*"\(=*[0-9][^"]*\)".*/\1/' | sed 's/^=//')
 JACS_RUST_CLI := $(shell grep '^jacs ' rust/haiai-cli/Cargo.toml | sed 's/.*"\(=*[0-9][^"]*\)".*/\1/' | sed 's/^=//')
 JACS_RUST_MCP := $(shell grep '^jacs ' rust/hai-mcp/Cargo.toml | sed 's/.*"\(=*[0-9][^"]*\)".*/\1/' | sed 's/^=//')
-JACS_PYTHON := $(shell grep 'jacs==' python/pyproject.toml | sed 's/.*jacs==\([^"]*\)".*/\1/')
+# Matches both pinned (jacs==X.Y.Z) and range floor (jacs>=X.Y.Z,<X.Y) forms.
+JACS_PYTHON := $(shell grep -o 'jacs[>=]=[0-9][0-9.]*' python/pyproject.toml | head -1 | sed 's/jacs[>=]=//')
 JACS_NODE := $(shell grep '@hai.ai/jacs' node/package.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
 JACS_CI_REF := $(shell grep '^  JACS_REF:' .github/workflows/test.yml | head -1 | sed 's/.*v\([0-9][^ ]*\).*/\1/')
 
