@@ -189,6 +189,9 @@ class TestEmailMessageFromDict:
         assert m.owner_mail_auth_passed is False
         assert m.owner_mail_auth_method is None
         assert m.owner_mail_auth_details is None
+        assert m.sender_mail_auth_passed is False
+        assert m.sender_mail_auth_method is None
+        assert m.sender_mail_auth_details is None
         assert m.email_summary is None
         assert m.musubi_summary is None
         assert m.sender_reputation is None
@@ -206,6 +209,13 @@ class TestEmailMessageFromDict:
                 "owner_mail_auth_passed": True,
                 "owner_mail_auth_method": "dkim_spf",
                 "owner_mail_auth_details": {"dkim": "pass", "spf": "pass"},
+                "sender_mail_auth_passed": True,
+                "sender_mail_auth_method": "dkim_spf",
+                "sender_mail_auth_details": {
+                    "from_domain": "example.com",
+                    "dkim": "pass",
+                    "spf": "pass",
+                },
                 "email_summary": "Owner asked for recent bounces.",
                 "musubi_summary": {
                     "trust_vector": {"phishing": 0.05, "prompt_injection": 0.1},
@@ -225,6 +235,13 @@ class TestEmailMessageFromDict:
         assert m.owner_mail_auth_passed is True
         assert m.owner_mail_auth_method == "dkim_spf"
         assert m.owner_mail_auth_details == {"dkim": "pass", "spf": "pass"}
+        assert m.sender_mail_auth_passed is True
+        assert m.sender_mail_auth_method == "dkim_spf"
+        assert m.sender_mail_auth_details == {
+            "from_domain": "example.com",
+            "dkim": "pass",
+            "spf": "pass",
+        }
         assert m.email_summary == "Owner asked for recent bounces."
         assert isinstance(m.musubi_summary, MusubiSummary)
         assert m.musubi_summary.trust_vector == {

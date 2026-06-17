@@ -469,6 +469,16 @@ pub struct EmailMessage {
     /// Redacted DKIM/SPF/DMARC decision details for ordinary owner-mail auth.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_mail_auth_details: Option<Value>,
+    /// TRUE when server-trusted ordinary mail authentication evidence passed
+    /// for the visible From sender domain. This is evidence, not owner auth.
+    #[serde(default)]
+    pub sender_mail_auth_passed: bool,
+    /// Server-side sender ordinary-mail auth method, such as `dkim_spf`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_mail_auth_method: Option<String>,
+    /// Redacted DKIM/SPF/DMARC decision details for ordinary sender-mail auth.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_mail_auth_details: Option<Value>,
     /// Deterministic one-line gist from the API, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub email_summary: Option<String>,
@@ -1206,6 +1216,13 @@ mod tests {
             "owner_mail_auth_passed": true,
             "owner_mail_auth_method": "dkim_spf",
             "owner_mail_auth_details": {"dkim": "pass", "spf": "pass"},
+            "sender_mail_auth_passed": true,
+            "sender_mail_auth_method": "dkim_spf",
+            "sender_mail_auth_details": {
+                "from_domain": "example.com",
+                "dkim": "pass",
+                "spf": "pass"
+            },
             "email_summary": "Owner asked for recent bounces.",
             "musubi_summary": {
                 "trust_vector": {"phishing": 0.05, "prompt_injection": 0.1},
@@ -1228,6 +1245,12 @@ mod tests {
         assert_eq!(
             message.owner_mail_auth_details.as_ref().unwrap()["dkim"],
             "pass"
+        );
+        assert!(message.sender_mail_auth_passed);
+        assert_eq!(message.sender_mail_auth_method.as_deref(), Some("dkim_spf"));
+        assert_eq!(
+            message.sender_mail_auth_details.as_ref().unwrap()["from_domain"],
+            "example.com"
         );
         assert_eq!(
             message.email_summary.as_deref(),
@@ -1263,6 +1286,9 @@ mod tests {
         assert!(!message.owner_mail_auth_passed);
         assert!(message.owner_mail_auth_method.is_none());
         assert!(message.owner_mail_auth_details.is_none());
+        assert!(!message.sender_mail_auth_passed);
+        assert!(message.sender_mail_auth_method.is_none());
+        assert!(message.sender_mail_auth_details.is_none());
         assert!(message.email_summary.is_none());
         assert!(message.musubi_summary.is_none());
         assert!(message.sender_reputation.is_none());

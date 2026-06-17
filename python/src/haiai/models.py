@@ -340,6 +340,9 @@ class EmailMessage:
     owner_mail_auth_passed: bool = False
     owner_mail_auth_method: Optional[str] = None
     owner_mail_auth_details: Optional[dict[str, Any]] = None
+    sender_mail_auth_passed: bool = False
+    sender_mail_auth_method: Optional[str] = None
+    sender_mail_auth_details: Optional[dict[str, Any]] = None
     email_summary: Optional[str] = None
     musubi_summary: Optional[MusubiSummary] = None
     sender_reputation: Optional[EmailReputationInfo] = None
@@ -396,6 +399,9 @@ class EmailMessage:
             owner_mail_auth_passed=m.get("owner_mail_auth_passed", False),
             owner_mail_auth_method=m.get("owner_mail_auth_method"),
             owner_mail_auth_details=m.get("owner_mail_auth_details"),
+            sender_mail_auth_passed=m.get("sender_mail_auth_passed", False),
+            sender_mail_auth_method=m.get("sender_mail_auth_method"),
+            sender_mail_auth_details=m.get("sender_mail_auth_details"),
             email_summary=m.get("email_summary"),
             musubi_summary=musubi_summary,
             sender_reputation=sender_reputation,

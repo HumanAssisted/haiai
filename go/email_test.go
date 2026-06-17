@@ -132,6 +132,9 @@ func TestGetMessageReturnsEmailMessage(t *testing.T) {
 			"owner_mail_auth_passed":true,
 			"owner_mail_auth_method":"dkim_spf",
 			"owner_mail_auth_details":{"dkim":"pass","spf":"pass"},
+			"sender_mail_auth_passed":true,
+			"sender_mail_auth_method":"dkim_spf",
+			"sender_mail_auth_details":{"from_domain":"hai.ai","dkim":"pass","spf":"pass"},
 			"email_summary":"Owner asked for recent bounces.",
 			"musubi_summary":{
 				"trust_vector":{"phishing":0.05},
@@ -168,6 +171,15 @@ func TestGetMessageReturnsEmailMessage(t *testing.T) {
 	}
 	if msg.OwnerMailAuthMethod == nil || *msg.OwnerMailAuthMethod != "dkim_spf" {
 		t.Fatalf("unexpected owner auth method: %v", msg.OwnerMailAuthMethod)
+	}
+	if !msg.SenderMailAuthPassed {
+		t.Fatal("sender auth should be true")
+	}
+	if msg.SenderMailAuthMethod == nil || *msg.SenderMailAuthMethod != "dkim_spf" {
+		t.Fatalf("unexpected sender auth method: %v", msg.SenderMailAuthMethod)
+	}
+	if msg.SenderMailAuthDetails["from_domain"] != "hai.ai" {
+		t.Fatalf("unexpected sender auth details: %v", msg.SenderMailAuthDetails)
 	}
 	if msg.EmailSummary == nil || *msg.EmailSummary != "Owner asked for recent bounces." {
 		t.Fatalf("unexpected email summary: %v", msg.EmailSummary)
@@ -1247,6 +1259,9 @@ func TestListMessagesParsesHostedEvidenceFields(t *testing.T) {
 			"owner_mail_auth_passed":true,
 			"owner_mail_auth_method":"dkim_spf",
 			"owner_mail_auth_details":{"dkim":"pass","spf":"pass"},
+			"sender_mail_auth_passed":true,
+			"sender_mail_auth_method":"dkim_spf",
+			"sender_mail_auth_details":{"from_domain":"example.com","dkim":"pass","spf":"pass"},
 			"email_summary":"Owner asked for recent bounces.",
 			"musubi_summary":{
 				"trust_vector":{"phishing":0.05},
@@ -1278,6 +1293,12 @@ func TestListMessagesParsesHostedEvidenceFields(t *testing.T) {
 	}
 	if msg.OwnerMailAuthMethod == nil || *msg.OwnerMailAuthMethod != "dkim_spf" {
 		t.Fatalf("unexpected owner auth method: %v", msg.OwnerMailAuthMethod)
+	}
+	if !msg.SenderMailAuthPassed {
+		t.Fatal("sender auth should be true")
+	}
+	if msg.SenderMailAuthMethod == nil || *msg.SenderMailAuthMethod != "dkim_spf" {
+		t.Fatalf("unexpected sender auth method: %v", msg.SenderMailAuthMethod)
 	}
 	if msg.EmailSummary == nil || *msg.EmailSummary != "Owner asked for recent bounces." {
 		t.Fatalf("unexpected email summary: %v", msg.EmailSummary)
@@ -1412,6 +1433,9 @@ func TestEmailMessageHostedEvidenceFieldsDeserialization(t *testing.T) {
 		"owner_mail_auth_passed":true,
 		"owner_mail_auth_method":"dkim_spf",
 		"owner_mail_auth_details":{"dkim":"pass","spf":"pass"},
+		"sender_mail_auth_passed":true,
+		"sender_mail_auth_method":"dkim_spf",
+		"sender_mail_auth_details":{"from_domain":"example.com","dkim":"pass","spf":"pass"},
 		"email_summary":"Owner asked for recent bounces.",
 		"musubi_summary":{
 			"trust_vector":{"phishing":0.05,"prompt_injection":0.1},
@@ -1438,6 +1462,15 @@ func TestEmailMessageHostedEvidenceFieldsDeserialization(t *testing.T) {
 	}
 	if msg.OwnerMailAuthDetails["dkim"] != "pass" {
 		t.Fatalf("unexpected owner_mail_auth_details: %v", msg.OwnerMailAuthDetails)
+	}
+	if !msg.SenderMailAuthPassed {
+		t.Fatal("sender_mail_auth_passed should be true")
+	}
+	if msg.SenderMailAuthMethod == nil || *msg.SenderMailAuthMethod != "dkim_spf" {
+		t.Fatalf("unexpected sender_mail_auth_method: %v", msg.SenderMailAuthMethod)
+	}
+	if msg.SenderMailAuthDetails["from_domain"] != "example.com" {
+		t.Fatalf("unexpected sender_mail_auth_details: %v", msg.SenderMailAuthDetails)
 	}
 	if msg.EmailSummary == nil || *msg.EmailSummary != "Owner asked for recent bounces." {
 		t.Fatalf("unexpected email_summary: %v", msg.EmailSummary)
@@ -1486,6 +1519,15 @@ func TestEmailMessageHostedEvidenceDefaultsWhenMissing(t *testing.T) {
 	}
 	if msg.OwnerMailAuthDetails != nil {
 		t.Fatalf("owner_mail_auth_details should be nil, got %v", msg.OwnerMailAuthDetails)
+	}
+	if msg.SenderMailAuthPassed {
+		t.Fatal("sender_mail_auth_passed should default false")
+	}
+	if msg.SenderMailAuthMethod != nil {
+		t.Fatalf("sender_mail_auth_method should be nil, got %v", msg.SenderMailAuthMethod)
+	}
+	if msg.SenderMailAuthDetails != nil {
+		t.Fatalf("sender_mail_auth_details should be nil, got %v", msg.SenderMailAuthDetails)
 	}
 	if msg.EmailSummary != nil {
 		t.Fatalf("email_summary should be nil, got %v", msg.EmailSummary)

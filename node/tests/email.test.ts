@@ -92,6 +92,9 @@ describe('getMessage', () => {
         owner_mail_auth_passed: true,
         owner_mail_auth_method: 'dkim_spf',
         owner_mail_auth_details: { dkim: 'pass', spf: 'pass' },
+        sender_mail_auth_passed: true,
+        sender_mail_auth_method: 'dkim_spf',
+        sender_mail_auth_details: { from_domain: 'example.com', dkim: 'pass', spf: 'pass' },
         email_summary: 'Owner asked for recent bounces.',
         musubi_summary: {
           trust_vector: { phishing: 0.05, prompt_injection: 0.1 },
@@ -126,6 +129,13 @@ describe('getMessage', () => {
     expect(msg.ownerMailAuthPassed).toBe(true);
     expect(msg.ownerMailAuthMethod).toBe('dkim_spf');
     expect(msg.ownerMailAuthDetails).toEqual({ dkim: 'pass', spf: 'pass' });
+    expect(msg.senderMailAuthPassed).toBe(true);
+    expect(msg.senderMailAuthMethod).toBe('dkim_spf');
+    expect(msg.senderMailAuthDetails).toEqual({
+      from_domain: 'example.com',
+      dkim: 'pass',
+      spf: 'pass',
+    });
     expect(msg.emailSummary).toBe('Owner asked for recent bounces.');
     expect(msg.musubiSummary).toEqual({
       trustVector: { phishing: 0.05, prompt_injection: 0.1 },
@@ -162,6 +172,9 @@ describe('listMessages', () => {
       owner_mail_auth_passed: true,
       owner_mail_auth_method: 'dkim_spf',
       owner_mail_auth_details: { dkim: 'pass', spf: 'pass' },
+      sender_mail_auth_passed: true,
+      sender_mail_auth_method: 'dkim_spf',
+      sender_mail_auth_details: { from_domain: 'example.com', dkim: 'pass', spf: 'pass' },
       email_summary: 'Owner asked for recent bounces.',
       musubi_summary: {
         trust_vector: { phishing: 0.05 },
@@ -183,6 +196,9 @@ describe('listMessages', () => {
     expect(messages).toHaveLength(1);
     expect(messages[0].ownerMailAuthPassed).toBe(true);
     expect(messages[0].ownerMailAuthMethod).toBe('dkim_spf');
+    expect(messages[0].senderMailAuthPassed).toBe(true);
+    expect(messages[0].senderMailAuthMethod).toBe('dkim_spf');
+    expect(messages[0].senderMailAuthDetails?.from_domain).toBe('example.com');
     expect(messages[0].emailSummary).toBe('Owner asked for recent bounces.');
     expect(messages[0].musubiSummary?.trustVector).toEqual({ phishing: 0.05 });
     expect(messages[0].senderReputation?.tier).toBe('established');

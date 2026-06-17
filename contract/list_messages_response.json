@@ -16,6 +16,19 @@
       "jacs_verified": true,
       "jacs_signer_id": "owner-agent-jacs-id",
       "jacs_key_is_owner": true,
+      "owner_mail_auth_passed": true,
+      "owner_mail_auth_method": "dkim_spf",
+      "owner_mail_auth_details": {
+        "dkim": "pass",
+        "spf": "pass"
+      },
+      "sender_mail_auth_passed": true,
+      "sender_mail_auth_method": "dkim_spf",
+      "sender_mail_auth_details": {
+        "from_domain": "hai.ai",
+        "dkim": "pass",
+        "spf": "pass"
+      },
       "cc_addresses": [],
       "labels": [],
       "trust_score": 92.4

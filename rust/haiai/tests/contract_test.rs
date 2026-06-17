@@ -73,6 +73,18 @@ fn contract_deserialize_email_message() {
         msg.jacs_key_is_owner,
         "owner-key attestation must deserialize for hosted owner instructions"
     );
+    assert!(msg.owner_mail_auth_passed);
+    assert_eq!(msg.owner_mail_auth_method.as_deref(), Some("dkim_spf"));
+    assert_eq!(
+        msg.owner_mail_auth_details.as_ref().unwrap()["dkim"],
+        "pass"
+    );
+    assert!(msg.sender_mail_auth_passed);
+    assert_eq!(msg.sender_mail_auth_method.as_deref(), Some("dkim_spf"));
+    assert_eq!(
+        msg.sender_mail_auth_details.as_ref().unwrap()["from_domain"],
+        "hai.ai"
+    );
     assert!(
         (msg.trust_score.unwrap() - 92.4).abs() < 0.01,
         "trust_score should be ~92.4, got {:?}",
@@ -96,6 +108,9 @@ fn contract_deserialize_list_messages_response() {
     assert_eq!(msg.body_text, "Hello, this is a test email body.");
     assert_eq!(msg.jacs_signer_id.as_deref(), Some("owner-agent-jacs-id"));
     assert!(msg.jacs_key_is_owner);
+    assert!(msg.owner_mail_auth_passed);
+    assert!(msg.sender_mail_auth_passed);
+    assert_eq!(msg.sender_mail_auth_method.as_deref(), Some("dkim_spf"));
     assert!(
         (msg.trust_score.unwrap() - 92.4).abs() < 0.01,
         "inbound trust_score should be ~92.4"
@@ -105,6 +120,9 @@ fn contract_deserialize_list_messages_response() {
     let outbound = &resp.messages[1];
     assert_eq!(outbound.id, "660e8400-e29b-41d4-a716-446655440001");
     assert_eq!(outbound.direction, "outbound");
+    assert!(!outbound.sender_mail_auth_passed);
+    assert!(outbound.sender_mail_auth_method.is_none());
+    assert!(outbound.sender_mail_auth_details.is_none());
     assert!(
         outbound.trust_score.is_none(),
         "outbound trust_score should be None"

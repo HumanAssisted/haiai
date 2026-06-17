@@ -451,6 +451,12 @@ export interface EmailMessage {
   ownerMailAuthMethod?: string | null;
   /** Redacted DKIM/SPF/DMARC evidence for owner ordinary-mail auth. */
   ownerMailAuthDetails?: Record<string, unknown> | null;
+  /** True when ordinary sender email authentication passed for the visible From domain. */
+  senderMailAuthPassed: boolean;
+  /** Server-side sender ordinary-mail auth method, such as dkim_spf. */
+  senderMailAuthMethod?: string | null;
+  /** Redacted DKIM/SPF/DMARC evidence for sender ordinary-mail auth. */
+  senderMailAuthDetails?: Record<string, unknown> | null;
   /** Deterministic one-line gist from the API, when available. */
   emailSummary?: string | null;
   /** Compact Musubi safety summary for this message, when available. */

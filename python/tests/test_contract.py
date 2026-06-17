@@ -113,6 +113,16 @@ class TestDeserializeEmailMessage:
         assert msg.jacs_verified is True
         assert msg.jacs_signer_id == "owner-agent-jacs-id"
         assert msg.jacs_key_is_owner is True
+        assert msg.owner_mail_auth_passed is True
+        assert msg.owner_mail_auth_method == "dkim_spf"
+        assert msg.owner_mail_auth_details == {"dkim": "pass", "spf": "pass"}
+        assert msg.sender_mail_auth_passed is True
+        assert msg.sender_mail_auth_method == "dkim_spf"
+        assert msg.sender_mail_auth_details == {
+            "from_domain": "hai.ai",
+            "dkim": "pass",
+            "spf": "pass",
+        }
         assert msg.trust_score == 92.4
 
 
@@ -143,12 +153,18 @@ class TestDeserializeListMessagesResponse:
         assert msg.jacs_verified is True
         assert msg.jacs_signer_id == "owner-agent-jacs-id"
         assert msg.jacs_key_is_owner is True
+        assert msg.owner_mail_auth_passed is True
+        assert msg.sender_mail_auth_passed is True
+        assert msg.sender_mail_auth_method == "dkim_spf"
         assert msg.trust_score == 92.4
 
         # Outbound message omits trust_score
         outbound = messages[1]
         assert outbound.id == "660e8400-e29b-41d4-a716-446655440001"
         assert outbound.direction == "outbound"
+        assert outbound.sender_mail_auth_passed is False
+        assert outbound.sender_mail_auth_method is None
+        assert outbound.sender_mail_auth_details is None
         assert outbound.trust_score is None
 
 

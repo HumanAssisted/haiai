@@ -331,6 +331,13 @@ class TestGetMessage:
             "owner_mail_auth_passed": True,
             "owner_mail_auth_method": "dkim_spf",
             "owner_mail_auth_details": {"dkim": "pass", "spf": "pass"},
+            "sender_mail_auth_passed": True,
+            "sender_mail_auth_method": "dkim_spf",
+            "sender_mail_auth_details": {
+                "from_domain": "example.com",
+                "dkim": "pass",
+                "spf": "pass",
+            },
             "email_summary": "Owner asked for recent bounces.",
             "musubi_summary": {
                 "trust_vector": {"phishing": 0.05, "prompt_injection": 0.1},
@@ -364,6 +371,13 @@ class TestGetMessage:
         assert result.owner_mail_auth_passed is True
         assert result.owner_mail_auth_method == "dkim_spf"
         assert result.owner_mail_auth_details == {"dkim": "pass", "spf": "pass"}
+        assert result.sender_mail_auth_passed is True
+        assert result.sender_mail_auth_method == "dkim_spf"
+        assert result.sender_mail_auth_details == {
+            "from_domain": "example.com",
+            "dkim": "pass",
+            "spf": "pass",
+        }
         assert result.email_summary == "Owner asked for recent bounces."
         assert result.musubi_summary is not None
         assert result.musubi_summary.trust_vector == {
@@ -1166,6 +1180,13 @@ class TestEmailMessageNewFields:
                 "owner_mail_auth_passed": True,
                 "owner_mail_auth_method": "dkim_spf",
                 "owner_mail_auth_details": {"dkim": "pass", "spf": "pass"},
+                "sender_mail_auth_passed": True,
+                "sender_mail_auth_method": "dkim_spf",
+                "sender_mail_auth_details": {
+                    "from_domain": "example.com",
+                    "dkim": "pass",
+                    "spf": "pass",
+                },
                 "email_summary": "Owner asked for recent bounces.",
                 "musubi_summary": {
                     "trust_vector": {"phishing": 0.05},
@@ -1194,6 +1215,13 @@ class TestEmailMessageNewFields:
         assert result[0].folder == "archive"
         assert result[0].owner_mail_auth_passed is True
         assert result[0].owner_mail_auth_method == "dkim_spf"
+        assert result[0].sender_mail_auth_passed is True
+        assert result[0].sender_mail_auth_method == "dkim_spf"
+        assert result[0].sender_mail_auth_details == {
+            "from_domain": "example.com",
+            "dkim": "pass",
+            "spf": "pass",
+        }
         assert result[0].email_summary == "Owner asked for recent bounces."
         assert result[0].musubi_summary is not None
         assert result[0].musubi_summary.trust_vector == {"phishing": 0.05}

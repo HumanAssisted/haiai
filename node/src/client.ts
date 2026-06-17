@@ -1063,6 +1063,9 @@ export class HaiClient {
       ownerMailAuthPassed: (m.owner_mail_auth_passed as boolean) ?? false,
       ownerMailAuthMethod: (m.owner_mail_auth_method as string | null) ?? null,
       ownerMailAuthDetails: (m.owner_mail_auth_details as Record<string, unknown> | null) ?? null,
+      senderMailAuthPassed: (m.sender_mail_auth_passed as boolean) ?? false,
+      senderMailAuthMethod: (m.sender_mail_auth_method as string | null) ?? null,
+      senderMailAuthDetails: (m.sender_mail_auth_details as Record<string, unknown> | null) ?? null,
       emailSummary: (m.email_summary as string | null) ?? null,
       musubiSummary: musubiRaw ? {
         trustVector: (musubiRaw.trust_vector as Record<string, number>) || {},
