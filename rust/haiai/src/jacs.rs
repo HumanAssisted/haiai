@@ -1221,9 +1221,12 @@ pub trait JacsVerificationProvider: JacsProvider {
 
     /// Unwrap a signed event, verifying its signature against known server public keys.
     ///
-    /// Returns a tuple of (unwrapped data, was_verified). If the signer's key is found
-    /// in `server_public_keys`, the signature is verified and `was_verified` is `true`.
-    /// If the signer's key is not found, the data is returned unverified.
+    /// Returns a tuple of (unwrapped data, was_verified) only after strict v2
+    /// envelope verification succeeds. `was_verified` is therefore always
+    /// `true`; unknown keys, plain/legacy events, stale timestamps, replay, and
+    /// invalid signatures are errors and never return payload data. New live
+    /// transport code should prefer `HaiEvent::verification`, which preserves
+    /// the complete signer provenance instead of this compatibility tuple.
     fn unwrap_signed_event(
         &self,
         event: &Value,

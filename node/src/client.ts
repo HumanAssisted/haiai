@@ -68,7 +68,7 @@ import {
   AuthenticationError,
   HaiConnectionError,
 } from './errors.js';
-import { signResponse, canonicalJson, getServerKeys } from './signing.js';
+import { signPayload, canonicalJson, getServerKeys } from './signing.js';
 import { loadConfig } from './config.js';
 import { JacsAgent } from '@hai.ai/jacs';
 // SSE/WS helpers retained in sse.ts and ws.ts for cleanup in Task 012.
@@ -1153,7 +1153,7 @@ export class HaiClient {
    * @returns Signed JACS document envelope
    */
   signBenchmarkResult(benchmarkResult: Record<string, unknown>): { signed_document: string; agent_jacs_id: string } {
-    return signResponse(
+    return signPayload(
       benchmarkResult,
       this.agent,
       this.jacsId,

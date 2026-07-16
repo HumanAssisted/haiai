@@ -1,8 +1,21 @@
-import { randomUUID } from 'node:crypto';
-import { JacsAgent, hashString } from '@hai.ai/jacs';
+import type { JacsAgent } from '@hai.ai/jacs';
 import { HaiError } from './errors.js';
 
 type ResponseSigner = Pick<JacsAgent, 'signStringSync'> & Partial<Pick<JacsAgent, 'signResponseSync'>>;
+
+/** Domain identifier cryptographically bound into signed HAI job responses. */
+export const SIGNED_JOB_RESPONSE_CONTRACT = 'hai.job-response' as const;
+
+/** Current signed HAI job-response payload contract version. */
+export const SIGNED_JOB_RESPONSE_VERSION = 2 as const;
+
+/** Payload placed inside the JACS-signed `data` field for a job response. */
+export interface SignedJobResponsePayloadV2 {
+  contract: typeof SIGNED_JOB_RESPONSE_CONTRACT;
+  version: typeof SIGNED_JOB_RESPONSE_VERSION;
+  job_id: string;
+  response: unknown;
+}
 
 /** JACS document envelope wrapping data with metadata and jacsSignature. */
 export interface JacsDocument {
@@ -18,6 +31,9 @@ export interface JacsDocument {
   jacsSignature: {
     agentID: string;
     date: string;
+    signingAlgorithm: string;
+    publicKeyHash: string;
+    signatureContentVersion: 'jacs-response-v2';
     signature: string;
   };
 }
@@ -25,13 +41,56 @@ export interface JacsDocument {
 // Cache for server public keys
 let serverKeysCache: Record<string, string> = {};
 let cacheExpiry = 0;
+let serverKeysCacheOrigin = '';
+
+function trustedServerKeyOrigin(baseUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch (error) {
+    throw new HaiError(
+      `Invalid HAI server origin: ${error instanceof Error ? error.message : String(error)}`,
+      undefined,
+      undefined,
+      'SERVER_KEY_ORIGIN_INVALID',
+      'Configure an absolute HTTPS HAI server URL',
+    );
+  }
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  const loopback =
+    hostname === 'localhost' ||
+    hostname === '::1' ||
+    /^127\.(?:\d{1,3}\.){2}\d{1,3}$/.test(hostname);
+  const secure = parsed.protocol === 'https:';
+  const loopbackHttp = parsed.protocol === 'http:' && loopback;
+  if (
+    (!secure && !loopbackHttp) ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.hash !== ''
+  ) {
+    throw new HaiError(
+      'HAI server signing keys require HTTPS (HTTP is allowed only on loopback)',
+      undefined,
+      undefined,
+      'SERVER_KEY_ORIGIN_INVALID',
+      'Configure an HTTPS HAI server URL without userinfo or fragments',
+    );
+  }
+  return parsed.origin;
+}
 
 /**
  * Fetch the server's public signing keys from the well-known endpoint.
  * Results are cached for 1 hour.
  */
 export async function getServerKeys(baseUrl: string, ffi?: { fetchServerKeys(): Promise<string> }): Promise<Record<string, string>> {
-  if (Date.now() < cacheExpiry && Object.keys(serverKeysCache).length > 0) {
+  const origin = trustedServerKeyOrigin(baseUrl);
+  if (
+    serverKeysCacheOrigin === origin &&
+    Date.now() < cacheExpiry &&
+    Object.keys(serverKeysCache).length > 0
+  ) {
     return serverKeysCache;
   }
 
@@ -40,12 +99,67 @@ export async function getServerKeys(baseUrl: string, ffi?: { fetchServerKeys(): 
   }
 
   const raw = await ffi.fetchServerKeys();
-  const data = JSON.parse(raw) as { keys?: Array<{ key_id: string; public_key: string }> };
+  const data = JSON.parse(raw) as {
+    keys?: Array<{
+      signer_id?: unknown;
+      jacs_id?: unknown;
+      key_id?: unknown;
+      public_key?: unknown;
+      is_active?: unknown;
+    }>;
+  };
 
   serverKeysCache = {};
   for (const key of data.keys ?? []) {
-    serverKeysCache[key.key_id] = key.public_key;
+    if (key.is_active !== true) continue;
+    const signerId = typeof key.signer_id === 'string' && key.signer_id.trim() !== ''
+      ? key.signer_id.trim()
+      : typeof key.jacs_id === 'string' &&
+          key.jacs_id.trim() !== '' &&
+          typeof key.key_id === 'string' &&
+          key.key_id.startsWith(`${key.jacs_id.trim()}:`)
+        ? key.key_id
+        : '';
+    if (signerId === '') {
+      throw new HaiError(
+        'HAI server key response contains an active key without an exact JACS signer ID',
+        undefined,
+        undefined,
+        'SERVER_KEY_INVALID',
+        'The server must publish signer_id for every active signing key',
+      );
+    }
+    if (typeof key.public_key !== 'string' || key.public_key.trim() === '') {
+      throw new HaiError(
+        `HAI server key response contains no public key for signer "${signerId}"`,
+        undefined,
+        undefined,
+        'SERVER_KEY_INVALID',
+        'The server must publish a non-empty PEM public key',
+      );
+    }
+    const prior = serverKeysCache[signerId];
+    if (prior !== undefined && prior !== key.public_key) {
+      throw new HaiError(
+        `HAI server key response contains conflicting active keys for signer "${signerId}"`,
+        undefined,
+        undefined,
+        'SERVER_KEY_CONFLICT',
+        'Retry after the server key registry is consistent',
+      );
+    }
+    serverKeysCache[signerId] = key.public_key;
   }
+  if (Object.keys(serverKeysCache).length === 0) {
+    throw new HaiError(
+      'HAI server key response contains no usable active signing key',
+      undefined,
+      undefined,
+      'SERVER_KEY_UNAVAILABLE',
+      'The server must publish its active JACS signing key before streaming events',
+    );
+  }
+  serverKeysCacheOrigin = origin;
   cacheExpiry = Date.now() + 3_600_000; // 1 hour
   return serverKeysCache;
 }
@@ -54,6 +168,7 @@ export async function getServerKeys(baseUrl: string, ffi?: { fetchServerKeys(): 
 export function clearServerKeysCache(): void {
   serverKeysCache = {};
   cacheExpiry = 0;
+  serverKeysCacheOrigin = '';
 }
 
 /**
@@ -102,16 +217,17 @@ export function canonicalJson(obj: unknown, agent: JacsAgent): string {
  * Unwrap a JACS-signed event, verifying the signature via JACS if server keys
  * are provided.
  *
- * Delegates to JACS binding-core `unwrapSignedEventSync` when the agent
- * supports it. Otherwise falls back to local unwrap + agent-side verification
- * via `verifyStringSync` (still routed through JACS canonical bytes).
+ * Delegates to JACS binding-core `unwrapSignedEventSync`. There is no
+ * payload-only fallback: the native verifier authenticates the complete v2
+ * envelope, enforces freshness, and atomically consumes its replay ID before
+ * releasing data.
  *
  * The `agent` parameter is REQUIRED — RFC 8785 canonicalization is delegated
  * to JACS with no local fallback.
  *
- * Supports both the canonical format (version/document_type/data/metadata/jacsSignature)
- * and the legacy format (payload/metadata/signature). If the event is not a
- * JacsDocument, it is returned as-is.
+ * Only the fully-bound canonical format
+ * (version/document_type/data/metadata/jacsSignature) is accepted. Plain and
+ * legacy payload-only events are rejected.
  *
  * @throws {HaiError} If JACS delegation fails (JACS_OP_FAILED).
  * @throws {HaiError} If a known key fails verification (VERIFICATION_FAILED).
@@ -132,126 +248,100 @@ export function unwrapSignedEvent(
     );
   }
 
-  // Try JACS binding-core delegation first — but only when the event itself
-  // looks like a JACS-signed document. JACS's unwrap_signed_event expects to
-  // receive a signed envelope; passing a plain heartbeat / non-JACS event
-  // would be an error. For non-JACS events we fall through to the local
-  // detection branch below which returns the event unchanged.
-  const looksJacs =
-    (eventData.jacsSignature && eventData.metadata && eventData.data !== undefined) ||
-    (eventData.metadata && eventData.signature);
-  if (looksJacs && 'unwrapSignedEventSync' in agent && typeof (agent as unknown as Record<string, unknown>).unwrapSignedEventSync === 'function') {
-    const eventJson = JSON.stringify(eventData);
-    // JACS binding-core expects HashMap<String, String> (flat object map of
-    // key_id -> public_key_pem), not an array.
-    const serverKeysJson = JSON.stringify(serverPublicKeys);
-    try {
-      const resultJson = (agent as unknown as Record<string, unknown> & { unwrapSignedEventSync: (e: string, k: string) => string }).unwrapSignedEventSync(eventJson, serverKeysJson);
-      const result = JSON.parse(resultJson) as { data: unknown; verified: boolean };
-      return result.data ?? eventData;
-    } catch (err) {
-      throw new HaiError(
-        `unwrapSignedEvent failed: ${err instanceof Error ? err.message : String(err)}`,
-        undefined,
-        undefined,
-        'JACS_OP_FAILED',
-        'Check JACS installation: npm install @hai.ai/jacs',
-      );
-    }
+  const hasOwnData = Object.prototype.hasOwnProperty.call(eventData, 'data');
+  const looksBoundV2 =
+    typeof eventData.version === 'string' &&
+    typeof eventData.document_type === 'string' &&
+    hasOwnData &&
+    eventData.metadata !== null && typeof eventData.metadata === 'object' &&
+    eventData.jacsSignature !== null && typeof eventData.jacsSignature === 'object';
+  if (!looksBoundV2) {
+    const legacy = eventData.payload !== undefined || eventData.signature !== undefined;
+    throw new HaiError(
+      legacy
+        ? 'Legacy payload-only signed events are not accepted by strict verification'
+        : 'Event is not a fully bound v2 JACS signed event',
+      undefined,
+      undefined,
+      'VERIFICATION_FAILED',
+      'Require the HAI server to emit a fully signed v2 response envelope',
+    );
   }
 
-  // Local unwrap with JACS verify for signature checks (still uses
-  // canonicalJson which delegates RFC 8785 to JACS)
-
-  // Canonical JacsDocument format: {version, document_type, data, metadata, jacsSignature}
-  if (eventData.jacsSignature && eventData.metadata && eventData.data !== undefined) {
-    const doc = eventData as unknown as JacsDocument;
-    const agentID = doc.jacsSignature.agentID;
-    const publicKeyPem = serverPublicKeys[agentID];
-
-    if (publicKeyPem) {
-      const signedContent = canonicalJson(doc.data, agent);
-      const valid = agent.verifyStringSync(
-        signedContent,
-        doc.jacsSignature.signature,
-        Buffer.from(publicKeyPem, 'utf-8'),
-        'pem',
-      );
-      if (!valid) {
-        throw new HaiError(
-          `Signature verification failed for agentID="${agentID}"`,
-          undefined,
-          undefined,
-          'VERIFICATION_FAILED',
-          'Verify the public key and algorithm match the signer',
-        );
-      }
-    }
-
-    return doc.data;
+  const native = (agent as unknown as Record<string, unknown>).unwrapSignedEventSync;
+  if (typeof native !== 'function') {
+    throw new HaiError(
+      'Strict event verification requires JACS unwrapSignedEventSync',
+      undefined,
+      undefined,
+      'JACS_TOO_OLD',
+      'Upgrade @hai.ai/jacs to 0.11.4 or newer',
+    );
   }
 
-  // Legacy format: {payload, metadata, signature}
-  if (eventData.metadata && eventData.signature) {
-    const payload = eventData.payload;
-    const sig = eventData.signature as Record<string, unknown>;
-    const keyId = (sig.key_id as string) || '';
-    const publicKeyPem = serverPublicKeys[keyId];
-
-    if (publicKeyPem) {
-      const signedContent = canonicalJson(
-        {
-          metadata: eventData.metadata,
-          payload: eventData.payload,
-        },
-        agent,
-      );
-      const valid = agent.verifyStringSync(
-        signedContent,
-        (sig.signature as string) || '',
-        Buffer.from(publicKeyPem, 'utf-8'),
-        'pem',
-      );
-      if (!valid) {
-        throw new HaiError(
-          `Signature verification failed for key_id="${keyId}"`,
-          undefined,
-          undefined,
-          'VERIFICATION_FAILED',
-          'Verify the public key and algorithm match the signer',
-        );
-      }
-    }
-
-    return payload;
+  let resultJson: string;
+  try {
+    resultJson = (native as (eventJson: string, keysJson: string) => string).call(
+      agent,
+      JSON.stringify(eventData),
+      JSON.stringify(serverPublicKeys),
+    );
+  } catch (err) {
+    throw new HaiError(
+      `Signed event verification failed: ${err instanceof Error ? err.message : String(err)}`,
+      undefined,
+      undefined,
+      'VERIFICATION_FAILED',
+      'Reject the event and verify the server key registry is current',
+    );
   }
 
-  // Not a JacsDocument -- return unchanged
-  return eventData;
+  let result: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(resultJson);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('native result must be an object');
+    }
+    result = parsed as Record<string, unknown>;
+  } catch (err) {
+    throw new HaiError(
+      `Strict JACS verifier returned malformed JSON: ${err instanceof Error ? err.message : String(err)}`,
+      undefined,
+      undefined,
+      'JACS_CONTRACT_INVALID',
+      'Upgrade @hai.ai/jacs and report the malformed native result',
+    );
+  }
+
+  if (result.verified !== true || !Object.prototype.hasOwnProperty.call(result, 'data')) {
+    throw new HaiError(
+      'Strict JACS verifier did not return verified data',
+      undefined,
+      undefined,
+      'JACS_CONTRACT_INVALID',
+      'Reject the event and upgrade @hai.ai/jacs',
+    );
+  }
+  return result.data;
 }
 
 /**
- * Sign a job response as a JACS document via JACS core.
+ * Sign arbitrary data as a JACS document via JACS core.
  *
- * Delegates envelope construction to JACS binding-core when the signer
- * exposes `signResponseSync`. Otherwise constructs the envelope locally
- * with `canonicalJson` (RFC 8785 via JACS) and delegates the signature to
- * JACS `signStringSync`.
- *
- * The local-envelope path REQUIRES `canonicalizer` — RFC 8785 canonicalization
- * is delegated to JACS with no local fallback. If `signer` is itself a full
- * `JacsAgent` (i.e. exposes `canonicalizeJsonSync`), pass it as both
- * arguments.
+ * Delegates the complete v2 envelope to JACS binding-core. HAIAI must not
+ * construct a local v1 envelope: that format signs only the data field and is
+ * rejected by HAI's strict complete-envelope verifier.
  *
  * @throws {HaiError} If the signer does not support signing (JACS_NOT_LOADED).
- * @throws {HaiError} If neither `signer.signResponseSync` nor `canonicalizer`
- *   is available for the local-envelope path (JACS_NOT_LOADED).
+ * @throws {HaiError} If `signer.signResponseSync` is unavailable
+ *   (JACS_TOO_OLD), or returns a non-v2 envelope (JACS_CONTRACT_INVALID).
+ * @internal Used for non-job documents that retain the generic signing path.
  */
-export function signResponse(
-  jobResponse: unknown,
+export function signPayload(
+  payload: unknown,
   signer: ResponseSigner,
   jacsId: string,
-  canonicalizer?: JacsAgent,
+  _canonicalizer?: JacsAgent,
 ): { signed_document: string; agent_jacs_id: string } {
   if (!('signStringSync' in signer) || typeof signer.signStringSync !== 'function') {
     throw new HaiError(
@@ -263,57 +353,123 @@ export function signResponse(
     );
   }
 
-  // Prefer JACS binding delegation (JACS canonicalizes internally via RFC 8785)
-  if ('signResponseSync' in signer && typeof (signer as unknown as Record<string, unknown>).signResponseSync === 'function') {
-    const rawJson = JSON.stringify(jobResponse);
-    const resultJson = (signer as unknown as Record<string, unknown> & { signResponseSync: (p: string) => string }).signResponseSync(rawJson);
-    return { signed_document: resultJson, agent_jacs_id: jacsId };
-  }
-
-  // Local envelope construction with JACS signStringSync + JACS canonical JSON
-  // delegation. canonicalizer is REQUIRED — there is no JS-side RFC 8785
-  // fallback. If the signer itself is a JacsAgent, callers can pass it as
-  // both signer and canonicalizer.
-  const canonicalAgent =
-    canonicalizer ??
-    (typeof (signer as unknown as Record<string, unknown>).canonicalizeJsonSync === 'function'
-      ? (signer as unknown as JacsAgent)
-      : undefined);
-  if (!canonicalAgent) {
+  const nativeSignResponse = (signer as unknown as Record<string, unknown>).signResponseSync;
+  if (typeof nativeSignResponse !== 'function') {
     throw new HaiError(
-      'signResponse local-envelope path requires a JacsAgent canonicalizer (RFC 8785 canonicalization is delegated to JACS — no local fallback)',
+      'Strict response signing requires JACS signResponseSync; legacy local v1 envelopes are not accepted',
       undefined,
       undefined,
-      'JACS_NOT_LOADED',
-      'Pass a loaded JacsAgent as the `canonicalizer` argument, or use a signer that exposes signResponseSync',
+      'JACS_TOO_OLD',
+      'Upgrade @hai.ai/jacs to 0.11.4 or newer',
     );
   }
-  const canonicalPayload = canonicalJson(jobResponse, canonicalAgent);
-  const now = new Date().toISOString();
-  const documentId = randomUUID();
-  const hash = hashString(canonicalPayload);
-  const sortedData: unknown = JSON.parse(canonicalPayload);
-  const signature = signer.signStringSync(canonicalPayload);
 
-  const jacsDoc: JacsDocument = {
-    version: '1.0.0',
-    document_type: 'job_response',
-    data: sortedData,
-    metadata: {
-      issuer: jacsId,
-      document_id: documentId,
-      created_at: now,
-      hash,
-    },
-    jacsSignature: {
-      agentID: jacsId,
-      date: now,
-      signature,
-    },
-  };
+  const signedDocument = (nativeSignResponse as (payloadJson: string) => string).call(
+    signer,
+    JSON.stringify(payload),
+  );
+  assertV2SignedResponseDocument(signedDocument);
 
   return {
-    signed_document: JSON.stringify(jacsDoc),
+    signed_document: signedDocument,
     agent_jacs_id: jacsId,
   };
+}
+
+function assertV2SignedResponseDocument(signedDocument: string): void {
+  let document: unknown;
+  try {
+    document = JSON.parse(signedDocument);
+  } catch (error) {
+    throw new HaiError(
+      `JACS signResponseSync returned malformed JSON: ${error instanceof Error ? error.message : String(error)}`,
+      undefined,
+      undefined,
+      'JACS_CONTRACT_INVALID',
+      'Upgrade @hai.ai/jacs to 0.11.4 or newer',
+    );
+  }
+
+  const value = document as Record<string, unknown> | null;
+  const metadata = value?.metadata as Record<string, unknown> | null;
+  const signature = value?.jacsSignature as Record<string, unknown> | null;
+  const nonEmptyString = (candidate: unknown): candidate is string =>
+    typeof candidate === 'string' && candidate.length > 0;
+  const valid =
+    value !== null &&
+    typeof value === 'object' &&
+    value.version === '2.0.0' &&
+    value.document_type === 'job_response' &&
+    Object.prototype.hasOwnProperty.call(value, 'data') &&
+    metadata !== null &&
+    typeof metadata === 'object' &&
+    nonEmptyString(metadata.issuer) &&
+    nonEmptyString(metadata.document_id) &&
+    nonEmptyString(metadata.created_at) &&
+    nonEmptyString(metadata.hash) &&
+    signature !== null &&
+    typeof signature === 'object' &&
+    nonEmptyString(signature.agentID) &&
+    nonEmptyString(signature.date) &&
+    nonEmptyString(signature.signingAlgorithm) &&
+    nonEmptyString(signature.publicKeyHash) &&
+    signature.signatureContentVersion === 'jacs-response-v2' &&
+    nonEmptyString(signature.signature);
+
+  if (!valid) {
+    throw new HaiError(
+      'JACS signResponseSync did not return a fully bound v2 response envelope',
+      undefined,
+      undefined,
+      'JACS_CONTRACT_INVALID',
+      'Upgrade @hai.ai/jacs to 0.11.4 or newer',
+    );
+  }
+}
+
+/**
+ * Sign a version-2 HAI job response, including its job ID in the signed bytes.
+ *
+ * The server requires the signed `job_id` to equal the HTTP path or WebSocket
+ * event job ID. This prevents a valid response from being replayed against a
+ * different job owned by the same agent.
+ */
+export function signResponse(
+  jobId: string,
+  jobResponse: unknown,
+  signer: ResponseSigner,
+  jacsId: string,
+  canonicalizer?: JacsAgent,
+): { signed_document: string; agent_jacs_id: string } {
+  if (typeof jobId !== 'string' || jobId.trim().length === 0) {
+    throw new HaiError(
+      'signResponse requires a non-empty job ID',
+      undefined,
+      undefined,
+      'INVALID_ARGUMENT',
+      'Pass the job ID from the HAI job event',
+    );
+  }
+  if (
+    typeof jobResponse !== 'object'
+    || jobResponse === null
+    || Array.isArray(jobResponse)
+    || !Object.prototype.hasOwnProperty.call(jobResponse, 'response')
+  ) {
+    throw new HaiError(
+      'signResponse requires a job response object with a response field',
+      undefined,
+      undefined,
+      'INVALID_ARGUMENT',
+      'Pass { response: { message, metadata, processing_time_ms } }',
+    );
+  }
+
+  const signedPayload: SignedJobResponsePayloadV2 = {
+    contract: SIGNED_JOB_RESPONSE_CONTRACT,
+    version: SIGNED_JOB_RESPONSE_VERSION,
+    job_id: jobId,
+    response: (jobResponse as { response: unknown }).response,
+  };
+  return signPayload(signedPayload, signer, jacsId, canonicalizer);
 }

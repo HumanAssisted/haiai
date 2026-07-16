@@ -39,8 +39,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
-import subprocess
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -48,6 +46,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from tests.jacs_test_utils import create_signed_jacs_agent
 
 haiipy = pytest.importorskip("haiipy", reason="haiipy native binding not built")
 
@@ -65,37 +65,8 @@ _LOCAL_KEY_PATTERN = re.compile(
 )
 
 
-def _locate_haiai_cli() -> str | None:
-    """Return the path to the haiai CLI binary built by the smoke-tests
-    workflow, or ``None`` when it isn't available.
-
-    Search order:
-    1. ``HAIAI_CLI`` env var (explicit override).
-    2. ``rust/target/release/haiai`` at the repo root (the smoke-tests
-       workflow's `Build haiai CLI` step writes here). Resolved by walking
-       up from this test file.
-    3. ``haiai`` on ``PATH`` (local dev with the cli installed).
-    """
-    explicit = os.environ.get("HAIAI_CLI")
-    if explicit and os.access(explicit, os.X_OK):
-        return explicit
-
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        candidate = parent / "rust" / "target" / "release" / "haiai"
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
-        if (parent / ".git").exists():
-            break  # don't walk past the repo root
-
-    on_path = shutil.which("haiai")
-    return on_path
-
-
 def _bootstrap_fresh_jacs_agent(workdir: str) -> str:
-    """Create a brand-new JACS agent in ``workdir`` via the ``haiai init``
-    subprocess. Returns the absolute path to the freshly-written
-    ``jacs.config.json``.
+    """Create a brand-new signed JACS agent at its final paths.
 
     This is the hermetic alternative to ``_bootstrap_jacs_agent`` for tests
     that must NOT share a ``data_directory`` with sibling tests in the same
@@ -103,64 +74,22 @@ def _bootstrap_fresh_jacs_agent(workdir: str) -> str:
     ``find_document(jacs_type="memory", singleton)`` would otherwise pick
     up state written by an earlier test in the shared smoke-agent dir.
 
-    Skips cleanly when the ``haiai`` CLI isn't on disk (e.g. local dev
-    without a release build).
+    Skips cleanly when the JACS Python binding is unavailable.
     """
-    cli = _locate_haiai_cli()
-    if not cli:
-        pytest.skip(
-            "haiai CLI binary not found; cannot bootstrap a fresh JACS "
-            "agent for the local-path smoke test"
-        )
-
-    workdir = os.path.realpath(workdir)
-    config_path = os.path.join(workdir, "jacs.config.json")
-    data_dir = os.path.join(workdir, "data")
-    key_dir = os.path.join(workdir, "keys")
-
-    # Use the same password the rest of the smoke-tests lane uses so the
-    # parent process's `JACS_PRIVATE_KEY_PASSWORD` (which the FFI reads at
-    # signing time) decrypts the agent's freshly-minted private key.
     password = (
         os.environ.get("_HAISDK_SMOKE_PASSWORD")
         or os.environ.get("JACS_PRIVATE_KEY_PASSWORD")
         or "smoke-password"
     )
-
-    env = os.environ.copy()
-    env["JACS_PRIVATE_KEY_PASSWORD"] = password
-
-    result = subprocess.run(
-        [
-            cli,
-            "init",
-            "--quiet",
-            "--name",
-            "local-smoke-agent",
-            "--register",
-            "false",
-            "--data-dir",
-            data_dir,
-            "--key-dir",
-            key_dir,
-            "--config-path",
-            config_path,
-        ],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        pytest.skip(
-            f"haiai init failed (rc={result.returncode}): "
-            f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    try:
+        fixture = create_signed_jacs_agent(
+            Path(workdir),
+            name="local-smoke-agent",
+            password=password,
         )
-
-    if not os.path.exists(config_path):
-        pytest.skip(f"haiai init succeeded but {config_path} was not written")
-
-    return config_path
+    except ImportError:
+        pytest.skip("JACS binding unavailable; cannot bootstrap smoke agent")
+    return str(fixture.config_path)
 
 
 def _restore_smoke_password(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -259,9 +188,9 @@ def _bootstrap_jacs_agent(workdir: str) -> str:
        and contains a `jacs.config.json`, use it directly. CI bootstraps the
        agent once via `haiai init --register false` and shares it across all
        three smoke tests (Issue 003).
-    2. **In-process bootstrap (for local dev).** Fall back to creating an
-       agent via `haiai.config.create_agent`. Skips when the JACS toolchain
-       isn't available.
+    2. **In-process bootstrap (for local dev).** Fall back to generating a
+       fresh signed agent at its final temp paths. Skips when the JACS
+       binding isn't available.
 
     Returns the absolute path to `jacs.config.json`.
     """
@@ -274,35 +203,20 @@ def _bootstrap_jacs_agent(workdir: str) -> str:
         pytest.skip(f"JACS_SMOKE_AGENT_DIR={agent_dir} but jacs.config.json not found")
 
     # Path 2: in-process bootstrap (local dev).
+    password = (
+        os.environ.get("_HAISDK_SMOKE_PASSWORD")
+        or os.environ.get("JACS_PRIVATE_KEY_PASSWORD")
+        or "smoke-password"
+    )
     try:
-        from haiai.config import create_agent  # type: ignore[import-not-found]
-    except Exception:  # pragma: no cover — environment-specific
-        pytest.skip(
-            "haiai.config.create_agent unavailable; cannot bootstrap JACS agent"
+        fixture = create_signed_jacs_agent(
+            Path(workdir),
+            name="smoke-agent",
+            password=password,
         )
-
-    config_path = os.path.join(workdir, "jacs.config.json")
-    try:
-        result = create_agent(
-            agent_name="smoke-agent",
-            password="smoke-password",
-            data_directory=workdir,
-            key_directory=workdir,
-            config_path=config_path,
-        )
-    except Exception as exc:  # pragma: no cover — environment-specific
+    except ImportError as exc:  # pragma: no cover — environment-specific
         pytest.skip(f"JACS agent creation failed (not a binding bug): {exc}")
-
-    # `create_agent` may write to a slightly different location on disk;
-    # fall back to whatever path it reports if our preferred path is empty.
-    if not os.path.exists(config_path):
-        result_path = getattr(result, "config_path", None) or (
-            result.get("config_path") if isinstance(result, dict) else None
-        )
-        if result_path and os.path.exists(result_path):
-            return result_path
-        pytest.skip("JACS agent created but config path not found")
-    return config_path
+    return str(fixture.config_path)
 
 
 def test_save_memory_round_trips_through_native_binding(

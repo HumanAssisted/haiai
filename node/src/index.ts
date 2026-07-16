@@ -20,11 +20,13 @@ export type { MimeSendEmailOptions, MimeEmailAttachment } from './mime.js';
 export {
   unwrapSignedEvent,
   signResponse,
+  SIGNED_JOB_RESPONSE_CONTRACT,
+  SIGNED_JOB_RESPONSE_VERSION,
   getServerKeys,
   clearServerKeysCache,
   canonicalJson,
 } from './signing.js';
-export type { JacsDocument } from './signing.js';
+export type { JacsDocument, SignedJobResponsePayloadV2 } from './signing.js';
 
 // Verify link
 export { generateVerifyLink, MAX_VERIFY_URL_LEN, MAX_VERIFY_DOCUMENT_BYTES } from './verify.js';

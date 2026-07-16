@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 license = "BUSL-1.1"
 authors = [{ name = "HAI.AI", email = "engineering@hai.io" }]
 dependencies = [
-    "jacs>=0.11.3,<0.12",
+    "jacs>=0.11.4,<0.12",
     "httpx>=0.27",
     "haiipy>=0.4.1",
 ]
@@ -46,6 +46,13 @@ Repository = "https://github.com/HumanAssisted/haiai"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/haiai"]
+
+# Local development and CI build the native binding and JACS from the sibling
+# source checkouts. Published wheel metadata still carries the registry version
+# floors above; uv uses these sources only while working in this repository.
+[tool.uv.sources]
+jacs = { path = "../../JACS/jacspy", editable = true }
+haiipy = { path = "../rust/haiipy", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

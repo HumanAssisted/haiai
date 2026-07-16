@@ -29,6 +29,9 @@ logger = logging.getLogger("haiai.config")
 # ---------------------------------------------------------------------------
 _config: Optional[AgentConfig] = None
 _agent: Any = None  # JacsAgent instance from JACS binding-core
+_native_agent: Any = None  # Native SimpleAgent retained for lifecycle operations
+_loaded_config_path: Optional[Path] = None
+_loaded_config_is_canonical = False
 
 _REQUIRED_FIELDS = ("jacsAgentName", "jacsAgentVersion", "jacsKeyDir")
 
@@ -274,7 +277,7 @@ def _read_agent_name_from_doc(data_dir: Path, id_and_version: str) -> str:
 
 
 def _load_canonical(raw: dict, path: Path) -> tuple[AgentConfig, str]:
-    """Parse a Rust-canonical JACS config (snake_case). Returns (AgentConfig, config_path)."""
+    """Parse a canonical JACS config without changing its authenticated bytes."""
     agent_id, version = _parse_agent_id_and_version(raw["jacs_agent_id_and_version"])
     key_dir = _resolve_absolute_dir(raw["jacs_key_directory"], path.parent)
     data_dir = _resolve_absolute_dir(
@@ -288,17 +291,11 @@ def _load_canonical(raw: dict, path: Path) -> tuple[AgentConfig, str]:
         key_dir=str(key_dir),
         jacs_id=agent_id,
     )
-    resolved_raw = dict(raw)
-    resolved_raw["jacs_data_directory"] = str(data_dir)
-    resolved_raw["jacs_key_directory"] = str(key_dir)
-
-    # The canonical config shape is correct, but Python tempfile paths on macOS
-    # often enter as /var/folders/... while current JACS rejects symlinked parent
-    # components. Pass SimpleAgent.load() a shadow config with resolved paths.
-    shadow_path = path.parent / ".haiai_resolved_jacs.config.json"
-    with open(shadow_path, "w", encoding="utf-8") as f:
-        json.dump(resolved_raw, f, indent=2)
-    return cfg, str(shadow_path)
+    # Directory fields and the config signature are one authenticated unit.
+    # JACS resolves relative paths against the source config itself, so passing a
+    # rewritten shadow file would both invalidate the signature and change path
+    # meaning. Always return the exact source path.
+    return cfg, str(path)
 
 
 def _load_legacy(raw: dict, path: Path) -> tuple[AgentConfig, str]:
@@ -335,7 +332,8 @@ def load(config_path: str | None = None) -> None:
     Exactly one password source must be configured.
     Keys must be encrypted at rest.
     """
-    global _config, _agent
+    global _agent, _config, _loaded_config_is_canonical, _loaded_config_path
+    global _native_agent
 
     if config_path is None:
         config_path = os.environ.get("JACS_CONFIG_PATH", "./jacs.config.json")
@@ -343,8 +341,7 @@ def load(config_path: str | None = None) -> None:
     if not path.is_file():
         raise FileNotFoundError(f"JACS config not found: {path}")
 
-    with open(path, encoding="utf-8") as f:
-        raw = json.load(f)
+    raw = json.loads(path.read_bytes())
 
     # Detect which config format this is. The Rust CLI (`haiai init`) and the
     # JACS library itself write canonical snake_case configs. Earlier Python
@@ -353,9 +350,9 @@ def load(config_path: str | None = None) -> None:
     has_legacy = all(k in raw for k in _REQUIRED_FIELDS)
 
     if is_canonical:
-        _config, jacs_config_path = _load_canonical(raw, path)
+        parsed_config, jacs_config_path = _load_canonical(raw, path)
     elif has_legacy:
-        _config, jacs_config_path = _load_legacy(raw, path)
+        parsed_config, jacs_config_path = _load_legacy(raw, path)
     else:
         missing_canonical = [k for k in _CANONICAL_FIELDS if k not in raw]
         missing_legacy = [k for k in _REQUIRED_FIELDS if k not in raw]
@@ -381,9 +378,17 @@ def load(config_path: str | None = None) -> None:
     try:
         from jacs.simple import _EphemeralAgentAdapter
 
-        _agent = _EphemeralAgentAdapter(native_agent)
+        adapted_agent = _EphemeralAgentAdapter(native_agent)
     except ImportError:
-        _agent = native_agent
+        adapted_agent = native_agent
+
+    # Publish module state only after JACS has authenticated and loaded the
+    # config. A failed load must not leave a half-loaded identity behind.
+    _config = parsed_config
+    _native_agent = native_agent
+    _agent = adapted_agent
+    _loaded_config_path = Path(jacs_config_path).resolve()
+    _loaded_config_is_canonical = is_canonical
 
     logger.info(
         "JACS agent '%s' v%s loaded via binding-core", _config.name, _config.version
@@ -422,11 +427,51 @@ def is_loaded() -> bool:
     return _config is not None and _agent is not None
 
 
-def save(config_path: str = "./jacs.config.json") -> None:
-    """Write the current in-memory config back to disk."""
+def _get_native_agent() -> Any:
+    """Return the loaded native SimpleAgent for identity lifecycle operations."""
+    if _native_agent is None:
+        raise RuntimeError("haiai.config.load() has not been called")
+    return _native_agent
+
+
+def _get_loaded_config_path() -> Path:
+    """Return the exact config path authenticated by the loaded SimpleAgent."""
+    if _loaded_config_path is None:
+        raise RuntimeError("haiai.config.load() has not been called")
+    return _loaded_config_path
+
+
+def save(config_path: str | None = None) -> None:
+    """Save config metadata without invalidating canonical JACS signatures.
+
+    Canonical configs are copied byte-for-byte from the authenticated source.
+    A relative-path config may only be copied within its original directory,
+    because moving it would change the meaning of its signed paths.
+    """
     if _config is None:
         raise RuntimeError("Nothing to save -- call load() or register first")
 
+    if _loaded_config_is_canonical:
+        source = _get_loaded_config_path()
+        path = source if config_path is None else Path(config_path).resolve()
+        source_bytes = source.read_bytes()
+        raw = json.loads(source_bytes)
+        has_relative_runtime_path = any(
+            isinstance(raw.get(field), str) and not Path(raw[field]).is_absolute()
+            for field in ("jacs_data_directory", "jacs_key_directory")
+        )
+        if has_relative_runtime_path and path.parent != source.parent:
+            raise ValueError(
+                "Cannot relocate a signed canonical JACS config with relative "
+                "data/key paths; create the identity at its final paths instead."
+            )
+        if path != source:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(source_bytes)
+        logger.info("Preserved signed JACS config at %s", path)
+        return
+
+    path = Path(config_path or "./jacs.config.json").resolve()
     data: dict = {
         "jacsAgentName": _config.name,
         "jacsAgentVersion": _config.version,
@@ -435,7 +480,6 @@ def save(config_path: str = "./jacs.config.json") -> None:
     if _config.jacs_id:
         data["jacsId"] = _config.jacs_id
 
-    path = Path(config_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
@@ -446,9 +490,13 @@ def save(config_path: str = "./jacs.config.json") -> None:
 
 def reset() -> None:
     """Reset module state (useful for testing)."""
-    global _config, _agent
+    global _agent, _config, _loaded_config_is_canonical, _loaded_config_path
+    global _native_agent
     _config = None
     _agent = None
+    _native_agent = None
+    _loaded_config_path = None
+    _loaded_config_is_canonical = False
 
 
 # Keep _private_key as a module-level attribute alias for backward compat

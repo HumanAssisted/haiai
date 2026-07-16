@@ -35,10 +35,10 @@ describe('security_regression_contract', () => {
 
     // Attempt to sign with a signer that lacks signStringSync -- should throw, not fall back
     const emptySigner = {} as never;
-    expect(() => signResponse({ test: true }, emptySigner, 'test-id')).toThrow(HaiError);
+    expect(() => signResponse('job-1', { response: { message: 'test' } }, emptySigner, 'test-id')).toThrow(HaiError);
 
     try {
-      signResponse({ test: true }, emptySigner, 'test-id');
+      signResponse('job-1', { response: { message: 'test' } }, emptySigner, 'test-id');
     } catch (err) {
       expect(err).toBeInstanceOf(HaiError);
       expect((err as HaiError).errorCode).toBe('JACS_NOT_LOADED');

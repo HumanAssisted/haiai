@@ -45,6 +45,17 @@ export declare class HaiClient {
   fetchServerKeys(): Promise<string>
   signEmailRaw(rawEmailB64: string): Promise<string>
   verifyEmailRaw(rawEmailB64: string): Promise<string>
+  saveAgreement(requestJson: string): Promise<string>
+  searchAgreements(requestJson: string): Promise<string>
+  getAgreement(agreementId: string): Promise<string>
+  countersignAgreement(agreementId: string, requestJson: string): Promise<string>
+  createAgreementV2(inputJson: string): Promise<string>
+  applyAgreementV2(document: string, mutationJson: string): Promise<string>
+  signAgreementV2(document: string, role: string): Promise<string>
+  verifyAgreementV2(document: string): Promise<string>
+  detectAgreementBranchConflict(baseDocument: string, leftDocument: string, rightDocument: string): Promise<string>
+  mergeAgreementTranscriptBranches(baseDocument: string, leftDocument: string, rightDocument: string): Promise<string>
+  resolveAgreementBranchConflict(baseDocument: string, previousDocument: string, sideBranchDocument: string, resolutionJson: string): Promise<string>
   signText(path: string, optsJson: string): Promise<string>
   verifyText(path: string, optsJson: string): Promise<string>
   signImage(inPath: string, outPath: string, optsJson: string): Promise<string>
@@ -73,6 +84,7 @@ export declare class HaiClient {
   enterpriseRun(): Promise<void>
   buildAuthHeader(): Promise<string>
   signMessage(message: string): Promise<string>
+  signResponse(payloadJson: string): Promise<string>
   canonicalJson(valueJson: string): Promise<string>
   verifyA2AArtifact(wrappedJson: string): Promise<string>
   exportAgentJson(): Promise<string>
@@ -88,4 +100,34 @@ export declare class HaiClient {
   connectWs(): Promise<number>
   wsNextEvent(handle: number): Promise<string | null>
   wsClose(handle: number): Promise<void>
+  storeDocument(signedJson: string): Promise<string>
+  signAndStore(dataJson: string): Promise<string>
+  getDocument(key: string): Promise<string>
+  getLatestDocument(docId: string): Promise<string>
+  getDocumentVersions(docId: string): Promise<string>
+  listDocuments(jacsType?: string | undefined | null): Promise<string>
+  removeDocument(key: string): Promise<void>
+  updateDocument(docId: string, signedJson: string): Promise<string>
+  searchDocuments(query: string, limit: number, offset: number): Promise<string>
+  queryByType(docType: string, limit: number, offset: number): Promise<string>
+  queryByField(field: string, value: string, limit: number, offset: number): Promise<string>
+  queryByAgent(agentId: string, limit: number, offset: number): Promise<string>
+  storageCapabilities(): Promise<string>
+  saveDocument(requestJson: string): Promise<string>
+  saveMemory(content?: string | undefined | null): Promise<string>
+  saveSoul(content?: string | undefined | null): Promise<string>
+  getMemory(): Promise<string | null>
+  getSoul(): Promise<string | null>
+  storeTextFile(path: string): Promise<string>
+  storeImageFile(path: string): Promise<string>
+  /**
+   * Fetch raw record bytes (no UTF-8 decode, no JSON parse). Returns a
+   * Node `Buffer` (assignable to `Uint8Array`).
+   */
+  getRecordBytes(key: string): Promise<Buffer>
+  conflictCreate(bodyJson: string): Promise<string>
+  conflictUpdate(keyOrId: string, mutationJson: string): Promise<string>
+  conflictGet(key: string): Promise<string>
+  conflictList(limit: number, offset: number): Promise<string>
+  conflictCheckReadiness(keyOrId: string): Promise<string>
 }

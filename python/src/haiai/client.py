@@ -65,7 +65,7 @@ from haiai.models import (
     VerifyTextResult,
     VerifyTextSignature,
 )
-from haiai.signing import is_signed_event, sign_response, unwrap_signed_event
+from haiai.signing import _sign_payload, is_signed_event, unwrap_signed_event
 
 logger = logging.getLogger("haiai.client")
 
@@ -612,17 +612,9 @@ class HaiClient:
                 ``register_with_hai=True``, but the local rotation is
                 still preserved.
         """
-        # rotate_keys stays native -- it involves file I/O, JACS agent creation,
-        # and key archival that are inherently local operations.
-        import shutil
-        import tempfile
-        import uuid
-
         from haiai import config as config_mod
-        from haiai.signing import create_agent_document
 
         cfg = config_mod.get_config()
-        old_agent = config_mod.get_agent()
 
         if cfg.jacs_id is None:
             raise HaiAuthError(
@@ -631,125 +623,54 @@ class HaiClient:
 
         old_version = cfg.version
         jacs_id = cfg.jacs_id
-        key_dir = Path(cfg.key_dir)
-
-        # 1. Determine archive paths
-        priv_candidates = [
-            key_dir / "agent_private_key.pem",
-            key_dir / "jacs.private.pem.enc",
-            key_dir / f"{cfg.name}.private.pem",
-            key_dir / "private_key.pem",
-        ]
-        priv_path: Optional[Path] = None
-        for p in priv_candidates:
-            if p.is_file():
-                priv_path = p
-                break
-
-        if priv_path is None:
+        loaded_config_path = config_mod._get_loaded_config_path()
+        if (
+            config_path is not None
+            and Path(config_path).resolve() != loaded_config_path
+        ):
             raise HaiAuthError(
-                "Cannot rotate keys: private key file not found. "
-                f"Searched: {', '.join(str(p) for p in priv_candidates)}"
+                "Cannot rotate a different config path than the authenticated "
+                "identity currently loaded by haiai.config.load()."
             )
 
-        archive_priv = priv_path.with_suffix(f".{old_version}.pem")
-
-        pub_path = key_dir / priv_path.name.replace("private", "public")
-        if not pub_path.is_file():
-            for name in [
-                "agent_public_key.pem",
-                "jacs.public.pem",
-                f"{cfg.name}.public.pem",
-                "public_key.pem",
-            ]:
-                alt = key_dir / name
-                if alt.is_file():
-                    pub_path = alt
-                    break
-
-        archive_pub = (
-            pub_path.with_suffix(f".{old_version}.pem") if pub_path.is_file() else None
-        )
-
-        # 2. Pre-sign auth header with old agent BEFORE archiving keys
-        if register_with_hai and hai_url is not None:
-            try:
-                self._build_jacs_auth_header_with_key(
-                    jacs_id,
-                    old_version,
-                    old_agent,
-                )
-            except Exception as exc:
-                logger.warning("Failed to pre-sign rotation auth header: %s", exc)
-
-        # 3. Archive old keys (after pre-signing)
-        logger.info("Archiving old private key: %s -> %s", priv_path, archive_priv)
-        shutil.move(str(priv_path), str(archive_priv))
-
-        if pub_path.is_file() and archive_pub is not None:
-            logger.info("Archiving old public key: %s -> %s", pub_path, archive_pub)
-            shutil.move(str(pub_path), str(archive_pub))
-
-        # 4. Generate new keypair via JACS SimpleAgent.create_agent()
+        # JACS owns the complete rotation transaction: archive the old key,
+        # generate the replacement, produce the continuity proof, save the new
+        # agent document, and re-sign the canonical config at its original path.
+        # Reimplementing any subset here can leave key, identity, and config
+        # state inconsistent after a crash.
         try:
-            from jacs import SimpleAgent as _SimpleAgent
-        except ImportError:
-            from jacs.jacs import SimpleAgent as _SimpleAgent  # type: ignore[no-redef]
-
-        password_bytes = config_mod.load_private_key_password()
-        password_str = password_bytes.decode("utf-8")
-
-        try:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                tmp_path = Path(tmp_dir).resolve()
-                tmp_key_dir = tmp_path / "keys"
-                tmp_key_dir.mkdir()
-                tmp_data_dir = tmp_path / "data"
-                tmp_data_dir.mkdir()
-                tmp_config = tmp_path / "jacs.config.json"
-
-                _new_agent, new_info = _SimpleAgent.create_agent(
-                    name=cfg.name,
-                    password=password_str,
-                    algorithm=algorithm,
-                    data_directory=str(tmp_data_dir),
-                    key_directory=str(tmp_key_dir),
-                    config_path=str(tmp_config),
-                    description="",
-                    domain="",
-                    default_storage="fs",
-                )
-
-                new_priv_src = Path(new_info.get("private_key_path", ""))
-                new_pub_src = Path(new_info.get("public_key_path", ""))
-
-                if new_priv_src.is_file():
-                    shutil.copy2(str(new_priv_src), str(priv_path))
-                    os.chmod(str(priv_path), 0o600)
-                if new_pub_src.is_file():
-                    shutil.copy2(str(new_pub_src), str(pub_path))
-                    os.chmod(str(pub_path), 0o644)
-
+            rotation_raw = config_mod._get_native_agent().rotate_keys(algorithm)
+            rotation = (
+                json.loads(rotation_raw)
+                if isinstance(rotation_raw, str)
+                else rotation_raw
+            )
         except Exception as exc:
-            logger.error("Key generation failed, rolling back: %s", exc)
-            shutil.move(str(archive_priv), str(priv_path))
-            if archive_pub is not None and archive_pub.is_file():
-                shutil.move(str(archive_pub), str(pub_path))
-            raise HaiAuthError(f"Key generation failed: {exc}") from exc
+            raise HaiAuthError(f"Key rotation failed: {exc}") from exc
 
-        # 5. Use the newly-created agent directly for signing
-        new_version = str(uuid.uuid4())
+        if not isinstance(rotation, dict):
+            raise HaiAuthError("Key rotation failed: JACS returned an invalid result")
+        if rotation.get("jacs_id") != jacs_id:
+            raise HaiAuthError("Key rotation failed: JACS changed the agent identity")
+        if rotation.get("old_version") != old_version:
+            raise HaiAuthError(
+                "Key rotation failed: JACS returned the wrong old version"
+            )
 
-        cfg_path = config_path or os.environ.get(
-            "JACS_CONFIG_PATH", "./jacs.config.json"
-        )
-
-        try:
-            from jacs.simple import _EphemeralAgentAdapter
-
-            new_agent = _EphemeralAgentAdapter(_new_agent)
-        except ImportError:
-            new_agent = _new_agent
+        new_version = rotation.get("new_version")
+        signed_agent_json = rotation.get("signed_agent_json")
+        new_public_key_hash = rotation.get("new_public_key_hash")
+        pub_pem_str = rotation.get("new_public_key_pem")
+        if not all(
+            isinstance(value, str) and value
+            for value in (
+                new_version,
+                signed_agent_json,
+                new_public_key_hash,
+                pub_pem_str,
+            )
+        ):
+            raise HaiAuthError("Key rotation failed: JACS returned incomplete metadata")
 
         config_mod._config = AgentConfig(
             name=cfg.name,
@@ -757,27 +678,6 @@ class HaiClient:
             key_dir=cfg.key_dir,
             jacs_id=jacs_id,
         )
-        config_mod._agent = new_agent
-        config_mod.save(cfg_path)
-
-        # 6. Build new agent document signed by the new agent
-        agent_doc = create_agent_document(
-            agent=new_agent,
-            name=cfg.name,
-            version=new_version,
-            jacs_id=jacs_id,
-            extra_fields={"jacsPreviousVersion": old_version},
-        )
-        signed_agent_json = json.dumps(agent_doc, indent=2)
-
-        # 7. Compute new public key hash and read PEM for re-registration
-        pub_pem_str = ""
-        if pub_path.is_file():
-            pub_key_raw = pub_path.read_bytes()
-            pub_pem_str = _normalize_public_key_pem(pub_key_raw)
-            new_public_key_hash = _compute_public_key_hash(pub_pem_str)
-        else:
-            new_public_key_hash = ""
 
         logger.info(
             "Key rotation complete: %s -> %s (agent=%s)",
@@ -786,7 +686,7 @@ class HaiClient:
             jacs_id,
         )
 
-        # 8. Optionally re-register with HAI using FFI
+        # Optionally re-register with HAI using the JACS-produced document.
         registered = False
         if register_with_hai:
             if hai_url is None:
@@ -1217,7 +1117,7 @@ class HaiClient:
         if metadata is not None:
             payload["metadata"] = metadata
 
-        return sign_response(payload, get_agent(), cfg.jacs_id or "")
+        return _sign_payload(payload, get_agent(), cfg.jacs_id or "")
 
     # ------------------------------------------------------------------
     # Email CRUD
@@ -2186,6 +2086,7 @@ class HaiClient:
                 data,
                 hai_url=self._hai_url,
                 verify=self._verify_server_signatures,
+                ffi=self._get_ffi(),
             )
             if self._verify_server_signatures and not verified:
                 logger.warning("Server signature verification failed")

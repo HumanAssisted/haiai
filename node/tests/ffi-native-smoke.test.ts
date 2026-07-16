@@ -12,7 +12,7 @@
  *    signed markdown bytes (plaintext plus the JACS signature footer).
  *
  * 2. **Local** (`saveMemory persists locally without HTTP traffic`) — dev
- *    default path (`haiai init` writes `default_storage: "fs"`). Bootstraps
+ *    default path (the JACS binding writes `jacs_default_storage: "fs"`). Bootstraps
  *    a fresh agent, sets `JACS_DEFAULT_STORAGE=fs`, signs locally, writes to
  *    disk, and returns a client-side `{jacsId}:{jacsVersion}` key. Verifies
  *    the doc round-trips via `getRecordBytes(key)`.
@@ -22,7 +22,7 @@
  *
  * Skipped cleanly when:
  * - haiinpm is not built / installable (try-import + describe.skip).
- * - The JACS toolchain isn't available to bootstrap a test agent.
+ * - The JACS Node binding isn't available to bootstrap a test agent.
  *
  * Per PRD docs/haiai/JACS_DOCUMENT_STORE_FFI_PRD.md §5.5: real
  * `node:http.createServer` (no fetch-level mock). The traffic is Rust
@@ -32,11 +32,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, type TaskContext } from 'vitest';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { spawnSync } from 'node:child_process';
-import { accessSync, constants, existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { createRequire } from 'node:module';
 
 const dynamicRequire = createRequire(import.meta.url);
@@ -61,7 +59,7 @@ const LOCAL_KEY_PATTERN =
 /**
  * Bootstrap or locate the JACS agent config. Two paths:
  * 1. Pre-baked agent dir via `JACS_SMOKE_AGENT_DIR` (preferred for CI —
- *    `haiai init` writes the agent once and all three smoke tests share it).
+ *    setup writes the agent once and all three smoke tests share it).
  * 2. In-process bootstrap via `@hai.ai/jacs` (local dev). Returns null
  *    when the JACS Node bindings aren't installed; caller should
  *    `ctx.skip()` to mark the test as SKIPPED (not PASSED with zero
@@ -78,107 +76,91 @@ function resolveJacsAgentConfig(workdir: string): string | null {
     return null;
   }
 
-  try {
-    const jacs = dynamicRequire('@hai.ai/jacs') as {
-      JacsAgent: new () => { createAgentSync: (params: string) => string };
-    };
-    const agent = new jacs.JacsAgent();
-    const params = JSON.stringify({
-      name: 'smoke-agent',
-      password: 'smoke-password',
-      dataDirectory: workdir,
-      keyDirectory: workdir,
-      configPath: join(workdir, 'jacs.config.json'),
-    });
-    const resultJson = agent.createAgentSync(params);
-    const result = JSON.parse(resultJson) as { config_path?: string };
-    return result.config_path ?? join(workdir, 'jacs.config.json');
-  } catch {
-    return null;
-  }
-}
-
-function canExecute(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function locateHaiaiCli(): string | null {
-  const explicit = process.env.HAIAI_CLI;
-  if (explicit && canExecute(explicit)) return resolve(explicit);
-
-  let dir = dirname(fileURLToPath(import.meta.url));
-  for (;;) {
-    const candidate = join(
-      dir,
-      'rust',
-      'target',
-      'release',
-      process.platform === 'win32' ? 'haiai.exe' : 'haiai',
-    );
-    if (canExecute(candidate)) return candidate;
-    if (existsSync(join(dir, '.git'))) break;
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-
-  const result = spawnSync('haiai', ['--help'], { stdio: 'ignore' });
-  return result.status === 0 ? 'haiai' : null;
+  return createFreshJacsAgentConfig(workdir, 'remote-smoke-agent').configPath ?? null;
 }
 
 function resolveFreshJacsAgentConfig(
   workdir: string,
 ): { configPath?: string; skipReason?: string } {
-  workdir = realpathSync(workdir);
-  const cli = locateHaiaiCli();
-  if (!cli) {
-    return { skipReason: 'haiai CLI binary not found; cannot bootstrap a fresh JACS agent' };
-  }
+  return createFreshJacsAgentConfig(workdir, 'local-smoke-agent');
+}
 
+/**
+ * Create a fresh, signed-v2 JACS config with the current Node binding.
+ *
+ * The smoke tests intentionally do not shell out to an independently built
+ * CLI: doing so can silently exercise an older JACS producer than the native
+ * addon under test. Validating the emitted config here makes artifact skew a
+ * visible skip reason instead of a confusing verification failure later.
+ */
+function createFreshJacsAgentConfig(
+  workdir: string,
+  name: string,
+): { configPath?: string; skipReason?: string } {
+  workdir = realpathSync(workdir);
   const password =
     process.env._HAISDK_SMOKE_PASSWORD ?? process.env.JACS_PRIVATE_KEY_PASSWORD ?? 'smoke-password';
   process.env.JACS_PRIVATE_KEY_PASSWORD = password;
 
   const configPath = join(workdir, 'jacs.config.json');
-  const result = spawnSync(
-    cli,
-    [
-      'init',
-      '--quiet',
-      '--name',
-      'local-smoke-agent',
-      '--register',
-      'false',
-      '--data-dir',
-      join(workdir, 'data'),
-      '--key-dir',
-      join(workdir, 'keys'),
-      '--config-path',
-      configPath,
-    ],
-    {
-      env: { ...process.env, JACS_PRIVATE_KEY_PASSWORD: password },
-      encoding: 'utf8',
-    },
-  );
+  try {
+    const jacs = dynamicRequire('@hai.ai/jacs') as {
+      createAgentSync: (
+        name: string,
+        password: string,
+        algorithm?: string | null,
+        dataDirectory?: string | null,
+        keyDirectory?: string | null,
+        configPath?: string | null,
+        agentType?: string | null,
+        description?: string | null,
+        domain?: string | null,
+        defaultStorage?: string | null,
+      ) => string;
+    };
+    const result = JSON.parse(
+      jacs.createAgentSync(
+        name,
+        password,
+        'ring-Ed25519',
+        join(workdir, 'data'),
+        join(workdir, 'keys'),
+        configPath,
+        null,
+        null,
+        null,
+        'fs',
+      ),
+    ) as { config_path?: string };
+    const emittedConfigPath = result.config_path ?? configPath;
+    if (!existsSync(emittedConfigPath)) {
+      return {
+        skipReason: `@hai.ai/jacs createAgentSync returned without writing ${emittedConfigPath}`,
+      };
+    }
 
-  if (result.status !== 0) {
+    const config = JSON.parse(readFileSync(emittedConfigPath, 'utf8')) as {
+      jacsSignature?: { signatureContentVersion?: string };
+      jacs_default_storage?: string;
+    };
+    if (config.jacsSignature?.signatureContentVersion !== 'jacs-signature-v2') {
+      return {
+        skipReason:
+          '@hai.ai/jacs emitted a config without jacs-signature-v2; rebuild the current binding',
+      };
+    }
+    if (config.jacs_default_storage !== 'fs') {
+      return {
+        skipReason: `@hai.ai/jacs emitted unexpected storage ${String(config.jacs_default_storage)}`,
+      };
+    }
+
+    return { configPath: realpathSync(emittedConfigPath) };
+  } catch (error) {
     return {
-      skipReason:
-        `haiai init failed (status=${String(result.status)}): ` +
-        `stdout=${result.stdout} stderr=${result.stderr}`,
+      skipReason: `cannot bootstrap a fresh JACS agent with @hai.ai/jacs: ${String(error)}`,
     };
   }
-  if (!existsSync(configPath)) {
-    return { skipReason: `haiai init succeeded but ${configPath} was not written` };
-  }
-
-  return { configPath };
 }
 
 describeWhenAvailable('haiinpm native FFI smoke test', () => {
@@ -205,7 +187,7 @@ describeWhenAvailable('haiinpm native FFI smoke test', () => {
 
       // Force remote routing for THIS test. Without this, the FFI's
       // `build_document_provider` falls through to `default_storage: "fs"`
-      // (set by `haiai init`), routes to LocalJacsProvider, and never
+      // (set in the generated config), routes to LocalJacsProvider, and never
       // makes the HTTP call this test was written to verify.
       process.env.JACS_DEFAULT_STORAGE = 'remote';
 

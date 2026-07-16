@@ -210,7 +210,7 @@ impl LocalJacsProvider {
         let saved_config_dir = config.config_dir().map(std::path::PathBuf::from);
         config.apply_env_overrides();
         config.set_config_dir(saved_config_dir);
-        canonicalize_config_dirs(&mut config, &config_path);
+        canonicalize_config_dirs(&mut config, &config_path)?;
         let load_config_path = materialize_resolved_config(&config_path, &config)?;
         let document_dir = resolve_config_relative_path(
             &config_path,
@@ -287,7 +287,7 @@ impl LocalJacsProvider {
             let saved_dir = reload_config.config_dir().map(std::path::PathBuf::from);
             reload_config.apply_env_overrides();
             reload_config.set_config_dir(saved_dir);
-            canonicalize_config_dirs(&mut reload_config, &config_path);
+            canonicalize_config_dirs(&mut reload_config, &config_path)?;
             if let Some(label) = &validated_label {
                 reload_config.merge(default_storage_override(label));
             }
@@ -750,7 +750,7 @@ fn resolve_config_relative_path(config_path: &Path, candidate: &str) -> PathBuf 
     }
 }
 
-fn canonicalize_config_dirs(config: &mut jacs::config::Config, config_path: &Path) {
+fn canonicalize_config_dirs(config: &mut jacs::config::Config, config_path: &Path) -> Result<()> {
     let data_dir = config
         .jacs_data_directory()
         .as_deref()
@@ -760,30 +760,16 @@ fn canonicalize_config_dirs(config: &mut jacs::config::Config, config_path: &Pat
         .as_deref()
         .map(|dir| canonicalize_config_dir(config_path, dir));
 
-    if data_dir.is_some() || key_dir.is_some() {
-        config.merge(jacs::config::Config::new(
-            None,
-            data_dir.clone(),
-            key_dir.clone(),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ));
-        if let Some(raw) = config.raw_json.as_mut().and_then(|v| v.as_object_mut()) {
-            if let Some(data_dir) = data_dir {
-                raw.insert(
-                    "jacs_data_directory".to_string(),
-                    serde_json::json!(data_dir),
-                );
-            }
-            if let Some(key_dir) = key_dir {
-                raw.insert("jacs_key_directory".to_string(), serde_json::json!(key_dir));
-            }
-        }
+    if let (Some(data_dir), Some(key_dir)) = (data_dir, key_dir) {
+        config
+            .set_runtime_filesystem_directories(&data_dir, &key_dir)
+            .map_err(|error| {
+                HaiError::Provider(format!(
+                    "failed to resolve signed JACS runtime directories: {error}"
+                ))
+            })?;
     }
+    Ok(())
 }
 
 fn canonicalize_config_dir(config_path: &Path, candidate: &str) -> String {

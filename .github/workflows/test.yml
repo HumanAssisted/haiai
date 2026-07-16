@@ -15,7 +15,7 @@ env:
   # Use crate/v* as the canonical source/API release ref; the JACS release
   # workflow verifies it against jacs-core, jacs-media, jacs, binding-core,
   # jacs-mcp, and jacs-cli.
-  JACS_REF: crate/v0.11.3
+  JACS_REF: crate/v0.11.4
 
 jobs:
   crypto-policy:
@@ -165,13 +165,14 @@ jobs:
           npx napi build --release
         timeout-minutes: 10
       - name: Build JACS napi addon (jacs.linux-x64-gnu.node)
-        # @hai.ai/jacs@0.10.0 is published on npm but its platform-binary
+        # The registry package still predates the strict 0.11.4 event verifier,
+        # and its platform-binary subpackages
         # subpackages (@hai.ai/jacs-linux-x64-gnu, etc.) were not published
         # alongside it. The committed package.json keeps the local-dev
         # file:../../JACS/jacsnpm path; building the napi addon here makes
         # the JACS loader's `existsSync(./jacs.linux-x64-gnu.node)` branch
-        # succeed without needing the missing registry subpackages. Once
-        # JACS publishes the platform binaries, restore `npm run deps:prod`.
+        # succeed without needing the missing registry subpackages. Once JACS
+        # 0.11.4 and its platform packages publish, restore `npm run deps:prod`.
         run: |
           cd "${{ github.workspace }}/../JACS/jacsnpm"
           npm install @napi-rs/cli

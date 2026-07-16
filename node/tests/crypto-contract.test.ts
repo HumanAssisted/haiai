@@ -51,9 +51,9 @@ describe('crypto_delegation_contract', () => {
 
     it('signResponse throws HaiError with JACS_NOT_LOADED when signer lacks signStringSync', () => {
       const fakeSigner = {} as never;
-      expect(() => signResponse({ test: true }, fakeSigner, 'test-id')).toThrow(HaiError);
+      expect(() => signResponse('job-1', { response: { message: 'test' } }, fakeSigner, 'test-id')).toThrow(HaiError);
       try {
-        signResponse({ test: true }, fakeSigner, 'test-id');
+        signResponse('job-1', { response: { message: 'test' } }, fakeSigner, 'test-id');
       } catch (err) {
         expect(err).toBeInstanceOf(HaiError);
         expect((err as HaiError).errorCode).toBe(contract.signing.error_when_no_jacs);
@@ -63,7 +63,12 @@ describe('crypto_delegation_contract', () => {
 
   describe('signing works with JACS agent', () => {
     it('signResponse succeeds with a valid JACS agent', () => {
-      const result = signResponse({ test: 'value' }, TEST_AGENT, TEST_JACS_ID);
+      const result = signResponse(
+        'job-1',
+        { response: { message: 'value' } },
+        TEST_AGENT,
+        TEST_JACS_ID,
+      );
       expect(result.signed_document).toBeTruthy();
       expect(typeof result.signed_document).toBe('string');
       const doc = JSON.parse(result.signed_document);

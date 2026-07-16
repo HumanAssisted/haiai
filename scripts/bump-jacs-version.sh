@@ -70,6 +70,8 @@ case "$CURRENT_NODE" in
     echo "  node/package.json"
     ;;
 esac
+node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('node/publish.deps.json','utf8'));p['@hai.ai/jacs']='$NEW_VERSION';fs.writeFileSync('node/publish.deps.json',JSON.stringify(p,null,2)+'\\n')"
+echo "  node/publish.deps.json"
 
 # --- CI JACS checkout ref ---
 

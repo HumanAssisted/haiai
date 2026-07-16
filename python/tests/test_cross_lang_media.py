@@ -3,9 +3,13 @@
 Mirrors `rust/haiai/tests/cross_lang_contract.rs` (`cross_lang_signed_image_*`
 and `cross_lang_signed_text_md_*`). Loads the same pre-signed fixtures from
 `fixtures/media/signed.{png,jpg,webp,md}` (signed once by the Rust regenerator
-in `rust/haiai/tests/regen_media_fixtures.rs`, signer = the shared test agent
-in `fixtures/jacs-agent/`) and asserts that the Python `HaiClient.verify_image`
+in `rust/haiai/tests/regen_media_fixtures.rs`, with its public key committed
+beside the media) and asserts that the Python `HaiClient.verify_image`
 / `.verify_text` paths produce the same Valid / HashMismatch verdicts as Rust.
+
+The legacy fixture agent config is intentionally not loaded: it predates signed
+agent configs. Verification uses a fresh signed local agent and resolves the
+fixture signer through its staged public key.
 
 Any drift between languages here MUST be a parity bug, not a test-only quirk.
 That is the entire point of this suite (PRD §5.5, TASK_011).
@@ -27,18 +31,19 @@ from typing import Any, Iterator
 
 import pytest
 
+from tests.jacs_test_utils import create_signed_jacs_agent
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MEDIA_DIR = REPO_ROOT / "fixtures" / "media"
-JACS_AGENT_DIR = REPO_ROOT / "fixtures" / "jacs-agent"
 SIGNER_FIXTURE_PATH = MEDIA_DIR / "SIGNER.json"
 CHECKSUMS_PATH = MEDIA_DIR / "CHECKSUMS.txt"
 
-# Password for the shared fixture agent (matches Rust + regenerator).
-FIXTURE_AGENT_PASSWORD = "secretpassord"
+# Password for the fresh local verifier agent.
+VERIFIER_AGENT_PASSWORD = "secretpassord"
 
 
 # ---------------------------------------------------------------------------
@@ -107,76 +112,51 @@ def _read_signed_with_checksum(name: str) -> bytes:
     return bytes_
 
 
-def _copy_with_colons(src: Path, dst: Path) -> None:
-    """Mirror Rust `copy_fixture_dir` — convert `_` to `:` in filenames."""
-    dst.mkdir(parents=True, exist_ok=True)
-    for entry in src.iterdir():
-        new_name = entry.name.replace("_", ":")
-        target = dst / new_name
-        if entry.is_dir():
-            _copy_with_colons(entry, target)
-        else:
-            shutil.copy2(entry, target)
-
-
-def _stage_fixture_agent(tmp: Path) -> Path:
-    """Stage `fixtures/jacs-agent/` in `tmp` with `_` → `:` filename mapping.
-
-    Returns the staged `jacs.config.json` path. Sets the password env var.
-    """
-    os.environ["JACS_PRIVATE_KEY_PASSWORD"] = FIXTURE_AGENT_PASSWORD
-
-    src_cfg = JACS_AGENT_DIR / "jacs.config.json"
-    cfg = json.loads(src_cfg.read_text())
-
-    # Keys: copy verbatim (no `_` mapping needed).
-    src_keys = JACS_AGENT_DIR / cfg["jacs_key_directory"]
-    tmp_keys = tmp / "keys"
-    tmp_keys.mkdir()
-    for entry in src_keys.iterdir():
-        shutil.copy2(entry, tmp_keys / entry.name)
-
-    # Data: agent JSON filenames use `_` placeholders for `:`. Map back.
-    src_data = JACS_AGENT_DIR / cfg["jacs_data_directory"]
-    tmp_data = tmp / "data"
-    _copy_with_colons(src_data, tmp_data)
-
-    cfg["jacs_data_directory"] = str(tmp_data)
-    cfg["jacs_key_directory"] = str(tmp_keys)
-
-    staged_cfg = tmp / "jacs.config.json"
-    staged_cfg.write_text(json.dumps(cfg, indent=2))
-    return staged_cfg
-
-
-def _build_ffi_client() -> tuple[Any, Path]:
-    """Construct a `haiipy.HaiClient` pointed at the staged fixture agent.
+def _build_ffi_client() -> tuple[Any, str, Path]:
+    """Construct a `haiipy.HaiClient` with strict-safe verifier state.
 
     Goes through the FFI directly (not `haiai.HaiClient`) because the test
     only needs the verify methods; this avoids the SimpleAgent.load round-trip
     and keeps the test scoped to the parity contract.
 
-    Returns the raw FFI client AND the tempdir path so the caller can keep it
-    alive (PyO3 builtin objects do not accept dynamic attributes).
+    The pre-signed media keeps its historical PQ signer, whose public key is
+    supplied through JACS' explicit key-directory verification option. The
+    local agent is generated and signed at its final paths; no unsigned-config
+    compatibility escape is used.
+
+    Returns the raw FFI client, verification options JSON, and tempdir path so
+    the caller can keep the files alive (PyO3 objects reject attributes).
     """
     import haiipy  # type: ignore[import-untyped]
 
     tmpdir = Path(tempfile.mkdtemp(prefix="haiai-media-parity-"))
-    config_path = _stage_fixture_agent(tmpdir)
+    verifier = create_signed_jacs_agent(
+        tmpdir / "verifier-agent",
+        name="media-fixture-verifier",
+        password=VERIFIER_AGENT_PASSWORD,
+    )
 
-    cfg = json.loads(config_path.read_text())
+    signer = _load_signer()
+    verification_keys = tmpdir / "verification-keys"
+    verification_keys.mkdir()
+    shutil.copy2(
+        REPO_ROOT / signer["public_key_file"],
+        verification_keys / f"{signer['signer_id']}.public.pem",
+    )
+
     ffi_config = json.dumps(
         {
-            "jacs_id": cfg["jacs_agent_id_and_version"].split(":")[0],
-            "agent_name": "FixtureAgent",
+            "jacs_id": verifier.jacs_id,
+            "agent_name": "MediaFixtureVerifier",
             "agent_version": "1.0.0",
-            "key_dir": cfg["jacs_key_directory"],
-            "jacs_config_path": str(config_path),
+            "key_dir": str(verifier.key_dir),
+            "jacs_config_path": str(verifier.config_path),
             "base_url": "http://localhost:1",  # never used; verify is local-only
         }
     )
     client = haiipy.HaiClient(ffi_config)
-    return client, tmpdir
+    verify_options = json.dumps({"key_dir": str(verification_keys)})
+    return client, verify_options, tmpdir
 
 
 # ---------------------------------------------------------------------------
@@ -217,23 +197,23 @@ def signer() -> dict[str, str]:
 
 @pytest.fixture(autouse=True)
 def _fixture_agent_password(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Override the project-wide `password_env` autouse with the fixture
+    """Override the project-wide `password_env` autouse with the verifier
     agent's password. This must run on every test that uses the FFI client,
     because conftest.py's `password_env` fixture (autouse, function-scoped)
     sets `JACS_PRIVATE_KEY_PASSWORD` to a different value otherwise.
     """
-    monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", FIXTURE_AGENT_PASSWORD)
+    monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", VERIFIER_AGENT_PASSWORD)
 
 
 @pytest.fixture(scope="module")
-def ffi_client() -> Iterator[Any]:
+def ffi_client() -> Iterator[tuple[Any, str]]:
     # Set the password before the FFI client is constructed (module scope).
     # The function-scoped autouse `_fixture_agent_password` keeps it set for
     # each subsequent test invocation that calls into the FFI.
-    os.environ["JACS_PRIVATE_KEY_PASSWORD"] = FIXTURE_AGENT_PASSWORD
-    client, tmpdir = _build_ffi_client()
+    os.environ["JACS_PRIVATE_KEY_PASSWORD"] = VERIFIER_AGENT_PASSWORD
+    client, verify_options, tmpdir = _build_ffi_client()
     try:
-        yield client
+        yield client, verify_options
     finally:
         if tmpdir.exists():
             shutil.rmtree(tmpdir, ignore_errors=True)
@@ -254,13 +234,15 @@ def stage_dir() -> Iterator[Path]:
 # ---------------------------------------------------------------------------
 
 
-def _verify_image(client: Any, path: Path) -> dict[str, Any]:
-    raw = client.verify_image_sync(str(path), "{}")
+def _verify_image(client_with_options: tuple[Any, str], path: Path) -> dict[str, Any]:
+    client, verify_options = client_with_options
+    raw = client.verify_image_sync(str(path), verify_options)
     return json.loads(raw)
 
 
-def _verify_text(client: Any, path: Path) -> dict[str, Any]:
-    raw = client.verify_text_sync(str(path), "{}")
+def _verify_text(client_with_options: tuple[Any, str], path: Path) -> dict[str, Any]:
+    client, verify_options = client_with_options
+    raw = client.verify_text_sync(str(path), verify_options)
     return json.loads(raw)
 
 

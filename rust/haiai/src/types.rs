@@ -723,6 +723,35 @@ pub struct SignedPayload {
     pub agent_jacs_id: String,
 }
 
+/// Domain identifier cryptographically bound into signed HAI job responses.
+pub const SIGNED_JOB_RESPONSE_CONTRACT: &str = "hai.job-response";
+
+/// Current signed HAI job-response payload contract version.
+pub const SIGNED_JOB_RESPONSE_VERSION: u8 = 2;
+
+/// Payload placed inside the JACS-signed `data` field for a job response.
+///
+/// Binding `job_id` inside the signed bytes prevents a valid response for one
+/// job from being transplanted to another job owned by the same agent.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SignedJobResponsePayloadV2 {
+    pub contract: String,
+    pub version: u8,
+    pub job_id: String,
+    pub response: Value,
+}
+
+impl SignedJobResponsePayloadV2 {
+    pub fn new(job_id: impl Into<String>, response: Value) -> Self {
+        Self {
+            contract: SIGNED_JOB_RESPONSE_CONTRACT.to_string(),
+            version: SIGNED_JOB_RESPONSE_VERSION,
+            job_id: job_id.into(),
+            response,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum TransportType {
@@ -930,6 +959,28 @@ pub struct VerifyAgentDocumentRequest {
     pub domain: Option<String>,
 }
 
+/// Cryptographic provenance attached to every event released by the live
+/// SSE/WebSocket clients.
+///
+/// `HaiEvent` is constructed only after the complete JACS v2 envelope and its
+/// replay identifier have been verified. Keeping this proof next to the
+/// unwrapped payload prevents callers from confusing parsed transport data
+/// with authenticated data.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct SignedEventVerification {
+    /// Always `"verified"` for an event released by a live connection.
+    pub status: String,
+    pub signer_id: String,
+    pub timestamp: String,
+    pub algorithm: String,
+    pub document_id: String,
+    /// SHA-256 of the exact logical SSE/WS JSON value that JACS verified.
+    pub event_sha256: String,
+    /// Always `"consumed"`; the payload is not released before replay state is
+    /// atomically consumed.
+    pub replay_status: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HaiEvent {
     #[serde(default)]
@@ -940,6 +991,7 @@ pub struct HaiEvent {
     pub id: Option<String>,
     #[serde(default)]
     pub raw: String,
+    pub verification: SignedEventVerification,
 }
 
 // ============================================================================

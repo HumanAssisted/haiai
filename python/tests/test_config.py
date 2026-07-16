@@ -23,6 +23,7 @@ from haiai.config import (
     reset,
     save,
 )
+from tests.jacs_test_utils import create_signed_jacs_agent
 
 
 class TestLoad:
@@ -39,57 +40,85 @@ class TestLoad:
         with pytest.raises(ValueError, match="neither canonical nor legacy fields"):
             load(str(p))
 
-    def test_load_valid_config_with_jacs(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_load_valid_config_with_jacs(self, tmp_path: Path) -> None:
         """Test load() with real JACS bindings."""
+        reset()
+        try:
+            import jacs  # noqa: F401
+        except ImportError:
+            pytest.skip("JACS bindings not available")
+
+        fixture = create_signed_jacs_agent(
+            tmp_path,
+            name="TestAgent",
+            password="TestConfig!2026",
+        )
+
+        original_config = fixture.config_path.read_bytes()
+        config = json.loads(fixture.config_path.read_text(encoding="utf-8"))
+        assert "jacsSignature" in config
+
+        load(str(fixture.config_path))
+        assert is_loaded()
+        cfg = get_config()
+        assert cfg.name == "TestAgent"
+        assert cfg.version == fixture.version
+        assert cfg.jacs_id == fixture.jacs_id
+        assert cfg.key_dir == str(fixture.key_dir)
+
+        agent = get_agent()
+        assert agent is not None
+        assert fixture.config_path.read_bytes() == original_config
+        assert Path(os.environ["JACS_CONFIG_PATH"]) == fixture.config_path
+        assert not (tmp_path / ".haiai_resolved_jacs.config.json").exists()
+
+        reset()
+
+    def test_load_preserves_signed_relative_paths(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Canonical configs are authenticated bytes, not rewriteable templates."""
         reset()
         try:
             from jacs import SimpleAgent
         except ImportError:
             pytest.skip("JACS bindings not available")
 
-        monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", "TestConfig!2026")
-
-        # Create a real agent with keys
-        key_dir = tmp_path / "keys"
-        key_dir.mkdir()
-        data_dir = tmp_path / "jacs_data"
-        data_dir.mkdir()
-
-        _agent, info = SimpleAgent.create_agent(
-            name="TestAgent",
-            password="TestConfig!2026",
+        monkeypatch.chdir(tmp_path)
+        password = "RelativeConfig!2026"
+        monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", password)
+        (tmp_path / "data").mkdir()
+        (tmp_path / "keys").mkdir()
+        config_path = tmp_path / "jacs.config.json"
+        SimpleAgent.create_agent(
+            name="RelativeAgent",
+            password=password,
             algorithm="ring-Ed25519",
-            data_directory=str(data_dir),
-            key_directory=str(key_dir),
-            config_path=str(tmp_path / "jacs_internal.config.json"),
+            data_directory="data",
+            key_directory="keys",
+            config_path="jacs.config.json",
             description="",
             domain="",
             default_storage="fs",
         )
 
-        # Write HAI-format config
-        config = {
-            "jacsAgentName": "TestAgent",
-            "jacsAgentVersion": "1.0.0",
-            "jacsKeyDir": str(key_dir),
-            "jacsId": "test-jacs-id-1234",
-        }
-        config_path = tmp_path / "jacs.config.json"
-        config_path.write_text(json.dumps(config, indent=2))
+        original_config = config_path.read_bytes()
+        signed = json.loads(original_config)
+        assert signed["jacs_data_directory"] == "data"
+        assert signed["jacs_key_directory"] == "keys"
 
         load(str(config_path))
-        assert is_loaded()
-        cfg = get_config()
-        assert cfg.name == "TestAgent"
-        assert cfg.version == "1.0.0"
-        assert cfg.jacs_id == "test-jacs-id-1234"
 
-        agent = get_agent()
-        assert agent is not None
+        assert config_path.read_bytes() == original_config
+        assert Path(os.environ["JACS_CONFIG_PATH"]) == config_path
+        assert get_config().key_dir == str(tmp_path / "keys")
+        assert not (tmp_path / ".haiai_resolved_jacs.config.json").exists()
 
-        reset()
+        with pytest.raises(ValueError, match="Cannot relocate"):
+            save(str(tmp_path / "elsewhere" / "jacs.config.json"))
+        assert config_path.read_bytes() == original_config
 
 
 class TestGetters:
@@ -126,6 +155,35 @@ class TestSave:
         reset()
         with pytest.raises(RuntimeError, match="Nothing to save"):
             save("/tmp/nope.json")
+
+    def test_save_copies_canonical_config_without_rewriting(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        reset()
+        try:
+            import jacs  # noqa: F401
+        except ImportError:
+            pytest.skip("JACS bindings not available")
+
+        fixture = create_signed_jacs_agent(
+            tmp_path,
+            name="CanonicalSaveAgent",
+            password="CanonicalSave!2026",
+        )
+        load(str(fixture.config_path))
+        expected = fixture.config_path.read_bytes()
+        copy_path = tmp_path / "saved.config.json"
+
+        save()
+        save(str(copy_path))
+
+        assert fixture.config_path.read_bytes() == expected
+        assert copy_path.read_bytes() == expected
+        assert (
+            json.loads(expected)["jacsSignature"]
+            == json.loads(copy_path.read_bytes())["jacsSignature"]
+        )
 
 
 class TestReset:

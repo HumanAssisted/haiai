@@ -214,7 +214,7 @@ impl From<HaiError> for HaiBindingError {
             HaiError::MissingJacsId => {
                 HaiBindingError::new(ErrorKind::ConfigFailed, err.to_string())
             }
-            HaiError::Provider(_) => {
+            HaiError::Provider(_) | HaiError::SignedEventVerification { .. } => {
                 HaiBindingError::new(ErrorKind::ProviderError, err.to_string())
             }
             HaiError::Validation { .. } => {
@@ -2350,7 +2350,11 @@ pub async fn sse_next_event(handle_id: u64) -> HaiBindingResult<Option<String>> 
         })?
     };
 
-    let event = tracked.conn.next_event().await;
+    let event = tracked
+        .conn
+        .next_event()
+        .await
+        .map_err(HaiBindingError::from)?;
 
     match event {
         Some(evt) => {
@@ -2392,7 +2396,11 @@ pub async fn ws_next_event(handle_id: u64) -> HaiBindingResult<Option<String>> {
         })?
     };
 
-    let event = tracked.conn.next_event().await;
+    let event = tracked
+        .conn
+        .next_event()
+        .await
+        .map_err(HaiBindingError::from)?;
 
     match event {
         Some(evt) => {
@@ -2508,6 +2516,16 @@ mod tests {
         let hai_err = HaiError::Provider("signing failed".to_string());
         let binding_err: HaiBindingError = hai_err.into();
         assert_eq!(binding_err.kind, ErrorKind::ProviderError);
+    }
+
+    #[test]
+    fn signed_event_verification_maps_to_provider_error_without_payload() {
+        let hai_err = HaiError::SignedEventVerification {
+            message: "unknown signer".to_string(),
+        };
+        let binding_err: HaiBindingError = hai_err.into();
+        assert_eq!(binding_err.kind, ErrorKind::ProviderError);
+        assert!(!binding_err.message.contains("benchmark payload"));
     }
 
     #[test]
@@ -3397,81 +3415,63 @@ mod tests {
     // TASK_003: Media-signing wrapper methods
     // =========================================================================
 
-    /// Materialize the fixture JACS agent into a tempdir with adjusted paths.
+    /// Generate a fresh, signed JACS agent whose config already contains the
+    /// final absolute temp paths. Rewriting paths in a copied signed config
+    /// invalidates its signature and must never be used as a test shortcut.
     /// Returns (TempDir, config_path).
     fn write_temp_media_fixture_config() -> (tempfile::TempDir, std::path::PathBuf) {
-        std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "secretpassord");
-
-        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/jacs-agent/jacs.config.json")
-            .canonicalize()
-            .expect("fixtures/jacs-agent/jacs.config.json must exist");
-        let source_dir = source.parent().expect("fixture config dir");
-        let mut value: Value =
-            serde_json::from_str(&std::fs::read_to_string(&source).expect("read fixture"))
-                .expect("parse fixture");
-
+        const PASSWORD: &str = "BindingMediaTest!2026";
+        std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", PASSWORD);
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let temp_root = temp_dir.path().canonicalize().expect("canonical tempdir");
-
-        // Copy keys
-        let source_key_dir = value
-            .get("jacs_key_directory")
-            .and_then(Value::as_str)
-            .map(|p| {
-                if std::path::PathBuf::from(p).is_absolute() {
-                    std::path::PathBuf::from(p)
-                } else {
-                    source_dir.join(p)
-                }
-            })
-            .expect("key dir");
         let temp_key_dir = temp_root.join("keys");
-        std::fs::create_dir_all(&temp_key_dir).expect("temp key dir");
-        for entry in std::fs::read_dir(&source_key_dir).expect("read keys") {
-            let entry = entry.expect("key entry");
-            std::fs::copy(entry.path(), temp_key_dir.join(entry.file_name())).expect("copy key");
-        }
-
-        // Copy data (with underscore→colon filename normalization)
-        let source_data_dir = value
-            .get("jacs_data_directory")
-            .and_then(Value::as_str)
-            .map(|p| {
-                if std::path::PathBuf::from(p).is_absolute() {
-                    std::path::PathBuf::from(p)
-                } else {
-                    source_dir.join(p)
-                }
-            })
-            .expect("data dir");
         let temp_data_dir = temp_root.join("data");
-        fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
-            std::fs::create_dir_all(dst).expect("create dst");
-            for entry in std::fs::read_dir(src).expect("read src") {
-                let entry = entry.expect("entry");
-                let src_path = entry.path();
-                let name = entry.file_name().to_string_lossy().replace('_', ":");
-                let dst_path = dst.join(&name);
-                if src_path.is_dir() {
-                    copy_dir_recursive(&src_path, &dst_path);
-                } else {
-                    std::fs::copy(&src_path, &dst_path).expect("copy file");
-                }
-            }
-        }
-        copy_dir_recursive(&source_data_dir, &temp_data_dir);
-
-        value["jacs_data_directory"] = Value::String(temp_data_dir.to_string_lossy().into_owned());
-        value["jacs_key_directory"] = Value::String(temp_key_dir.to_string_lossy().into_owned());
-
         let config_path = temp_root.join("media-binding.config.json");
-        std::fs::write(
-            &config_path,
-            serde_json::to_vec_pretty(&value).expect("serialize config"),
-        )
-        .expect("write config");
+        LocalJacsProvider::create_agent_with_options(&haiai::types::CreateAgentOptions {
+            name: "media-binding-test".to_string(),
+            password: PASSWORD.to_string(),
+            algorithm: Some("ed25519".to_string()),
+            data_directory: Some(temp_data_dir.display().to_string()),
+            key_directory: Some(temp_key_dir.display().to_string()),
+            config_path: Some(config_path.display().to_string()),
+            agent_type: Some("ai".to_string()),
+            description: Some("Binding media test agent".to_string()),
+            domain: None,
+            default_storage: Some("fs".to_string()),
+        })
+        .expect("create signed temporary JACS agent");
+
         (temp_dir, config_path)
+    }
+
+    #[test]
+    fn generated_media_fixture_config_is_signed_with_final_paths_and_loadable() {
+        let (temp_dir, config_path) = write_temp_media_fixture_config();
+        let config: Value = serde_json::from_slice(
+            &std::fs::read(&config_path).expect("read generated fixture config"),
+        )
+        .expect("parse generated fixture config");
+        let expected_data = temp_dir
+            .path()
+            .join("data")
+            .canonicalize()
+            .expect("data path");
+        let expected_keys = temp_dir
+            .path()
+            .join("keys")
+            .canonicalize()
+            .expect("key path");
+
+        assert!(config.get("jacsSignature").is_some());
+        assert_eq!(
+            config.get("jacs_data_directory").and_then(Value::as_str),
+            Some(expected_data.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            config.get("jacs_key_directory").and_then(Value::as_str),
+            Some(expected_keys.to_string_lossy().as_ref())
+        );
+        build_media_wrapper(&config_path);
     }
 
     fn make_media_test_png(width: u32, height: u32) -> Vec<u8> {

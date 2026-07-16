@@ -99,6 +99,7 @@ def password_env(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]
     monkeypatch.delenv("JACS_PASSWORD_FILE", raising=False)
     monkeypatch.delenv("JACS_DISABLE_PASSWORD_ENV", raising=False)
     monkeypatch.delenv("JACS_DISABLE_PASSWORD_FILE", raising=False)
+    monkeypatch.delenv("JACS_ALLOW_UNSIGNED_AGENT_CONFIG", raising=False)
     yield
 
 

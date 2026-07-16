@@ -2,6 +2,7 @@
 .claude
 jacs.config.json
 !fixtures/jacs-agent/jacs.config.json
+!fixtures/media/verifier-agent/jacs.config.json
 jacs_data
 private
 var

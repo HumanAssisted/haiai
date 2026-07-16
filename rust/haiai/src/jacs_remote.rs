@@ -3393,10 +3393,10 @@ mod verify_tests {
         assert_eq!(data["verdict"], "approved");
 
         let unknown: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
-        let (_data, verified) = remote
+        let error = remote
             .unwrap_signed_event(&event, &unknown)
-            .expect("unwrap unknown");
-        assert!(!verified, "unknown key must come back unverified, not Err");
+            .expect_err("unknown signer must fail closed without returning data");
+        assert!(error.to_string().contains("Unknown signer"));
     }
 
     #[tokio::test(flavor = "multi_thread")]
