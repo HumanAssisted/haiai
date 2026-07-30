@@ -36,8 +36,10 @@ impl ServerHandler for HaiMcpServer {
         implementation.website_url = Some(haiai::DEFAULT_BASE_URL.to_string());
 
         let capabilities = ServerCapabilities::builder()
-            .enable_tools_with(ToolsCapability {
-                list_changed: Some(false),
+            .enable_tools_with({
+                let mut tools = ToolsCapability::default();
+                tools.list_changed = Some(false);
+                tools
             })
             .build();
 
@@ -65,7 +67,7 @@ impl ServerHandler for HaiMcpServer {
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<rmcp::model::CallToolResult, McpError> {
+    ) -> Result<rmcp::model::CallToolResponse, McpError> {
         if request.name.as_ref() == "jacs_memory_save" {
             return Err(McpError::invalid_request(
                 "jacs_memory_save is hidden in hai-mcp; use hai_save_memory",
@@ -75,7 +77,9 @@ impl ServerHandler for HaiMcpServer {
 
         if hai_tools::has_tool(request.name.as_ref()) {
             let name = request.name.to_string();
-            return hai_tools::dispatch(&self.context, &name, request.arguments).await;
+            return hai_tools::dispatch(&self.context, &name, request.arguments)
+                .await
+                .map(Into::into);
         }
 
         // NOTE: JACS document operations (sign, verify, search, store) are synchronous.

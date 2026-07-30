@@ -7,7 +7,7 @@ use haiai::{
     VerifyTextOptions, VerifyTextResult,
 };
 use jacs_mcp::path_policy::{resolve_input_path, resolve_output_path};
-use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
+use rmcp::model::{CallToolResult, ContentBlock, JsonObject, Tool};
 use rmcp::ErrorData as McpError;
 use serde_json::{json, Value};
 
@@ -2018,13 +2018,13 @@ async fn call_delete_email_template(context: &HaiServerContext, args: &Value) ->
 }
 
 fn success_tool_result(text: String, structured: Value) -> CallToolResult {
-    let mut result = CallToolResult::success(vec![Content::text(text)]);
+    let mut result = CallToolResult::success(vec![ContentBlock::text(text)]);
     result.structured_content = Some(structured);
     result
 }
 
 fn error_tool_result(message: String) -> CallToolResult {
-    let mut result = CallToolResult::error(vec![Content::text(message.clone())]);
+    let mut result = CallToolResult::error(vec![ContentBlock::text(message.clone())]);
     result.structured_content = Some(json!({ "error": message }));
     result
 }
@@ -2579,8 +2579,8 @@ mod tests {
         let text = result
             .content
             .first()
-            .and_then(|c| match c.raw {
-                rmcp::model::RawContent::Text(ref t) => Some(t.text.clone()),
+            .and_then(|c| match c {
+                rmcp::model::ContentBlock::Text(ref t) => Some(t.text.clone()),
                 _ => None,
             })
             .unwrap_or_default();
@@ -3135,8 +3135,8 @@ mod tests {
         let text = result
             .content
             .first()
-            .and_then(|c| match c.raw {
-                rmcp::model::RawContent::Text(ref t) => Some(t.text.clone()),
+            .and_then(|c| match c {
+                rmcp::model::ContentBlock::Text(ref t) => Some(t.text.clone()),
                 _ => None,
             })
             .unwrap_or_default();
@@ -3175,8 +3175,8 @@ mod tests {
         let text = result
             .content
             .first()
-            .and_then(|c| match c.raw {
-                rmcp::model::RawContent::Text(ref t) => Some(t.text.clone()),
+            .and_then(|c| match c {
+                rmcp::model::ContentBlock::Text(ref t) => Some(t.text.clone()),
                 _ => None,
             })
             .unwrap_or_default();
