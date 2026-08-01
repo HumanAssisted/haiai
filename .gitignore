@@ -70,3 +70,6 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# Locally seeded CLI binary for the pip shim bundled-path fallback
+python/src/haiai/bin/
