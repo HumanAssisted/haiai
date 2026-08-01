@@ -1451,7 +1451,10 @@ async fn main() -> anyhow::Result<()> {
     // Commands that load an existing agent need the private key password. Prompt once if not set and not -q.
     if !matches!(
         cli.command,
-        Commands::Init { .. } | Commands::SelfKnowledge { .. } | Commands::Deploy { .. }
+        Commands::Init { .. }
+            | Commands::SelfKnowledge { .. }
+            | Commands::Deploy { .. }
+            | Commands::ExtractMediaSignature { .. }
     ) {
         ensure_agent_password(cli.quiet, cli.password_file.as_deref())
             .context("failed to resolve private key password")?;

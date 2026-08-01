@@ -266,11 +266,16 @@ pub fn handle_verify_image(
 // ---------------------------------------------------------------------------
 
 pub fn handle_extract_media_signature(file: &str, raw_payload: bool) -> anyhow::Result<()> {
-    let provider = load_provider()?;
-    match provider
-        .extract_media_signature(file, raw_payload)
-        .context("extract_media_signature failed")?
-    {
+    // Media extraction only parses the embedded payload; it does not require
+    // an agent identity or access to private key material.
+    let payload = if raw_payload {
+        jacs::simple::advanced::extract_media_signature_raw(file)
+    } else {
+        jacs::simple::advanced::extract_media_signature(file)
+    }
+    .context("extract_media_signature failed")?;
+
+    match payload {
         Some(payload) => {
             println!("{payload}");
             Ok(())
