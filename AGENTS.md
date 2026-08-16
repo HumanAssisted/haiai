@@ -2,7 +2,7 @@
 
 ## Purpose
 
-HAIAI SDK -- HAI platform integration layer around `jacs`. Helps agents use JACS identity/provenance to register with HAI, receive benchmark jobs, interact with other agents, and send/receive agent email.
+HAIAI SDK -- HAI platform integration layer around `jacs`. Helps agents use JACS identity/provenance to register with HAI, run agreement/conflict workflows, and send/receive agent email. Lab benchmark jobs stay admin/lab.
 
 ## Working Norms
 

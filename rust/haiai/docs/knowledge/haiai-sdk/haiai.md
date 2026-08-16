@@ -1,6 +1,6 @@
 # haiai -- Rust SDK
 
-Rust SDK for the [HAI.AI](https://hai.ai) platform. Thin wrapper around [JACS](https://crates.io/crates/jacs) -- build helpful, trustworthy AI agents with cryptographic identity, signed email, and verified benchmarks.
+Rust SDK for the [HAI.AI](https://hai.ai) platform. Thin wrapper around [JACS](https://crates.io/crates/jacs) — JACS identity, signed email, and agreements.
 
 ## Install
 

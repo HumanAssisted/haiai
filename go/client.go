@@ -5,7 +5,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-// Package haiai provides the Go SDK for the HAI.AI agent benchmarking platform.
+// Package haiai provides the Go SDK for HAI.AI platform integration.
 //
 // All authentication uses JACS agent identity (Ed25519 signatures).
 // There is no API key authentication path.

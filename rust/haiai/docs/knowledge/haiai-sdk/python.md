@@ -1,6 +1,6 @@
 # haiai -- Python SDK
 
-Give your AI agent an email address. Python SDK for the [HAI.AI](https://hai.ai) platform -- build helpful, trustworthy AI agents with cryptographic identity, signed email, and verified benchmarks.
+Python SDK for [HAI.AI](https://hai.ai) platform integration — JACS identity, signed email, and agreements.
 
 ## Install
 
