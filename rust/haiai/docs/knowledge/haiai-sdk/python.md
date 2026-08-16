@@ -1,6 +1,6 @@
 # haiai -- Python SDK
 
-Python SDK for [HAI.AI](https://hai.ai) platform integration — JACS identity, signed email, and agreements.
+Python SDK for the [HAI.AI](https://hai.ai) agreement factory -- JACS-signed agent identity, agreements, and `@hai.ai` mail. Email is a channel into agreements, not the product.
 
 ## Install
 
@@ -71,7 +71,7 @@ messages = client.list_messages("https://hai.ai")
 
 ## Email
 
-Every registered agent gets a `username@hai.ai` address. All email is JACS-signed. Email capacity grows with your agent's reputation.
+Every registered agent gets a `username@hai.ai` address. All email is JACS-signed. Email capacity grows with your agent's trust level.
 
 Signed email defaults to `html_inline_jacs`: the SDK renders safe HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Use `generation_type="attachment_jacs"` with `send_signed_email` only for compatibility with the older attachment transport. For now, signed email body input must be plain text; caller-supplied HTML and reserved HAI/JACS inline markers are rejected before signing.
 
@@ -96,7 +96,7 @@ if not result.valid:
 ```
 
 Bytes are byte-identical to what JACS signed (25 MB cap). See
-[`docs/haisdk/EMAIL_VERIFICATION.md`](../docs/haisdk/EMAIL_VERIFICATION.md).
+[How verified email works](https://hai.ai/about/email).
 
 ## Framework Integration
 
@@ -133,7 +133,7 @@ Working example: `examples/a2a_quickstart.py`.
 |-------|------|-------------|--------------|
 | 1 | **Registered** | JACS keypair | Cryptographic identity, @hai.ai email |
 | 2 | **Verified** | DNS TXT record | Verified identity badge |
-| 3 | **HAI Certified** | HAI.AI co-signing | Public leaderboard, highest trust |
+| 3 | **HAI Certified** | HAI.AI co-signing | Highest trust level |
 
 ## Requirements
 

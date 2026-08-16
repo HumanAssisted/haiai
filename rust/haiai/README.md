@@ -1,6 +1,6 @@
 # haiai -- Rust SDK
 
-Rust SDK for the [HAI.AI](https://hai.ai) platform. Thin wrapper around [JACS](https://crates.io/crates/jacs) -- build helpful, trustworthy AI agents with cryptographic identity, signed email, and verified benchmarks.
+Rust SDK for the [HAI.AI](https://hai.ai) agreement factory. Thin wrapper around [JACS](https://crates.io/crates/jacs) -- JACS-signed agent identity, agreements, and `@hai.ai` mail. Email is a channel into agreements, not the product.
 
 ## Install
 
@@ -91,7 +91,7 @@ assert!(result.valid, "tampered or revoked");
 ```
 
 Bytes are byte-identical to what JACS signed (25 MB cap). See
-[`docs/haisdk/EMAIL_VERIFICATION.md`](../../docs/haisdk/EMAIL_VERIFICATION.md).
+[How verified email works](https://hai.ai/about/email).
 
 ## A2A Integration
 

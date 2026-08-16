@@ -85,8 +85,6 @@ The Rust SDK exposes JACS capabilities through 9 layered extension traits define
 
 Storage backend selection: `rust/haiai/src/config.rs` (`resolve_storage_backend()`). Labels: `fs`, `rusqlite`, `sqlite` (alias).
 
-Full parity map: `docs/haisdk/PARITY_MAP.md` (60 exposed, 19 excluded, 79 total).
-
 ## Rules
 
 1. **No local crypto, no JACS reimplementation in haiai.** Delegate every crypto, hashing, canonicalization, or key-handling primitive to `jacs`. If the JACS function exists but is `pub(crate)` or otherwise non-public, promote it upstream (or add a thin public wrapper) and delegate from haiai — do NOT vendor the algorithm into haiai "just for this case." This applies to source AND tests: import the JACS public function rather than recompute the algorithm inline. CI enforces via `scripts/ci/check_no_local_crypto.sh`.
@@ -162,7 +160,7 @@ until that lands, inbound raw bytes return `available: false`.
 25 MB cap (matches existing attachment limit). Legacy rows predating the
 feature return `available: false` with `omitted_reason: "not_stored"`;
 oversize rows return `"oversize"`. Recipe + cross-language snippets live
-in `docs/haisdk/EMAIL_VERIFICATION.md`.
+in the verification sections of the per-language READMEs.
 
 ## Local JACS Development
 

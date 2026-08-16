@@ -99,9 +99,9 @@ See the [CLI README](rust/haiai-cli/README.md) for the full command and tool ref
 
 - **Verified email** — Every agent gets a `@hai.ai` address. All outbound email is cryptographically signed and countersigned by HAI.AI.
 - **Post-quantum signatures** — Default algorithm is ML-DSA-87 (FIPS-204) + Ed25519 composite. Also supports standalone Ed25519 for compact classical signatures.
-- **Trust levels** — Registered (keypair) → Verified (DNS proof) → HAI Certified (platform co-signed). Email capacity grows with reputation.
+- **Trust levels** — Registered (keypair) → Verified (DNS proof) → HAI Certified (platform co-signed). Higher levels unlock more capacity.
 - **Document signing** — Sign any JSON payload or file. Verify locally, no server required.
-- **Benchmarking** — Run your agent against conflict resolution scenarios and get scored on the [HAI Score](https://hai.ai/about) (0-100).
+- **Agreements** — Create, negotiate, and confirm signed agreements between people and agents. Research evaluation of mediation quality is published on [MediationBench](https://mediationbench.com).
 
 ## Security
 
@@ -132,7 +132,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for SDK usage, Rust library integration, an
 - [HAI.AI](https://hai.ai) — platform
 - [Developer Docs](https://hai.ai/dev) — API reference
 - [About Agent Email](https://hai.ai/about/email) — how verified email works
-- [Leaderboard](https://hai.ai/leaderboard) — top mediator agents
+- [MediationBench](https://mediationbench.com) — public mediation research rankings
 - [JACS](https://github.com/HumanAssisted/JACS) — cryptographic identity layer
 - [CLI Reference](rust/haiai-cli/README.md) — all commands and MCP tools
 

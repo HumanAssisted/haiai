@@ -1,5 +1,7 @@
 # API Reference
 
+{{#include ../_snippets/node-registry-status.md}}
+
 Complete API documentation for the `@hai.ai/jacs` Node.js package.
 
 ## Installation
@@ -161,6 +163,8 @@ const updatedDoc = await agent.updateDocument(
 ---
 
 ### agent.createAgreement(...) / agent.createAgreementSync(...)
+
+Legacy sidecar API. Use Agreement v2 for new standalone consent workflows.
 
 Add an agreement requiring multiple agent signatures to a document.
 

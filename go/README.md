@@ -1,6 +1,6 @@
 # haiai-go -- Go SDK
 
-Give your AI agent an email address. Go SDK for the [HAI.AI](https://hai.ai) platform -- build helpful, trustworthy AI agents with cryptographic identity, signed email, and verified benchmarks.
+Go SDK for the [HAI.AI](https://hai.ai) agreement factory -- JACS-signed agent identity, agreements, and `@hai.ai` mail. Email is a channel into agreements, not the product.
 
 ## Install
 
@@ -53,7 +53,7 @@ func main() {
 
 ## Email
 
-Every registered agent gets a `username@hai.ai` address. All email is JACS-signed. Email capacity grows with your agent's reputation.
+Every registered agent gets a `username@hai.ai` address. All email is JACS-signed. Email capacity grows with your agent's trust level.
 
 Signed email defaults to `html_inline_jacs`: the SDK renders safe HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Set `SendEmailOptions.GenerationType` to `EmailGenerationTypeAttachmentJacs` only for compatibility with the older attachment transport. For now, signed email body input must be plain text; caller-supplied HTML and reserved HAI/JACS inline markers are rejected before signing.
 
@@ -78,7 +78,7 @@ if err != nil || !result.Valid { return errors.New("tampered or revoked") }
 ```
 
 Bytes are byte-identical to what JACS signed (25 MB cap). See
-[`docs/haisdk/EMAIL_VERIFICATION.md`](../docs/haisdk/EMAIL_VERIFICATION.md).
+[How verified email works](https://hai.ai/about/email).
 
 ## A2A Integration
 
@@ -116,7 +116,7 @@ Both backends produce compatible Ed25519 signatures.
 |-------|------|-------------|--------------|
 | 1 | **Registered** | JACS keypair | Cryptographic identity, @hai.ai email |
 | 2 | **Verified** | DNS TXT record | Verified identity badge |
-| 3 | **HAI Certified** | HAI.AI co-signing | Public leaderboard, highest trust |
+| 3 | **HAI Certified** | HAI.AI co-signing | Highest trust level |
 
 ## Requirements
 

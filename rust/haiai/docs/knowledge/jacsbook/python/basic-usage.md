@@ -178,6 +178,8 @@ is_valid = agent.verify_string(
 
 ## Working with Agreements
 
+The methods in this section use the legacy `jacsAgreement` sidecar on an existing signed document. For new standalone consent workflows, prefer Agreement v2 through `SimpleAgent.create_agreement_v2()`, `sign_agreement_v2()`, and `verify_agreement_v2()`.
+
 ### Create an Agreement
 
 ```python
@@ -249,12 +251,21 @@ signed_agent_json = agent.sign_agent(
 )
 ```
 
-## Request/Response Signing
+## Generic Request/Response Documents
+
+> **Not HTTP authentication:** `JacsAgent.sign_request()` and
+> `verify_response()` wrap and verify a generic signed JACS document. They do
+> not bind the HTTP method, absolute URL, query, exact body bytes, or audience.
+> For an authorization credential use
+> `SimpleAgent.build_request_auth_header(method, url, body, audience)`. For v2 response
+> envelopes use `SimpleAgent.sign_response()` and fail-closed
+> `SimpleAgent.unwrap_signed_event()` with pinned server keys. See
+> [Security](../advanced/security.md#request-bound-http-authorization).
 
 ### Sign a Request
 
 ```python
-# Sign request parameters as a JACS document
+# Sign request-like data as a durable JACS document (not an HTTP credential)
 signed_request = agent.sign_request({
     "method": "GET",
     "path": "/api/resource",
@@ -266,7 +277,7 @@ signed_request = agent.sign_request({
 ### Verify a Response
 
 ```python
-# Verify a signed response
+# Verify a generic signed document (not a jacs-response-v2 event)
 result = agent.verify_response(signed_response_json)
 print('Response valid:', result)
 

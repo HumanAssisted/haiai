@@ -1,5 +1,7 @@
 # Basic Usage
 
+{{#include ../_snippets/node-registry-status.md}}
+
 This chapter covers fundamental JACS operations in Node.js, including agent initialization, document creation, signing, and verification.
 
 ## v0.7.0: Async-First API
@@ -193,6 +195,8 @@ const isValid = await agent.verifyString(
 ```
 
 ## Working with Agreements
+
+The methods in this section use the legacy `jacsAgreement` sidecar on an existing signed document. For new standalone consent workflows, prefer Agreement v2 through `createAgreementV2()`, `signAgreementV2()`, and `verifyAgreementV2()`.
 
 ### Create an Agreement
 

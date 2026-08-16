@@ -1,6 +1,6 @@
 ---
 name: jacs
-description: Cryptographic document signing/verification plus HAI platform integration (attestation, username lifecycle, mailbox workflows, key registry, and agreement tools) with JACS. Use when the user asks about signing, verifying, JACS, cryptographic identity, HAI agreements, HAI email, or agent-to-agent communication.
+description: Cryptographic document signing/verification plus HAI platform integration (attestation, username lifecycle, mailbox workflows, key registry, and agreement/provenance tools) with JACS. Use when the user asks about signing, verifying, JACS, cryptographic identity, HAI agreements, HAI email, or agent-to-agent communication.
 ---
 
 # JACS Cryptographic Provenance
