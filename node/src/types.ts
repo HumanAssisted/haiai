@@ -4,6 +4,10 @@
 
 /** Options for HaiClient constructor. */
 export interface HaiClientOptions {
+  /** Explicit tenant expected on actionable signed events. Never inferred from discovery. */
+  expectedEventTenant?: string;
+  /** Pinned server recipient for job responses (the API's configured request audience). */
+  responseAudience?: string;
   /** Path to jacs.config.json. Defaults to JACS_CONFIG_PATH env or ./jacs.config.json. */
   configPath?: string;
   /** HAI server URL. Default: https://hai.ai */

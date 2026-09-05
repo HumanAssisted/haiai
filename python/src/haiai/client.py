@@ -157,7 +157,7 @@ def _verify_hai_message_impl(
         return False
 
 
-def _build_ffi_config() -> str:
+def _build_ffi_config(expected_event_tenant: Optional[str] = None, response_audience: Optional[str] = None) -> str:
     """Build the JSON config string for the FFI adapter from loaded JACS config."""
     from haiai.config import get_config, is_loaded
 
@@ -176,6 +176,10 @@ def _build_ffi_config() -> str:
         os.environ.get("HAI_URL") or os.environ.get("HAI_API_URL") or DEFAULT_BASE_URL
     )
     config["base_url"] = base_url
+    if expected_event_tenant is not None:
+        config["expected_event_tenant"] = expected_event_tenant
+    if response_audience is not None:
+        config["response_audience"] = response_audience
 
     # Pick up config path from env
     config_path = os.environ.get("JACS_CONFIG_PATH", "./jacs.config.json")
@@ -213,10 +217,14 @@ class HaiClient:
         timeout: float = 30.0,
         max_retries: int = 3,
         verify_server_signatures: bool = False,
+        expected_event_tenant: Optional[str] = None,
+        response_audience: Optional[str] = None,
     ) -> None:
         self._timeout = timeout
         self._max_retries = max_retries
         self._verify_server_signatures = verify_server_signatures
+        self._expected_event_tenant = expected_event_tenant
+        self._response_audience = response_audience
         self._connected = False
         self._should_disconnect = False
         self._ws: Any = None
@@ -233,7 +241,7 @@ class HaiClient:
     def _get_ffi(self) -> FFIAdapter:
         """Lazily create the FFI adapter."""
         if self._ffi is None:
-            self._ffi = FFIAdapter(_build_ffi_config())
+            self._ffi = FFIAdapter(_build_ffi_config(self._expected_event_tenant, self._response_audience))
         return self._ffi
 
     # ------------------------------------------------------------------

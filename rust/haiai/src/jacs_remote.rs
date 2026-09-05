@@ -12,7 +12,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use base64::Engine;
-use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use reqwest::{Client as HttpClient, StatusCode};
 
 fn url_encode(s: &str) -> String {
@@ -24,8 +24,8 @@ use time::OffsetDateTime;
 use crate::client::encode_path_segment;
 use crate::error::{HaiError, Result};
 use crate::jacs::{
-    logical_name_from_metadata, summary_from_document_bytes, summary_matches_logical_name,
-    DocSummary, JacsDocumentProvider, JacsProvider,
+    DocSummary, JacsDocumentProvider, JacsProvider, logical_name_from_metadata,
+    summary_from_document_bytes, summary_matches_logical_name,
 };
 use crate::types::{DocSearchHit, DocSearchResults, SignedDocument, StorageCapabilities};
 
@@ -376,6 +376,26 @@ impl<P: JacsProvider> JacsProvider for RemoteJacsProvider<P> {
     }
     fn sign_response(&self, payload: &Value) -> Result<crate::types::SignedPayload> {
         self.inner.sign_response(payload)
+    }
+
+    fn build_request_auth_header(
+        &self,
+        method: &str,
+        url: &str,
+        body: &[u8],
+        audience: &str,
+    ) -> Result<String> {
+        self.inner
+            .build_request_auth_header(method, url, body, audience)
+    }
+
+    #[cfg(feature = "jacs-crate")]
+    fn sign_response_with_context(
+        &self,
+        data: &jacs::response_context::ResponseData,
+        operation: jacs::response_context::ResponseOperation,
+    ) -> Result<crate::types::SignedPayload> {
+        self.inner.sign_response_with_context(data, operation)
     }
     fn sign_text_update(
         &self,

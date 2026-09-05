@@ -2220,6 +2220,7 @@ dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "jsonschema",
+ "p256",
  "pbkdf2",
  "phf",
  "rand 0.9.5",

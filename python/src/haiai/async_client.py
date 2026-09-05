@@ -80,10 +80,14 @@ class AsyncHaiClient:
         timeout: float = 30.0,
         max_retries: int = 3,
         verify_server_signatures: bool = False,
+        expected_event_tenant: Optional[str] = None,
+        response_audience: Optional[str] = None,
     ) -> None:
         self._timeout = timeout
         self._max_retries = max_retries
         self._verify_server_signatures = verify_server_signatures
+        self._expected_event_tenant = expected_event_tenant
+        self._response_audience = response_audience
         self._connected = False
         self._should_disconnect = False
         self._hai_url: Optional[str] = None
@@ -97,7 +101,7 @@ class AsyncHaiClient:
         if self._ffi is None:
             from haiai.client import _build_ffi_config
 
-            self._ffi = AsyncFFIAdapter(_build_ffi_config())
+            self._ffi = AsyncFFIAdapter(_build_ffi_config(self._expected_event_tenant, self._response_audience))
         return self._ffi
 
     @property

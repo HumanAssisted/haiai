@@ -191,6 +191,20 @@ pub trait JacsProvider: Send + Sync {
     fn jacs_id(&self) -> &str;
     fn sign_string(&self, message: &str) -> Result<String>;
 
+    /// Build the shipped request-auth-v2 header over final method, URL, exact
+    /// entity bytes and deployment-pinned audience. No legacy fallback.
+    fn build_request_auth_header(
+        &self,
+        _method: &str,
+        _url: &str,
+        _body: &[u8],
+        _audience: &str,
+    ) -> Result<String> {
+        Err(HaiError::Provider(
+            "request-auth-v2 is unsupported by this provider".into(),
+        ))
+    }
+
     /// Sign raw bytes and return the signature bytes.
     /// Required for email signing where the payload is binary.
     fn sign_bytes(&self, data: &[u8]) -> Result<Vec<u8>>;
@@ -330,8 +344,21 @@ pub trait JacsProvider: Send + Sync {
         ))
     }
 
-    /// Return a signed payload accepted by `/api/v1/agents/jobs/{job_id}/response`.
+    /// Legacy response-v2 mathematical signing; not an action authorization.
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload>;
+
+    /// Sign the closed action context through a named JACS operation.
+    /// Restricted remote providers must authorize this operation separately.
+    #[cfg(feature = "jacs-crate")]
+    fn sign_response_with_context(
+        &self,
+        _data: &jacs::response_context::ResponseData,
+        _operation: jacs::response_context::ResponseOperation,
+    ) -> Result<SignedPayload> {
+        Err(HaiError::Provider(
+            "context-bound response signing is unsupported by this provider".into(),
+        ))
+    }
 
     /// Verify a wrapped A2A artifact using JACS cryptographic verification.
     ///
@@ -1311,7 +1338,7 @@ pub trait JacsMediaProvider: JacsProvider {
     /// discriminator (`Valid`, `HashMismatch`, `MissingSignature`, etc.) and
     /// the signer info when available.
     fn verify_image(&self, path: &str, opts: VerifyImageOptions)
-        -> Result<MediaVerificationResult>;
+    -> Result<MediaVerificationResult>;
 
     /// Extract the JACS signature payload from a signed image without
     /// verifying it. `raw_payload = false` returns the decoded JSON string;
@@ -1445,6 +1472,25 @@ impl JacsProvider for Box<dyn JacsProvider> {
         (**self).sign_response(payload)
     }
 
+    fn build_request_auth_header(
+        &self,
+        method: &str,
+        url: &str,
+        body: &[u8],
+        audience: &str,
+    ) -> Result<String> {
+        (**self).build_request_auth_header(method, url, body, audience)
+    }
+
+    #[cfg(feature = "jacs-crate")]
+    fn sign_response_with_context(
+        &self,
+        data: &jacs::response_context::ResponseData,
+        operation: jacs::response_context::ResponseOperation,
+    ) -> Result<SignedPayload> {
+        (**self).sign_response_with_context(data, operation)
+    }
+
     fn verify_a2a_artifact(&self, wrapped_json: &str) -> Result<String> {
         (**self).verify_a2a_artifact(wrapped_json)
     }
@@ -1537,6 +1583,25 @@ impl JacsProvider for Box<dyn JacsMediaProvider> {
 
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
         (**self).sign_response(payload)
+    }
+
+    fn build_request_auth_header(
+        &self,
+        method: &str,
+        url: &str,
+        body: &[u8],
+        audience: &str,
+    ) -> Result<String> {
+        (**self).build_request_auth_header(method, url, body, audience)
+    }
+
+    #[cfg(feature = "jacs-crate")]
+    fn sign_response_with_context(
+        &self,
+        data: &jacs::response_context::ResponseData,
+        operation: jacs::response_context::ResponseOperation,
+    ) -> Result<SignedPayload> {
+        (**self).sign_response_with_context(data, operation)
     }
 
     fn verify_a2a_artifact(&self, wrapped_json: &str) -> Result<String> {

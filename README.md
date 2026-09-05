@@ -127,6 +127,27 @@ go get github.com/HumanAssisted/haiai-go  # Go
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for SDK usage, Rust library integration, and architecture details.
 
+## Actionable signed events
+
+Live SSE/WebSocket events and job responses use the closed response-v2 context
+contract. Configure the expected deployment tenant and the API's pinned
+request-auth audience before connecting or submitting responses; neither is
+inferred from received signatures or key discovery:
+
+- Rust: `client.with_expected_event_context(tenant, audience)?`
+- Python (sync/async): `HaiClient(expected_event_tenant=tenant, response_audience=audience)`
+- Node: `HaiClient.create({ expectedEventTenant: tenant, responseAudience: audience })`
+- Go: `WithExpectedEventContext(tenant, audience)`
+- Existing FFI initialization JSON: `expected_event_tenant` and `response_audience`.
+
+Recipients are bound to their authenticated connection nonce and JACS principal;
+job responses also bind the job channel and causation. Legacy signatures remain
+mathematically inspectable, but missing/mismatched action context never releases
+a live payload. Deploy matching HAI/HAIAI producers and consumers together. This
+context check does not itself establish lifecycle authority or authorize jobs.
+Custom providers must implement the named `sign_response_with_context` operation;
+unsupported providers fail closed rather than falling back to generic signing.
+
 ## Links
 
 - [HAI.AI](https://hai.ai) — platform

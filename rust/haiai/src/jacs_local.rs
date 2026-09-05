@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use jacs::agent::boilerplate::BoilerPlate;
 use jacs::agent::document::DocumentTraits;
 use jacs::crypt::KeyManager;
-use jacs::document::{service_from_agent, DocumentService};
+use jacs::document::{DocumentService, service_from_agent};
 use jacs::inline;
 use jacs::simple::{self, CreateAgentParams, SimpleAgent};
 use serde_json::Value;
@@ -1029,10 +1029,44 @@ impl JacsProvider for LocalJacsProvider {
         })
     }
 
+    fn build_request_auth_header(
+        &self,
+        method: &str,
+        url: &str,
+        body: &[u8],
+        audience: &str,
+    ) -> Result<String> {
+        let mut agent = self
+            .agent
+            .lock()
+            .map_err(|error| HaiError::Provider(error.to_string()))?;
+        jacs::protocol::build_request_auth_header(&mut agent, method, url, body, audience)
+            .map_err(|error| HaiError::Provider(error.to_string()))
+    }
+
     fn sign_email_locally(&self, raw_email: &[u8]) -> Result<Vec<u8>> {
         let simple = self.load_simple_agent()?;
         jacs::email::sign_email(raw_email, &simple)
             .map_err(|e| HaiError::Provider(format!("JACS email signing failed: {e}")))
+    }
+
+    fn sign_response_with_context(
+        &self,
+        data: &jacs::response_context::ResponseData,
+        operation: jacs::response_context::ResponseOperation,
+    ) -> Result<SignedPayload> {
+        let mut agent = self
+            .agent
+            .lock()
+            .map_err(|error| HaiError::Provider(format!("failed to lock JACS agent: {error}")))?;
+        let envelope = jacs::protocol::sign_response_with_context(&mut agent, data, operation)
+            .map_err(|error| {
+                HaiError::Provider(format!("JACS contextual response signing failed: {error}"))
+            })?;
+        Ok(SignedPayload {
+            signed_document: serde_json::to_string(&envelope)?,
+            agent_jacs_id: self.jacs_id.clone(),
+        })
     }
 
     fn export_agent_json(&self) -> Result<String> {
@@ -2219,7 +2253,7 @@ impl JacsAgreementProvider for LocalJacsProvider {
 
 #[cfg(all(test, feature = "agreements"))]
 mod agreement_v2_tests {
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::*;
     use crate::jacs::JacsAgreementProvider;
@@ -2412,7 +2446,7 @@ mod agreement_v2_tests {
 
 #[cfg(all(test, feature = "conflict"))]
 mod conflict_tests {
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     use super::*;
     use crate::jacs::{JacsConflictProvider, JacsDocumentProvider};

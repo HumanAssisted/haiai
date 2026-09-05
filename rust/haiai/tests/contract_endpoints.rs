@@ -80,6 +80,7 @@ async fn hello_uses_shared_method_path_auth_contract() {
     hello.assert_async().await;
 }
 
+#[cfg(feature = "jacs-crate")]
 #[tokio::test]
 async fn submit_response_uses_shared_method_path_auth_contract() {
     let fixture = load_contract_fixture();
@@ -93,6 +94,9 @@ async fn submit_response_uses_shared_method_path_auth_contract() {
             let when = when
                 .method(method_from_fixture(&fixture.submit_response.method))
                 .path(expected_path)
+                .body_includes(r#"\"contextClass\":\"private_event\""#)
+                .body_includes(r#"\"audience\":\"contract-test-api\""#)
+                .body_includes(r#"\"tenant\":\"contract-test-tenant\""#)
                 .body_includes(r#"\"contract\":\"hai.job-response\""#)
                 .body_includes(r#"\"version\":2"#)
                 .body_includes(format!(r#"\"job_id\":\"{job_id}\""#));
@@ -109,7 +113,48 @@ async fn submit_response_uses_shared_method_path_auth_contract() {
         })
         .await;
 
-    let client = make_client(&server.base_url());
+    // This endpoint now requires a real named contextual signer; the static
+    // fake-signature provider deliberately cannot authorize action output.
+    let directory = tempfile::tempdir().expect("isolated signing fixture");
+    let config = directory.path().join("jacs.config.json");
+    let password = "contract-fixture-password";
+    let previous = std::env::var_os("JACS_PRIVATE_KEY_PASSWORD");
+    struct RestorePassword(Option<std::ffi::OsString>);
+    impl Drop for RestorePassword {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => unsafe { std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", value) },
+                None => unsafe { std::env::remove_var("JACS_PRIVATE_KEY_PASSWORD") },
+            }
+        }
+    }
+    let _restore = RestorePassword(previous);
+    unsafe { std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", password) };
+    haiai::LocalJacsProvider::create_agent_with_options(&haiai::CreateAgentOptions {
+        name: "context-contract-test".into(),
+        password: password.into(),
+        algorithm: Some("ed25519".into()),
+        data_directory: Some(directory.path().join("data").display().to_string()),
+        key_directory: Some(directory.path().join("keys").display().to_string()),
+        config_path: Some(config.display().to_string()),
+        agent_type: None,
+        description: None,
+        domain: None,
+        default_storage: None,
+    })
+    .expect("create real JACS signer");
+    let provider =
+        haiai::LocalJacsProvider::from_config_path(Some(&config), None).expect("load signer");
+    let client = HaiClient::new(
+        provider,
+        HaiClientOptions {
+            base_url: server.base_url(),
+            ..HaiClientOptions::default()
+        },
+    )
+    .expect("client")
+    .with_expected_event_context("contract-test-tenant".into(), "contract-test-api".into())
+    .expect("explicit context");
     client
         .submit_response(job_id, "response body", None, 0)
         .await

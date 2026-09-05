@@ -17,8 +17,8 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
 use tokio::sync::RwLock;
@@ -31,9 +31,9 @@ use haiai::error::HaiError;
 #[cfg(feature = "agreements")]
 use haiai::jacs::JacsAgreementProvider;
 use haiai::jacs::{
-    media_verify_result_to_json, verify_text_result_to_json, JacsConflictProvider,
-    JacsDocumentProvider, JacsMediaProvider, JacsProvider, SaveDocumentRequest, SaveIntent,
-    SignImageOptions, SignTextOptions, StaticJacsProvider, VerifyImageOptions, VerifyTextOptions,
+    JacsConflictProvider, JacsDocumentProvider, JacsMediaProvider, JacsProvider,
+    SaveDocumentRequest, SaveIntent, SignImageOptions, SignTextOptions, StaticJacsProvider,
+    VerifyImageOptions, VerifyTextOptions, media_verify_result_to_json, verify_text_result_to_json,
 };
 use haiai::jacs_local::LocalJacsProvider;
 use std::path::PathBuf;
@@ -367,6 +367,33 @@ impl HaiClientWrapper {
         // fields. The auto variant overrides `jacs_config_path` after
         // construction when a `jacs_config_path` is present.
         let mut wrapper = Self::new(jacs, options)?;
+        let expected_tenant = config.get("expected_event_tenant").and_then(Value::as_str);
+        let response_audience = config.get("response_audience").and_then(Value::as_str);
+        if expected_tenant.is_some() || response_audience.is_some() {
+            let tenant = expected_tenant.ok_or_else(|| {
+                HaiBindingError::new(
+                    ErrorKind::ConfigFailed,
+                    "expected_event_tenant is required with response_audience",
+                )
+            })?;
+            let audience = response_audience.ok_or_else(|| {
+                HaiBindingError::new(
+                    ErrorKind::ConfigFailed,
+                    "response_audience is required with expected_event_tenant",
+                )
+            })?;
+            let client = Arc::try_unwrap(wrapper.inner)
+                .map_err(|_| {
+                    HaiBindingError::new(
+                        ErrorKind::ConfigFailed,
+                        "new client is unexpectedly shared",
+                    )
+                })?
+                .into_inner()
+                .with_expected_event_context(tenant.into(), audience.into())
+                .map_err(HaiBindingError::from)?;
+            wrapper.inner = Arc::new(RwLock::new(client));
+        }
         wrapper.jacs_storage_backend = jacs_storage_backend;
         Ok(wrapper)
     }
@@ -1497,7 +1524,9 @@ impl HaiClientWrapper {
         if total_streaming_handles().await >= MAX_STREAMING_HANDLES {
             return Err(HaiBindingError::new(
                 ErrorKind::ApiError,
-                format!("maximum streaming handle limit ({MAX_STREAMING_HANDLES}) exceeded; close existing connections first"),
+                format!(
+                    "maximum streaming handle limit ({MAX_STREAMING_HANDLES}) exceeded; close existing connections first"
+                ),
             ));
         }
 
@@ -1530,7 +1559,9 @@ impl HaiClientWrapper {
         if total_streaming_handles().await >= MAX_STREAMING_HANDLES {
             return Err(HaiBindingError::new(
                 ErrorKind::ApiError,
-                format!("maximum streaming handle limit ({MAX_STREAMING_HANDLES}) exceeded; close existing connections first"),
+                format!(
+                    "maximum streaming handle limit ({MAX_STREAMING_HANDLES}) exceeded; close existing connections first"
+                ),
             ));
         }
 
@@ -1642,16 +1673,17 @@ impl HaiClientWrapper {
 
         match backend.as_str() {
             "fs" | "rusqlite" | "sqlite" => {
-                let provider = LocalJacsProvider::from_config_path(Some(path), Some(backend.as_str()))
-                    .map_err(|e| {
-                        HaiBindingError::new(
-                            ErrorKind::ConfigFailed,
-                            format!(
-                                "failed to build conflict provider from {}: {e}",
-                                path.display()
-                            ),
-                        )
-                    })?;
+                let provider =
+                    LocalJacsProvider::from_config_path(Some(path), Some(backend.as_str()))
+                        .map_err(|e| {
+                            HaiBindingError::new(
+                                ErrorKind::ConfigFailed,
+                                format!(
+                                    "failed to build conflict provider from {}: {e}",
+                                    path.display()
+                                ),
+                            )
+                        })?;
                 Ok(Box::new(provider))
             }
             "remote" => Err(HaiBindingError::new(

@@ -47,17 +47,28 @@ const (
 // All cryptographic operations (signing, verification, key management) are
 // delegated to the Rust FFI layer via the FFIClient interface.
 type Client struct {
-	endpoint   string
-	jacsID     string
-	mu         sync.RWMutex // protects haiAgentID and agentEmail
-	haiAgentID string       // HAI-assigned agent UUID for email URL paths (set after registration)
-	agentEmail string       // Agent's @hai.ai email address (set after registration)
-	agentKeys  *keyCache    // Agent key cache with 5-minute TTL
-	ffi        FFIClient    // Rust FFI client for all API calls and crypto operations
+	expectedEventTenant string
+	responseAudience    string
+	endpoint            string
+	jacsID              string
+	mu                  sync.RWMutex // protects haiAgentID and agentEmail
+	haiAgentID          string       // HAI-assigned agent UUID for email URL paths (set after registration)
+	agentEmail          string       // Agent's @hai.ai email address (set after registration)
+	agentKeys           *keyCache    // Agent key cache with 5-minute TTL
+	ffi                 FFIClient    // Rust FFI client for all API calls and crypto operations
 }
 
 // Option configures a Client.
 type Option func(*Client)
+
+// WithExpectedEventContext pins tenant and server recipient for live signed
+// events and job responses. Neither value comes from the received envelope.
+func WithExpectedEventContext(tenant, responseAudience string) Option {
+	return func(c *Client) {
+		c.expectedEventTenant = tenant
+		c.responseAudience = responseAudience
+	}
+}
 
 // WithEndpoint sets the HAI API base URL.
 func WithEndpoint(endpoint string) Option {
@@ -165,6 +176,10 @@ func NewClient(opts ...Option) (*Client, error) {
 		}
 		if configPath != "" {
 			ffiConfig["jacs_config_path"] = configPath
+		}
+		if cl.expectedEventTenant != "" || cl.responseAudience != "" {
+			ffiConfig["expected_event_tenant"] = cl.expectedEventTenant
+			ffiConfig["response_audience"] = cl.responseAudience
 		}
 		configJSON, err := json.Marshal(ffiConfig)
 		if err != nil {

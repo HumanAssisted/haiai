@@ -108,6 +108,8 @@ export class HaiClient {
   /** FFI adapter that delegates all HTTP calls to the Rust binding-core. Lazily initialized. */
   private _ffi: FFIClientAdapter | null = null;
   private baseUrl: string;
+  private expectedEventTenant?: string;
+  private responseAudience?: string;
   private timeout: number;
   private maxRetries: number;
   private maxReconnectAttempts: number;
@@ -142,6 +144,8 @@ export class HaiClient {
   }
 
   private constructor(options?: HaiClientOptions) {
+    this.expectedEventTenant = options?.expectedEventTenant;
+    this.responseAudience = options?.responseAudience;
     // URL precedence mirrors the Python SDK (client.py:174):
     //   options.url > HAI_URL > HAI_API_URL > DEFAULT_BASE_URL
     const rawUrl =
@@ -174,6 +178,8 @@ export class HaiClient {
       base_url: this.baseUrl,
       timeout_ms: this.timeout,
       max_retries: this.maxRetries,
+      expected_event_tenant: this.expectedEventTenant,
+      response_audience: this.responseAudience,
     };
     if (this.configPath) {
       ffiConfig.jacs_config_path = this.configPath;

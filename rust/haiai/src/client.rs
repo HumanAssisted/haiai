@@ -9,9 +9,7 @@ use base64::Engine;
 #[cfg(feature = "jacs-crate")]
 use futures_util::{SinkExt, StreamExt};
 use reqwest::{Response, StatusCode};
-use serde_json::{json, Value};
-#[cfg(feature = "jacs-crate")]
-use sha2::{Digest, Sha256};
+use serde_json::{Value, json};
 use time::OffsetDateTime;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -200,6 +198,7 @@ impl Default for HaiClientOptions {
 
 pub struct HaiClient<P: JacsProvider> {
     base_url: String,
+    expected_event_context: Option<(String, String)>,
     http: reqwest::Client,
     /// Streaming HTTP client with connect/read timeouts but no total request
     /// deadline. A total deadline would terminate every healthy SSE stream.
@@ -285,6 +284,7 @@ impl<P: JacsProvider> HaiClient<P> {
 
         Ok(Self {
             base_url: trimmed.to_string(),
+            expected_event_context: None,
             http,
             #[cfg(feature = "jacs-crate")]
             live_http,
@@ -298,6 +298,37 @@ impl<P: JacsProvider> HaiClient<P> {
             agent_email: None,
             #[cfg(feature = "jacs-crate")]
             shared_event_replay_store: None,
+        })
+    }
+
+    /// Pin deployment tenancy and the recipient of outbound job responses.
+    /// Neither value is inferred from a signed event or discovery response.
+    pub fn with_expected_event_context(
+        mut self,
+        tenant: String,
+        response_audience: String,
+    ) -> Result<Self> {
+        if tenant.is_empty()
+            || tenant.len() > 256
+            || response_audience.is_empty()
+            || response_audience == "public"
+            || response_audience.len() > 256
+        {
+            return Err(HaiError::Validation {
+                field: "expected_event_context".into(),
+                message: "explicit nonempty tenant and private response audience are required"
+                    .into(),
+            });
+        }
+        self.expected_event_context = Some((tenant, response_audience));
+        Ok(self)
+    }
+
+    #[cfg(feature = "jacs-crate")]
+    fn expected_event_context(&self) -> Result<&(String, String)> {
+        self.expected_event_context.as_ref().ok_or_else(|| HaiError::Validation {
+            field: "expected_event_context".into(),
+            message: "configure expected_event_tenant and response_audience before live events or job responses".into(),
         })
     }
 
@@ -628,7 +659,7 @@ impl<P: JacsProvider> HaiClient<P> {
             "processing_time_ms": processing_time_ms,
         });
         let payload = serde_json::to_value(SignedJobResponsePayloadV2::new(job_id, response))?;
-        let signed = self.jacs.sign_response(&payload)?;
+        let signed = self.sign_job_response_context(job_id, payload)?;
 
         let safe_job_id = encode_path_segment(job_id);
         let url = self.url(&format!("/api/v1/agents/jobs/{safe_job_id}/response"));
@@ -647,6 +678,42 @@ impl<P: JacsProvider> HaiClient<P> {
             job_id: value_string(&data, &["job_id", "jobId"]).if_empty_then(job_id),
             message: value_string(&data, &["message"]).if_empty_then("Response accepted"),
         })
+    }
+
+    fn sign_job_response_context(
+        &self,
+        job_id: &str,
+        payload: Value,
+    ) -> Result<crate::types::SignedPayload> {
+        #[cfg(feature = "jacs-crate")]
+        {
+            use jacs::response_context::{
+                EventCausation, EventTransport, ResponseData, ResponseOperation,
+            };
+            let (tenant, audience) = self.expected_event_context()?;
+            let data = ResponseData::PrivateEvent {
+                event_type: "job_response".into(),
+                contract: "hai.job-response".into(),
+                contract_version: "2".into(),
+                transport: EventTransport::Channel(format!("job:{job_id}")),
+                issuer: String::new(),
+                tenant: tenant.clone(),
+                audience: audience.clone(),
+                event_id: String::new(),
+                emitted_at: String::new(),
+                causation: EventCausation::Job { id: job_id.into() },
+                payload,
+            };
+            self.jacs
+                .sign_response_with_context(&data, ResponseOperation::SignAsyncEvent)
+        }
+        #[cfg(not(feature = "jacs-crate"))]
+        {
+            let _ = (job_id, payload);
+            Err(HaiError::Provider(
+                "context-bound job responses require the jacs-crate feature".into(),
+            ))
+        }
     }
 
     pub async fn verify_status(&self, agent_id: Option<&str>) -> Result<VerifyAgentResult> {
@@ -2055,6 +2122,13 @@ impl<P: JacsProvider> HaiClient<P> {
 
     #[cfg(feature = "jacs-crate")]
     pub async fn connect_sse(&self) -> Result<SseConnection> {
+        let auth = self.build_auth_header()?;
+        let expected_context = LiveEventContext::for_connection(
+            self.expected_event_context()?.0.clone(),
+            self.jacs.jacs_id(),
+            &auth,
+            false,
+        )?;
         validate_live_event_key_origin(&self.base_url)?;
         let key_url = self.url("/.well-known/hai-keys.json");
         let mut server_public_keys = refresh_server_public_keys(&self.http, &key_url).await?;
@@ -2065,7 +2139,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let response = self
             .live_http
             .get(url)
-            .header("Authorization", self.build_auth_header()?)
+            .header("Authorization", auth)
             .header("Accept", "text/event-stream")
             .header("Cache-Control", "no-cache")
             .send()
@@ -2157,6 +2231,7 @@ impl<P: JacsProvider> HaiClient<P> {
                                 &raw_event.raw,
                                 &server_public_keys,
                                 shared_replay_store.as_deref(),
+                                &expected_context,
                             );
                             let event = match verified {
                                 Ok(event) => event,
@@ -2206,6 +2281,13 @@ impl<P: JacsProvider> HaiClient<P> {
 
     #[cfg(feature = "jacs-crate")]
     pub async fn connect_ws(&self) -> Result<WsConnection> {
+        let auth = self.build_auth_header()?;
+        let expected_context = LiveEventContext::for_connection(
+            self.expected_event_context()?.0.clone(),
+            self.jacs.jacs_id(),
+            &auth,
+            true,
+        )?;
         validate_live_event_key_origin(&self.base_url)?;
         let key_url = self.url("/.well-known/hai-keys.json");
         let mut server_public_keys = refresh_server_public_keys(&self.http, &key_url).await?;
@@ -2216,7 +2298,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let mut request = ws_url.into_client_request().map_err(|err| {
             HaiError::Message(format!("failed to build websocket request: {err}"))
         })?;
-        let auth_header = tungstenite::http::HeaderValue::from_str(&self.build_auth_header()?)
+        let auth_header = tungstenite::http::HeaderValue::from_str(&auth)
             .map_err(|err| HaiError::Message(format!("invalid auth header: {err}")))?;
         request.headers_mut().insert("Authorization", auth_header);
 
@@ -2319,6 +2401,7 @@ impl<P: JacsProvider> HaiClient<P> {
                             &text,
                             &server_public_keys,
                             shared_replay_store.as_deref(),
+                            &expected_context,
                         );
                         let event = match verified {
                             Ok(event) => event,
@@ -2776,27 +2859,118 @@ fn parse_server_public_keys(document: &Value) -> Result<HashMap<String, Vec<u8>>
 }
 
 #[cfg(feature = "jacs-crate")]
+#[derive(Clone)]
+struct LiveEventContext {
+    tenant: String,
+    audience: String,
+    transport: jacs::response_context::EventTransport,
+}
+
+#[cfg(feature = "jacs-crate")]
+impl LiveEventContext {
+    fn for_connection(tenant: String, audience: &str, auth: &str, websocket: bool) -> Result<Self> {
+        // This is our freshly generated outgoing credential, not remote
+        // asserted identity. Preserve the shipped legacy/v2 header dialect.
+        let nonce = if auth.starts_with("JACS v2.") {
+            jacs::protocol::inspect_unverified_request_auth_header(auth)
+                .map_err(|error| HaiError::Provider(error.to_string()))?
+                .nonce
+        } else {
+            auth.strip_prefix("JACS ")
+                .and_then(|value| value.rsplitn(3, ':').nth(1))
+                .filter(|value| {
+                    value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+                .ok_or_else(|| {
+                    HaiError::Provider("connection auth header has no expected nonce".into())
+                })?
+                .to_string()
+        };
+        let channel = format!("jacs-auth-nonce:{nonce}");
+        Ok(Self {
+            tenant,
+            audience: jacs::validation::normalize_agent_id(audience).to_string(),
+            transport: if websocket {
+                jacs::response_context::EventTransport::Channel(channel)
+            } else {
+                jacs::response_context::EventTransport::Stream(channel)
+            },
+        })
+    }
+}
+
+#[cfg(feature = "jacs-crate")]
 fn verify_live_transport_event(
     raw: &str,
     server_public_keys: &HashMap<String, Vec<u8>>,
     shared_replay_store: Option<&dyn jacs::replay::ReplayStore>,
+    expected: &LiveEventContext,
 ) -> Result<HaiEvent> {
-    let (verified, event_sha256) = if let Some(store) = shared_replay_store {
+    use jacs::response_context::{EventCausation, ResponseData, ResponseExpectation};
+    let failure = |message: String| HaiError::SignedEventVerification { message };
+    jacs::schema::utils::check_document_size(raw).map_err(|error| failure(error.to_string()))?;
+    let envelope = jacs::strict_json::parse_strict_json(raw)
+        .map_err(|error| failure(format!("signed event is not strict JSON: {error}")))?;
+    let issuer = envelope
+        .pointer("/jacsSignature/agentID")
+        .and_then(Value::as_str)
+        .filter(|issuer| server_public_keys.contains_key(*issuer))
+        .ok_or_else(|| {
+            failure("event signer is not in the trusted active server key set".into())
+        })?;
+    let expectation = ResponseExpectation::PrivateEvent {
+        issuer: issuer.into(),
+        tenant: expected.tenant.clone(),
+        audience: expected.audience.clone(),
+        transport: expected.transport.clone(),
+        contract: "hai.agent-event".into(),
+        contract_version: "2".into(),
+        allowed_event_types: ["benchmark_job", "heartbeat", "disconnect", "connected"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        causation: None,
+    };
+    let context = jacs::response_context::require_response_context(&envelope, &expectation)
+        .map_err(|error| failure(error.to_string()))?;
+    let ResponseData::PrivateEvent {
+        event_type,
+        causation,
+        payload,
+        ..
+    } = context
+    else {
+        return Err(failure("private agent event context required".into()));
+    };
+    if payload.get("type").and_then(Value::as_str) != Some(event_type.as_str()) {
+        return Err(failure(
+            "signed event type differs from its payload type".into(),
+        ));
+    }
+    let expected_causation = if event_type == "benchmark_job" {
+        EventCausation::Job {
+            id: payload
+                .get("job_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| failure("benchmark event job_id is missing".into()))?
+                .into(),
+        }
+    } else {
+        EventCausation::None { id: () }
+    };
+    if causation != expected_causation {
+        return Err(failure(
+            "signed event causation differs from its payload job".into(),
+        ));
+    }
+    // No payload release or replay consumption precedes expected-context checks.
+    let verified = if let Some(store) = shared_replay_store {
         if store.scope() != jacs::replay::ReplayStoreScope::Shared {
             return Err(HaiError::SignedEventVerification {
                 message: "live event replay backend must have shared scope".to_string(),
             });
         }
-        jacs::schema::utils::check_document_size(raw).map_err(|error| {
-            HaiError::SignedEventVerification {
-                message: error.to_string(),
-            }
-        })?;
-        let envelope = jacs::strict_json::parse_strict_json(raw).map_err(|error| {
-            HaiError::SignedEventVerification {
-                message: format!("signed event is not strict JSON: {error}"),
-            }
-        })?;
         let max_age_seconds = jacs::replay::payload_replay_window_seconds();
         let verified = jacs::protocol::verify_signed_event_with_replay_store(
             &envelope,
@@ -2807,35 +2981,22 @@ fn verify_live_transport_event(
         .map_err(|error| HaiError::SignedEventVerification {
             message: error.to_string(),
         })?;
-        let exact_sha256 = format!("{:x}", Sha256::digest(raw.as_bytes()));
-        (verified, exact_sha256)
+        verified
     } else {
         let verified =
             jacs::protocol::verify_signed_event_json_with_trusted_keys(raw, server_public_keys)
                 .map_err(|error| HaiError::SignedEventVerification {
                     message: error.to_string(),
                 })?;
-        let event_sha256 = format!("{:x}", Sha256::digest(raw.as_bytes()));
-        (verified, event_sha256)
+        verified
     };
-
-    let event_type = verified
-        .data
-        .get("type")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| HaiError::SignedEventVerification {
-            message: "verified event data is missing a non-empty type".to_string(),
-        })?
-        .to_string();
     // SSE's outer `event:` and `id:` fields are not signed, so the raw parser
     // discards them. Routing and the consumer-visible ID come from the
     // verified payload/provenance below.
     let document_id = verified.document_id.clone();
     Ok(HaiEvent {
         event_type,
-        data: verified.data,
+        data: payload,
         id: Some(document_id.clone()),
         raw: raw.to_string(),
         verification: SignedEventVerification {
@@ -2844,7 +3005,7 @@ fn verify_live_transport_event(
             timestamp: verified.timestamp,
             algorithm: verified.algorithm,
             document_id,
-            event_sha256,
+            event_sha256: jacs::crypt::hash::hash_string(raw),
             replay_status: "consumed".to_string(),
         },
     })
@@ -3239,18 +3400,24 @@ mod tests {
     #[test]
     fn sse_parser_preserves_utf8_split_across_chunks() {
         let mut parser = SseParser::default();
-        assert!(parser
-            .push_chunk("event: benchmark_job\ndata: {\"message\":\"hi ".as_bytes())
-            .expect("partial event")
-            .is_empty());
-        assert!(parser
-            .push_chunk(&[0xF0, 0x9F])
-            .expect("partial UTF-8")
-            .is_empty());
-        assert!(parser
-            .push_chunk(&[0x99, 0x82])
-            .expect("complete UTF-8")
-            .is_empty());
+        assert!(
+            parser
+                .push_chunk("event: benchmark_job\ndata: {\"message\":\"hi ".as_bytes())
+                .expect("partial event")
+                .is_empty()
+        );
+        assert!(
+            parser
+                .push_chunk(&[0xF0, 0x9F])
+                .expect("partial UTF-8")
+                .is_empty()
+        );
+        assert!(
+            parser
+                .push_chunk(&[0x99, 0x82])
+                .expect("complete UTF-8")
+                .is_empty()
+        );
         let events = parser.push_chunk(b"\"}\n\n").expect("complete event");
 
         assert_eq!(events.len(), 1);
@@ -3426,6 +3593,15 @@ mod tests {
     }
 
     #[cfg(feature = "jacs-crate")]
+    fn test_live_context() -> LiveEventContext {
+        LiveEventContext {
+            tenant: "test-tenant".into(),
+            audience: "test-recipient".into(),
+            transport: jacs::response_context::EventTransport::Stream("test-stream".into()),
+        }
+    }
+
+    #[cfg(feature = "jacs-crate")]
     #[test]
     fn live_event_verifier_rejects_plain_and_legacy_payloads() {
         let keys = std::collections::HashMap::new();
@@ -3433,7 +3609,7 @@ mod tests {
             r#"{"type":"benchmark_job","job_id":"attacker"}"#,
             r#"{"payload":{"type":"benchmark_job"},"signature":{"signature":"fake"}}"#,
         ] {
-            let error = verify_live_transport_event(raw, &keys, None)
+            let error = verify_live_transport_event(raw, &keys, None, &test_live_context())
                 .expect_err("unbound event must never reach a live consumer");
             assert!(error.to_string().contains("signed event"));
         }
@@ -3446,7 +3622,7 @@ mod tests {
             "metadata":{},
             "jacsSignature":{}
         }"#;
-        let error = verify_live_transport_event(duplicate_name, &keys, None)
+        let error = verify_live_transport_event(duplicate_name, &keys, None, &test_live_context())
             .expect_err("duplicate JSON names must fail before payload release");
         assert!(error.to_string().contains("duplicate"));
     }
@@ -3553,12 +3729,29 @@ mod tests {
         }
         let signer = LocalJacsProvider::from_config_path(Some(config_path.as_path()), None)
             .expect("load signing agent");
-        let signed = signer
-            .sign_response(&json!({
+        let expected = test_live_context();
+        let data = jacs::response_context::ResponseData::PrivateEvent {
+            event_type: "benchmark_job".into(),
+            contract: "hai.agent-event".into(),
+            contract_version: "2".into(),
+            transport: expected.transport.clone(),
+            tenant: expected.tenant.clone(),
+            audience: expected.audience.clone(),
+            issuer: String::new(),
+            event_id: String::new(),
+            emitted_at: String::new(),
+            causation: jacs::response_context::EventCausation::Job { id: "job-7".into() },
+            payload: json!({
                 "type": "benchmark_job",
                 "job_id": "job-7",
                 "config": {"timeout_secs": 30}
-            }))
+            }),
+        };
+        let signed = signer
+            .sign_response_with_context(
+                &data,
+                jacs::response_context::ResponseOperation::SignAsyncEvent,
+            )
             .expect("sign event");
         let envelope: Value = serde_json::from_str(&signed.signed_document).unwrap();
         let signer_id = envelope["jacsSignature"]["agentID"]
@@ -3571,8 +3764,43 @@ mod tests {
         )]);
         let replay = SharedReplayStore::default();
 
-        let event = verify_live_transport_event(&signed.signed_document, &keys, Some(&replay))
-            .expect("first delivery should verify");
+        let mut wrong_recipient = expected.clone();
+        wrong_recipient.audience = "another-agent".into();
+        assert!(
+            verify_live_transport_event(
+                &signed.signed_document,
+                &keys,
+                Some(&replay),
+                &wrong_recipient
+            )
+            .is_err()
+        );
+        let mut wrong_tenant = expected.clone();
+        wrong_tenant.tenant = "another-tenant".into();
+        assert!(
+            verify_live_transport_event(
+                &signed.signed_document,
+                &keys,
+                Some(&replay),
+                &wrong_tenant
+            )
+            .is_err()
+        );
+        let mut wrong_stream = expected.clone();
+        wrong_stream.transport =
+            jacs::response_context::EventTransport::Stream("another-stream".into());
+        assert!(
+            verify_live_transport_event(
+                &signed.signed_document,
+                &keys,
+                Some(&replay),
+                &wrong_stream
+            )
+            .is_err()
+        );
+        let event =
+            verify_live_transport_event(&signed.signed_document, &keys, Some(&replay), &expected)
+                .expect("first delivery should verify");
         assert_eq!(event.event_type, "benchmark_job");
         assert_eq!(event.data["job_id"], "job-7");
         assert_eq!(event.verification.signer_id, signer_id);
@@ -3585,8 +3813,9 @@ mod tests {
         );
         assert_eq!(event.raw, signed.signed_document);
 
-        let duplicate = verify_live_transport_event(&signed.signed_document, &keys, Some(&replay))
-            .expect_err("duplicate delivery must fail closed");
+        let duplicate =
+            verify_live_transport_event(&signed.signed_document, &keys, Some(&replay), &expected)
+                .expect_err("duplicate delivery must fail closed");
         assert!(duplicate.to_string().contains("Replay attack"));
     }
 
