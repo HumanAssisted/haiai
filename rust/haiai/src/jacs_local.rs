@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use jacs::agent::boilerplate::BoilerPlate;
 use jacs::agent::document::DocumentTraits;
 use jacs::crypt::KeyManager;
-use jacs::document::{DocumentService, service_from_agent};
+use jacs::document::{service_from_agent, DocumentService};
 use jacs::inline;
 use jacs::simple::{self, CreateAgentParams, SimpleAgent};
 use serde_json::Value;
@@ -2253,7 +2253,7 @@ impl JacsAgreementProvider for LocalJacsProvider {
 
 #[cfg(all(test, feature = "agreements"))]
 mod agreement_v2_tests {
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     use super::*;
     use crate::jacs::JacsAgreementProvider;
@@ -2446,7 +2446,7 @@ mod agreement_v2_tests {
 
 #[cfg(all(test, feature = "conflict"))]
 mod conflict_tests {
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     use super::*;
     use crate::jacs::{JacsConflictProvider, JacsDocumentProvider};

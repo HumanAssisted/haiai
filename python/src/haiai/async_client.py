@@ -101,7 +101,9 @@ class AsyncHaiClient:
         if self._ffi is None:
             from haiai.client import _build_ffi_config
 
-            self._ffi = AsyncFFIAdapter(_build_ffi_config(self._expected_event_tenant, self._response_audience))
+            self._ffi = AsyncFFIAdapter(
+                _build_ffi_config(self._expected_event_tenant, self._response_audience)
+            )
         return self._ffi
 
     @property

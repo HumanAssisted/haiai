@@ -300,6 +300,8 @@ impl JacsSigner for AgentSigner {
 
         Ok(VerificationResult {
             valid,
+            // An explicit verification key establishes integrity, not enrollment.
+            identity_binding_status: Default::default(),
             data,
             signer_id,
             signer_name: None,
@@ -470,94 +472,99 @@ pub(crate) mod tests {
     use haiai::LocalJacsProvider;
     use tempfile::TempDir;
 
-    fn jacs_fixture_config_path() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/jacs-agent/jacs.config.json")
-            .canonicalize()
-            .expect("fixtures/jacs-agent/jacs.config.json must exist in repo")
+    const FIXTURE_PRIVATE_KEY_PASSWORD: &str = "TestHaiaiEmbedded!2026";
+    static FIXTURE_PASSWORD_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    pub(crate) struct GuardedTempDir {
+        temp_dir: TempDir,
+        _password_guard: FixturePasswordEnvGuard,
+    }
+
+    impl GuardedTempDir {
+        pub(crate) fn path(&self) -> &Path {
+            self.temp_dir.path()
+        }
+    }
+
+    struct FixturePasswordEnvGuard {
+        previous: Option<String>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl FixturePasswordEnvGuard {
+        fn set() -> Self {
+            let lock = FIXTURE_PASSWORD_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let previous = std::env::var("JACS_PRIVATE_KEY_PASSWORD").ok();
+            // SAFETY: this test-only RAII guard holds FIXTURE_PASSWORD_ENV_LOCK
+            // until it restores the prior process environment on Drop.
+            unsafe {
+                std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", FIXTURE_PRIVATE_KEY_PASSWORD);
+            }
+            Self {
+                previous,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for FixturePasswordEnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: the matching fixture lock is still held and prevents
+            // another fixture test from observing this restoration window.
+            unsafe {
+                match self.previous.take() {
+                    Some(previous) => std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", previous),
+                    None => std::env::remove_var("JACS_PRIVATE_KEY_PASSWORD"),
+                }
+            }
+        }
     }
 
     /// Crate-internal sibling that exposes `write_temp_fixture_config` to
     /// the `hai_tools::tests` module (issues 004/005/006 MCP integration
-    /// tests). Mirrors the existing private helper exactly.
-    pub(crate) fn write_temp_fixture_config_pub() -> (TempDir, PathBuf) {
+    /// tests).
+    pub(crate) fn write_temp_fixture_config_pub() -> (GuardedTempDir, PathBuf) {
         write_temp_fixture_config()
     }
 
-    fn write_temp_fixture_config() -> (TempDir, PathBuf) {
-        std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "secretpassord");
-
-        let source = jacs_fixture_config_path();
-        let source_dir = source.parent().expect("fixture config dir");
-        let mut value: Value =
-            serde_json::from_str(&fs::read_to_string(&source).expect("read fixture config"))
-                .expect("parse fixture config");
-
+    fn write_temp_fixture_config() -> (GuardedTempDir, PathBuf) {
+        let password_guard = FixturePasswordEnvGuard::set();
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let workspace_root = temp_dir.path().canonicalize().expect("canonical tempdir");
-
-        // Copy key directory to temp
-        let source_key_dir = value
-            .get("jacs_key_directory")
-            .and_then(Value::as_str)
-            .map(|p| {
-                if PathBuf::from(p).is_absolute() {
-                    PathBuf::from(p)
-                } else {
-                    source_dir.join(p)
-                }
-            })
-            .expect("key dir in config");
         let temp_key_dir = workspace_root.join("keys");
-        fs::create_dir_all(&temp_key_dir).expect("create temp key dir");
-        for entry in fs::read_dir(&source_key_dir).expect("read key dir") {
-            let entry = entry.expect("key dir entry");
-            fs::copy(entry.path(), temp_key_dir.join(entry.file_name())).expect("copy key file");
-        }
-
-        // Copy agent data to temp, converting underscore filenames to colon
-        // (colons are illegal on Windows, so fixtures use underscores in git)
-        let source_data_dir = value
-            .get("jacs_data_directory")
-            .and_then(Value::as_str)
-            .map(|p| {
-                if PathBuf::from(p).is_absolute() {
-                    PathBuf::from(p)
-                } else {
-                    source_dir.join(p)
-                }
-            })
-            .expect("data dir in config");
         let temp_data_dir = workspace_root.join("data");
-        fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
-            fs::create_dir_all(dst).expect("create dir");
-            for entry in fs::read_dir(src).expect("read dir") {
-                let entry = entry.expect("dir entry");
-                let src_path = entry.path();
-                // Convert underscores back to colons for JACS {id}:{version} filenames
-                let name = entry.file_name().to_string_lossy().replace('_', ":");
-                let dst_path = dst.join(&name);
-                if src_path.is_dir() {
-                    copy_dir_recursive(&src_path, &dst_path);
-                } else {
-                    fs::copy(&src_path, &dst_path).expect("copy file");
-                }
-            }
-        }
-        copy_dir_recursive(&source_data_dir, &temp_data_dir);
-
-        // Point config at temp directories
-        value["jacs_data_directory"] = Value::String(temp_data_dir.to_string_lossy().into_owned());
-        value["jacs_key_directory"] = Value::String(temp_key_dir.to_string_lossy().into_owned());
-
         let config_path = workspace_root.join("embedded-jacs.config.json");
-        fs::write(
-            &config_path,
-            serde_json::to_vec_pretty(&value).expect("encode fixture config"),
-        )
-        .expect("write temp config");
+        let params = jacs::simple::CreateAgentParams::builder()
+            .name("haiai-embedded-provider-test")
+            .password(FIXTURE_PRIVATE_KEY_PASSWORD)
+            .algorithm("pq2025")
+            .data_directory(&temp_data_dir.to_string_lossy())
+            .key_directory(&temp_key_dir.to_string_lossy())
+            .config_path(&config_path.to_string_lossy())
+            .agent_type("ai")
+            .description("Isolated HAIAI embedded-provider test fixture")
+            .default_storage("fs")
+            .no_compat_key(true)
+            .build();
+        let (_created, _info) = SimpleAgent::create_with_params(params)
+            .expect("create signed temporary fixture with explicit password");
 
-        (temp_dir, config_path)
+        let persisted: Value = serde_json::from_str(
+            &fs::read_to_string(&config_path).expect("read generated fixture config"),
+        )
+        .expect("parse generated fixture config");
+        assert!(persisted.get("jacsSignature").is_some());
+        assert!(persisted.get("jacsSha256").is_some());
+
+        (
+            GuardedTempDir {
+                temp_dir,
+                _password_guard: password_guard,
+            },
+            config_path,
+        )
     }
 
     #[test]
@@ -682,7 +689,7 @@ pub(crate) mod tests {
     #[test]
     fn embedded_and_local_produce_compatible_image_signatures() {
         // Sign with LocalJacsProvider, verify with EmbeddedJacsProvider, both
-        // pointed at the same fixture config. Proves trait-impl parity.
+        // pointed at the same authenticated fixture. Proves trait-impl parity.
         let (temp_dir, config_path) = write_temp_fixture_config();
         let local =
             LocalJacsProvider::from_config_path(Some(&config_path), None).expect("local provider");

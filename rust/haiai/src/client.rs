@@ -9,7 +9,7 @@ use base64::Engine;
 #[cfg(feature = "jacs-crate")]
 use futures_util::{SinkExt, StreamExt};
 use reqwest::{Response, StatusCode};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use time::OffsetDateTime;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -2877,7 +2877,7 @@ impl LiveEventContext {
                 .nonce
         } else {
             auth.strip_prefix("JACS ")
-                .and_then(|value| value.rsplitn(3, ':').nth(1))
+                .and_then(|value| value.rsplit(':').nth(1))
                 .filter(|value| {
                     value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
                 })
@@ -2972,7 +2972,8 @@ fn verify_live_transport_event(
             });
         }
         let max_age_seconds = jacs::replay::payload_replay_window_seconds();
-        let verified = jacs::protocol::verify_signed_event_with_replay_store(
+
+        jacs::protocol::verify_signed_event_with_replay_store(
             &envelope,
             server_public_keys,
             store,
@@ -2980,15 +2981,12 @@ fn verify_live_transport_event(
         )
         .map_err(|error| HaiError::SignedEventVerification {
             message: error.to_string(),
-        })?;
-        verified
+        })?
     } else {
-        let verified =
-            jacs::protocol::verify_signed_event_json_with_trusted_keys(raw, server_public_keys)
-                .map_err(|error| HaiError::SignedEventVerification {
-                    message: error.to_string(),
-                })?;
-        verified
+        jacs::protocol::verify_signed_event_json_with_trusted_keys(raw, server_public_keys)
+            .map_err(|error| HaiError::SignedEventVerification {
+                message: error.to_string(),
+            })?
     };
     // SSE's outer `event:` and `id:` fields are not signed, so the raw parser
     // discards them. Routing and the consumer-visible ID come from the
@@ -3400,24 +3398,18 @@ mod tests {
     #[test]
     fn sse_parser_preserves_utf8_split_across_chunks() {
         let mut parser = SseParser::default();
-        assert!(
-            parser
-                .push_chunk("event: benchmark_job\ndata: {\"message\":\"hi ".as_bytes())
-                .expect("partial event")
-                .is_empty()
-        );
-        assert!(
-            parser
-                .push_chunk(&[0xF0, 0x9F])
-                .expect("partial UTF-8")
-                .is_empty()
-        );
-        assert!(
-            parser
-                .push_chunk(&[0x99, 0x82])
-                .expect("complete UTF-8")
-                .is_empty()
-        );
+        assert!(parser
+            .push_chunk("event: benchmark_job\ndata: {\"message\":\"hi ".as_bytes())
+            .expect("partial event")
+            .is_empty());
+        assert!(parser
+            .push_chunk(&[0xF0, 0x9F])
+            .expect("partial UTF-8")
+            .is_empty());
+        assert!(parser
+            .push_chunk(&[0x99, 0x82])
+            .expect("complete UTF-8")
+            .is_empty());
         let events = parser.push_chunk(b"\"}\n\n").expect("complete event");
 
         assert_eq!(events.len(), 1);
@@ -3766,38 +3758,32 @@ mod tests {
 
         let mut wrong_recipient = expected.clone();
         wrong_recipient.audience = "another-agent".into();
-        assert!(
-            verify_live_transport_event(
-                &signed.signed_document,
-                &keys,
-                Some(&replay),
-                &wrong_recipient
-            )
-            .is_err()
-        );
+        assert!(verify_live_transport_event(
+            &signed.signed_document,
+            &keys,
+            Some(&replay),
+            &wrong_recipient
+        )
+        .is_err());
         let mut wrong_tenant = expected.clone();
         wrong_tenant.tenant = "another-tenant".into();
-        assert!(
-            verify_live_transport_event(
-                &signed.signed_document,
-                &keys,
-                Some(&replay),
-                &wrong_tenant
-            )
-            .is_err()
-        );
+        assert!(verify_live_transport_event(
+            &signed.signed_document,
+            &keys,
+            Some(&replay),
+            &wrong_tenant
+        )
+        .is_err());
         let mut wrong_stream = expected.clone();
         wrong_stream.transport =
             jacs::response_context::EventTransport::Stream("another-stream".into());
-        assert!(
-            verify_live_transport_event(
-                &signed.signed_document,
-                &keys,
-                Some(&replay),
-                &wrong_stream
-            )
-            .is_err()
-        );
+        assert!(verify_live_transport_event(
+            &signed.signed_document,
+            &keys,
+            Some(&replay),
+            &wrong_stream
+        )
+        .is_err());
         let event =
             verify_live_transport_event(&signed.signed_document, &keys, Some(&replay), &expected)
                 .expect("first delivery should verify");

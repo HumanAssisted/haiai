@@ -12,7 +12,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use base64::Engine;
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use reqwest::{Client as HttpClient, StatusCode};
 
 fn url_encode(s: &str) -> String {
@@ -24,8 +24,8 @@ use time::OffsetDateTime;
 use crate::client::encode_path_segment;
 use crate::error::{HaiError, Result};
 use crate::jacs::{
-    DocSummary, JacsDocumentProvider, JacsProvider, logical_name_from_metadata,
-    summary_from_document_bytes, summary_matches_logical_name,
+    logical_name_from_metadata, summary_from_document_bytes, summary_matches_logical_name,
+    DocSummary, JacsDocumentProvider, JacsProvider,
 };
 use crate::types::{DocSearchHit, DocSearchResults, SignedDocument, StorageCapabilities};
 

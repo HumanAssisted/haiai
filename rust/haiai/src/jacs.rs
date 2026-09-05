@@ -1338,7 +1338,7 @@ pub trait JacsMediaProvider: JacsProvider {
     /// discriminator (`Valid`, `HashMismatch`, `MissingSignature`, etc.) and
     /// the signer info when available.
     fn verify_image(&self, path: &str, opts: VerifyImageOptions)
-    -> Result<MediaVerificationResult>;
+        -> Result<MediaVerificationResult>;
 
     /// Extract the JACS signature payload from a signed image without
     /// verifying it. `raw_payload = false` returns the decoded JSON string;

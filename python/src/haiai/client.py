@@ -157,7 +157,9 @@ def _verify_hai_message_impl(
         return False
 
 
-def _build_ffi_config(expected_event_tenant: Optional[str] = None, response_audience: Optional[str] = None) -> str:
+def _build_ffi_config(
+    expected_event_tenant: Optional[str] = None, response_audience: Optional[str] = None
+) -> str:
     """Build the JSON config string for the FFI adapter from loaded JACS config."""
     from haiai.config import get_config, is_loaded
 
@@ -241,7 +243,9 @@ class HaiClient:
     def _get_ffi(self) -> FFIAdapter:
         """Lazily create the FFI adapter."""
         if self._ffi is None:
-            self._ffi = FFIAdapter(_build_ffi_config(self._expected_event_tenant, self._response_audience))
+            self._ffi = FFIAdapter(
+                _build_ffi_config(self._expected_event_tenant, self._response_audience)
+            )
         return self._ffi
 
     # ------------------------------------------------------------------

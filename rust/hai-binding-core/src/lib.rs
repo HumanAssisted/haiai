@@ -17,8 +17,8 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use serde_json::Value;
 use tokio::sync::RwLock;
@@ -31,9 +31,9 @@ use haiai::error::HaiError;
 #[cfg(feature = "agreements")]
 use haiai::jacs::JacsAgreementProvider;
 use haiai::jacs::{
-    JacsConflictProvider, JacsDocumentProvider, JacsMediaProvider, JacsProvider,
-    SaveDocumentRequest, SaveIntent, SignImageOptions, SignTextOptions, StaticJacsProvider,
-    VerifyImageOptions, VerifyTextOptions, media_verify_result_to_json, verify_text_result_to_json,
+    media_verify_result_to_json, verify_text_result_to_json, JacsConflictProvider,
+    JacsDocumentProvider, JacsMediaProvider, JacsProvider, SaveDocumentRequest, SaveIntent,
+    SignImageOptions, SignTextOptions, StaticJacsProvider, VerifyImageOptions, VerifyTextOptions,
 };
 use haiai::jacs_local::LocalJacsProvider;
 use std::path::PathBuf;

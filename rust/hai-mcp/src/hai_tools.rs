@@ -2671,7 +2671,7 @@ mod tests {
     //
     // These exercise the dispatch path end-to-end (parse args -> guard ->
     // embedded provider -> JACS call -> envelope serialization) using the
-    // fixture agent under `fixtures/jacs-agent/` plus a tempdir + chdir so
+    // generated signed fixture agent plus a tempdir + chdir so
     // `require_relative_path_safe` is satisfied. The pattern mirrors the
     // jacs-mcp integration tests at jacs-mcp/tests/integration.rs which use
     // the same chdir-into-tempdir strategy.
@@ -2682,8 +2682,11 @@ mod tests {
     /// owned tempdir guard so caller fs writes stay alive for the test scope.
     /// Uses `serial_test`-style chdir caller responsibility — caller wraps the
     /// test body in `chdir` while the context is alive.
-    fn build_media_context_with_fixture(
-    ) -> (HaiServerContext, tempfile::TempDir, std::path::PathBuf) {
+    fn build_media_context_with_fixture() -> (
+        HaiServerContext,
+        crate::embedded_provider::tests::GuardedTempDir,
+        std::path::PathBuf,
+    ) {
         use crate::embedded_provider::LoadedSharedAgent;
 
         let (temp_dir, config_path) =
@@ -2699,8 +2702,11 @@ mod tests {
         (context, temp_dir, config_path)
     }
 
-    fn build_conflict_context_with_fixture(
-    ) -> (HaiServerContext, tempfile::TempDir, std::path::PathBuf) {
+    fn build_conflict_context_with_fixture() -> (
+        HaiServerContext,
+        crate::embedded_provider::tests::GuardedTempDir,
+        std::path::PathBuf,
+    ) {
         use crate::embedded_provider::LoadedSharedAgent;
 
         let (temp_dir, config_path) =
