@@ -11,11 +11,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # JACS `make release-everything` creates package-scoped tags, not bare v* tags.
-  # Use crate/v* as the canonical source/API release ref; the JACS release
-  # workflow verifies it against jacs-core, jacs-media, jacs, binding-core,
-  # jacs-mcp, and jacs-cli.
-  JACS_REF: crate/v0.11.4
+  # Reviewed local source, not a published release. This exact commit must be
+  # made available in the public JACS repository before remote CI can run.
+  # A later version bump switches to its canonical crate/vX.Y.Z release tag.
+  JACS_REF: 313654816ff146ffaebc8ecf1a9a1521b19bb6e3
 
 jobs:
   crypto-policy:
@@ -59,6 +58,10 @@ jobs:
         run: |
           chmod +x scripts/ci/check_workflow_policy.sh
           ./scripts/ci/check_workflow_policy.sh
+      - name: Check exact JACS checkout helper (local Git fixtures only)
+        run: |
+          bash -n scripts/ci/checkout_jacs.sh scripts/ci/test_checkout_jacs.sh scripts/bump-jacs-version.sh
+          bash scripts/ci/test_checkout_jacs.sh
 
   test-python:
     runs-on: ubuntu-latest
@@ -78,7 +81,7 @@ jobs:
       - name: Setup Rust (for haiipy build via maturin)
         uses: dtolnay/rust-toolchain@stable
       - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        run: bash scripts/ci/checkout_jacs.sh "$JACS_REF" "${{ github.workspace }}/../JACS"
       - name: Create virtualenv and install maturin
         run: |
           python -m venv .venv
@@ -157,7 +160,7 @@ jobs:
       - name: Setup Rust (for haiinpm build via napi-rs)
         uses: dtolnay/rust-toolchain@stable
       - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        run: bash scripts/ci/checkout_jacs.sh "$JACS_REF" "${{ github.workspace }}/../JACS"
       - name: Build haiinpm native addon
         run: |
           cd rust/haiinpm
@@ -244,7 +247,7 @@ jobs:
       - name: Setup Rust (for jacsgo build)
         uses: dtolnay/rust-toolchain@stable
       - name: Clone JACS (for workspace patch + jacsgo build)
-        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        run: bash scripts/ci/checkout_jacs.sh "$JACS_REF" "${{ github.workspace }}/../JACS"
       - name: Cache jacsgo shared library
         id: cache-jacsgo
         uses: actions/cache@v4
@@ -299,7 +302,7 @@ jobs:
         with:
           toolchain: ${{ matrix.rust-version }}
       - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        run: bash scripts/ci/checkout_jacs.sh "$JACS_REF" "${{ github.workspace }}/../JACS"
       - name: Run tests (all workspace crates including hai-binding-core, haiinpm, haiipy, haiigo)
         run: |
           cd rust
@@ -339,7 +342,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Clone JACS (for workspace patch + jacsgo build)
-        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        run: bash scripts/ci/checkout_jacs.sh "$JACS_REF" "${{ github.workspace }}/../JACS"
 
       # Build all native FFI artifacts up front.
       - name: Build haiigo cdylib (libhaiigo)

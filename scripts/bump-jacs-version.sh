@@ -27,6 +27,12 @@ if [ "$CURRENT" = "$NEW_VERSION" ]; then
   exit 0
 fi
 
+# Validate the source pin before changing any package manifest.
+if [[ "$(grep -Ec '^  JACS_REF: ([0-9a-f]{40}|crate/v[0-9]+\.[0-9]+\.[0-9]+)$' .github/workflows/test.yml)" != 1 ]]; then
+  echo 'Expected one exact JACS source pin in test.yml' >&2
+  exit 1
+fi
+
 echo "JACS dependency: $CURRENT -> $NEW_VERSION"
 echo ""
 
@@ -77,7 +83,8 @@ echo "  node/publish.deps.json"
 
 echo ""
 echo "CI:"
-sed -i '' -E "s|JACS_REF: ([^ ]*/)?v$CURRENT|JACS_REF: crate/v$NEW_VERSION|" .github/workflows/test.yml
+sed -i '' -E "s#^(  JACS_REF: )([0-9a-f]{40}|crate/v[0-9]+\.[0-9]+\.[0-9]+)\$#\1crate/v$NEW_VERSION#" .github/workflows/test.yml
+grep -Fxq "  JACS_REF: crate/v$NEW_VERSION" .github/workflows/test.yml
 echo "  .github/workflows/test.yml"
 
 # --- Regenerate lockfiles ---

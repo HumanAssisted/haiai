@@ -33,7 +33,6 @@ JACS_PYTHON := $(shell grep -o 'jacs[>=]=[0-9][0-9.]*' python/pyproject.toml | h
 JACS_NODE := $(shell grep '@hai.ai/jacs' node/package.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
 JACS_NODE_PROD := $(shell grep '@hai.ai/jacs' node/publish.deps.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
 JACS_CI_REF := $(shell grep '^  JACS_REF:' .github/workflows/test.yml | head -1 | sed 's/^  JACS_REF: *//')
-JACS_CI_VERSION := $(shell echo "$(JACS_CI_REF)" | sed 's|.*/v||; s|^v||')
 
 # ============================================================================
 # TEST
@@ -180,15 +179,17 @@ check-jacs-versions:
 	@echo "  rust/hai-mcp    $(JACS_RUST_MCP)"
 	@echo "  python          $(JACS_PYTHON)"
 	@echo "  node publish    $(JACS_NODE_PROD)"
-	@echo "  ci JACS_REF     $(JACS_CI_REF) ($(JACS_CI_VERSION))"
+	@echo "  ci JACS_REF     $(JACS_CI_REF)"
 	@if [ "$(JACS_RUST)" != "$(JACS_RUST_CLI)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != haiai-cli ($(JACS_RUST_CLI))"; exit 1; fi
 	@if [ "$(JACS_RUST)" != "$(JACS_RUST_MCP)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != hai-mcp ($(JACS_RUST_MCP))"; exit 1; fi
 	@if [ "$(JACS_RUST)" != "$(JACS_PYTHON)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != python ($(JACS_PYTHON))"; exit 1; fi
-	@if [ "$(JACS_RUST)" != "$(JACS_CI_VERSION)" ]; then \
-		echo "ERROR: jacs in haiai ($(JACS_RUST)) != CI JACS_REF $(JACS_CI_REF) ($(JACS_CI_VERSION))"; exit 1; fi
+	@if printf '%s\n' "$(JACS_CI_REF)" | grep -Eq '^[0-9a-f]{40}$$'; then \
+		echo "  CI source version is verified from the exact commit during checkout"; \
+	elif [ "$(JACS_CI_REF)" != "crate/v$(JACS_RUST)" ]; then \
+		echo "ERROR: CI JACS_REF must be a full commit SHA or crate/v$(JACS_RUST)"; exit 1; fi
 	@if [ "$(JACS_RUST)" != "$(JACS_NODE_PROD)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != node production dependency ($(JACS_NODE_PROD))"; exit 1; fi
 	@case "$(JACS_NODE)" in \
@@ -196,7 +197,7 @@ check-jacs-versions:
 		*) if [ "$(JACS_RUST)" != "$(JACS_NODE)" ]; then \
 			echo "ERROR: jacs in haiai ($(JACS_RUST)) != node ($(JACS_NODE))"; exit 1; fi ;; \
 	esac
-	@echo "All JACS versions match: $(JACS_RUST)"
+	@echo "All SDK JACS dependency versions match: $(JACS_RUST)"
 
 # ============================================================================
 # GITHUB CI RELEASE (via git tags)
