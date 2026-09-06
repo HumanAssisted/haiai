@@ -82,12 +82,14 @@ class AsyncHaiClient:
         verify_server_signatures: bool = False,
         expected_event_tenant: Optional[str] = None,
         response_audience: Optional[str] = None,
+        request_auth_audience: str = "hai.ai",
     ) -> None:
         self._timeout = timeout
         self._max_retries = max_retries
         self._verify_server_signatures = verify_server_signatures
         self._expected_event_tenant = expected_event_tenant
         self._response_audience = response_audience
+        self._request_auth_audience = request_auth_audience
         self._connected = False
         self._should_disconnect = False
         self._hai_url: Optional[str] = None
@@ -102,7 +104,11 @@ class AsyncHaiClient:
             from haiai.client import _build_ffi_config
 
             self._ffi = AsyncFFIAdapter(
-                _build_ffi_config(self._expected_event_tenant, self._response_audience)
+                _build_ffi_config(
+                    self._expected_event_tenant,
+                    self._response_audience,
+                    self._request_auth_audience,
+                )
             )
         return self._ffi
 
@@ -146,6 +152,18 @@ class AsyncHaiClient:
 
     def _build_jacs_auth_header(self) -> str:
         return _client_shared.build_jacs_auth_header()
+
+    async def build_request_auth_header(
+        self, method: str, url: str, body: bytes = b""
+    ) -> str:
+        """Authenticate final method, URL and exact body bytes through Rust/JACS.
+
+        Send the same bytes and build a fresh header per attempt. Ordinary SDK
+        requests handle this automatically; audience remains pinned by the client.
+        """
+        return await self._get_ffi().build_request_auth_header(
+            _client_shared.request_auth_input(method, url, body)
+        )
 
     def _build_auth_headers(self) -> dict[str, str]:
         return _client_shared.build_auth_headers()
@@ -473,25 +491,24 @@ class AsyncHaiClient:
     ) -> RotationResult:
         """Rotate the agent's cryptographic keys (async).
 
-        Delegates to the synchronous ``HaiClient.rotate_keys()`` in a
-        thread executor, since the operation involves file I/O and JACS
-        agent creation that are inherently synchronous.
+        Uses this client's async Rust adapter, preserving its configured
+        identity, URL and audience. Arguments and results match
+        ``HaiClient.rotate_keys()``. Local Python key state is reloaded after
+        rotation, even when HAI registration is not confirmed.
         """
-        from haiai.client import HaiClient
-
-        sync_client = HaiClient(
-            timeout=self._timeout,
-            verify_server_signatures=self._verify_server_signatures,
+        cfg, loaded_path = _client_shared.rotation_config(config_path)
+        ffi = self._get_ffi()
+        _client_shared.validate_rotation_client(
+            cfg, await ffi.jacs_id(), hai_url, await ffi.base_url()
         )
-        sync_client._hai_url = self._hai_url or hai_url or ""
-        sync_client._hai_agent_id = self._hai_agent_id or ""
-
+        try:
+            rotation = await ffi.rotate_keys(
+                {"register_with_hai": register_with_hai, "algorithm": algorithm}
+            )
+        except Exception as exc:
+            raise HaiAuthError(f"Key rotation failed: {exc}") from exc
         return await asyncio.to_thread(
-            sync_client.rotate_keys,
-            hai_url=hai_url,
-            register_with_hai=register_with_hai,
-            config_path=config_path,
-            algorithm=algorithm,
+            _client_shared.complete_key_rotation, rotation, cfg, loaded_path
         )
 
     # ------------------------------------------------------------------

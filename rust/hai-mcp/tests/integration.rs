@@ -113,59 +113,37 @@ impl TestWorkspace {
     }
 
     fn write_embedded_jacs_config(&self) -> PathBuf {
-        let source = jacs_fixture_config();
-        let source_dir = source.parent().expect("fixture config dir");
         let workspace_root = self
             .path()
             .canonicalize()
             .expect("canonical workspace tempdir");
-        let mut value: Value =
-            serde_json::from_str(&std::fs::read_to_string(&source).expect("read fixture config"))
-                .expect("parse fixture config");
-
-        // Copy key directory to workspace
-        let source_key_dir = value
-            .get("jacs_key_directory")
-            .and_then(Value::as_str)
-            .map(|p| {
-                if PathBuf::from(p).is_absolute() {
-                    PathBuf::from(p)
-                } else {
-                    source_dir.join(p)
-                }
-            })
-            .expect("key dir in config");
-        let temp_key_dir = workspace_root.join("keys");
-        std::fs::create_dir_all(&temp_key_dir).expect("create temp key dir");
-        for entry in std::fs::read_dir(&source_key_dir).expect("read key dir") {
-            let entry = entry.expect("key dir entry");
-            std::fs::copy(entry.path(), temp_key_dir.join(entry.file_name())).expect("copy key");
-        }
-
-        // Copy agent data, converting underscore filenames to colons
-        let source_data_dir = value
-            .get("jacs_data_directory")
-            .and_then(Value::as_str)
-            .map(|p| {
-                if PathBuf::from(p).is_absolute() {
-                    PathBuf::from(p)
-                } else {
-                    source_dir.join(p)
-                }
-            })
-            .expect("data dir in config");
-        let temp_data_dir = workspace_root.join("data");
-        copy_fixture_dir(&source_data_dir, &temp_data_dir);
-
-        value["jacs_data_directory"] = Value::String(temp_data_dir.to_string_lossy().into_owned());
-        value["jacs_key_directory"] = Value::String(temp_key_dir.to_string_lossy().into_owned());
-
-        let config_path = workspace_root.join("embedded-jacs.config.json");
-        std::fs::write(
-            &config_path,
-            serde_json::to_vec_pretty(&value).expect("encode temp config"),
-        )
-        .expect("write temp config");
+        let config_path = workspace_root.join("jacs.config.json");
+        // Real signed configuration and encrypted keys; changing copied paths
+        // without re-signing would no longer test a usable local identity.
+        let output = isolated_haiai_command()
+            .args([
+                "init",
+                "--name",
+                "mcp-test-agent",
+                "--register",
+                "false",
+                "--algorithm",
+                "ring-Ed25519",
+            ])
+            .arg("--data-dir")
+            .arg(workspace_root.join("data"))
+            .arg("--key-dir")
+            .arg(workspace_root.join("keys"))
+            .arg("--config-path")
+            .arg(&config_path)
+            .current_dir(&workspace_root)
+            .output()
+            .expect("create encrypted JACS fixture through CLI");
+        assert!(
+            output.status.success(),
+            "fixture creation failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         config_path
     }
 }
@@ -178,7 +156,11 @@ struct McpSession {
 
 impl McpSession {
     fn spawn(_workspace: &TestWorkspace, hai_url: &str, jacs_config: &Path) -> Self {
-        Self::spawn_inner(hai_url, jacs_config, None, "warn", None)
+        Self::spawn_inner(hai_url, jacs_config, None, "warn", None, None)
+    }
+
+    fn spawn_with_profile(hai_url: &str, jacs_config: &Path, profile: &str) -> Self {
+        Self::spawn_inner(hai_url, jacs_config, None, "warn", None, Some(profile))
     }
 
     fn spawn_with_log(
@@ -189,7 +171,14 @@ impl McpSession {
         rust_log: &str,
         storage: Option<&str>,
     ) -> Self {
-        Self::spawn_inner(hai_url, jacs_config, Some(log_file), rust_log, storage)
+        Self::spawn_inner(
+            hai_url,
+            jacs_config,
+            Some(log_file),
+            rust_log,
+            storage,
+            None,
+        )
     }
 
     fn spawn_inner(
@@ -198,8 +187,9 @@ impl McpSession {
         log_file: Option<&Path>,
         rust_log: &str,
         storage: Option<&str>,
+        profile: Option<&str>,
     ) -> Self {
-        let mut command = Command::new(haiai_bin());
+        let mut command = isolated_haiai_command();
         if let Some(path) = log_file {
             command.arg("--log-file").arg(path);
         }
@@ -209,14 +199,21 @@ impl McpSession {
             .env("JACS_CONFIG", jacs_config)
             .env("JACS_PRIVATE_KEY_PASSWORD", "secretpassord")
             .env("RUST_LOG", rust_log);
+        if let Some(profile) = profile {
+            command.args(["--profile", profile]);
+        }
         if let Some(label) = storage {
             command.env("JACS_DEFAULT_STORAGE", label);
         }
+        command.current_dir(jacs_config.parent().expect("JACS config dir"));
+        Self::from_command(command, log_file.is_some())
+    }
+
+    fn from_command(mut command: Command, quiet_stderr: bool) -> Self {
         let mut child = command
-            .current_dir(jacs_config.parent().expect("JACS config dir"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(if log_file.is_some() {
+            .stderr(if quiet_stderr {
                 Stdio::null()
             } else {
                 Stdio::inherit()
@@ -343,29 +340,16 @@ fn haiai_bin() -> PathBuf {
     candidate
 }
 
-fn jacs_fixture_config() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let path = manifest_dir.join("../../fixtures/jacs-agent/jacs.config.json");
-    path.canonicalize()
-        .expect("fixtures/jacs-agent/jacs.config.json must exist in repo")
-}
-
-/// Copy fixture directory, converting underscore filenames to colons.
-/// JACS uses `{id}:{version}.json` but colons are illegal on Windows,
-/// so fixtures use underscores in git and get converted at test runtime.
-fn copy_fixture_dir(src: &Path, dst: &Path) {
-    std::fs::create_dir_all(dst).expect("create dir");
-    for entry in std::fs::read_dir(src).expect("read dir") {
-        let entry = entry.expect("dir entry");
-        let src_path = entry.path();
-        let name = entry.file_name().to_string_lossy().replace('_', ":");
-        let dst_path = dst.join(&name);
-        if src_path.is_dir() {
-            copy_fixture_dir(&src_path, &dst_path);
-        } else {
-            std::fs::copy(&src_path, &dst_path).expect("copy file");
+fn isolated_haiai_command() -> Command {
+    let mut command = Command::new(haiai_bin());
+    for (name, _) in std::env::vars_os() {
+        let label = name.to_string_lossy();
+        if label.starts_with("JACS_") || label.starts_with("HAI_") {
+            command.env_remove(name);
         }
     }
+    command.env("JACS_PRIVATE_KEY_PASSWORD", "secretpassord");
+    command
 }
 
 fn read_request(stream: &mut TcpStream) -> Option<RecordedRequest> {
@@ -520,7 +504,21 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     assert!(tools.contains(&"hai_register_agent".to_string()));
     assert!(tools.contains(&"hai_send_email".to_string()));
     assert!(tools.contains(&"hai_save_memory".to_string()));
-    assert!(tools.contains(&"jacs_export_agent".to_string()));
+    assert_eq!(
+        tools
+            .iter()
+            .filter(|name| name.starts_with("jacs_"))
+            .cloned()
+            .collect::<Vec<_>>(),
+        vec!["jacs_verify_document"]
+    );
+    for tool in hai_mcp::hai_tools::definitions() {
+        assert!(
+            tools.contains(&tool.name.to_string()),
+            "missing HAI tool {}",
+            tool.name
+        );
+    }
     assert!(!tools.contains(&"jacs_memory_save".to_string()));
     assert!(!tools.contains(&"jacs_memory_recall".to_string()));
     assert!(!tools.contains(&"jacs_memory_list".to_string()));
@@ -538,13 +536,15 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     );
     assert!(saved_memory["structuredContent"]["key"].as_str().is_some());
 
-    let exported = session.call_tool(10, "jacs_export_agent", json!({}));
-    let export_text = exported["content"][0]["text"]
-        .as_str()
-        .expect("jacs_export_agent text");
-    let export_json: Value = serde_json::from_str(export_text).expect("decode export result");
-    assert_eq!(export_json["success"].as_bool(), Some(true));
-    assert!(export_json["agent_id"].as_str().is_some());
+    // Loading a HAI provider never implicitly enables JACS key/export/sign tools.
+    for (index, tool) in ["jacs_sign_document", "jacs_export_agent", "jacs_sign_image"]
+        .iter()
+        .enumerate()
+    {
+        session.send(json!({"jsonrpc":"2.0","id":100 + index,"method":"tools/call","params":{"name":tool,"arguments":{}}}));
+        let rejected = session.read_message();
+        assert_eq!(rejected["error"]["code"], -32602, "{rejected}");
+    }
 
     let email_status = session.call_tool(
         12,
@@ -590,6 +590,242 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
         },
         "GET /api/agents/hai-agent-123/email/status with JACS auth",
     );
+}
+
+fn jacs_tool_value(response: Value) -> Value {
+    serde_json::from_str(
+        response["content"][0]["text"]
+            .as_str()
+            .expect("JACS tool text"),
+    )
+    .expect("JACS tool JSON")
+}
+
+#[test]
+fn explicit_local_signing_has_exact_jacs_scope_and_positive_json_agreement_workflows() {
+    use jacs::agent::boilerplate::BoilerPlate;
+    let workspace = TestWorkspace::new();
+    let config_path = workspace.write_embedded_jacs_config();
+    let config = jacs::config::Config::from_file(config_path.to_str().unwrap()).unwrap();
+    assert!(config.is_signed);
+    let public = jacs::agent::Agent::from_config_public_only(config).unwrap();
+    let agent_id = public.get_id().unwrap();
+    let hai = MiniHaiServer::start();
+    let mut session = McpSession::spawn_with_profile(hai.base_url(), &config_path, "local-sign");
+    session.initialize();
+    let tools = session.list_tools();
+    let mut jacs_tools: Vec<_> = tools
+        .iter()
+        .filter(|name| name.starts_with("jacs_"))
+        .map(String::as_str)
+        .collect();
+    jacs_tools.sort_unstable();
+    assert_eq!(
+        jacs_tools,
+        vec![
+            "jacs_apply_agreement_v2",
+            "jacs_create_agreement_v2",
+            "jacs_detect_agreement_v2_branch_conflict",
+            "jacs_merge_agreement_v2_transcript_branches",
+            "jacs_resolve_agreement_v2_branch_conflict",
+            "jacs_sign_agreement_v2",
+            "jacs_sign_document",
+            "jacs_verify_agreement_v2",
+            "jacs_verify_document",
+        ]
+    );
+    for tool in hai_mcp::hai_tools::definitions() {
+        assert!(
+            tools.contains(&tool.name.to_string()),
+            "missing HAI tool {}",
+            tool.name
+        );
+    }
+    let supplied = json!({"hello":"HAIAI local MCP", "jacsType":"agent"});
+    let signed = jacs_tool_value(session.call_tool(
+        30,
+        "jacs_sign_document",
+        json!({"content":supplied.to_string()}),
+    ));
+    assert_eq!(signed["success"], true, "{signed}");
+    let document: Value =
+        serde_json::from_str(signed["signed_document"].as_str().unwrap()).unwrap();
+    assert_eq!(document["jacsType"], "document");
+    assert_eq!(document["content"], supplied);
+    assert_eq!(document["jacsSignature"]["agentID"], agent_id);
+    let verified = jacs_tool_value(session.call_tool(31, "jacs_verify_document", json!({
+        "document":signed["signed_document"], "public_key":public.get_public_key().unwrap(), "algorithm":"ed25519"
+    })));
+    assert_eq!(verified["valid"], true, "{verified}");
+    assert!(config_path
+        .parent()
+        .unwrap()
+        .join(format!(
+            "documents/{}:{}.json",
+            document["jacsId"].as_str().unwrap(),
+            document["jacsVersion"].as_str().unwrap()
+        ))
+        .is_file());
+
+    let input = json!({"title":"Local MCP Agreement", "description":"Explicit local agent workflow.", "terms":"Return the borrowed book.", "termsFormat":"text/plain", "status":"proposed",
+        "parties":[{"agentId":agent_id,"agentType":"ai","role":"signer"}], "controllers":[agent_id],
+        "signaturePolicy":{"partyQuorum":"all","witnessRequired":0,"notaryRequired":0,"requiredAlgorithms":["ring-Ed25519"],"minimumStrength":"classical"}});
+    // Keep the public input a JSON object; the embedded handler delegates it to JACS.
+    let created =
+        jacs_tool_value(session.call_tool(32, "jacs_create_agreement_v2", json!({"input":input})));
+    assert_eq!(created["success"], true, "{created}");
+    let agreed = jacs_tool_value(session.call_tool(
+        33,
+        "jacs_sign_agreement_v2",
+        json!({"agreement":created["agreement"],"role":"signer"}),
+    ));
+    assert_eq!(agreed["success"], true, "{agreed}");
+    let inspected = jacs_tool_value(session.call_tool(
+        34,
+        "jacs_verify_agreement_v2",
+        json!({"agreement":agreed["agreement"]}),
+    ));
+    assert_eq!(inspected["success"], true, "{inspected}");
+    assert_eq!(
+        inspected["result"]["cryptographicResult"], "valid",
+        "{inspected}"
+    );
+    assert_eq!(
+        inspected["valid"], false,
+        "mathematics is not human approval or policy acceptance"
+    );
+    for (index, tool) in [
+        "jacs_create_agent",
+        "jacs_trust_agent",
+        "jacs_sign_text",
+        "jacs_sign_image",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert!(!tools.iter().any(|name| name == tool));
+        session.send(json!({"jsonrpc":"2.0","id":200 + index,"method":"tools/call","params":{"name":tool,"arguments":{}}}));
+        let rejected = session.read_message();
+        assert_eq!(rejected["error"]["code"], -32602, "{rejected}");
+    }
+    // JACS's offline tool scope does not disable separately authorized HAI HTTP tools.
+    let email = session.call_tool(
+        40,
+        "hai_get_email_status",
+        json!({"agent_id":"hai-agent-123"}),
+    );
+    assert_eq!(
+        email["structuredContent"]["email_status"]["status"],
+        "active"
+    );
+    hai.assert_request(
+        |request| {
+            request
+                .headers
+                .get("authorization")
+                .is_some_and(|value| value.starts_with("JACS "))
+        },
+        "authenticated HAI API call with local JACS scope",
+    );
+}
+
+#[test]
+fn local_signing_refuses_missing_unsigned_and_conflicting_operator_configuration() {
+    let workspace = TestWorkspace::new();
+    let config = workspace.write_embedded_jacs_config();
+    let mut unsigned: Value = serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+    unsigned.as_object_mut().unwrap().remove("jacsSignature");
+    let unsigned_path = workspace.path().join("unsigned.json");
+    std::fs::write(&unsigned_path, serde_json::to_vec(&unsigned).unwrap()).unwrap();
+    for (selection, override_env, expected) in [
+        (None, None, "requires explicit JACS_CONFIG"),
+        (Some(workspace.path().join("missing.json")), None, "config"),
+        (
+            Some(unsigned_path),
+            Some(("JACS_ALLOW_UNSIGNED_AGENT_CONFIG", "true")),
+            "signed",
+        ),
+        (
+            Some(config.clone()),
+            Some(("JACS_DEFAULT_STORAGE", "sqlite")),
+            "fs",
+        ),
+        (
+            Some(config.clone()),
+            Some(("JACS_AGENT_ID_AND_VERSION", "another:identity")),
+            "overrides",
+        ),
+        (
+            Some(config.clone()),
+            Some(("JACS_KEY_DIRECTORY", "different-keys")),
+            "overrides",
+        ),
+    ] {
+        let mut command = isolated_haiai_command();
+        command
+            .args(["mcp", "--profile", "local-sign"])
+            .current_dir(workspace.path());
+        if let Some(path) = selection {
+            command.env("JACS_CONFIG", path);
+        }
+        if let Some((key, value)) = override_env {
+            command.env(key, value);
+        }
+        let output = command.output().expect("negative local-sign startup");
+        assert!(!output.status.success());
+        assert!(
+            output.stdout.is_empty(),
+            "startup failure must not pollute MCP stdout"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "expected {expected}: {stderr}");
+    }
+}
+
+#[test]
+fn mcp_profile_and_explicit_config_precedence_match_jacs() {
+    let workspace = TestWorkspace::new();
+    let config = workspace.write_embedded_jacs_config();
+    for (cli_profile, use_primary, expected_signing) in [
+        (None, true, true),
+        (Some("verify-only"), true, false),
+        (None, false, true),
+    ] {
+        let mut command = isolated_haiai_command();
+        command
+            .arg("mcp")
+            .env("JACS_MCP_PROFILE", "local-sign")
+            .current_dir(workspace.path());
+        if use_primary {
+            command.env("JACS_CONFIG", &config).env(
+                "JACS_CONFIG_PATH",
+                workspace.path().join("ignored-missing.json"),
+            );
+        } else {
+            command.env("JACS_CONFIG_PATH", &config);
+        }
+        if let Some(profile) = cli_profile {
+            command.args(["--profile", profile]);
+        }
+        let mut session = McpSession::from_command(command, false);
+        session.initialize();
+        assert_eq!(
+            session
+                .list_tools()
+                .contains(&"jacs_sign_document".to_string()),
+            expected_signing
+        );
+    }
+    for profile in ["full", "core", "trust-admin", "legacy-core"] {
+        let output = isolated_haiai_command()
+            .args(["mcp", "--profile", profile])
+            .env("JACS_CONFIG", &config)
+            .current_dir(workspace.path())
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{profile}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains("MCP profile"));
+    }
 }
 
 #[test]

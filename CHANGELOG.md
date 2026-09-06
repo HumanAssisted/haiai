@@ -19,6 +19,28 @@
 
 ### Changed
 
+- **2026-09-05: Explicit embedded JACS MCP signing.** `haiai mcp --profile
+  local-sign` uses the existing signed `JACS_CONFIG`/`JACS_CONFIG_PATH` and JACS
+  scope constructor; conflicting identity/storage overrides are rejected.
+  Advertisement matches the instance's active nine JSON/Agreement tools.
+  Default embedded JACS stays verification-only; HAI's separate HTTP, email,
+  media and storage tools remain. Shared-identity request-auth delegation,
+  positive stdio workflows, strict lint and 47 scoped regressions pass locally.
+  This is agent provenance, not per-action human approval or restoration of
+  every JACS MCP file/media tool.
+
+- **2026-09-05: One request-bound SDK authentication path.** Actual Rust HTTP,
+  SSE and WebSocket upgrade requests use JACS v2 over final request context;
+  Python/Node/Go delegate through the same client. Added exact-byte caller-built
+  header facades and deployment-pinned audience configuration, with no legacy
+  fallback or authenticated redirects. Local key rotation preserves old-key
+  authorization of the exact new registration payload without retaining a
+  reusable old signer. Local document signing and disk storage are unchanged.
+  Unconfirmed hosted registration does not undo a successful local rotation or
+  update: check `registered_with_hai`; automatic reconciliation remains future
+  work. Final native package evidence is macOS arm64 only, not publication or
+  all-platform readiness.
+
 - **Signed-email inputs are strict in HTML-inline mode.** The SDK owns HTML rendering for now: callers pass plain text, and the SDK rejects user HTML tokens plus reserved HAI/JACS inline markers before signing so generated signature artifacts cannot be injected or confused with user content.
 - Node and Go signed-email facades now pass `html_inline_jacs` explicitly when callers omit a generation type, matching Python and keeping the cross-language default visible at the FFI boundary.
 - **JACS schema consolidation compatibility.** HAIAI now treats retired JACS application schemas as generic signed documents in MCP/docs/email assertions and refreshes embedded self-knowledge from the current JACS docs.

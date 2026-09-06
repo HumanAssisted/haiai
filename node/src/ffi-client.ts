@@ -138,6 +138,7 @@ interface NativeHaiClient {
 
   // JACS Delegation
   buildAuthHeader(): Promise<string>;
+  buildRequestAuthHeader(requestJson: string): Promise<string>;
   signMessage(message: string): Promise<string>;
   signResponse(payloadJson: string): Promise<string>;
   canonicalJson(valueJson: string): Promise<string>;
@@ -1013,6 +1014,14 @@ export class FFIClientAdapter {
   async buildAuthHeader(): Promise<string> {
     try {
       return await this.native.buildAuthHeader();
+    } catch (err) {
+      throw mapFFIError(err);
+    }
+  }
+
+  async buildRequestAuthHeader(requestJson: string): Promise<string> {
+    try {
+      return await this.native.buildRequestAuthHeader(requestJson);
     } catch (err) {
       throw mapFFIError(err);
     }

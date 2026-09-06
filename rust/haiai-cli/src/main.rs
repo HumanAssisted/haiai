@@ -136,7 +136,13 @@ enum Commands {
     },
 
     /// Start the built-in HAIAI MCP server (stdio transport)
-    Mcp,
+    Mcp {
+        /// Embedded JACS tools: verify-only (default) or local-sign with explicit
+        /// JACS_CONFIG/JACS_CONFIG_PATH and signed filesystem configuration.
+        /// HAI platform tools keep their separate configured permissions.
+        #[arg(long)]
+        profile: Option<String>,
+    },
 
     /// Ping the HAI API and verify connectivity
     Hello,
@@ -1181,6 +1187,54 @@ fn resolve_storage_flag(
     Ok(storage.map(|s| s.to_string()))
 }
 
+/// Only explicit config selection grants the embedded JACS local-sign scope.
+/// Compare through JACS's parser/override rules, not a second config inventory.
+fn mcp_local_signing_config(
+    profile: jacs_mcp::Profile,
+    storage: Option<&str>,
+) -> anyhow::Result<Option<std::path::PathBuf>> {
+    if profile != jacs_mcp::Profile::LocalSign {
+        return Ok(None);
+    }
+    let mut selected = None;
+    for name in ["JACS_CONFIG", "JACS_CONFIG_PATH"] {
+        match std::env::var(name) {
+            Ok(value) if !value.is_empty() => {
+                selected = Some(std::path::PathBuf::from(value));
+                break;
+            }
+            Ok(_) | Err(std::env::VarError::NotPresent) => {}
+            Err(_) => anyhow::bail!("{name} must be a UTF-8 config path"),
+        }
+    }
+    let selected = selected.context(
+        "local-sign requires explicit JACS_CONFIG or JACS_CONFIG_PATH; cwd config discovery does not grant signing authority",
+    )?;
+    let config = jacs::config::Config::from_file(
+        selected
+            .to_str()
+            .context("local-sign config path must be UTF-8")?,
+    )
+    .context("read selected local-sign config")?;
+    anyhow::ensure!(
+        config.is_signed,
+        "local-sign requires an existing signed JACS config"
+    );
+    anyhow::ensure!(
+        haiai::resolve_storage_backend(storage, Some(&selected))? == "fs",
+        "local-sign requires fs storage; remove conflicting --storage/--storage-env or JACS_DEFAULT_STORAGE settings",
+    );
+    let mut effective = config.clone();
+    effective.apply_env_overrides();
+    anyhow::ensure!(
+        serde_json::to_value(&effective)? == serde_json::to_value(&config)?,
+        "local-sign refuses JACS environment overrides that change the selected signed config; remove the overrides or update the signed config explicitly",
+    );
+    // JACS validates the signed config and refuses leaf symlinks itself. Keep
+    // the selected leaf intact; canonicalizing it here would bypass that check.
+    Ok(Some(selected))
+}
+
 /// Read the saved deploy state from `.haiai-deploy.json` in the current directory.
 fn read_deploy_state() -> anyhow::Result<DeployState> {
     let path = std::path::PathBuf::from(".haiai-deploy.json");
@@ -1455,6 +1509,7 @@ async fn main() -> anyhow::Result<()> {
             | Commands::SelfKnowledge { .. }
             | Commands::Deploy { .. }
             | Commands::ExtractMediaSignature { .. }
+            | Commands::Mcp { .. }
     ) {
         ensure_agent_password(cli.quiet, cli.password_file.as_deref())
             .context("failed to resolve private key password")?;
@@ -1608,7 +1663,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        Commands::Mcp => {
+        Commands::Mcp { profile } => {
             {
                 use tracing_subscriber::layer::SubscriberExt;
                 use tracing_subscriber::util::SubscriberInitExt;
@@ -1640,6 +1695,30 @@ async fn main() -> anyhow::Result<()> {
                 };
             }
 
+            let profile = jacs_mcp::Profile::resolve(profile.as_deref()).map_err(|error| {
+                tracing::warn!(event = "haiai.mcp.profile_rejected", "{error}");
+                error
+            })?;
+            let local_config = mcp_local_signing_config(profile, effective_storage.as_deref())
+                .inspect_err(|_| {
+                    tracing::warn!(
+                        event = "haiai.mcp.local_signing_rejected",
+                        "Local signing operator configuration rejected"
+                    )
+                })?;
+            ensure_agent_password(cli.quiet, cli.password_file.as_deref())
+                .context("failed to resolve private key password")?;
+            let scoped_jacs = local_config
+                .as_ref()
+                .map(JacsMcpServer::local_signing_from_config)
+                .transpose()
+                .inspect_err(|_| {
+                    tracing::warn!(
+                        event = "haiai.mcp.local_signing_rejected",
+                        "JACS refused local signing authority"
+                    )
+                })?;
+
             // Honor JACS_DEFAULT_STORAGE env var and --storage / --storage-env flags for MCP
             // document operations (PRD Section 5.2).
             let storage_summary = haiai::redacted_display(effective_storage.as_deref(), None);
@@ -1649,8 +1728,11 @@ async fn main() -> anyhow::Result<()> {
                 "MCP storage backend resolved"
             );
 
-            let shared_agent = LoadedSharedAgent::load_from_config_env()
-                .context("failed to load JACS agent for haiai mcp")?;
+            let shared_agent = match local_config {
+                Some(path) => LoadedSharedAgent::load_from_config_path(path),
+                None => LoadedSharedAgent::load_from_config_env(),
+            }
+            .context("failed to load JACS agent for haiai mcp")?;
             let provider = shared_agent
                 .embedded_provider()
                 .context("failed to construct embedded HAIAI provider from JACS agent")?;
@@ -1668,10 +1750,11 @@ async fn main() -> anyhow::Result<()> {
             if let Some(email) = shared_agent.agent_email() {
                 context.remember_agent_email(&fallback_jacs_id, email);
             }
-            let server =
-                HaiMcpServer::new(JacsMcpServer::new(shared_agent.agent_wrapper()), context);
+            let jacs =
+                scoped_jacs.unwrap_or_else(|| JacsMcpServer::new(shared_agent.agent_wrapper()));
+            let server = HaiMcpServer::new(jacs, context);
 
-            tracing::info!("haiai mcp ready, waiting for MCP client on stdio");
+            tracing::info!(jacs_profile = profile.as_str(), "haiai mcp ready, waiting for MCP client on stdio; HAI platform permissions remain separate");
 
             let (stdin, stdout) = stdio();
             let running = server.serve((stdin, stdout)).await?;
@@ -3370,14 +3453,22 @@ mod tests {
     #[test]
     fn parse_mcp() {
         let cli = Cli::parse_from(["haiai", "mcp"]);
-        assert!(matches!(cli.command, Commands::Mcp));
+        assert!(matches!(cli.command, Commands::Mcp { profile: None }));
         assert!(cli.log_file.is_none());
+    }
+
+    #[test]
+    fn parse_mcp_explicit_local_profile() {
+        let cli = Cli::parse_from(["haiai", "mcp", "--profile", "local-sign"]);
+        assert!(
+            matches!(cli.command, Commands::Mcp { profile: Some(value) } if value == "local-sign")
+        );
     }
 
     #[test]
     fn parse_mcp_with_log_file() {
         let cli = Cli::parse_from(["haiai", "--log-file", "/tmp/haiai-mcp.log", "mcp"]);
-        assert!(matches!(cli.command, Commands::Mcp));
+        assert!(matches!(cli.command, Commands::Mcp { profile: None }));
         assert_eq!(cli.log_file.as_deref(), Some("/tmp/haiai-mcp.log"));
     }
 

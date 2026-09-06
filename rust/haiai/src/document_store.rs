@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::client::DEFAULT_BASE_URL;
+use crate::client::{DEFAULT_BASE_URL, DEFAULT_REQUEST_AUTH_AUDIENCE};
 use crate::config::resolve_storage_backend;
 use crate::error::{HaiError, Result};
 use crate::jacs::JacsDocumentProvider;
@@ -25,6 +25,22 @@ pub fn build_document_provider(
     storage: Option<&str>,
     base_url: Option<String>,
 ) -> Result<Box<dyn JacsDocumentProvider>> {
+    build_document_provider_with_request_auth_audience(
+        config_path,
+        storage,
+        base_url,
+        DEFAULT_REQUEST_AUTH_AUDIENCE,
+    )
+}
+
+/// Build the routed provider with the caller's already-pinned API audience.
+/// Reconstructed FFI providers must preserve this rather than resetting it.
+pub fn build_document_provider_with_request_auth_audience(
+    config_path: Option<&Path>,
+    storage: Option<&str>,
+    base_url: Option<String>,
+    request_auth_audience: &str,
+) -> Result<Box<dyn JacsDocumentProvider>> {
     let backend = resolve_storage_backend(storage, config_path)?;
     let remote = crate::config::resolve_remote(None, config_path);
 
@@ -32,10 +48,20 @@ pub fn build_document_provider(
     // remote provider with local signing — the PRD's two-axis model.
     if remote && backend != "remote" {
         tracing::info!(backend = %backend, remote = true, "promoting to remote provider (remote=true in config)");
-        return build_document_provider_for_backend(config_path, "remote", base_url);
+        return build_document_provider_for_backend_with_audience(
+            config_path,
+            "remote",
+            base_url,
+            request_auth_audience,
+        );
     }
 
-    build_document_provider_for_backend(config_path, &backend, base_url)
+    build_document_provider_for_backend_with_audience(
+        config_path,
+        &backend,
+        base_url,
+        request_auth_audience,
+    )
 }
 
 /// Build a document provider for a pre-resolved backend label.
@@ -43,6 +69,20 @@ pub fn build_document_provider_for_backend(
     config_path: Option<&Path>,
     backend: &str,
     base_url: Option<String>,
+) -> Result<Box<dyn JacsDocumentProvider>> {
+    build_document_provider_for_backend_with_audience(
+        config_path,
+        backend,
+        base_url,
+        DEFAULT_REQUEST_AUTH_AUDIENCE,
+    )
+}
+
+fn build_document_provider_for_backend_with_audience(
+    config_path: Option<&Path>,
+    backend: &str,
+    base_url: Option<String>,
+    request_auth_audience: &str,
 ) -> Result<Box<dyn JacsDocumentProvider>> {
     match backend {
         "fs" | "rusqlite" | "sqlite" => {
@@ -66,6 +106,7 @@ pub fn build_document_provider_for_backend(
                 local,
                 RemoteJacsProviderOptions {
                     base_url,
+                    request_auth_audience: request_auth_audience.to_string(),
                     ..RemoteJacsProviderOptions::default()
                 },
             )?;

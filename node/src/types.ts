@@ -8,6 +8,8 @@ export interface HaiClientOptions {
   expectedEventTenant?: string;
   /** Pinned server recipient for job responses (the API's configured request audience). */
   responseAudience?: string;
+  /** Pinned request-auth service audience. Defaults to hai.ai; not inferred from a request. */
+  requestAuthAudience?: string;
   /** Path to jacs.config.json. Defaults to JACS_CONFIG_PATH env or ./jacs.config.json. */
   configPath?: string;
   /** HAI server URL. Default: https://hai.ai */

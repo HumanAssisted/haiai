@@ -22,7 +22,8 @@ type mockFFIClient struct {
 	authHeader string
 
 	// buildAuthHeaderFn returns the auth header. Tests can override this.
-	buildAuthHeaderFn func() (string, error)
+	buildAuthHeaderFn        func() (string, error)
+	buildRequestAuthHeaderFn func(requestJSON string) (string, error)
 	// signMessageFn signs a message. Tests can override this.
 	signMessageFn func(message string) (string, error)
 	// signResponseFn signs a response payload. Tests can override this.
@@ -482,6 +483,13 @@ func (m *mockFFIClient) BuildAuthHeader() (string, error) {
 		return m.buildAuthHeaderFn()
 	}
 	return m.authHeader, nil
+}
+
+func (m *mockFFIClient) BuildRequestAuthHeader(requestJSON string) (string, error) {
+	if m.buildRequestAuthHeaderFn != nil {
+		return m.buildRequestAuthHeaderFn(requestJSON)
+	}
+	return "", fmt.Errorf("mock: BuildRequestAuthHeader not implemented")
 }
 
 func (m *mockFFIClient) SignMessage(message string) (string, error) {

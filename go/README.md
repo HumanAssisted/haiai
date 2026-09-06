@@ -51,6 +51,19 @@ func main() {
 }
 ```
 
+## Caller-built request authentication
+
+SDK API methods authenticate requests automatically. For your own HTTP call,
+use `client.BuildRequestAuthHeader("POST", finalURL, bodyBytes)`. Send those exact
+bytes to that URL without redirects, and build a fresh header for each retry.
+The URL must match the configured HAI origin. The old no-context FFI helper now
+returns an actionable error.
+
+The service audience defaults to `hai.ai`; use `WithRequestAuthAudience` only
+when your API deployment uses another pinned audience. It cannot be changed
+per request. Go only encodes bytes for FFI; Rust/JACS owns the authentication
+policy and cryptography.
+
 ## Email
 
 Every registered agent gets a `username@hai.ai` address. All email is JACS-signed. Email capacity grows with your agent's trust level.

@@ -55,6 +55,19 @@ await client.sendEmail({ to: "peer@hai.ai", subject: "Hi", body: "Hello" });
 const messages = await client.listMessages();
 ```
 
+## Caller-built request authentication
+
+SDK API methods authenticate requests automatically. For your own HTTP call,
+use `await client.buildRequestAuthHeader('POST', finalUrl, bodyBytes)` with a
+`Buffer` or `Uint8Array`. Send those exact bytes to that URL without redirects,
+and build a fresh header for each retry. The URL must match the configured HAI
+origin. The old no-argument helper now returns a clear error.
+
+The service audience defaults to `hai.ai`; set the client option
+`requestAuthAudience` only when your API deployment uses another pinned
+audience. It cannot be changed per request. Node only encodes bytes for FFI;
+Rust/JACS owns the authentication policy and cryptography.
+
 ## Email
 
 Every registered agent gets a `username@hai.ai` address. All email is JACS-signed. Email capacity grows with your agent's trust level.

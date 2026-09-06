@@ -41,7 +41,6 @@ pub struct LocalJacsProvider {
     jacs_id: String,
     algorithm: String,
     config_path: PathBuf,
-    load_config_path: PathBuf,
     jacs_config_env: JacsConfigEnvSnapshot,
     document_service: Option<Arc<dyn DocumentService>>,
     /// The resolved storage backend label (e.g., "fs", "rusqlite").
@@ -51,6 +50,9 @@ pub struct LocalJacsProvider {
 }
 
 static JACS_CONFIG_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// Exact registration entity bytes and their request-bound authorization header.
+type PreparedAgentRegistration = (Vec<u8>, String);
 
 #[derive(Clone, Debug)]
 #[doc(hidden)]
@@ -211,7 +213,6 @@ impl LocalJacsProvider {
         config.apply_env_overrides();
         config.set_config_dir(saved_config_dir);
         canonicalize_config_dirs(&mut config, &config_path)?;
-        let load_config_path = materialize_resolved_config(&config_path, &config)?;
         let document_dir = resolve_config_relative_path(
             &config_path,
             config
@@ -279,7 +280,7 @@ impl LocalJacsProvider {
             })?;
             // Reload a fresh agent for the provider's own signing operations.
             let mut reload_config = jacs::config::Config::from_file(
-                &load_config_path.display().to_string(),
+                &config_path.display().to_string(),
             )
             .map_err(|e| {
                 HaiError::Provider(format!("failed to reload config for provider agent: {e}"))
@@ -315,7 +316,6 @@ impl LocalJacsProvider {
             jacs_id,
             algorithm,
             config_path,
-            load_config_path,
             jacs_config_env,
             document_service,
             storage_label: validated_label,
@@ -422,6 +422,14 @@ impl LocalJacsProvider {
         let mut agent = self.agent.lock().map_err(|e| {
             HaiError::Provider(format!("failed to lock agent for config signing: {e}"))
         })?;
+        self.write_config_signed_with_agent(&mut agent, config_value)
+    }
+
+    fn write_config_signed_with_agent(
+        &self,
+        agent: &mut jacs::agent::Agent,
+        config_value: &Value,
+    ) -> Result<()> {
         let signed = if config_value.get("jacsSignature").is_some() {
             agent
                 .update_config(config_value)
@@ -454,7 +462,12 @@ impl LocalJacsProvider {
         self.write_config_signed(&config_value)
     }
 
-    fn update_config_version(&self, jacs_id: &str, new_version: &str) -> Result<()> {
+    fn update_config_version(
+        &self,
+        agent: &mut jacs::agent::Agent,
+        jacs_id: &str,
+        new_version: &str,
+    ) -> Result<()> {
         let config_str = std::fs::read_to_string(&self.config_path).map_err(|e| {
             HaiError::Provider(format!("failed to read config for version update: {e}"))
         })?;
@@ -466,16 +479,149 @@ impl LocalJacsProvider {
                 serde_json::json!(new_lookup),
             );
         }
-        self.write_config_signed(&config_value)
+        self.write_config_signed_with_agent(agent, &config_value)
+    }
+
+    fn prepare_agent_registration(
+        agent: &mut jacs::agent::Agent,
+        signed_agent_json: &str,
+        url: &str,
+        audience: &str,
+    ) -> Result<PreparedAgentRegistration> {
+        let body = serde_json::to_vec(&serde_json::json!({"agent_json":signed_agent_json}))?;
+        let header = jacs::protocol::build_request_auth_header(agent, "POST", url, &body, audience)
+            .map_err(|error| HaiError::Provider(error.to_string()))?;
+        Ok((body, header))
+    }
+
+    fn update_with_registration(
+        &self,
+        new_agent_data: &str,
+        registration: Option<(&str, &str)>,
+    ) -> Result<(UpdateAgentResult, Option<PreparedAgentRegistration>)> {
+        let mut current = self
+            .agent
+            .lock()
+            .map_err(|error| HaiError::Provider(format!("failed to lock JACS agent: {error}")))?;
+        let config = jacs::config::Config::from_file(&self.config_path.display().to_string())
+            .map_err(|error| {
+                HaiError::Provider(format!("failed to load update config: {error}"))
+            })?;
+        let mut updated = jacs::agent::Agent::from_config(config, None)
+            .map_err(|error| HaiError::Provider(format!("failed to load update agent: {error}")))?;
+        let old_version = current
+            .get_value()
+            .and_then(|value| value["jacsVersion"].as_str().map(String::from))
+            .ok_or_else(|| HaiError::Provider("current agent version is unavailable".into()))?;
+        let signed_agent_json = updated
+            .update_self(new_agent_data)
+            .map_err(|error| HaiError::Provider(format!("failed to update agent: {error}")))?;
+        let new_doc: Value = serde_json::from_str(&signed_agent_json)?;
+        let new_version = new_doc["jacsVersion"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let prepared = registration
+            .map(|(url, audience)| {
+                Self::prepare_agent_registration(&mut current, &signed_agent_json, url, audience)
+            })
+            .transpose()?;
+        updated.save().map_err(|error| {
+            HaiError::Provider(format!("failed to save updated agent: {error}"))
+        })?;
+        self.update_config_version(&mut updated, &self.jacs_id, &new_version)?;
+        *current = updated;
+        Ok((
+            UpdateAgentResult {
+                jacs_id: self.jacs_id.clone(),
+                old_version,
+                new_version,
+                signed_agent_json,
+                registered_with_hai: false,
+            },
+            prepared,
+        ))
+    }
+
+    /// Reuse the existing JACS rotation, retaining the old in-memory signer
+    /// only until the exact registration entity has been authenticated.
+    fn rotate_with_registration(
+        &self,
+        registration: Option<(&str, &str)>,
+        algorithm: Option<&str>,
+    ) -> Result<(RotationResult, Option<PreparedAgentRegistration>)> {
+        let mut agent = self
+            .agent
+            .lock()
+            .map_err(|error| HaiError::Provider(format!("failed to lock JACS agent: {error}")))?;
+        let config = jacs::config::Config::from_file(&self.config_path.display().to_string())
+            .map_err(|error| {
+                HaiError::Provider(format!("failed to load rotation config: {error}"))
+            })?;
+        let rotating_agent = Mutex::new(jacs::agent::Agent::from_config(config, None).map_err(
+            |error| HaiError::Provider(format!("failed to load rotation agent: {error}")),
+        )?);
+        // Rotation commits the same canonical signed config used by reloads.
+        let rotated = simple::advanced::rotate_with_mutex(
+            &rotating_agent,
+            Some(&self.config_path.display().to_string()),
+            algorithm,
+        )
+        .map_err(|error| HaiError::Provider(format!("JACS key rotation failed: {error}")))?;
+        let result = RotationResult {
+            jacs_id: rotated.jacs_id,
+            old_version: rotated.old_version,
+            new_version: rotated.new_version,
+            new_public_key_hash: rotated.new_public_key_hash,
+            registered_with_hai: false,
+            signed_agent_json: rotated.signed_agent_json,
+        };
+        let prepared = registration
+            .map(|(url, audience)| -> Result<_> {
+                Self::prepare_agent_registration(
+                    &mut agent,
+                    &result.signed_agent_json,
+                    url,
+                    audience,
+                )
+            })
+            .transpose();
+        // Replace even if preparing registration failed: local rotation already
+        // committed and subsequent signing must use the new key. No old-key
+        // signer escapes this scope.
+        *agent = rotating_agent.into_inner().map_err(|error| {
+            HaiError::Provider(format!("failed to recover rotated agent: {error}"))
+        })?;
+        Ok((result, prepared?))
     }
 
     fn load_simple_agent(&self) -> Result<SimpleAgent> {
-        let config_path_str = self.load_config_path.display().to_string();
-        let _env_guard = JacsConfigEnvOverrideGuard::apply(&self.jacs_config_env)?;
+        let mut current = self.jacs_config_env.clone();
+        // Hold this guard through loading so rotation cannot change the
+        // canonical config between the identity snapshot and its use.
+        let agent = self
+            .agent
+            .lock()
+            .map_err(|error| HaiError::Provider(error.to_string()))?;
+        let lookup = agent
+            .get_lookup_id()
+            .map_err(|error| HaiError::Provider(error.to_string()))?;
+        let algorithm = agent
+            .get_key_algorithm()
+            .ok_or_else(|| HaiError::Provider("current signing algorithm is unavailable".into()))?;
+        for (key, value) in &mut current.entries {
+            match *key {
+                "JACS_AGENT_ID_AND_VERSION" => *value = lookup.clone(),
+                "JACS_AGENT_KEY_ALGORITHM" => *value = algorithm.clone(),
+                _ => {}
+            }
+        }
+        let config_path_str = self.config_path.display().to_string();
+        let _env_guard = JacsConfigEnvOverrideGuard::apply(&current)?;
         SimpleAgent::load(Some(&config_path_str), Some(false)).map_err(|e| {
             HaiError::Provider(format!(
                 "failed to load SimpleAgent from {}: {e}",
-                self.load_config_path.display()
+                self.config_path.display()
             ))
         })
     }
@@ -780,28 +926,6 @@ fn canonicalize_config_dir(config_path: &Path, candidate: &str) -> String {
         .to_string()
 }
 
-fn materialize_resolved_config(
-    config_path: &Path,
-    config: &jacs::config::Config,
-) -> Result<PathBuf> {
-    let Some(raw_json) = config.raw_json.as_ref() else {
-        return Ok(config_path.to_path_buf());
-    };
-    let Some(parent) = config_path.parent() else {
-        return Ok(config_path.to_path_buf());
-    };
-    let resolved_path = parent.join(".haiai_resolved_jacs.config.json");
-    let bytes = serde_json::to_vec_pretty(raw_json)
-        .map_err(|e| HaiError::Provider(format!("serialize resolved JACS config: {e}")))?;
-    std::fs::write(&resolved_path, bytes).map_err(|e| {
-        HaiError::Provider(format!(
-            "write resolved JACS config {}: {e}",
-            resolved_path.display()
-        ))
-    })?;
-    Ok(resolved_path)
-}
-
 // =============================================================================
 // JacsProvider implementation
 // =============================================================================
@@ -1077,78 +1201,49 @@ impl JacsProvider for LocalJacsProvider {
     }
 
     fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
-        let old_version = {
-            let agent = self
-                .agent
-                .lock()
-                .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
-            agent
-                .get_value()
-                .and_then(|v| v["jacsVersion"].as_str().map(String::from))
-                .unwrap_or_default()
-        };
+        self.update_with_registration(new_agent_data, None)
+            .map(|(result, _)| result)
+    }
 
-        let updated_json = {
-            let mut agent = self
-                .agent
-                .lock()
-                .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
-            agent
-                .update_self(new_agent_data)
-                .map_err(|e| HaiError::Provider(format!("failed to update agent: {e}")))?
-        };
-
-        let new_doc: Value = serde_json::from_str(&updated_json)?;
-        let new_version = new_doc["jacsVersion"].as_str().unwrap_or("").to_string();
-
-        {
-            let agent = self
-                .agent
-                .lock()
-                .map_err(|e| HaiError::Provider(format!("failed to lock agent for save: {e}")))?;
-            agent
-                .save()
-                .map_err(|e| HaiError::Provider(format!("failed to save updated agent: {e}")))?;
-        }
-
-        self.update_config_version(&self.jacs_id, &new_version)?;
-
-        Ok(UpdateAgentResult {
-            jacs_id: self.jacs_id.clone(),
-            old_version,
-            new_version,
-            signed_agent_json: updated_json,
-            registered_with_hai: false,
+    fn update_for_registration(
+        &self,
+        new_agent_data: &str,
+        url: &str,
+        audience: &str,
+    ) -> Result<crate::jacs::UpdateRegistrationRequest> {
+        let (result, prepared) =
+            self.update_with_registration(new_agent_data, Some((url, audience)))?;
+        let (body, auth_header) = prepared.expect("registration requested");
+        Ok(crate::jacs::UpdateRegistrationRequest {
+            result,
+            body,
+            auth_header,
         })
     }
 
     #[cfg(feature = "jacs-crate")]
     fn rotate(&self) -> Result<RotationResult> {
-        let simple = self.load_simple_agent()?;
-        let jacs_result = simple::advanced::rotate(&simple, None)
-            .map_err(|e| HaiError::Provider(format!("JACS key rotation failed: {e}")))?;
+        self.rotate_with_registration(None, None)
+            .map(|(result, _)| result)
+    }
 
-        // Reload the agent so in-memory state reflects the rotated keys
-        let mut agent = self
-            .agent
-            .lock()
-            .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
-        let config = jacs::config::Config::from_file(&self.config_path.display().to_string())
-            .map_err(|e| {
-                HaiError::Provider(format!("failed to reload config after rotation: {e}"))
-            })?;
-        let new_agent = jacs::agent::Agent::from_config(config, None).map_err(|e| {
-            HaiError::Provider(format!("failed to reload JACS agent after rotation: {e}"))
-        })?;
-        *agent = new_agent;
+    fn rotate_with_algorithm(&self, algorithm: Option<&str>) -> Result<RotationResult> {
+        self.rotate_with_registration(None, algorithm)
+            .map(|(result, _)| result)
+    }
 
-        Ok(RotationResult {
-            jacs_id: jacs_result.jacs_id,
-            old_version: jacs_result.old_version,
-            new_version: jacs_result.new_version,
-            new_public_key_hash: jacs_result.new_public_key_hash,
-            registered_with_hai: false,
-            signed_agent_json: jacs_result.signed_agent_json,
+    fn rotate_for_registration(
+        &self,
+        url: &str,
+        audience: &str,
+        algorithm: Option<&str>,
+    ) -> Result<crate::jacs::RotationRegistrationRequest> {
+        let (result, prepared) = self.rotate_with_registration(Some((url, audience)), algorithm)?;
+        let (body, auth_header) = prepared.expect("registration requested");
+        Ok(crate::jacs::RotationRegistrationRequest {
+            result,
+            body,
+            auth_header,
         })
     }
 }
@@ -1855,12 +1950,7 @@ impl JacsVerificationProvider for LocalJacsProvider {
     }
 
     fn build_auth_header_jacs(&self) -> Result<String> {
-        let mut agent = self
-            .agent
-            .lock()
-            .map_err(|e| HaiError::Provider(format!("failed to lock JACS agent: {e}")))?;
-        jacs::protocol::build_auth_header(&mut agent)
-            .map_err(|e| HaiError::Provider(format!("build_auth_header failed: {e}")))
+        Err(crate::request_auth::missing_request_context())
     }
 
     fn unwrap_signed_event(
@@ -2803,6 +2893,283 @@ fn resolve_jacs_config_path(config_path: Option<&Path>) -> PathBuf {
 mod tests {
     use super::*;
     use crate::jacs::JacsMediaProvider;
+
+    #[test]
+    fn canonical_config_handles_relative_paths_and_restart_without_secondary_cache() {
+        let _guard = crate::test_support::env_lock();
+        let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix(".sdk-config-path-")
+            .tempdir_in(&cwd)
+            .unwrap();
+        let config_path = dir.path().join("jacs.config.json");
+        std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123");
+        LocalJacsProvider::create_agent(jacs::simple::CreateAgentParams {
+            name: "canonical-config-only".into(),
+            password: "TestPass!123".into(),
+            config_path: config_path.display().to_string(),
+            data_directory: dir.path().join("data").display().to_string(),
+            key_directory: dir.path().join("keys").display().to_string(),
+            algorithm: "ring-Ed25519".into(),
+            default_storage: "fs".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        let relative_config = config_path.strip_prefix(&cwd).unwrap();
+        let provider = LocalJacsProvider::from_config_path(Some(relative_config), None).unwrap();
+        let mut config: Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        config["jacs_data_directory"] = serde_json::json!("data");
+        config["jacs_key_directory"] = serde_json::json!("keys");
+        provider.write_config_signed(&config).unwrap();
+        // An unwritable obsolete cache path must not prevent canonical updates.
+        std::fs::create_dir(dir.path().join(".haiai_resolved_jacs.config.json")).unwrap();
+        let restarted = LocalJacsProvider::from_config_path(Some(&config_path), None).unwrap();
+        restarted
+            .update_config_email("canonical@example.test")
+            .unwrap();
+        let rotated = restarted
+            .rotate_with_algorithm(Some("ring-Ed25519"))
+            .unwrap();
+        let relative_restart =
+            LocalJacsProvider::from_config_path(Some(relative_config), None).unwrap();
+        let agent: Value =
+            serde_json::from_str(&relative_restart.export_agent_json().unwrap()).unwrap();
+        assert_eq!(agent["jacsVersion"], rotated.new_version);
+        assert_eq!(
+            relative_restart.agent_email_from_config().as_deref(),
+            Some("canonical@example.test")
+        );
+    }
+
+    #[test]
+    fn metadata_registration_uses_prior_version_and_preserves_local_update_on_failure() {
+        let _guard = crate::test_support::env_lock();
+        // Match tokio::test's current-thread runtime while keeping the shared
+        // process-environment lock outside async code.
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("metadata registration test runtime")
+            .block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(60), async {
+                    for status in [200, 503] {
+                        let (_dir, config_path) =
+                            crate::test_support::create_test_agent("metadata-v2-boundary");
+                        let provider =
+                            LocalJacsProvider::from_config_path(Some(&config_path), None).unwrap();
+                        let old_key = provider.public_key_pem().unwrap();
+                        let mut updated: Value =
+                            serde_json::from_str(&provider.export_agent_json().unwrap()).unwrap();
+                        let old_key_id = format!(
+                            "{}:{}",
+                            updated["jacsId"].as_str().unwrap(),
+                            updated["jacsVersion"].as_str().unwrap()
+                        );
+                        updated["jacsName"] = serde_json::json!("updated-with-current-key");
+                        let server = httpmock::MockServer::start_async().await;
+                        let captured = Arc::new(Mutex::new(Vec::new()));
+                        let seen = captured.clone();
+                        let registration = server
+                            .mock_async(move |when, then| {
+                                when.method("POST").path("/api/v1/agents/register").is_true(
+                                    move |request: &httpmock::HttpMockRequest| {
+                                        let header = request.headers()["authorization"]
+                                            .to_str()
+                                            .unwrap()
+                                            .to_string();
+                                        seen.lock().unwrap().push((header, request.body_vec()));
+                                        true
+                                    },
+                                );
+                                then.status(status);
+                            })
+                            .await;
+                        let client = crate::HaiClient::new(
+                            provider,
+                            crate::HaiClientOptions {
+                                base_url: server.base_url(),
+                                request_auth_audience: "metadata.staging".into(),
+                                max_retries: 0,
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap();
+                        let result = client.update_agent(&updated.to_string()).await.unwrap();
+                        assert_eq!(result.registered_with_hai, status == 200);
+                        registration.assert_calls_async(1).await;
+                        let captured = captured.lock().unwrap();
+                        let (header, body) = &captured[0];
+                        let claims =
+                            jacs::protocol::inspect_unverified_request_auth_header(header).unwrap();
+                        assert_eq!(claims.key_id, old_key_id);
+                        assert_eq!(
+                            serde_json::from_slice::<Value>(body).unwrap(),
+                            serde_json::json!({"agent_json":result.signed_agent_json})
+                        );
+                        jacs::protocol::verify_request_auth_header_with_trusted_key_without_replay(
+                            header,
+                            old_key.as_bytes(),
+                            &old_key_id,
+                            "POST",
+                            &server.url("/api/v1/agents/register"),
+                            body,
+                            "metadata.staging",
+                            60,
+                        )
+                        .unwrap();
+                        let restarted =
+                            LocalJacsProvider::from_config_path(Some(&config_path), None).unwrap();
+                        let local: Value =
+                            serde_json::from_str(&restarted.export_agent_json().unwrap()).unwrap();
+                        assert_eq!(local["jacsVersion"], result.new_version);
+                        assert_eq!(local["jacsName"], "updated-with-current-key");
+                        assert_eq!(restarted.public_key_pem().unwrap(), old_key);
+                        let current_header = restarted
+                            .build_request_auth_header(
+                                "GET",
+                                &server.url("/local-check"),
+                                &[],
+                                "metadata.staging",
+                            )
+                            .unwrap();
+                        let current =
+                            jacs::protocol::inspect_unverified_request_auth_header(&current_header)
+                                .unwrap();
+                        assert_eq!(
+                            current.key_id,
+                            format!("{}:{}", result.jacs_id, result.new_version)
+                        );
+                    }
+                })
+                .await
+                .expect("metadata registration test timeout");
+            });
+    }
+
+    #[test]
+    fn rotation_registration_authenticates_exact_new_document_with_old_key() {
+        let _guard = crate::test_support::env_lock();
+        let (_dir, config_path) = crate::test_support::create_test_agent("rotation-v2-boundary");
+        let provider = LocalJacsProvider::from_config_path(Some(&config_path), None).unwrap();
+        assert!(provider
+            .build_auth_header_jacs()
+            .unwrap_err()
+            .to_string()
+            .contains("build_request_auth_header"));
+        let mut updated: Value =
+            serde_json::from_str(&provider.export_agent_json().unwrap()).unwrap();
+        updated["jacsName"] = serde_json::json!("updated-before-rotation");
+        let updated = provider.update_agent(&updated.to_string()).unwrap();
+        provider
+            .update_config_email("rotated@example.test")
+            .unwrap();
+        let old_key = provider.public_key_pem().unwrap();
+        let url = "https://hai.example/api/v1/agents/register";
+        let prepared = provider
+            .rotate_for_registration(url, "hai.ai", Some("ring-Ed25519"))
+            .unwrap();
+        assert_eq!(prepared.result.old_version, updated.new_version);
+        let rotated_agent: Value =
+            serde_json::from_str(&prepared.result.signed_agent_json).unwrap();
+        assert_eq!(rotated_agent["jacsName"], "updated-before-rotation");
+        assert_eq!(
+            provider.agent_email_from_config().as_deref(),
+            Some("rotated@example.test")
+        );
+        let claims =
+            jacs::protocol::inspect_unverified_request_auth_header(&prepared.auth_header).unwrap();
+        assert_eq!(
+            claims.key_id,
+            format!(
+                "{}:{}",
+                prepared.result.jacs_id, prepared.result.old_version
+            )
+        );
+        let payload: Value = serde_json::from_slice(&prepared.body).unwrap();
+        assert_eq!(
+            payload,
+            serde_json::json!({"agent_json":prepared.result.signed_agent_json})
+        );
+        jacs::protocol::verify_request_auth_header_with_trusted_key_without_replay(
+            &prepared.auth_header,
+            old_key.as_bytes(),
+            &claims.key_id,
+            "POST",
+            url,
+            &prepared.body,
+            "hai.ai",
+            60,
+        )
+        .unwrap();
+        assert!(
+            jacs::protocol::verify_request_auth_header_with_trusted_key_without_replay(
+                &prepared.auth_header,
+                old_key.as_bytes(),
+                &claims.key_id,
+                "POST",
+                url,
+                b"{}",
+                "hai.ai",
+                60
+            )
+            .is_err()
+        );
+        let next_header = provider
+            .build_request_auth_header("GET", "https://hai.example/api/v1/agents/me", &[], "hai.ai")
+            .unwrap();
+        let next_claims =
+            jacs::protocol::inspect_unverified_request_auth_header(&next_header).unwrap();
+        assert_eq!(
+            next_claims.key_id,
+            format!(
+                "{}:{}",
+                prepared.result.jacs_id, prepared.result.new_version
+            )
+        );
+        let new_key = provider.public_key_pem().unwrap();
+        assert_ne!(old_key, new_key);
+        jacs::protocol::verify_request_auth_header_with_trusted_key_without_replay(
+            &next_header,
+            new_key.as_bytes(),
+            &next_claims.key_id,
+            "GET",
+            "https://hai.example/api/v1/agents/me",
+            &[],
+            "hai.ai",
+            60,
+        )
+        .unwrap();
+        let restarted = LocalJacsProvider::from_config_path(Some(&config_path), None).unwrap();
+        assert_eq!(
+            restarted.public_key_pem().unwrap(),
+            new_key,
+            "canonical config must survive restart"
+        );
+        let second = provider
+            .rotate_for_registration(url, "hai.ai", None)
+            .unwrap();
+        assert_eq!(
+            second.result.old_version, prepared.result.new_version,
+            "a second rotation uses current identity, not startup snapshot"
+        );
+        let second_claims =
+            jacs::protocol::inspect_unverified_request_auth_header(&second.auth_header).unwrap();
+        jacs::protocol::verify_request_auth_header_with_trusted_key_without_replay(
+            &second.auth_header,
+            new_key.as_bytes(),
+            &second_claims.key_id,
+            "POST",
+            url,
+            &second.body,
+            "hai.ai",
+            60,
+        )
+        .unwrap();
+        let exported = provider.export_agent_json().unwrap();
+        let exported: Value = serde_json::from_str(&exported).unwrap();
+        assert_eq!(exported["jacsVersion"], second.result.new_version);
+    }
 
     struct TestJacsEnvOverrideGuard(Vec<(&'static str, bool, Option<String>)>);
 

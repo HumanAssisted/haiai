@@ -148,6 +148,7 @@ extern char* hai_sign_response(HaiClientHandle handle, const char* payload_json)
 extern char* hai_canonical_json(HaiClientHandle handle, const char* value_json);
 extern char* hai_verify_a2a_artifact(HaiClientHandle handle, const char* wrapped_json);
 extern char* hai_build_auth_header(HaiClientHandle handle);
+extern char* hai_build_request_auth_header(HaiClientHandle handle, const char* request_json);
 extern char* hai_export_agent_json(HaiClientHandle handle);
 
 // Client State (Read)
@@ -1139,6 +1140,25 @@ func (c *Client) BuildAuthHeader() (string, error) {
 		return "", fmt.Errorf("failed to parse auth header: %w", err)
 	}
 	return s, nil
+}
+
+func (c *Client) BuildRequestAuthHeader(requestJSON string) (string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return "", err
+	}
+	cs := cString(requestJSON)
+	defer C.free(unsafe.Pointer(cs))
+	raw, err := parseEnvelope(goString(C.hai_build_request_auth_header(c.handle, cs)))
+	if err != nil {
+		return "", err
+	}
+	var header string
+	if err := json.Unmarshal(raw, &header); err != nil {
+		return "", fmt.Errorf("failed to parse request auth header: %w", err)
+	}
+	return header, nil
 }
 
 func (c *Client) SignMessage(message string) (string, error) {

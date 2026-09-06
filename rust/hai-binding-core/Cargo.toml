@@ -13,6 +13,7 @@ homepage.workspace = true
 
 [dependencies]
 haiai = { version = "=0.4.1", path = "../haiai", features = ["conflict"] }
+base64.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
 thiserror.workspace = true

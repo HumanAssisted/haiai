@@ -69,6 +69,19 @@ client.send_email("https://hai.ai", to="peer@hai.ai", subject="Hi", body="Hello"
 messages = client.list_messages("https://hai.ai")
 ```
 
+## Caller-built request authentication
+
+SDK API methods authenticate requests automatically. For your own HTTP call,
+use `client.build_request_auth_header("POST", final_url, body_bytes)` (or `await`
+the same method on `AsyncHaiClient`). Send those exact bytes to that URL without
+redirects, and build a fresh header for each retry. The URL must match the
+configured HAI origin. The old no-argument helper now returns a clear error.
+
+The service audience defaults to `hai.ai`; set `request_auth_audience` on the
+client only when your API deployment uses a different pinned audience. It is
+never chosen from the outgoing request. Python only encodes the bytes for FFI;
+Rust/JACS owns the authentication policy and cryptography.
+
 ## Email
 
 Every registered agent gets a `username@hai.ai` address. All email is JACS-signed. Email capacity grows with your agent's trust level.

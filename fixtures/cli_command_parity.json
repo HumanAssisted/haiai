@@ -9,7 +9,7 @@
     },
     {
       "name": "mcp",
-      "args": []
+      "args": ["profile:string?"]
     },
     {
       "name": "hello",

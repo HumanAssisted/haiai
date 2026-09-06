@@ -16,6 +16,7 @@ fn make_client(base_url: &str, jacs_id: &str) -> HaiClient<StaticJacsProvider> {
     .expect("client")
 }
 
+#[cfg(feature = "jacs-crate")]
 #[tokio::test]
 async fn submit_response_escapes_job_id_path_segment() {
     let server = MockServer::start_async().await;
@@ -23,7 +24,12 @@ async fn submit_response_escapes_job_id_path_segment() {
     let mock = server
         .mock_async(|when, then| {
             when.method(POST)
-                .path("/api/v1/agents/jobs/job%2Fwith%2Fslash/response");
+                .path("/api/v1/agents/jobs/job%2Fwith%2Fslash/response")
+                .header_exists("authorization")
+                .body_includes(r#"\"contextClass\":\"private_event\""#)
+                .body_includes(r#"\"tenant\":\"path-test-tenant\""#)
+                .body_includes(r#"\"audience\":\"path-test-api\""#)
+                .body_includes(r#"\"job_id\":\"job/with/slash\""#);
             then.status(200).json_body(json!({
                 "success": true,
                 "job_id": "job/with/slash",
@@ -32,7 +38,51 @@ async fn submit_response_escapes_job_id_path_segment() {
         })
         .await;
 
-    let client = make_client(&server.base_url(), "agent/with/slash");
+    // Job responses require a real contextual signer. The other tests only
+    // exercise routing and may continue using a fake HTTP credential provider.
+    let directory = tempfile::tempdir().expect("isolated signing fixture");
+    let root = directory
+        .path()
+        .canonicalize()
+        .expect("canonical fixture root");
+    let config = root.join("jacs.config.json");
+    let password = "path-fixture-password";
+    struct RestorePassword(Option<std::ffi::OsString>);
+    impl Drop for RestorePassword {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => unsafe { std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", value) },
+                None => unsafe { std::env::remove_var("JACS_PRIVATE_KEY_PASSWORD") },
+            }
+        }
+    }
+    let _restore = RestorePassword(std::env::var_os("JACS_PRIVATE_KEY_PASSWORD"));
+    unsafe { std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", password) };
+    haiai::LocalJacsProvider::create_agent_with_options(&haiai::CreateAgentOptions {
+        name: "path-context-test".into(),
+        password: password.into(),
+        algorithm: Some("ed25519".into()),
+        data_directory: Some(root.join("data").display().to_string()),
+        key_directory: Some(root.join("keys").display().to_string()),
+        config_path: Some(config.display().to_string()),
+        agent_type: None,
+        description: None,
+        domain: None,
+        default_storage: None,
+    })
+    .expect("create real JACS signer");
+    let provider =
+        haiai::LocalJacsProvider::from_config_path(Some(&config), None).expect("load signer");
+    let client = HaiClient::new(
+        provider,
+        HaiClientOptions {
+            base_url: server.base_url(),
+            ..HaiClientOptions::default()
+        },
+    )
+    .expect("client")
+    .with_expected_event_context("path-test-tenant".into(), "path-test-api".into())
+    .expect("explicit job response context");
     client
         .submit_response("job/with/slash", "response body", None, 0)
         .await

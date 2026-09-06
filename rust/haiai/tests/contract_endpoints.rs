@@ -116,7 +116,11 @@ async fn submit_response_uses_shared_method_path_auth_contract() {
     // This endpoint now requires a real named contextual signer; the static
     // fake-signature provider deliberately cannot authorize action output.
     let directory = tempfile::tempdir().expect("isolated signing fixture");
-    let config = directory.path().join("jacs.config.json");
+    let base = directory
+        .path()
+        .canonicalize()
+        .expect("canonical signing fixture");
+    let config = base.join("jacs.config.json");
     let password = "contract-fixture-password";
     let previous = std::env::var_os("JACS_PRIVATE_KEY_PASSWORD");
     struct RestorePassword(Option<std::ffi::OsString>);
@@ -134,8 +138,8 @@ async fn submit_response_uses_shared_method_path_auth_contract() {
         name: "context-contract-test".into(),
         password: password.into(),
         algorithm: Some("ed25519".into()),
-        data_directory: Some(directory.path().join("data").display().to_string()),
-        key_directory: Some(directory.path().join("keys").display().to_string()),
+        data_directory: Some(base.join("data").display().to_string()),
+        key_directory: Some(base.join("keys").display().to_string()),
         config_path: Some(config.display().to_string()),
         agent_type: None,
         description: None,

@@ -196,7 +196,7 @@
     ]
   },
   "build_auth_header": {
-    "description": "buildAuthHeader must produce 'JACS {jacsId}:{timestamp}:{nonce}:{signature_base64}'. Vectors in cross_lang_test.json cover format; these cover edge cases.",
+    "description": "The retired no-context buildAuthHeader helper must reject and point to buildRequestAuthHeader(method, url, body). Current authentication delegates exact request context to Rust/JACS request-auth-v2; cross_lang_test.json request_auth defines the FFI encoding contract.",
     "cases": [
       {
         "name": "special_chars_in_id",

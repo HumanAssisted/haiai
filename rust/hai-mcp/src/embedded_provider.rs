@@ -381,6 +381,26 @@ impl JacsProvider for EmbeddedJacsProvider {
         })
     }
 
+    fn build_request_auth_header(
+        &self,
+        method: &str,
+        url: &str,
+        body: &[u8],
+        audience: &str,
+    ) -> HaiResult<String> {
+        let mut agent = self
+            .inner
+            .lock()
+            .map_err(|error| HaiError::Provider(format!("failed to lock JACS agent: {error}")))?;
+        jacs::protocol::build_request_auth_header(&mut agent, method, url, body, audience).map_err(
+            |error| {
+                HaiError::Provider(format!(
+                    "embedded JACS request authentication failed: {error}"
+                ))
+            },
+        )
+    }
+
     fn sign_email_locally(&self, raw_email: &[u8]) -> HaiResult<Vec<u8>> {
         let signer = AgentSigner(Arc::clone(&self.inner));
         jacs::email::sign_email(raw_email, &signer)
@@ -587,6 +607,62 @@ pub(crate) mod tests {
         let local_json: Value =
             serde_json::from_str(&local.export_agent_json().unwrap()).expect("local json");
         assert_eq!(embedded_json, local_json);
+    }
+
+    #[test]
+    fn embedded_provider_authenticates_exact_client_request_with_shared_identity() {
+        let (_temp_dir, config_path) = write_temp_fixture_config();
+        let shared = LoadedSharedAgent::load_from_config_path(&config_path).expect("load shared");
+        let embedded = shared.embedded_provider().expect("embedded provider");
+        let public_key = embedded.public_key_pem().expect("public key");
+        let agent_json: Value =
+            serde_json::from_str(&embedded.export_agent_json().unwrap()).expect("agent json");
+        let key_id = format!(
+            "{}:{}",
+            agent_json["jacsId"].as_str().unwrap(),
+            agent_json["jacsVersion"].as_str().unwrap()
+        );
+        let audience = "embedded-hai-deployment";
+        let client = haiai::HaiClient::new(
+            embedded,
+            haiai::HaiClientOptions {
+                base_url: "https://hai.example".into(),
+                request_auth_audience: audience.into(),
+                ..Default::default()
+            },
+        )
+        .expect("embedded HAI client");
+        let url = "https://hai.example/api/items/a%2Fb?x=%2B&x=two";
+        let body = [0, 0xff, b'\r', b'\n'];
+        let header = client
+            .build_request_auth_header("PATCH", url, &body)
+            .expect("embedded provider must support authenticated HAI requests");
+
+        jacs::protocol::verify_request_auth_header_with_trusted_key_without_replay(
+            &header,
+            public_key.as_bytes(),
+            &key_id,
+            "PATCH",
+            url,
+            &body,
+            audience,
+            60,
+        )
+        .expect("shared registered identity verifies the exact request");
+        assert!(
+            jacs::protocol::verify_request_auth_header_with_trusted_key_without_replay(
+                &header,
+                public_key.as_bytes(),
+                &key_id,
+                "PATCH",
+                url,
+                b"changed body",
+                audience,
+                60,
+            )
+            .is_err(),
+            "the embedded adapter must preserve request-byte binding"
+        );
     }
 
     // -------------------------------------------------------------------------

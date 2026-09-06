@@ -1,7 +1,8 @@
 {
-  "description": "Cross-language HAIAI wrapper contract for JACS auth-header shaping and canonical JSON selection.",
+  "description": "Cross-language HAIAI wrapper contract for exact request-auth delegation and canonical JSON selection.",
   "ownership_note": "This fixture intentionally covers only HAIAI-owned behavior. Raw cryptographic signing, verification, and key handling remain owned by JACS.",
   "auth_header": {
+    "status": "retired: historical fixture only; no-context SDK helpers reject and direct callers to request_auth",
     "scheme": "JACS",
     "parts": [
       "jacs_id",
@@ -16,6 +17,17 @@
       "nonce": "fixture-nonce-001",
       "stub_signature_base64": "fixture-signature-base64",
       "expected_header": "JACS test-agent-001:1700000000:fixture-nonce-001:fixture-signature-base64"
+    }
+  },
+  "request_auth": {
+    "scheme_prefix": "JACS v2.",
+    "input_fields": ["method", "url", "body_base64"],
+    "audience_source": "pinned client configuration, never per-request input",
+    "example": {
+      "method": "POST",
+      "url": "https://hai.ai/api/example?q=a%20b",
+      "body_base64": "AP8NCg==",
+      "stub_header": "JACS v2.fixture-delegated-header"
     }
   },
   "canonical_json_cases": [

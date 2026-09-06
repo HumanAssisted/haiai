@@ -1551,6 +1551,27 @@ impl HaiClient {
             .map_err(to_py_err)
     }
 
+    fn build_request_auth_header<'py>(
+        &self,
+        py: Python<'py>,
+        request_json: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            client
+                .build_request_auth_header(&request_json)
+                .await
+                .map_err(to_py_err)
+        })
+    }
+
+    fn build_request_auth_header_sync(&self, py: Python, request_json: String) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        py.detach(|| RT.block_on(async { client.build_request_auth_header(&request_json).await }))
+            .map_err(to_py_err)
+    }
+
     fn sign_message<'py>(&self, py: Python<'py>, message: String) -> PyResult<Bound<'py, PyAny>> {
         let client = self.inner.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
@@ -1649,6 +1670,17 @@ impl HaiClient {
         check_not_async()?;
         let client = self.inner.clone();
         Ok(py.detach(|| RT.block_on(async { client.jacs_id().await })))
+    }
+
+    fn base_url<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let client = self.inner.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move { Ok(client.base_url().await) })
+    }
+
+    fn base_url_sync(&self, py: Python) -> PyResult<String> {
+        check_not_async()?;
+        let client = self.inner.clone();
+        Ok(py.detach(|| RT.block_on(async { client.base_url().await })))
     }
 
     fn set_hai_agent_id<'py>(&self, py: Python<'py>, id: String) -> PyResult<Bound<'py, PyAny>> {

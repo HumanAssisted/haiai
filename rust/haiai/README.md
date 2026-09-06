@@ -40,13 +40,57 @@ async fn main() -> anyhow::Result<()> {
 This crate delegates all cryptographic operations to JACS via `JacsProvider` and owns HAI-specific concerns:
 
 - HAI API endpoint contracts and authentication
-- JACS auth header construction (`JACS {jacsId}:{timestamp}:{signature_base64}`)
+- Request-bound JACS v2 authentication (delegated to JACS)
 - URL/path escaping for agent IDs
 - Email, benchmark, and verification API workflows
 - Verify-link generation
 - A2A facade composition (`client.get_a2a(...)`)
 
 ## Signed Email Generation
+
+### API request authentication
+
+Authenticated `HaiClient` operations sign the final HTTP method, origin,
+path/query, exact body bytes and configured recipient using JACS request-auth
+v2. There is no old-header fallback. Python, Node and Go operations use this
+same Rust transport; ordinary local document signing and encrypted disk keys
+are unchanged. Unsigned registration bootstrap and public discovery remain
+available.
+
+The default `HaiClientOptions::request_auth_audience` is `hai.ai`, matching
+HAI. A separately deployed API must configure its audience explicitly in both
+API ingress and SDK; discovery never chooses that trust value. Authenticated
+requests do not follow redirects. A normal retry gets a fresh proof over the
+same operation data.
+
+For a caller-built HTTP request, use
+`client.build_request_auth_header(method, final_url, exact_body_bytes)` and
+send that exact request once without redirects. The URL must match the client
+origin. The old no-argument `build_auth_header()` returns an actionable error
+because it cannot bind a request. Never serialize the body again after signing.
+
+Key rotation still delegates to JACS. When registering rotated keys, the local
+provider retains its existing in-memory old signer only long enough to
+authenticate the final new-agent registration bytes, then switches to the new
+key. Custom providers implement `rotate_for_registration` for this operation;
+local-only `rotate()` remains independent. An unconfirmed API registration is
+reported as `registered_with_hai: false` and a bounded WARN, not silent success.
+Metadata registration likewise authenticates its exact bytes with the previous
+registered version, using the same request preparation and transport helpers.
+Python sync/async rotation delegates this Rust path, including its existing
+algorithm option; omitting the Rust algorithm option preserves the current one.
+
+Local success is not hosted readiness: after unconfirmed rotation or metadata
+registration, local signing remains usable but the API may still know only the
+previous version. Automatic retry/reconciliation after this partial outcome is
+not implemented; callers must check `registered_with_hai` and must not report
+hosted success merely because local files were updated.
+
+`StaticJacsProvider` remains a fake-signature test fixture, not authentication
+or a substitute for a configured local JACS agent. Signing errors emit the
+bounded `jacs_request_auth_failed` WARN event without request bodies or headers.
+
+### Email payloads
 
 `HaiClient::send_signed_email` defaults to `EmailGenerationType::HtmlInlineJacs`: the SDK renders safe HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Use `send_signed_email_with_generation_type(..., EmailGenerationType::AttachmentJacs)` only for compatibility with the older attachment transport.
 

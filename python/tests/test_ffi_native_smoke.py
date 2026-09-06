@@ -1,7 +1,7 @@
 """Real-FFI smoke tests for haiipy.
 
-Two tests, one per backend, both loading the real haiipy native binding
-(PyO3 cdylib) and exercising `save_memory("...")` end-to-end:
+The storage tests load the real haiipy native binding (PyO3 cdylib) and
+exercise `save_memory("...")` end-to-end for each backend:
 
 1. **Remote** (`test_save_memory_round_trips_through_native_binding`) —
    hosted production path. Sets ``JACS_DEFAULT_STORAGE=remote`` so the FFI
@@ -16,9 +16,8 @@ Two tests, one per backend, both loading the real haiipy native binding
    disk, and returns a client-side ``{jacsId}:{jacsVersion}`` key. Verifies
    the doc round-trips via `get_record_bytes(key)`.
 
-Together these two tests cover the only two backends production and dev
-users actually exercise — and would have caught a regression in either
-the remote routing path OR the local FS routing path.
+The request-auth tests additionally exercise the public sync and async SDK
+facades with binary bytes, pinned audience, and native validation errors.
 
 Skipped cleanly when:
 - haiipy is not built / installable (`importorskip`).
@@ -36,6 +35,8 @@ listening socket can intercept.
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 import os
 import re
@@ -369,3 +370,82 @@ def test_save_memory_local_path_through_native_binding(
             "expected the stored signed-text artifact to contain the "
             "original plaintext we just saved"
         )
+
+
+def _unverified_request_auth_claims(header: str) -> dict[str, Any]:
+    """Inspect transport fields only; cryptographic verification stays in JACS."""
+    assert re.fullmatch(r"JACS v2\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", header)
+    segment = header.removeprefix("JACS v2.").split(".", 1)[0]
+    return json.loads(base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4)))
+
+
+@pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+def test_request_auth_helper_through_native_binding(
+    monkeypatch: pytest.MonkeyPatch, use_async: bool
+) -> None:
+    """Public facades carry binary bytes and return the native header unchanged."""
+    from jacs import SimpleAgent
+
+    from haiai import config
+    from haiai.async_client import AsyncHaiClient
+    from haiai.client import HaiClient
+    from haiai.errors import HaiError
+
+    _restore_smoke_password(monkeypatch)
+    monkeypatch.setenv("JACS_DEFAULT_STORAGE", "fs")
+    monkeypatch.setenv("HAI_URL", "http://127.0.0.1:1")
+
+    with tempfile.TemporaryDirectory() as workdir:
+        config_path = _bootstrap_fresh_jacs_agent(workdir)
+        monkeypatch.setenv("JACS_CONFIG_PATH", config_path)
+        config.load(config_path)
+        try:
+            audience = "smoke-request-audience"
+            url = "http://127.0.0.1:1/api/example?q=a%20b"
+            body = b"\x00\xff\r\nbinary-body"
+            client = (
+                AsyncHaiClient(request_auth_audience=audience)
+                if use_async
+                else HaiClient(request_auth_audience=audience)
+            )
+            if use_async:
+                header = asyncio.run(
+                    client.build_request_auth_header("POST", url, body)
+                )
+            else:
+                header = client.build_request_auth_header("POST", url, body)
+
+            claims = _unverified_request_auth_claims(header)
+            # Compare with JACS's own builder, not a second hash/signature implementation.
+            reference = SimpleAgent.load(config_path).build_request_auth_header(
+                "POST", url, body, audience
+            )
+            expected = _unverified_request_auth_claims(reference)
+            for field in (
+                "keyId",
+                "method",
+                "authority",
+                "target",
+                "audience",
+                "contentDigest",
+            ):
+                assert claims[field] == expected[field]
+            assert claims["audience"] == audience
+            assert claims["target"] == "/api/example?q=a%20b"
+
+            with pytest.raises(HaiError, match="origin"):
+                wrong_origin = "http://127.0.0.1:2/api/example"
+                if use_async:
+                    asyncio.run(
+                        client.build_request_auth_header("POST", wrong_origin, body)
+                    )
+                else:
+                    client.build_request_auth_header("POST", wrong_origin, body)
+
+            with pytest.raises(HaiError, match="request authentication requires"):
+                if use_async:
+                    asyncio.run(client._get_ffi().build_auth_header())
+                else:
+                    client._get_ffi().build_auth_header()
+        finally:
+            config.reset()

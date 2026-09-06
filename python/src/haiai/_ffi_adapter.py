@@ -633,6 +633,12 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
+    def build_request_auth_header(self, request_json: str) -> str:
+        try:
+            return self._native.build_request_auth_header_sync(request_json)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
     def sign_message(self, message: str) -> str:
         try:
             return self._native.sign_message_sync(message)
@@ -1497,6 +1503,12 @@ class AsyncFFIAdapter:
     async def build_auth_header(self) -> str:
         try:
             return await self._native.build_auth_header()
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def build_request_auth_header(self, request_json: str) -> str:
+        try:
+            return await self._native.build_request_auth_header(request_json)
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 

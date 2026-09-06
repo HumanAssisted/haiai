@@ -20,13 +20,14 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use base64::Engine;
 use serde_json::Value;
 use tokio::sync::RwLock;
 
 use std::path::Path;
 
 use haiai::client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
-use haiai::document_store::build_document_provider;
+use haiai::document_store::build_document_provider_with_request_auth_audience;
 use haiai::error::HaiError;
 #[cfg(feature = "agreements")]
 use haiai::jacs::JacsAgreementProvider;
@@ -243,6 +244,33 @@ impl From<serde_json::Error> for HaiBindingError {
 /// Result type for binding-core operations.
 pub type HaiBindingResult<T> = Result<T, HaiBindingError>;
 
+/// The FFI transports bytes as Base64 only; all request policy and signing
+/// remain in HaiClient/JACS. In particular, callers cannot override audience.
+fn parse_request_auth_input(input: &str) -> HaiBindingResult<(String, String, Vec<u8>)> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RequestAuthInput {
+        method: String,
+        url: String,
+        body_base64: String,
+    }
+    let request: RequestAuthInput = serde_json::from_str(input).map_err(|error| {
+        HaiBindingError::new(
+            ErrorKind::InvalidArgument,
+            format!("invalid request auth input: {error}"),
+        )
+    })?;
+    let body = base64::engine::general_purpose::STANDARD
+        .decode(&request.body_base64)
+        .map_err(|_| {
+            HaiBindingError::new(
+                ErrorKind::InvalidArgument,
+                "body_base64 must contain valid standard Base64 for the exact request body",
+            )
+        })?;
+    Ok((request.method, request.url, body))
+}
+
 // =============================================================================
 // Client wrapper
 // =============================================================================
@@ -277,6 +305,8 @@ pub struct HaiClientWrapper {
     /// the per-call remote provider for doc-store operations. Stored because
     /// `HaiClient` does not re-expose this through its public API.
     base_url: String,
+    /// Validated service audience retained when reconstructing remote providers.
+    request_auth_audience: String,
 }
 
 impl fmt::Debug for HaiClientWrapper {
@@ -296,6 +326,7 @@ impl HaiClientWrapper {
             .clone()
             .unwrap_or_else(|| format!("haiai-rust/{}", env!("CARGO_PKG_VERSION")));
         let base_url = options.base_url.clone();
+        let request_auth_audience = options.request_auth_audience.clone();
         let client = HaiClient::new(jacs, options).map_err(HaiBindingError::from)?;
         Ok(Self {
             inner: Arc::new(RwLock::new(client)),
@@ -303,6 +334,7 @@ impl HaiClientWrapper {
             jacs_config_path: None,
             jacs_storage_backend: None,
             base_url,
+            request_auth_audience,
         })
     }
 
@@ -358,6 +390,16 @@ impl HaiClientWrapper {
 
         let options = HaiClientOptions {
             base_url,
+            request_auth_audience: match config.get("request_auth_audience") {
+                None => haiai::client::DEFAULT_REQUEST_AUTH_AUDIENCE.to_string(),
+                Some(Value::String(audience)) => audience.clone(),
+                Some(_) => {
+                    return Err(HaiBindingError::new(
+                        ErrorKind::InvalidArgument,
+                        "request_auth_audience must be a string",
+                    ))
+                }
+            },
             timeout: std::time::Duration::from_secs(timeout_secs),
             max_retries,
             client_identifier,
@@ -530,10 +572,18 @@ impl HaiClientWrapper {
     // Sync JACS delegation methods
     // =========================================================================
 
-    /// Build an auth header.
+    /// Retired no-context helper. Use build_request_auth_header instead.
     pub async fn build_auth_header(&self) -> HaiBindingResult<String> {
         let client = self.inner.read().await;
         Ok(client.build_auth_header()?)
+    }
+
+    /// Build request-auth-v2 for the exact method, URL and transmitted body.
+    /// Input is a closed object with method, url and body_base64 string fields.
+    pub async fn build_request_auth_header(&self, request_json: &str) -> HaiBindingResult<String> {
+        let (method, url, body) = parse_request_auth_input(request_json)?;
+        let client = self.inner.read().await;
+        Ok(client.build_request_auth_header(&method, &url, &body)?)
     }
 
     /// Sign a message string.
@@ -723,6 +773,16 @@ impl HaiClientWrapper {
         let v: Value = serde_json::from_str(options_json)?;
         let options = haiai::types::RotateKeysOptions {
             register_with_hai: v.get("register_with_hai").and_then(|b| b.as_bool()),
+            algorithm: match v.get("algorithm") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(value)) if !value.trim().is_empty() => Some(value.clone()),
+                Some(_) => {
+                    return Err(HaiBindingError::new(
+                        ErrorKind::InvalidArgument,
+                        "algorithm must be a non-empty string",
+                    ));
+                }
+            },
         };
         let client = self.inner.read().await;
         let result = client.rotate_keys(Some(&options)).await?;
@@ -1615,10 +1675,11 @@ impl HaiClientWrapper {
                 "jacs_config_path required for document-store operations",
             )
         })?;
-        build_document_provider(
+        build_document_provider_with_request_auth_audience(
             Some(path),
             self.jacs_storage_backend.as_deref(),
             Some(self.base_url.clone()),
+            &self.request_auth_audience,
         )
         .map_err(|e| {
             HaiBindingError::new(
@@ -2988,27 +3049,71 @@ mod tests {
     // =========================================================================
 
     #[tokio::test]
-    async fn build_auth_header_uses_provider_signing() {
+    async fn build_auth_header_requires_request_context() {
         let config = r#"{"jacs_id": "sign-test-id"}"#;
         let wrapper = HaiClientWrapper::from_config_json_auto(config).unwrap();
+        let error = wrapper.build_auth_header().await.expect_err("no context");
+        assert_eq!(error.kind, ErrorKind::InvalidArgument);
+        assert!(error.message.contains("build_request_auth_header"));
+    }
 
-        // StaticJacsProvider produces deterministic base64-encoded "sig:..." signatures.
-        // build_auth_header should return a JACS auth header string.
-        let result = wrapper.build_auth_header().await;
-        assert!(
-            result.is_ok(),
-            "build_auth_header should succeed with StaticJacsProvider"
-        );
+    #[test]
+    fn request_auth_input_preserves_exact_binary_body() {
+        let (method, url, body) = parse_request_auth_input(
+            r#"{"method":"POST","url":"https://hai.ai/api/example?q=a%20b","body_base64":"AP8NCg=="}"#,
+        ).expect("closed request input");
+        assert_eq!(method, "POST");
+        assert_eq!(url, "https://hai.ai/api/example?q=a%20b");
+        assert_eq!(body, b"\0\xff\r\n");
+    }
 
-        let header = result.unwrap();
-        assert!(
-            header.starts_with("JACS "),
-            "auth header should start with 'JACS '"
-        );
-        assert!(
-            header.contains("sign-test-id"),
-            "auth header should contain the jacs_id"
-        );
+    #[test]
+    fn request_auth_input_rejects_missing_extra_duplicate_and_invalid_fields() {
+        for input in [
+            r#"{"method":"GET","url":"https://hai.ai/"}"#,
+            r#"{"method":"GET","url":"https://hai.ai/","body_base64":"","audience":"other"}"#,
+            r#"{"method":"GET","method":"POST","url":"https://hai.ai/","body_base64":""}"#,
+            r#"{"method":"GET","url":"https://hai.ai/","body_base64":"%%%"}"#,
+            r#"{"method":"GET","url":"https://hai.ai/","body_base64":null}"#,
+            "[]",
+        ] {
+            let error = parse_request_auth_input(input).expect_err(input);
+            assert_eq!(error.kind, ErrorKind::InvalidArgument, "{input}");
+        }
+    }
+
+    #[tokio::test]
+    async fn build_request_auth_header_uses_local_provider() {
+        let (_temp, config_path) = write_temp_media_fixture_config();
+        let wrapper = build_media_wrapper(&config_path);
+        let header = wrapper
+            .build_request_auth_header(
+                r#"{"method":"POST","url":"https://hai.ai/api/example","body_base64":"AP8NCg=="}"#,
+            )
+            .await
+            .expect("local request authentication");
+        assert!(header.starts_with("JACS v2."));
+    }
+
+    #[test]
+    fn request_auth_audience_config_rejects_non_string_or_empty_values() {
+        for value in [Value::Null, Value::Bool(true), Value::String(String::new())] {
+            let config =
+                serde_json::json!({"jacs_id":"fixture-agent", "request_auth_audience":value});
+            let error = HaiClientWrapper::from_config_json_auto(&config.to_string())
+                .expect_err("invalid audience");
+            assert_eq!(error.kind, ErrorKind::InvalidArgument);
+            assert!(error.message.contains("request_auth_audience"));
+        }
+    }
+
+    #[test]
+    fn request_auth_audience_is_retained_for_reconstructed_document_providers() {
+        let wrapper = HaiClientWrapper::from_config_json_auto(
+            r#"{"jacs_id":"fixture-agent","request_auth_audience":"records.staging"}"#,
+        )
+        .expect("pinned config");
+        assert_eq!(wrapper.request_auth_audience, "records.staging");
     }
 
     #[tokio::test]
@@ -3443,6 +3548,22 @@ mod tests {
         assert_eq!(result.unwrap_err().kind, ErrorKind::SerializationFailed);
     }
 
+    #[tokio::test]
+    async fn rotate_keys_rejects_invalid_algorithm_before_provider_mutation() {
+        let wrapper =
+            HaiClientWrapper::from_config_json_auto(r#"{"jacs_id":"rotate-test"}"#).unwrap();
+        for algorithm in [
+            serde_json::json!(false),
+            serde_json::json!(17),
+            serde_json::json!(""),
+        ] {
+            let options = serde_json::json!({"register_with_hai":false, "algorithm":algorithm});
+            let error = wrapper.rotate_keys(&options.to_string()).await.unwrap_err();
+            assert_eq!(error.kind, ErrorKind::InvalidArgument);
+            assert!(error.message.contains("algorithm"));
+        }
+    }
+
     // =========================================================================
     // TASK_003: Media-signing wrapper methods
     // =========================================================================
@@ -3604,8 +3725,8 @@ mod tests {
         let summary = val.get("summary").unwrap();
         // 55 base + 11 agreement + 26 jacs_document_store methods = 92 async methods.
         assert_eq!(summary["async_methods"].as_u64(), Some(92));
-        // 82 base + 11 agreement + 26 doc-store methods = 119 total public methods.
-        assert_eq!(summary["total_public_methods"].as_u64(), Some(119));
+        // Includes the context-aware request-auth delegation method.
+        assert_eq!(summary["total_public_methods"].as_u64(), Some(120));
     }
 
     #[tokio::test]

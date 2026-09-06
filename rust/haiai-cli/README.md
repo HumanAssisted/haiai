@@ -67,6 +67,29 @@ haiai forward-email --message-id MSG_ID --to other@hai.ai
 haiai mcp
 ```
 
+This defaults to `verify-only` for embedded `jacs_*` tools. To deliberately
+enable ordinary JSON and Agreement V2 signing with an existing local agent:
+
+```bash
+JACS_CONFIG=/absolute/path/jacs.config.json haiai mcp --profile local-sign
+```
+
+Use the normal password environment channel or `--password-file` (or `--quiet`
+to let JACS use an already configured keychain); never
+pass a private key or password in a tool call. Local signing requires an existing
+signed filesystem configuration, keeps encrypted keys on disk, and stores signed
+documents under the selected config directory's `documents/` folder. The profile
+does not create keys or grant key/trust administration. Conflicting JACS config
+overrides and non-`fs` storage are rejected with an actionable startup error.
+`JACS_CONFIG` wins over `JACS_CONFIG_PATH`; local-sign will not infer authority
+from a config found in the current directory. `--profile` wins over
+`JACS_MCP_PROFILE`, which otherwise defaults to `verify-only`.
+
+These profiles limit **only embedded JACS tools**, not the entire HAIAI process.
+Existing `hai_*` email, media, memory/storage and API tools retain their separate
+configured permissions. JACS local signing's offline checks do not disable HAI
+HTTP calls. An agent signature proves provenance, not a person's approval.
+
 Connect it to any MCP client (Claude Desktop, Cursor, Claude Code, etc.):
 
 ```json
@@ -146,7 +169,11 @@ Once the MCP server is running, it exposes these tools:
 
 **Verification:** `hai_generate_verify_link`
 
-Plus all JACS tools from [jacs-mcp](https://crates.io/crates/jacs-mcp) (signing, verification, document management).
+The embedded [JACS tools](https://crates.io/crates/jacs-mcp) are advertised from
+their active scope: only `jacs_verify_document` by default; local-sign adds
+`jacs_sign_document` and the seven Agreement V2 tools. Unadvertised JACS signing,
+file/media, key and trust-administration tools remain unavailable. Existing
+HAI-prefixed tools are independent of that inventory.
 
 ## Environment Variables
 

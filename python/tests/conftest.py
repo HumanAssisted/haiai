@@ -321,6 +321,9 @@ class MockFFIAdapter:
     def build_auth_header(self) -> str:
         return self._record("build_auth_header")
 
+    def build_request_auth_header(self, request_json: str) -> str:
+        return self._record("build_request_auth_header", request_json)
+
     def sign_message(self, message: str) -> str:
         return self._record("sign_message", message)
 
@@ -602,6 +605,9 @@ class MockAsyncFFIAdapter(MockFFIAdapter):
 
     async def _arecord(self, method: str, *args: Any, **kwargs: Any) -> Any:
         return self._record(method, *args, **kwargs)
+
+    async def build_request_auth_header(self, request_json: str) -> str:  # type: ignore[override]
+        return self._record("build_request_auth_header", request_json)
 
     # Override all methods to be async
     async def hello(self, include_test: bool = False) -> dict:  # type: ignore[override]
@@ -921,8 +927,10 @@ def async_ffi_client(
 
 
 @pytest.fixture(autouse=True)
-def _auto_mock_ffi(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
-    """Auto-mock the FFI adapter for all tests.
+def _auto_mock_ffi(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> Generator[None, None, None]:
+    """Auto-mock the FFI adapter except for explicitly native smoke tests.
 
     This ensures tests that create HaiClient/AsyncHaiClient instances
     don't fail when haiipy is not installed. The mock FFI adapter
@@ -932,6 +940,10 @@ def _auto_mock_ffi(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, Non
     Tests that previously mocked httpx.post/get will need updating to
     mock at the FFI level instead.
     """
+    if request.node.get_closest_marker("native_smoke") is not None:
+        yield
+        return
+
     from haiai.client import HaiClient
     from haiai.async_client import AsyncHaiClient
 

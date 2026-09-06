@@ -62,7 +62,6 @@ import type {
   ExtractMediaSignatureOptions,
   ExtractMediaSignatureResult,
 } from './types.js';
-import * as nodeCrypto from 'node:crypto';
 import {
   HaiError,
   AuthenticationError,
@@ -110,6 +109,7 @@ export class HaiClient {
   private baseUrl: string;
   private expectedEventTenant?: string;
   private responseAudience?: string;
+  private requestAuthAudience: string;
   private timeout: number;
   private maxRetries: number;
   private maxReconnectAttempts: number;
@@ -146,6 +146,7 @@ export class HaiClient {
   private constructor(options?: HaiClientOptions) {
     this.expectedEventTenant = options?.expectedEventTenant;
     this.responseAudience = options?.responseAudience;
+    this.requestAuthAudience = options?.requestAuthAudience ?? 'hai.ai';
     // URL precedence mirrors the Python SDK (client.py:174):
     //   options.url > HAI_URL > HAI_API_URL > DEFAULT_BASE_URL
     const rawUrl =
@@ -180,6 +181,7 @@ export class HaiClient {
       max_retries: this.maxRetries,
       expected_event_tenant: this.expectedEventTenant,
       response_audience: this.responseAudience,
+      request_auth_audience: this.requestAuthAudience,
     };
     if (this.configPath) {
       ffiConfig.jacs_config_path = this.configPath;
@@ -362,18 +364,25 @@ export class HaiClient {
     return this.agent.signStringSync(message);
   }
 
-  /** Build the JACS Authorization header value string. */
+  /** Retired no-context helper. Use buildRequestAuthHeader with the final request. */
   buildAuthHeader(): string {
-    // Prefer JACS binding delegation
-    if ('buildAuthHeaderSync' in this.agent && typeof (this.agent as unknown as Record<string, unknown>).buildAuthHeaderSync === 'function') {
-      return (this.agent as unknown as Record<string, unknown> & { buildAuthHeaderSync: () => string }).buildAuthHeaderSync();
+    throw new HaiError('Request authentication requires the final method, URL and exact body bytes; use buildRequestAuthHeader(method, url, body)');
+  }
+
+  /**
+   * Authenticate the final URL (including query) and exact bytes using Rust/JACS.
+   * Send the same body bytes and build a fresh header per attempt. Ordinary SDK
+   * calls do this automatically; audience remains pinned by client configuration.
+   */
+  async buildRequestAuthHeader(method: string, url: string, body: Uint8Array = new Uint8Array()): Promise<string> {
+    if (!(body instanceof Uint8Array)) {
+      throw new TypeError('body must be a Uint8Array containing the exact transmitted request body');
     }
-    // Fallback: local construction using JACS signStringSync
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const nonce = nodeCrypto.randomUUID().replace(/-/g, '');
-    const message = `${this.jacsId}:${timestamp}:${nonce}`;
-    const signature = this.agent.signStringSync(message);
-    return `JACS ${this.jacsId}:${timestamp}:${nonce}:${signature}`;
+    return this.ffi.buildRequestAuthHeader(JSON.stringify({
+      method,
+      url,
+      body_base64: Buffer.from(body).toString('base64'),
+    }));
   }
 
   // ---------------------------------------------------------------------------

@@ -3,11 +3,10 @@
 //! See `docs/jacs/JACS_DOCUMENT_STORE_PRD.md` §4.5.
 //!
 //! Wraps a `JacsProvider` (typically `LocalJacsProvider`) for local key material —
-//! the agent's keys NEVER leave the client. HTTP calls go directly through the wrapped
-//! `reqwest::Client` so we don't need to wrap a `HaiClient<Arc<P>>`. Auth headers are
-//! built from `JacsProvider::sign_string` exactly the way `HaiClient::build_auth_header`
-//! does (matching `client.rs:210-215`).
+//! the agent's keys NEVER leave the client. Record calls use the same final-byte
+//! request-auth-v2 boundary as `HaiClient`; public-key lookup stays unsigned.
 
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -19,14 +18,14 @@ fn url_encode(s: &str) -> String {
     utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()
 }
 use serde_json::Value;
-use time::OffsetDateTime;
 
-use crate::client::encode_path_segment;
+use crate::client::{encode_path_segment, DEFAULT_REQUEST_AUTH_AUDIENCE};
 use crate::error::{HaiError, Result};
 use crate::jacs::{
     logical_name_from_metadata, summary_from_document_bytes, summary_matches_logical_name,
     DocSummary, JacsDocumentProvider, JacsProvider,
 };
+use crate::request_auth::RequestClient;
 use crate::types::{DocSearchHit, DocSearchResults, SignedDocument, StorageCapabilities};
 
 /// Endpoint base for all record CRUD (D1).
@@ -46,6 +45,8 @@ pub const AUTO_PAGE_CAP: usize = 1000;
 pub struct RemoteJacsProviderOptions {
     pub base_url: String,
     pub timeout: Duration,
+    /// Deployment-pinned service audience, independent of the network origin.
+    pub request_auth_audience: String,
 }
 
 impl Default for RemoteJacsProviderOptions {
@@ -53,14 +54,15 @@ impl Default for RemoteJacsProviderOptions {
         Self {
             base_url: "https://hai.ai".to_string(),
             timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+            request_auth_audience: DEFAULT_REQUEST_AUTH_AUDIENCE.to_string(),
         }
     }
 }
 
 /// Remote JACS document provider — signs locally, persists/queries against `hai-api`.
 pub struct RemoteJacsProvider<P: JacsProvider> {
-    inner: P,
-    http: HttpClient,
+    inner: Arc<P>,
+    http: RequestClient<P>,
     base_url: String,
     /// Lazily-built local verification state (ephemeral JACS agent + signer
     /// key cache). Verification never needs the inner provider's keys.
@@ -80,10 +82,31 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
                 ),
             });
         }
+        if options.request_auth_audience.trim().is_empty()
+            || options.request_auth_audience.len() > 256
+        {
+            return Err(HaiError::Validation {
+                field: "request_auth_audience".into(),
+                message:
+                    "a nonempty deployment-pinned request audience of at most 256 bytes is required"
+                        .into(),
+            });
+        }
         let http = HttpClient::builder()
             .timeout(options.timeout)
             .build()
             .map_err(HaiError::from)?;
+        let authenticated_http = HttpClient::builder()
+            .timeout(options.timeout)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        let inner = Arc::new(inner);
+        let http = RequestClient::new(
+            http,
+            authenticated_http,
+            inner.clone(),
+            options.request_auth_audience,
+        );
         Ok(Self {
             inner,
             http,
@@ -122,26 +145,6 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
         }
     }
 
-    /// Build a `JACS {jacsId}:{ts}:{nonce}:{sig}` Authorization header.
-    /// Mirrors `HaiClient::build_auth_header`.
-    fn build_auth_header(&self) -> Result<String> {
-        let ts = OffsetDateTime::now_utc().unix_timestamp();
-        let nonce = uuid::Uuid::new_v4().simple().to_string();
-        let message = format!("{}:{ts}:{nonce}", self.inner.jacs_id());
-        let signature = self.inner.sign_string(&message).map_err(|e| {
-            tracing::warn!(
-                operation = "remote_build_auth_header",
-                error = %e,
-                "failed to sign remote auth header"
-            );
-            e
-        })?;
-        Ok(format!(
-            "JACS {}:{ts}:{nonce}:{signature}",
-            self.inner.jacs_id()
-        ))
-    }
-
     /// Split a `key` of shape `id` or `id:version` into `(id, Option<version>)`.
     fn split_key(key: &str) -> (&str, Option<&str>) {
         match key.split_once(':') {
@@ -157,7 +160,6 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
         content_type: &str,
     ) -> Result<Value> {
         let started = Instant::now();
-        let auth = self.build_auth_header()?;
         let url = self.url(RECORDS_PATH);
         tracing::debug!(
             operation = "remote_post_record",
@@ -168,7 +170,7 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
         let resp = self
             .http
             .post(&url)
-            .header("Authorization", auth)
+            .authenticated()
             .header("Content-Type", content_type)
             .body(body)
             .send()
@@ -212,7 +214,6 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
             ),
             None => format!("{}/{}", RECORDS_PATH, encode_path_segment(id)),
         };
-        let auth = self.build_auth_header()?;
         let url = self.url(&path);
         tracing::debug!(
             operation = "remote_get_record_bytes",
@@ -222,7 +223,7 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
         let resp = self
             .http
             .get(&url)
-            .header("Authorization", auth)
+            .authenticated()
             .send()
             .await
             .map_err(|e| {
@@ -289,10 +290,6 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
             );
             Err(map_status_error(status, &text))
         }
-    }
-
-    fn build_auth_header_blocking(&self) -> Result<String> {
-        self.build_auth_header()
     }
 
     /// Synchronous helper that runs an async future to completion. The blocking trait
@@ -540,12 +537,11 @@ impl<P: JacsProvider> JacsDocumentProvider for RemoteJacsProvider<P> {
             RECORDS_PATH,
             encode_path_segment(id),
         );
-        let auth = self.build_auth_header_blocking()?;
         let _resp = Self::block_on(async move {
             let r = self
                 .http
                 .delete(&url)
-                .header("Authorization", auth)
+                .authenticated()
                 .send()
                 .await
                 .map_err(|e| HaiError::Provider(format!("network error: {e}")))?;
@@ -988,11 +984,10 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
     }
 
     async fn get_json_async(&self, url: &str) -> Result<Value> {
-        let auth = self.build_auth_header()?;
         let resp = self
             .http
             .get(url)
-            .header("Authorization", auth)
+            .authenticated()
             .send()
             .await
             .map_err(|e| HaiError::Provider(format!("network error: {e}")))?;
@@ -1414,9 +1409,7 @@ impl<P: JacsProvider> crate::jacs::JacsVerificationProvider for RemoteJacsProvid
     }
 
     fn build_auth_header_jacs(&self) -> Result<String> {
-        // Same `JACS {jacsId}:{ts}:{nonce}:{sig}` header this provider already
-        // sends on every records call.
-        self.build_auth_header()
+        Err(crate::request_auth::missing_request_context())
     }
 
     fn unwrap_signed_event(
@@ -3432,14 +3425,131 @@ mod verify_tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn build_auth_header_jacs_reuses_remote_header_builder() {
+    async fn build_auth_header_jacs_requires_request_context() {
         let server = MockServer::start_async().await;
         let remote = remote_with_static(server.base_url());
-        let header = remote.build_auth_header_jacs().expect("auth header");
-        assert!(
-            header.starts_with("JACS "),
-            "JACS scheme expected, got: {header}"
-        );
+        let error = remote
+            .build_auth_header_jacs()
+            .expect_err("missing request context");
+        assert!(error.to_string().contains("build_request_auth_header"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn remote_http_authenticates_exact_crud_requests_and_pinned_audience() {
+        use std::sync::{Arc, Mutex};
+
+        let (_dir, local, _signed, agent_id, version, pem) = signed_fixture("remote-request-auth");
+        let server = MockServer::start_async().await;
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let seen = captured.clone();
+        let origin = server.base_url();
+        let mock = server
+            .mock_async(move |when, then| {
+                when.is_true(move |request: &httpmock::HttpMockRequest| {
+                    let header = request
+                        .headers()
+                        .get("authorization")
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string();
+                    let url = format!("{}{}", origin, request.uri().path_and_query().unwrap());
+                    seen.lock().unwrap().push((
+                        request.method_str().to_string(),
+                        url,
+                        header,
+                        request.body_vec(),
+                    ));
+                    true
+                });
+                then.status(200).json_body(json!({"key":"record:v1"}));
+            })
+            .await;
+        let remote = RemoteJacsProvider::new(
+            local,
+            RemoteJacsProviderOptions {
+                base_url: server.base_url(),
+                request_auth_audience: "records.staging".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("provider");
+        remote
+            .post_record_bytes_async(b"\0\xff\r\n".to_vec(), "application/octet-stream")
+            .await
+            .expect("POST");
+        remote
+            .get_record_bytes_async("id/with space:v/1")
+            .await
+            .expect("GET bytes");
+        remote
+            .get_json_async(&format!(
+                "{}/api/v1/records?type=note&limit=2&cursor=a%2Fb",
+                server.base_url()
+            ))
+            .await
+            .expect("GET query");
+        remote.remove_document("record:v1").expect("DELETE");
+        mock.assert_calls_async(4).await;
+        let requests = captured.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        assert_eq!(requests[0].3, b"\0\xff\r\n");
+        assert!(requests[1]
+            .1
+            .ends_with("/api/v1/records/id%2Fwith%20space/v/v%2F1"));
+        assert!(requests[2].1.ends_with("?type=note&limit=2&cursor=a%2Fb"));
+        let key_id = format!("{agent_id}:{version}");
+        for (method, url, header, body) in requests.iter() {
+            jacs::protocol::verify_request_auth_header_with_trusted_key_without_replay(
+                header,
+                pem.as_bytes(),
+                &key_id,
+                method,
+                url,
+                body,
+                "records.staging",
+                60,
+            )
+            .expect("actual captured request verifies");
+            assert!(
+                jacs::protocol::verify_request_auth_header_with_trusted_key_without_replay(
+                    header,
+                    pem.as_bytes(),
+                    &key_id,
+                    method,
+                    url,
+                    body,
+                    "hai.ai",
+                    60,
+                )
+                .is_err(),
+                "a different service must reject the same credential"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn remote_authenticated_record_requests_do_not_follow_redirects() {
+        let server = MockServer::start_async().await;
+        let landing = server
+            .mock_async(|when, then| {
+                when.path("/redirect-target");
+                then.status(200).json_body(json!({"key":"unexpected:v1"}));
+            })
+            .await;
+        let redirect = server
+            .mock_async(|when, then| {
+                when.method(HMethod::POST).path(RECORDS_PATH);
+                then.status(307).header("location", "/redirect-target");
+            })
+            .await;
+        let remote = remote_with_static(server.base_url());
+        let error = remote
+            .post_record_bytes_async(b"{}".to_vec(), CT_JSON)
+            .await
+            .expect_err("redirect is not an authenticated operation");
+        assert!(error.to_string().contains("307"));
+        redirect.assert_calls_async(1).await;
+        landing.assert_calls_async(0).await;
     }
 
     #[tokio::test(flavor = "multi_thread")]

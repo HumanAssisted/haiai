@@ -659,6 +659,14 @@ impl HaiClient {
     }
 
     #[napi]
+    pub async fn build_request_auth_header(&self, request_json: String) -> Result<String> {
+        self.inner
+            .build_request_auth_header(&request_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
     pub async fn sign_message(&self, message: String) -> Result<String> {
         self.inner.sign_message(&message).await.map_err(to_napi_err)
     }

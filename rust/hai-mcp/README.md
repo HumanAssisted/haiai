@@ -69,7 +69,35 @@ haiai mcp
 
 ## HAI Tools
 
-The server adds these tools on top of the base JACS MCP tools:
+The server adds these tools to the **active**, not the compiled, JACS inventory.
+`JacsMcpServer::new` preserves JACS's verify-only default even when a HAI provider
+has loaded a private key. Embedding a JACS server never broadens its granted scope.
+
+For explicitly configured local JSON/Agreement signing, use:
+
+```bash
+JACS_CONFIG=/absolute/path/jacs.config.json haiai mcp --profile local-sign
+```
+
+The CLI delegates authority checks to JACS's `local_signing_from_config`: an
+existing signed config, encrypted key and filesystem storage are required. It
+rejects conflicting effective JACS environment overrides rather than loading a
+different identity for HAI's provider. `JACS_CONFIG_PATH` is the existing fallback;
+cwd-only config discovery does not authorize local-sign. Password handling uses
+the CLI's existing environment or `--password-file` channel (`--quiet` delegates
+lookup to JACS, including an already configured keychain).
+
+Local-sign exposes exactly nine JACS tools: explicit-key document verification,
+ordinary JSON signing, and seven Agreement V2 create/apply/sign/inspect/branch
+tools. JSON input remains nested ordinary content; created documents persist
+under the config directory's `documents/`. File/media, raw signing and key/trust
+administration are not part of the embedded JACS scope. Signatures prove agent
+provenance, not per-action human approval.
+
+This does **not** restrict the whole HAIAI process to verification or offline
+operation: retained `hai_*` tools have separate configured authority for HAI API
+requests, email, media and storage. In particular, existing HAI-prefixed media
+tools remain available; they are not additional `jacs_*` profile permissions.
 
 | Tool | Description |
 |------|-------------|
@@ -96,7 +124,7 @@ The server adds these tools on top of the base JACS MCP tools:
 
 `hai-mcp` composes two MCP tool sets into one server:
 
-1. **JACS tools** (from `jacs-mcp`) -- signing, verification, document management
+1. **Active JACS tools** (from `jacs-mcp`) -- verify-only by default; explicitly scoped JSON/Agreement signing
 2. **HAI tools** (from this crate) -- platform registration, email, usernames
 
 Tool dispatch checks HAI tools first, then falls through to JACS.
@@ -106,6 +134,8 @@ Tool dispatch checks HAI tools first, then falls through to JACS.
 | Variable | Description |
 |----------|-------------|
 | `JACS_CONFIG` | Path to `jacs.config.json` |
+| `JACS_CONFIG_PATH` | Existing fallback when `JACS_CONFIG` is unset or empty |
+| `JACS_MCP_PROFILE` | JACS scope selection; `--profile` wins; default `verify-only` |
 | `JACS_PRIVATE_KEY_PASSWORD` | Private key password |
 | `HAI_URL` | HAI API base URL override |
 | `RUST_LOG` | Tracing filter (default: `info,rmcp=warn`) |
