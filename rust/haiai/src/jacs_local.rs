@@ -37,7 +37,7 @@ use crate::types::{
 /// This adapter loads the local agent configured by `jacs.config.json` and
 /// delegates signing operations to JACS runtime methods.
 pub struct LocalJacsProvider {
-    agent: Mutex<jacs::agent::Agent>,
+    agent: Arc<Mutex<jacs::agent::Agent>>,
     jacs_id: String,
     algorithm: String,
     config_path: PathBuf,
@@ -312,7 +312,7 @@ impl LocalJacsProvider {
         };
 
         Ok(Self {
-            agent: Mutex::new(agent),
+            agent: Arc::new(Mutex::new(agent)),
             jacs_id,
             algorithm,
             config_path,
@@ -624,6 +624,16 @@ impl LocalJacsProvider {
                 self.config_path.display()
             ))
         })
+    }
+
+    /// Media helpers use the current in-memory signer, including after key
+    /// rotation. They do not reread config or decrypt another private key.
+    fn media_simple_agent(&self) -> SimpleAgent {
+        SimpleAgent::from_shared_agent(
+            Arc::clone(&self.agent),
+            Some(self.config_path.to_string_lossy().into_owned()),
+            false,
+        )
     }
 
     /// Get the document service, returning an error if not configured.
@@ -2811,20 +2821,19 @@ impl JacsAttestationProvider for LocalJacsProvider {
 // JacsMediaProvider implementation (Layer 8) — JACS 0.10.0
 // =============================================================================
 //
-// Local-only sign/verify for inline text and PNG/JPEG/WebP images. Each method
-// reloads a `SimpleAgent` view via `load_simple_agent()` (cheap; config IO),
-// then delegates to the JACS free functions in `jacs::simple::advanced`.
+// Local-only text/image operations share the already-loaded agent and delegate
+// to the existing JACS helpers. No config reload or second key decryption.
 // PRD: docs/MEDIA_SIGNING_PRD.md §4.2 / §7 R2.
 
 impl JacsMediaProvider for LocalJacsProvider {
     fn sign_text_file(&self, path: &str, opts: SignTextOptions) -> Result<SignTextOutcome> {
-        let simple = self.load_simple_agent()?;
+        let simple = self.media_simple_agent();
         jacs::simple::advanced::sign_text_file(&simple, path, opts)
             .map_err(|e| HaiError::Provider(format!("sign_text_file failed: {e}")))
     }
 
     fn verify_text_file(&self, path: &str, opts: VerifyTextOptions) -> Result<VerifyTextResult> {
-        let simple = self.load_simple_agent()?;
+        let simple = self.media_simple_agent();
         jacs::simple::advanced::verify_text_file(&simple, path, opts)
             .map_err(|e| HaiError::Provider(format!("verify_text_file failed: {e}")))
     }
@@ -2835,7 +2844,7 @@ impl JacsMediaProvider for LocalJacsProvider {
         out_path: &str,
         opts: SignImageOptions,
     ) -> Result<SignedMedia> {
-        let simple = self.load_simple_agent()?;
+        let simple = self.media_simple_agent();
         jacs::simple::advanced::sign_image(&simple, in_path, out_path, opts)
             .map_err(|e| HaiError::Provider(format!("sign_image failed: {e}")))
     }
@@ -2845,7 +2854,7 @@ impl JacsMediaProvider for LocalJacsProvider {
         path: &str,
         opts: VerifyImageOptions,
     ) -> Result<MediaVerificationResult> {
-        let simple = self.load_simple_agent()?;
+        let simple = self.media_simple_agent();
         jacs::simple::advanced::verify_image(&simple, path, opts)
             .map_err(|e| HaiError::Provider(format!("verify_image failed: {e}")))
     }

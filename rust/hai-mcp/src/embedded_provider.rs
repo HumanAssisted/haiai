@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::{anyhow, Context as _};
-use haiai::jacs_local::{lock_jacs_config_env, JacsConfigEnvOverrideGuard, JacsConfigEnvSnapshot};
+use haiai::jacs_local::{lock_jacs_config_env, JacsConfigEnvSnapshot};
 use haiai::key_format::normalize_public_key_pem;
 use haiai::{
     HaiError, JacsMediaProvider, JacsProvider, MediaVerificationResult, Result as HaiResult,
@@ -121,19 +121,15 @@ pub struct EmbeddedJacsProvider {
     jacs_id: String,
     algorithm: String,
     public_key_pem: String,
-    /// Path to the JACS config used to load the agent. PRD §7 R2: required by
-    /// `JacsMediaProvider` because `SimpleAgent` has no `from_existing_agent`
-    /// constructor — media operations reload a `SimpleAgent` view from this
-    /// path on each call. Cost is negligible (local file IO).
+    /// Original config metadata; media operations use `inner`, never reload it.
     config_path: PathBuf,
-    jacs_config_env: JacsConfigEnvSnapshot,
 }
 
 impl EmbeddedJacsProvider {
     pub fn new(
         inner: Arc<StdMutex<Agent>>,
         config_path: PathBuf,
-        jacs_config_env: JacsConfigEnvSnapshot,
+        _jacs_config_env: JacsConfigEnvSnapshot,
     ) -> HaiResult<Self> {
         let (jacs_id, algorithm, public_key_pem) = {
             let agent = inner.lock().map_err(|error| {
@@ -159,7 +155,6 @@ impl EmbeddedJacsProvider {
             algorithm,
             public_key_pem,
             config_path,
-            jacs_config_env,
         })
     }
 
@@ -172,23 +167,15 @@ impl EmbeddedJacsProvider {
             public_key_pem: "-----BEGIN PUBLIC KEY-----\nTEST\n-----END PUBLIC KEY-----\n"
                 .to_string(),
             config_path: PathBuf::from("/dev/null"),
-            jacs_config_env: JacsConfigEnvSnapshot::empty(),
         }
     }
 
-    /// Reload a `SimpleAgent` view from the saved config path. PRD §7 R2:
-    /// `SimpleAgent` has no constructor accepting an existing `jacs::Agent`,
-    /// so media operations reload from disk on each call. Cost is negligible
-    /// (local file IO; same approach `LocalJacsProvider::load_simple_agent`
-    /// already takes).
-    fn simple_agent(&self) -> HaiResult<SimpleAgent> {
-        let _env_guard = JacsConfigEnvOverrideGuard::apply(&self.jacs_config_env)?;
-        SimpleAgent::load(Some(&self.config_path.to_string_lossy()), Some(false)).map_err(|e| {
-            HaiError::Provider(format!(
-                "failed to load SimpleAgent for media op from {}: {e}",
-                self.config_path.display()
-            ))
-        })
+    fn simple_agent(&self) -> SimpleAgent {
+        SimpleAgent::from_shared_agent(
+            Arc::clone(&self.inner),
+            Some(self.config_path.to_string_lossy().into_owned()),
+            false,
+        )
     }
 
     pub fn export_agent_json(&self) -> HaiResult<String> {
@@ -412,22 +399,19 @@ impl JacsProvider for EmbeddedJacsProvider {
 // JacsMediaProvider implementation (Layer 8) — JACS 0.10.0
 // =============================================================================
 //
-// PRD §4.2 / §7 R2: each method reloads a `SimpleAgent` view from the saved
-// config path (`SimpleAgent` has no `from_existing_agent` constructor). The
-// agent lock on `self.inner` is NOT held during the media operation — only
-// briefly during `simple_agent()` (which doesn't lock at all because it
-// reads from disk, not from `inner`). Long-running file IO inside JACS
-// `sign_image` runs without contending for the embedded agent lock.
+// All media operations share the same loaded identity/lock as ordinary
+// document signing. JACS owns the crypto and takes the lock when needed;
+// wrapping this view performs no file IO or private-key decryption.
 
 impl JacsMediaProvider for EmbeddedJacsProvider {
     fn sign_text_file(&self, path: &str, opts: SignTextOptions) -> HaiResult<SignTextOutcome> {
-        let simple = self.simple_agent()?;
+        let simple = self.simple_agent();
         jacs::simple::advanced::sign_text_file(&simple, path, opts)
             .map_err(|e| HaiError::Provider(format!("sign_text_file failed: {e}")))
     }
 
     fn verify_text_file(&self, path: &str, opts: VerifyTextOptions) -> HaiResult<VerifyTextResult> {
-        let simple = self.simple_agent()?;
+        let simple = self.simple_agent();
         jacs::simple::advanced::verify_text_file(&simple, path, opts)
             .map_err(|e| HaiError::Provider(format!("verify_text_file failed: {e}")))
     }
@@ -438,7 +422,7 @@ impl JacsMediaProvider for EmbeddedJacsProvider {
         out_path: &str,
         opts: SignImageOptions,
     ) -> HaiResult<SignedMedia> {
-        let simple = self.simple_agent()?;
+        let simple = self.simple_agent();
         jacs::simple::advanced::sign_image(&simple, in_path, out_path, opts)
             .map_err(|e| HaiError::Provider(format!("sign_image failed: {e}")))
     }
@@ -448,7 +432,7 @@ impl JacsMediaProvider for EmbeddedJacsProvider {
         path: &str,
         opts: VerifyImageOptions,
     ) -> HaiResult<MediaVerificationResult> {
-        let simple = self.simple_agent()?;
+        let simple = self.simple_agent();
         jacs::simple::advanced::verify_image(&simple, path, opts)
             .map_err(|e| HaiError::Provider(format!("verify_image failed: {e}")))
     }
@@ -789,5 +773,59 @@ pub(crate) mod tests {
             .expect("embedded verify_image");
         assert_eq!(result.status, haiai::MediaVerifyStatus::Valid);
         assert_eq!(result.signer_id.as_deref(), Some(signed.signer_id.as_str()));
+    }
+
+    #[test]
+    fn local_and_embedded_media_keep_loaded_identity_without_reloading_config() {
+        let (temp_dir, config_path) = write_temp_fixture_config();
+        let local = LocalJacsProvider::from_config_path(Some(&config_path), None).unwrap();
+        let shared = LoadedSharedAgent::load_from_config_path(&config_path).unwrap();
+        let embedded = shared.embedded_provider().unwrap();
+        let expected_id = embedded.jacs_id.clone();
+        // The original config is unavailable after construction. Every media
+        // operation must still use its loaded identity, not reload/unlock one.
+        fs::rename(&config_path, temp_dir.path().join("saved.config.json")).unwrap();
+        let input = temp_dir.path().join("input.png");
+        fs::write(&input, make_test_png(8, 8)).unwrap();
+        let providers: [&dyn JacsMediaProvider; 2] = [&local, &embedded];
+        for (index, provider) in providers.into_iter().enumerate() {
+            let text = temp_dir.path().join(format!("loaded-{index}.md"));
+            fs::write(&text, b"# Same loaded agent\n").unwrap();
+            let signed_text = provider
+                .sign_text_file(text.to_str().unwrap(), SignTextOptions::default())
+                .unwrap();
+            assert_eq!(signed_text.signers_added, 1);
+            match provider
+                .verify_text_file(text.to_str().unwrap(), VerifyTextOptions::default())
+                .unwrap()
+            {
+                VerifyTextResult::Signed { signatures } => {
+                    assert_eq!(signatures.len(), 1);
+                    assert_eq!(signatures[0].status, haiai::TextSignatureStatus::Valid);
+                    assert_eq!(signatures[0].signer_id, expected_id);
+                }
+                other => panic!("Expected verified text, got {other:?}"),
+            }
+            let output = temp_dir.path().join(format!("loaded-{index}.png"));
+            let signed = provider
+                .sign_image(
+                    input.to_str().unwrap(),
+                    output.to_str().unwrap(),
+                    SignImageOptions::default(),
+                )
+                .unwrap();
+            assert_eq!(signed.signer_id, expected_id);
+            let verified = provider
+                .verify_image(output.to_str().unwrap(), VerifyImageOptions::default())
+                .unwrap();
+            assert_eq!(verified.status, haiai::MediaVerifyStatus::Valid);
+            assert_eq!(verified.signer_id.as_deref(), Some(expected_id.as_str()));
+            let payload = provider
+                .extract_media_signature(output.to_str().unwrap(), false)
+                .unwrap()
+                .unwrap();
+            let document: Value = serde_json::from_str(&payload).unwrap();
+            assert_eq!(document["jacsSignature"]["agentID"], expected_id);
+        }
     }
 }
