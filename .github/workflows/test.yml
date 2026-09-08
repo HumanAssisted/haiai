@@ -11,10 +11,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Reviewed local source, not a published release. This exact commit must be
-  # made available in the public JACS repository before remote CI can run.
-  # A later version bump switches to its canonical crate/vX.Y.Z release tag.
-  JACS_REF: 2079af0021e837dad24f2ae23b1285b0f8b4161e
+  # Exact unreleased JACS v0.11.4 source, available in the public repository.
+  # A later version bump selects its canonical crate/vX.Y.Z release tag.
+  JACS_REF: a6c9ec964ac4e2a2fd5f1232baa76ecb0522d272
 
 jobs:
   crypto-policy:
