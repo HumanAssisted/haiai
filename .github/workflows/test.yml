@@ -14,7 +14,7 @@ env:
   # Reviewed local source, not a published release. This exact commit must be
   # made available in the public JACS repository before remote CI can run.
   # A later version bump switches to its canonical crate/vX.Y.Z release tag.
-  JACS_REF: 6f10620e0a52dd13d52828bf1fe34c462586c950
+  JACS_REF: 2079af0021e837dad24f2ae23b1285b0f8b4161e
 
 jobs:
   crypto-policy:
