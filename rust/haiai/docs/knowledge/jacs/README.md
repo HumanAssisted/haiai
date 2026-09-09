@@ -73,34 +73,34 @@ jacs mcp
   "mcpServers": {
     "jacs": {
       "command": "jacs",
-      "args": ["mcp"],
-      "env": {
-        "JACS_CONFIG": "/absolute/path/to/jacs.config.json",
-        "JACS_PASSWORD_FILE": "/absolute/path/to/jacs-password",
-        "JACS_MCP_BASE_DIR": "/absolute/path/to/project"
-      }
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-The MCP server opens no HTTP port. It runs as a subprocess of the MCP client so the agent private key stays local to that process.
+The MCP server opens no HTTP port. Without an explicit config, its default
+verification-only process loads no identity; a supplied config is public-only
+and never loads/decrypts a private signing key. Callers provide the exact public
+key and algorithm with the document bytes they inspect.
 
-`JACS_CONFIG` is required. Prefer an owner-readable password file (for example, mode `0600`) or the OS keychain instead of placing the private-key password directly in desktop-client JSON.
-
-**Core profile** (default) includes document, inline text/media, trust, search, key/agent, A2A discovery, and W3C tools.
-
-**Full profile** adds Agreement v2, A2A artifact, and attestation tools:
+The default `verify-only` process advertises only explicit-key document
+integrity verification; it does not expose signing, key/trust mutation, disk
+search, ambient trust reads, or public exports. The only accepted profile names are
+`verify-only`, `local-sign`, `trust-admin`, and compatibility-only
+`legacy-core`. An explicit `--profile` overrides `JACS_MCP_PROFILE`, and
+unknown values fail startup. For local JSON/Agreement signing, explicitly
+select your existing signed config:
 
 ```bash
-jacs mcp --profile full
-# Equivalent when --profile is absent:
-JACS_MCP_PROFILE=full jacs mcp
+jacs mcp --profile local-sign --config ./jacs.config.json
 ```
 
-An explicit `--profile` overrides `JACS_MCP_PROFILE`; unknown profile values fail startup instead of silently selecting core.
-
-File-tool paths must be relative to `JACS_MCP_BASE_DIR` (or the launch working directory when unset). Absolute paths, traversal, and symlinks are rejected. Existing output files are not overwritten unless the operator explicitly sets `JACS_MCP_OVERWRITE_OK=1`.
+This uses the existing encrypted key/password source and a closed offline tool
+set; documents persist under `<config directory>/documents`. It signs as the
+local agent, not as evidence of per-action human approval. File text/image
+tools and administrative profiles remain unavailable. See the [MCP local scope
+and remaining limitations](jacs-mcp/README.md#explicit-local-signing).
 
 ## Use cases
 
@@ -128,7 +128,7 @@ JACS is most useful when signed data leaves the process, service, team, or organ
 
 The CLI and MCP server are the recommended starting points. Native APIs are available when you need direct library integration:
 
-> **Shipped versions observed 2026-07-11:** source is `0.11.4`, while crates.io
+> **Shipped versions observed 2026-07-11:** source is `0.12.0`, while crates.io
 > and PyPI publish `0.11.3`, npm publishes `@hai.ai/jacs@0.10.1`, and
 > `@jacs/wasm` is not published. The Go module has only a pseudo-version and no
 > matching native-library release. Do not assume source-head API parity from an
@@ -139,13 +139,13 @@ The CLI and MCP server are the recommended starting points. Native APIs are avai
 |----------|---------|-------|
 | Rust | `cargo add jacs` | Registry `0.11.3`; deepest API surface, including `jacs::email`, `jacs::text`, and `jacs::media`. |
 | Python | `pip install jacs` | Registry `0.11.3`; simple API, framework adapters, text/image signing. |
-| Node.js | `npm install @hai.ai/jacs` | Registry `0.10.1`; it does **not** contain every API documented on this `0.11.4` branch. |
+| Node.js | `npm install @hai.ai/jacs` | Registry `0.10.1`; it does **not** contain every API documented on this `0.12.0` branch. |
 | Go | See [`jacsgo/README.md`](jacsgo/README.md) | `go get` alone cannot link. Build the full repository today; after a semantic release exists, install its checksum-verified native library. |
 | Browser | Source build only | `@jacs/wasm` is not yet available from npm. |
 
 ## HTTP trust-boundary protocol
 
-Source `0.11.4` includes a request-bound HTTP credential and a fully signed
+Source `0.12.0` includes a request-bound HTTP credential and a fully signed
 response/event envelope on the instance-based simple API:
 
 | Language | Request credential | Signed response | Strict event verification |
@@ -204,4 +204,4 @@ Report vulnerabilities to security@hai.ai. Do not open public issues for securit
 
 ---
 
-v0.11.4 | [Apache-2.0](./LICENSE-APACHE) | [Third-Party Notices](./THIRD-PARTY-NOTICES)
+v0.12.0 | [Apache-2.0](./LICENSE-APACHE) | [Third-Party Notices](./THIRD-PARTY-NOTICES)

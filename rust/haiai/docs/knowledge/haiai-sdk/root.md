@@ -84,6 +84,40 @@ Add to your MCP client config (Claude Desktop, Cursor, Claude Code, etc.):
 
 Your AI agent now has access to all HAI tools — identity, email, signing, and document management — through MCP.
 
+## Choosing an endpoint
+
+Every HAIAI SDK, the CLI, and the MCP server resolve the HAI API origin the same way:
+
+```
+explicit option  >  $HAI_URL  >  $HAI_API_URL  >  https://hai.ai
+```
+
+A variable that is set but blank counts as unset. No code change is needed to move between deployments — export the variable and every route follows it: registration, email, agreements, `/.well-known/hai-keys.json`, the SSE/WebSocket job stream, and job responses.
+
+| Target | Command |
+|--------|---------|
+| Production HAI (default) | `haiai list-messages` |
+| MediationBench / benchmark | `HAI_URL=https://sim.hai.ai haiai list-messages` |
+| A local `hai/api` checkout | `HAI_URL=http://localhost:3000 haiai list-messages` |
+
+`HAI_API_URL` is honoured as a fallback so the same export the `hai` API's own benchmark tooling uses works here unchanged.
+
+Point the MCP server the same way — the environment reaches the subprocess through your MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "haiai": {
+      "command": "haiai",
+      "args": ["mcp"],
+      "env": { "HAI_URL": "https://sim.hai.ai" }
+    }
+  }
+}
+```
+
+One constraint: live SSE/WebSocket delivery verifies every event against the origin's published signing keys, so the origin must be **HTTPS unless its host is loopback**. `https://sim.hai.ai` and `http://localhost:3000` both work; `http://some-lan-host:3000` is refused.
+
 ## What the MCP server provides
 
 | Category | Tools |
