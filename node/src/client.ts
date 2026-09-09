@@ -62,13 +62,12 @@ import type {
   ExtractMediaSignatureOptions,
   ExtractMediaSignatureResult,
 } from './types.js';
-import * as nodeCrypto from 'node:crypto';
 import {
   HaiError,
   AuthenticationError,
   HaiConnectionError,
 } from './errors.js';
-import { signPayload, canonicalJson, getServerKeys } from './signing.js';
+import { signPayload, canonicalJson, getServerKeys, randomNonce } from './signing.js';
 import { loadConfig } from './config.js';
 import { JacsAgent } from '@hai.ai/jacs';
 // SSE/WS helpers retained in sse.ts and ws.ts for cleanup in Task 012.
@@ -368,7 +367,7 @@ export class HaiClient {
     }
     // Fallback: local construction using JACS signStringSync
     const timestamp = Math.floor(Date.now() / 1000).toString();
-    const nonce = nodeCrypto.randomUUID().replace(/-/g, '');
+    const nonce = randomNonce();
     const message = `${this.jacsId}:${timestamp}:${nonce}`;
     const signature = this.agent.signStringSync(message);
     return `JACS ${this.jacsId}:${timestamp}:${nonce}:${signature}`;

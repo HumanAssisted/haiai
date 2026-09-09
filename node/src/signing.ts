@@ -1,7 +1,20 @@
 import type { JacsAgent } from '@hai.ai/jacs';
+import { randomUUID } from 'node:crypto';
 import { HaiError } from './errors.js';
 
 type ResponseSigner = Pick<JacsAgent, 'signStringSync'> & Partial<Pick<JacsAgent, 'signResponseSync'>>;
+
+/**
+ * A single-use replay nonce for the `JACS` Authorization header.
+ *
+ * Not a signing primitive — the signature itself is always produced by JACS.
+ * This lives here because `scripts/ci/check_no_local_crypto.sh` allows
+ * `node:crypto` only in the signing/hash modules, so `client.ts` must not
+ * reach for `randomUUID` itself.
+ */
+export function randomNonce(): string {
+  return randomUUID().replace(/-/g, '');
+}
 
 /** Domain identifier cryptographically bound into signed HAI job responses. */
 export const SIGNED_JOB_RESPONSE_CONTRACT = 'hai.job-response' as const;
