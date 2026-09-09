@@ -165,14 +165,14 @@ jobs:
           npx napi build --release
         timeout-minutes: 10
       - name: Build JACS napi addon (jacs.linux-x64-gnu.node)
-        # The registry package still predates the strict 0.11.4 event verifier,
-        # and its platform-binary subpackages
-        # subpackages (@hai.ai/jacs-linux-x64-gnu, etc.) were not published
-        # alongside it. The committed package.json keeps the local-dev
-        # file:../../JACS/jacsnpm path; building the napi addon here makes
-        # the JACS loader's `existsSync(./jacs.linux-x64-gnu.node)` branch
-        # succeed without needing the missing registry subpackages. Once JACS
-        # 0.11.4 and its platform packages publish, restore `npm run deps:prod`.
+        # npm publishes @hai.ai/jacs 0.10.1, which predates the strict signed
+        # event verifier, and no platform-binary subpackages
+        # (@hai.ai/jacs-linux-x64-gnu, etc.) were published alongside it. The
+        # committed package.json keeps the local-dev file:../../JACS/jacsnpm
+        # path; building the napi addon here makes the JACS loader's
+        # `existsSync(./jacs.linux-x64-gnu.node)` branch succeed without the
+        # missing registry subpackages. Once JACS 0.12.0 and its platform
+        # packages publish, restore `npm run deps:prod`.
         run: |
           cd "${{ github.workspace }}/../JACS/jacsnpm"
           npm install @napi-rs/cli

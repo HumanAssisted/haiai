@@ -237,12 +237,31 @@ export HAI_URL=https://hai.ai
 
 | Surface | Where the origin comes from |
 |---------|-----------------------------|
-| Rust library | `HaiClientOptions.base_url`, defaulted from `haiai::base_url_from_env()` |
+| Rust — `Agent::from_config(..)` | Resolved from the environment for you |
+| Rust — `HaiClient::new(..)` | `HaiClientOptions.base_url`, which you set. `HaiClientOptions::default()` is always `https://hai.ai`; pass `base_url: haiai::base_url_from_env()` to opt into the environment |
 | Rust CLI (`haiai …`) | `haiai::base_url_from_env()` |
 | MCP server (`haiai mcp`) | `haiai::base_url_from_env()`; set `env` in your MCP client config |
-| Python | `HaiClient(...)` config, defaulted in `haiai/client.py`; or pass the base URL per call |
-| Node | `HaiClient.create({ url })`, defaulted in `node/src/client.ts` |
-| Go | `haiigo` config `BaseURL`, delegating to the same Rust resolver |
+| Python | `HaiClient(...)` resolves it in `haiai/client.py`; or pass the base URL per call |
+| Node | `HaiClient.create({ url })`, resolved in `node/src/client.ts` |
+| Go | `haiai.NewClient(...)` resolves it; `WithEndpoint("https://…")` overrides |
+
+The low-level Rust constructor is the one exception, deliberately: a
+`HaiClientOptions` you built by hand should mean exactly what it says.
+
+```rust
+// Opt a low-level client into the environment explicitly:
+let client = haiai::HaiClient::new(
+    provider,
+    haiai::HaiClientOptions {
+        base_url: haiai::base_url_from_env(),
+        ..Default::default()
+    },
+)?;
+```
+
+`RemoteJacsProvider::from_inner` reads the same variables but has **no**
+default: sending documents to production because an environment variable was
+missing is not a safe fallback, so it errors instead.
 
 `HAI_API_URL` is honoured as a fallback so the export used by the `hai` API's
 own benchmark tooling (`api/benchmark/README.md`) works here unchanged.

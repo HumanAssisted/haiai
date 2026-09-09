@@ -66,8 +66,9 @@ pub use a2a::{
 #[cfg(feature = "jacs-crate")]
 pub use agent::{Agent, EmailNamespace};
 pub use client::{
-    base_url_from_env, HaiClient, HaiClientOptions, SseConnection, WsConnection, DEFAULT_BASE_URL,
-    DEFAULT_DNS_RESOLVER, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_SECS,
+    base_url_from_env, base_url_from_env_opt, HaiClient, HaiClientOptions, SseConnection,
+    WsConnection, DEFAULT_BASE_URL, DEFAULT_DNS_RESOLVER, DEFAULT_MAX_RETRIES,
+    DEFAULT_TIMEOUT_SECS,
 };
 #[cfg(feature = "jacs-crate")]
 pub use config::resolve_log_filter;

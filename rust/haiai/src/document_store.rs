@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use crate::client::DEFAULT_BASE_URL;
 use crate::config::resolve_storage_backend;
 use crate::error::{HaiError, Result};
 use crate::jacs::JacsDocumentProvider;
@@ -59,9 +58,9 @@ pub fn build_document_provider_for_backend(
                             "failed to load local JACS signer for remote document provider: {e}"
                         ))
                     })?;
-            let base_url = base_url
-                .or_else(|| std::env::var("HAI_URL").ok())
-                .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
+            // `HAI_URL` > `HAI_API_URL` > `DEFAULT_BASE_URL`, one contract for
+            // the whole crate.
+            let base_url = base_url.unwrap_or_else(crate::client::base_url_from_env);
             let remote = RemoteJacsProvider::new(
                 local,
                 RemoteJacsProviderOptions {

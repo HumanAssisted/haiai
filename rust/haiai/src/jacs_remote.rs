@@ -94,12 +94,17 @@ impl<P: JacsProvider> RemoteJacsProvider<P> {
     }
 
     /// Construct from environment / explicit base_url; mirrors `LocalJacsProvider::from_config`.
-    /// `HAI_URL` overrides the default base URL.
+    /// `HAI_URL`, then `HAI_API_URL`, supplies the base URL when the caller
+    /// does not. There is deliberately no default here: a remote signer that
+    /// silently fell back to production would be a surprising place to send
+    /// documents, so an unset environment is an error.
     pub fn from_inner(inner: P, base_url: Option<String>) -> Result<Self> {
         let resolved = base_url
-            .or_else(|| std::env::var("HAI_URL").ok())
+            .or_else(crate::client::base_url_from_env_opt)
             .ok_or_else(|| HaiError::ConfigInvalid {
-                message: "RemoteJacsProvider requires HAI_URL or an explicit base_url".to_string(),
+                message:
+                    "RemoteJacsProvider requires HAI_URL, HAI_API_URL, or an explicit base_url"
+                        .to_string(),
             })?;
         Self::new(
             inner,

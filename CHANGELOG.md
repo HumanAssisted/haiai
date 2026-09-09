@@ -2,7 +2,31 @@
 
 ## Unreleased
 
+### Breaking
+
+- **`haiai[crewai]` is gone**, following JACS 0.12.0, which removed the CrewAI
+  adapter and the `jacs[crewai]` extra because CrewAI pins a `chromadb`
+  release with four unpatched advisories. `pip install "haiai[crewai]"` could
+  not resolve, and neither could `haiai[all]`, which listed it. The four
+  `haiai.integrations` CrewAI helpers remain — the import surface is unchanged
+  — but they now report that the adapter was removed upstream and name the
+  LangChain / LangGraph / FastAPI / Anthropic / MCP alternatives instead of
+  offering an install command that cannot work.
+
 ### Added
+
+- **One documented switch for the HAI origin, in every SDK.** Rust, Python,
+  Node, and Go now resolve it identically: explicit option > `HAI_URL` >
+  `HAI_API_URL` > `https://hai.ai`, with a set-but-blank variable counting as
+  unset. Previously Python read both variables, Node read both but let a blank
+  one win and then fail URL validation, and the Rust CLI, `haiai mcp`, and Go
+  read only `HAI_URL`. `haiai::base_url_from_env()` is the Rust definition;
+  `Agent::from_config` uses it, as do the CLI and the MCP server.
+  `HaiClientOptions::default()` deliberately stays literal, and
+  `RemoteJacsProvider::from_inner` still has no default — it errors rather
+  than silently targeting production. See "Choosing an endpoint" in the README
+  and DEVELOPMENT.md, including the constraint that live SSE/WebSocket
+  delivery needs an HTTPS origin unless the host is loopback.
 
 - **Agreement v2 parity with JACS across the SDK.** `LocalJacsProvider` now implements the full `JacsAgreementProvider` v2 surface against `jacs::agreements::v2` (requires jacs 0.11.2): `create_agreement_v2`, `apply_agreement_v2` (typed mutations: appendTranscript/updateTerms/setStatus/setParties/setSignaturePolicy/addLink/setOwners), `sign_agreement_v2` (signer/witness/notary roles), `verify_agreement_v2` (structural + hash + policy + signature report), `detect_agreement_branch_conflict`, `merge_agreement_transcript_branches`, and `resolve_agreement_branch_conflict` — replacing the "deferred for P1" stubs. Covered by a real-Ed25519 lifecycle suite mirroring JACS's shared parity scenario (create → append transcript → sign → verify; transcript branches auto-merge; conflicting terms detect then resolve; unknown roles rejected with the same message as JACS binding-core).
 - **Release ordering:** the `agreements` feature requires **jacs 0.11.2**, which is not yet published — JACS main must be pushed, tagged `v0.11.2` (CI `JACS_REF` now points there), and published to crates.io (and jacspy to PyPI for the Python pipeline) before haiai can be released. `save_agreement`/`search_agreements` target HAI workflow endpoints that are PRD-documented ahead of their server implementation.
@@ -20,10 +44,42 @@
 - **Signed-email inputs are strict in HTML-inline mode.** The SDK owns HTML rendering for now: callers pass plain text, and the SDK rejects user HTML tokens plus reserved HAI/JACS inline markers before signing so generated signature artifacts cannot be injected or confused with user content.
 - Node and Go signed-email facades now pass `html_inline_jacs` explicitly when callers omit a generation type, matching Python and keeping the cross-language default visible at the FFI boundary.
 - **JACS schema consolidation compatibility.** HAIAI now treats retired JACS application schemas as generic signed documents in MCP/docs/email assertions and refreshes embedded self-knowledge from the current JACS docs.
+- **JACS is pinned to 0.12.0** across the Rust manifests, `python/pyproject.toml`
+  (`>=0.12.0,<0.13`), `node/publish.deps.json`, all three lockfiles, and CI's
+  `JACS_REF`. These are forward-looking: crates.io and PyPI publish 0.11.3 and
+  npm publishes 0.10.1, so CI cannot clone `crate/v0.12.0` until JACS tags it.
+- **`haiai mcp` starts JACS in the `local-sign` profile.** JACS 0.12.0 made MCP
+  tool profiles fail-closed: a server built from an agent handle alone runs
+  `verify-only` and refuses every other JACS tool at dispatch, so haiai was
+  advertising an inventory it could no longer serve. `haiai mcp` authorizes
+  `local-sign` from the config it has already loaded and unlocked, keeping
+  document and agreement signing available; if JACS refuses it logs
+  `event=mcp_local_signing_denied` at WARN and falls back to verify-only rather
+  than failing startup. Only the active profile's tools are advertised, so
+  identity and key administration tools (`jacs_export_agent`,
+  `jacs_create_agent`, `jacs_rotate_keys`) no longer appear.
+- **Agreement v2 reports read `mathematicalChecksValid`.** In JACS 0.12.0 an
+  agreement v2 report keeps `valid` and `policyAccepted` false as a fail-closed
+  wire-migration field, because portable inspection cannot authenticate role,
+  quorum, or lineage; the truthful cryptographic and structural result is
+  `mathematicalChecksValid`.
 
 ### Fixed
 
 - **HTML-inline signed email through FFI bindings.** `Box<dyn JacsMediaProvider>` now forwards envelope-signing methods, so the default `html_inline_jacs` path works for Python, Node, Go, and other binding-core callers backed by `LocalJacsProvider`.
+- **`pro_run` polled a payment route the HAI API does not serve.** It requested
+  `GET /api/benchmark/payments/{payment_id}/status`; the real route is
+  `GET /api/benchmark/payment/{payment_id}/verify`, returning
+  `{payment_id, verified, status, tier, amount}`. Every `pro_run` against a live
+  deployment 404'd until the poll timeout.
+- **The embedded MCP JACS verifier no longer leaks unauthenticated signer
+  metadata.** `AgentSigner::verify_with_key` now mirrors
+  `SimpleAgent::build_verification_result`: a failed verification surfaces no
+  `signer_id`, timestamp, or payload, a legacy-v1 signature (no
+  `signatureContentVersion`) surfaces no signer metadata even on success, and
+  local enrollment evidence is consulted only after the cryptographic checks
+  pass — a trust-store error becomes a verification error rather than a silent
+  downgrade.
 
 ## 0.4.0 (2026-04-28)
 

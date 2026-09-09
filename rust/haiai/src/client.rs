@@ -53,15 +53,23 @@ pub const DEFAULT_BASE_URL: &str = "https://hai.ai";
 /// Note that live SSE/WebSocket delivery additionally requires the origin to
 /// be HTTPS unless its host is loopback — see `validate_live_event_key_origin`.
 pub fn base_url_from_env() -> String {
+    base_url_from_env_opt().unwrap_or_else(|| DEFAULT_BASE_URL.to_string())
+}
+
+/// Same resolution as [`base_url_from_env`], but without the default.
+///
+/// Returns `None` when neither variable carries a usable value, for the call
+/// sites that must fail loudly rather than silently target production.
+pub fn base_url_from_env_opt() -> Option<String> {
     for name in ["HAI_URL", "HAI_API_URL"] {
         if let Ok(value) = std::env::var(name) {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
-                return trimmed.to_string();
+                return Some(trimmed.to_string());
             }
         }
     }
-    DEFAULT_BASE_URL.to_string()
+    None
 }
 
 /// Maximum time a live connection may keep one server-key snapshot before it
