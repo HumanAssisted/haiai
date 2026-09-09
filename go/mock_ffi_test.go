@@ -464,7 +464,7 @@ func (m *mockFFIClient) ProRun(optionsJSON string) (json.RawMessage, error) {
 	}
 	if !sub.AlreadyPaid && sub.CheckoutURL != "" {
 		// Poll for payment
-		statusPath := fmt.Sprintf("/api/benchmark/payments/%s/status", urlEncode(sub.SessionID))
+		statusPath := fmt.Sprintf("/api/benchmark/payment/%s/verify", urlEncode(sub.SessionID))
 		_, _ = m.doGet(statusPath)
 	}
 	// Run benchmark

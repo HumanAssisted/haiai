@@ -1995,7 +1995,11 @@ impl<P: JacsProvider> HaiClient<P> {
 
         let start = std::time::Instant::now();
         let safe_payment_id = encode_path_segment(&payment_id);
-        let status_url = self.url(&format!("/api/benchmark/payments/{safe_payment_id}/status"));
+        // The HAI API serves this as singular `payment` + `verify`
+        // (`GET /api/benchmark/payment/{payment_id}/verify`), returning
+        // `{payment_id, verified, status, tier, amount}`. The `status` field
+        // read below is that response's field.
+        let status_url = self.url(&format!("/api/benchmark/payment/{safe_payment_id}/verify"));
 
         loop {
             if start.elapsed() >= options.poll_timeout {

@@ -82,7 +82,7 @@ async fn pro_run_polls_payment_and_runs_benchmark() {
     let status = server
         .mock_async(|when, then| {
             when.method(GET)
-                .path("/api/benchmark/payments/pay%2F123/status");
+                .path("/api/benchmark/payment/pay%2F123/verify");
             then.status(200).json_body(json!({
                 "status": "paid"
             }));

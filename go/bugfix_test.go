@@ -58,7 +58,7 @@ func TestProRunPollsCorrectPaymentStatusEndpoint(t *testing.T) {
 			_, _ = w.Write([]byte(`{"checkout_url":"http://example.com/pay","session_id":"sess-123","already_paid":false}`))
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/benchmark/payments/") {
+		if strings.HasPrefix(r.URL.Path, "/api/benchmark/payment/") {
 			gotStatusPath = r.URL.Path
 			callCount++
 			w.Header().Set("Content-Type", "application/json")
@@ -84,7 +84,7 @@ func TestProRunPollsCorrectPaymentStatusEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProRun: %v", err)
 	}
-	expected := "/api/benchmark/payments/sess-123/status"
+	expected := "/api/benchmark/payment/sess-123/verify"
 	if gotStatusPath != expected {
 		t.Fatalf("expected %q, got %q", expected, gotStatusPath)
 	}
