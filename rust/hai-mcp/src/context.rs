@@ -44,9 +44,10 @@ impl HaiServerContext {
         embedded_provider: EmbeddedJacsProvider,
         storage_override: Option<String>,
     ) -> Self {
-        let base_url = normalize_base_url(
-            &std::env::var("HAI_URL").unwrap_or_else(|_| haiai::DEFAULT_BASE_URL.to_string()),
-        );
+        // `HAI_URL` > `HAI_API_URL` > `DEFAULT_BASE_URL`, the same precedence
+        // every HAIAI SDK uses; this is how an operator points `haiai mcp` at
+        // a benchmark or staging deployment.
+        let base_url = normalize_base_url(&haiai::base_url_from_env());
         let default_config_path = default_config_path.map(PathBuf::from);
         Self {
             base_url,

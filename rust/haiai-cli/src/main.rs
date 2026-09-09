@@ -1192,7 +1192,7 @@ fn read_deploy_state() -> anyhow::Result<DeployState> {
 }
 
 fn hai_url() -> String {
-    std::env::var("HAI_URL").unwrap_or_else(|_| haiai::DEFAULT_BASE_URL.to_string())
+    haiai::base_url_from_env()
 }
 
 /// Read and trim a password from a file path.

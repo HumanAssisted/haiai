@@ -142,12 +142,16 @@ export class HaiClient {
   }
 
   private constructor(options?: HaiClientOptions) {
-    // URL precedence mirrors the Python SDK (client.py:174):
+    // URL precedence mirrors the Python SDK (client.py:174) and the Rust
+    // `haiai::base_url_from_env`:
     //   options.url > HAI_URL > HAI_API_URL > DEFAULT_BASE_URL
+    // A variable that is set but blank counts as unset in all three, so an
+    // `export HAI_URL=` left in a shell profile falls through to the default
+    // instead of failing URL validation.
     const rawUrl =
-      options?.url
-      ?? process.env.HAI_URL
-      ?? process.env.HAI_API_URL
+      [options?.url, process.env.HAI_URL, process.env.HAI_API_URL]
+        .map((candidate) => candidate?.trim())
+        .find((candidate) => !!candidate)
       ?? DEFAULT_BASE_URL;
     if (!/^https?:\/\//i.test(rawUrl)) {
       throw new HaiError(

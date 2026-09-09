@@ -171,9 +171,13 @@ def _build_ffi_config() -> str:
         config["agent_version"] = cfg.version
         config["key_dir"] = cfg.key_dir
 
-    # Pick up base URL from env
+    # Pick up base URL from env. Precedence matches every other HAIAI SDK:
+    # HAI_URL > HAI_API_URL > DEFAULT_BASE_URL, with a set-but-blank variable
+    # counting as unset.
     base_url = (
-        os.environ.get("HAI_URL") or os.environ.get("HAI_API_URL") or DEFAULT_BASE_URL
+        os.environ.get("HAI_URL", "").strip()
+        or os.environ.get("HAI_API_URL", "").strip()
+        or DEFAULT_BASE_URL
     )
     config["base_url"] = base_url
 

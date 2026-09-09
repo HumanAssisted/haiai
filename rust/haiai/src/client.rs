@@ -40,6 +40,30 @@ use crate::types::{
 
 pub const DEFAULT_BASE_URL: &str = "https://hai.ai";
 
+/// Resolve the HAI API origin this process should target.
+///
+/// Precedence matches the Python and Node SDKs exactly:
+/// `HAI_URL` > `HAI_API_URL` > [`DEFAULT_BASE_URL`]. A variable that is set
+/// but empty (or only whitespace) is treated as unset, so an
+/// `export HAI_URL=` left in a shell profile falls through instead of
+/// producing an unusable origin.
+///
+/// This is the single switch a developer flips to point an agent at a
+/// benchmark or staging deployment instead of production `https://hai.ai`.
+/// Note that live SSE/WebSocket delivery additionally requires the origin to
+/// be HTTPS unless its host is loopback — see `validate_live_event_key_origin`.
+pub fn base_url_from_env() -> String {
+    for name in ["HAI_URL", "HAI_API_URL"] {
+        if let Ok(value) = std::env::var(name) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+    DEFAULT_BASE_URL.to_string()
+}
+
 /// Maximum time a live connection may keep one server-key snapshot before it
 /// must refresh the exact active signer map.
 pub const DEFAULT_SERVER_KEY_REFRESH_SECS: u64 = 5 * 60;
@@ -3739,6 +3763,44 @@ mod tests {
             },
         );
         assert!(result.is_ok(), "https:// should be accepted");
+    }
+
+    /// `HAI_URL` > `HAI_API_URL` > default, with blank treated as unset — the
+    /// contract the Python (`client.py`) and Node (`client.ts`) SDKs already
+    /// implement, and the switch a developer flips to target a benchmark
+    /// deployment instead of production.
+    #[test]
+    fn base_url_from_env_follows_the_cross_sdk_precedence() {
+        let _guard = crate::test_support::env_lock();
+        let restore = |name: &str, previous: Option<String>| match previous {
+            Some(value) => std::env::set_var(name, value),
+            None => std::env::remove_var(name),
+        };
+        let previous_hai_url = std::env::var("HAI_URL").ok();
+        let previous_hai_api_url = std::env::var("HAI_API_URL").ok();
+
+        std::env::remove_var("HAI_URL");
+        std::env::remove_var("HAI_API_URL");
+        assert_eq!(base_url_from_env(), DEFAULT_BASE_URL);
+
+        std::env::set_var("HAI_API_URL", "https://sim.hai.ai");
+        assert_eq!(base_url_from_env(), "https://sim.hai.ai");
+
+        std::env::set_var("HAI_URL", "https://staging.hai.example");
+        assert_eq!(base_url_from_env(), "https://staging.hai.example");
+
+        std::env::set_var("HAI_URL", "   ");
+        assert_eq!(
+            base_url_from_env(),
+            "https://sim.hai.ai",
+            "a blank HAI_URL must fall through, not win"
+        );
+
+        std::env::set_var("HAI_API_URL", "");
+        assert_eq!(base_url_from_env(), DEFAULT_BASE_URL);
+
+        restore("HAI_URL", previous_hai_url);
+        restore("HAI_API_URL", previous_hai_api_url);
     }
 
     #[tokio::test]

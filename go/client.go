@@ -132,9 +132,16 @@ func NewClient(opts ...Option) (*Client, error) {
 		opt(cl)
 	}
 
-	// Override endpoint from environment if not set by option
-	if envURL := os.Getenv("HAI_URL"); envURL != "" && cl.endpoint == DefaultEndpoint {
-		cl.endpoint = strings.TrimRight(envURL, "/")
+	// Override endpoint from environment if not set by option. Precedence
+	// matches every other HAIAI SDK: option > HAI_URL > HAI_API_URL >
+	// DefaultEndpoint, with a set-but-blank variable counting as unset.
+	if cl.endpoint == DefaultEndpoint {
+		for _, name := range []string{"HAI_URL", "HAI_API_URL"} {
+			if envURL := strings.TrimSpace(os.Getenv(name)); envURL != "" {
+				cl.endpoint = strings.TrimRight(envURL, "/")
+				break
+			}
+		}
 	}
 
 	// Auto-discover config if jacsID is missing

@@ -215,6 +215,45 @@ let wrapped = a2a.sign_artifact(json!({"taskId":"t-1","input":"hello"}), "task",
 let verified = a2a.verify_artifact(&wrapped)?;
 ```
 
+## Choosing an endpoint
+
+Nothing in the SDKs hard-codes a deployment. The HAI API origin resolves as:
+
+```
+explicit option  >  $HAI_URL  >  $HAI_API_URL  >  https://hai.ai
+```
+
+A variable that is set but blank counts as unset, in all four languages.
+
+```bash
+# Benchmark / MediationBench deployment
+export HAI_URL=https://sim.hai.ai
+
+# Local hai/api checkout
+export HAI_URL=http://localhost:3000
+
+# Production (or just leave both unset)
+export HAI_URL=https://hai.ai
+```
+
+| Surface | Where the origin comes from |
+|---------|-----------------------------|
+| Rust library | `HaiClientOptions.base_url`, defaulted from `haiai::base_url_from_env()` |
+| Rust CLI (`haiai …`) | `haiai::base_url_from_env()` |
+| MCP server (`haiai mcp`) | `haiai::base_url_from_env()`; set `env` in your MCP client config |
+| Python | `HaiClient(...)` config, defaulted in `haiai/client.py`; or pass the base URL per call |
+| Node | `HaiClient.create({ url })`, defaulted in `node/src/client.ts` |
+| Go | `haiigo` config `BaseURL`, delegating to the same Rust resolver |
+
+`HAI_API_URL` is honoured as a fallback so the export used by the `hai` API's
+own benchmark tooling (`api/benchmark/README.md`) works here unchanged.
+
+Live SSE/WebSocket delivery verifies every event against the origin's
+published signing keys, so the origin must be **HTTPS unless its host is
+loopback** (`haiai::client::validate_live_event_key_origin`). `https://sim.hai.ai`
+and `http://localhost:3000` both work; `http://some-lan-host:3000` is refused
+before any connection is made.
+
 ## Connection models
 
 HAI supports three transport protocols for agent communication:
@@ -222,8 +261,12 @@ HAI supports three transport protocols for agent communication:
 | Transport | Endpoint | Use case |
 |-----------|----------|----------|
 | **SSE** (recommended) | `GET /api/v1/agents/connect` | Persistent connection, server pushes events |
-| **WebSocket** | `wss://hai.ai/ws/v1/agents/connect` | Bidirectional, lower latency |
+| **WebSocket** | `GET /ws/agent/connect` (`wss://` against the configured origin) | Bidirectional, lower latency |
 | **HTTP Outbound** | `POST` to your agent's webhook | Agent receives jobs via HTTP callback |
+
+Both live transports first fetch `GET /.well-known/hai-keys.json` from the
+configured origin and refuse any frame that is not a signed event verifiable
+against an active key from that document.
 
 ## Error handling
 
