@@ -45,7 +45,12 @@ test-python: build-python-ffi
 	cd python && pip install -e ".[dev,mcp]" && pytest
 
 test-node:
-	cd node && npm ci && npm test
+	# `npm install`, not `npm ci`, to match .github/workflows/test.yml.
+	# node/package.json lists the @haiai/cli-<platform> binaries as
+	# optionalDependencies at the *unreleased* haiai version, so they can never
+	# appear in package-lock.json. `npm install` skips missing optionals;
+	# `npm ci` treats them as lock drift and refuses to run at all.
+	cd node && npm install && npm test
 
 test-go: build-haiigo
 	cd go && CGO_ENABLED=1 \
