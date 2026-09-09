@@ -166,8 +166,44 @@ impl TestWorkspace {
             serde_json::to_vec_pretty(&value).expect("encode temp config"),
         )
         .expect("write temp config");
+        sign_fixture_config(&config_path, &value);
         config_path
     }
+}
+
+/// Sign the staged temp config with the fixture agent's own key.
+///
+/// JACS >= 0.11.4 refuses to load an unsigned *persisted* config for an
+/// existing-agent load, and the directory fields rewritten above sit inside the
+/// signed payload, so the signature has to be produced after the rewrite. The
+/// signing agent is loaded from a programmatic config (no `raw_json`, so the
+/// caller is the trust source); the `JACS_ALLOW_UNSIGNED_AGENT_CONFIG` hatch is
+/// deliberately not used, so the spawned server still takes the strict path.
+fn sign_fixture_config(config_path: &Path, value: &Value) {
+    std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "secretpassord");
+    let field = |name: &str| value.get(name).and_then(Value::as_str).map(str::to_string);
+    let mut config = jacs::config::Config::new(
+        field("jacs_use_security"),
+        field("jacs_data_directory"),
+        field("jacs_key_directory"),
+        field("jacs_agent_private_key_filename"),
+        field("jacs_agent_public_key_filename"),
+        field("jacs_agent_key_algorithm"),
+        None,
+        field("jacs_agent_id_and_version"),
+        field("jacs_default_storage"),
+    );
+    config.set_config_dir(config_path.parent().map(PathBuf::from));
+    let mut agent = jacs::agent::Agent::from_config(config, None)
+        .expect("load fixture agent for config signing");
+    let signed = agent
+        .sign_config(value)
+        .expect("sign staged fixture config");
+    std::fs::write(
+        config_path,
+        serde_json::to_vec_pretty(&signed).expect("encode signed fixture config"),
+    )
+    .expect("write signed fixture config");
 }
 
 struct McpSession {

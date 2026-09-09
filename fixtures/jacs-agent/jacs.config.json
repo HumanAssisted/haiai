@@ -1,6 +1,6 @@
 {
     "$schema": "https://hai.ai/schemas/jacs.config.schema.json",
-    "jacs_agent_id_and_version": "96160c44-9e52-4889-b5bb-5a5aec41bf32:a6b06341-a4c7-4dae-9dfd-570301d781cb",
+    "jacs_agent_id_and_version": "96160c44-9e52-4889-b5bb-5a5aec41bf32:0ae4b7ec-de05-4613-9ed3-bb59801bca39",
     "jacs_agent_key_algorithm": "pq2025",
     "jacs_agent_private_key_filename": "jacs.private.pem.enc",
     "jacs_agent_public_key_filename": "jacs.public.pem",

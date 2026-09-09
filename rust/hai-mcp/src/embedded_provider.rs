@@ -601,7 +601,57 @@ pub(crate) mod tests {
         )
         .expect("write temp config");
 
+        sign_temp_fixture_config(&config_path);
+
         (temp_dir, config_path)
+    }
+
+    /// Sign the freshly rewritten temp config with the fixture agent's own key.
+    ///
+    /// JACS >= 0.11.4 refuses to load an unsigned *persisted* config for an
+    /// existing-agent load. Real deployments get a signed config from
+    /// `haiai init`, but the checked-in fixture is an unsigned legacy config
+    /// whose directory fields are rewritten per tempdir — and those fields sit
+    /// inside the signed payload — so the signature has to be produced here,
+    /// after the rewrite.
+    ///
+    /// The signing agent is loaded from a *programmatic* `Config` (no
+    /// `raw_json`, so the caller is the trust source and nothing on disk is
+    /// trusted unverified). The `JACS_ALLOW_UNSIGNED_AGENT_CONFIG` migration
+    /// hatch is deliberately not used: every load performed by an actual test
+    /// body then goes through the strict signed-config path, exactly as
+    /// production does.
+    fn sign_temp_fixture_config(config_path: &Path) {
+        let raw: Value =
+            serde_json::from_str(&fs::read_to_string(config_path).expect("read temp config"))
+                .expect("parse temp config");
+        let field = |name: &str| raw.get(name).and_then(Value::as_str).map(str::to_string);
+
+        let mut config = jacs::config::Config::new(
+            field("jacs_use_security"),
+            field("jacs_data_directory"),
+            field("jacs_key_directory"),
+            field("jacs_agent_private_key_filename"),
+            field("jacs_agent_public_key_filename"),
+            field("jacs_agent_key_algorithm"),
+            None,
+            field("jacs_agent_id_and_version"),
+            field("jacs_default_storage"),
+        );
+        config.set_config_dir(config_path.parent().map(PathBuf::from));
+
+        let signed = {
+            let _config_env_lock = lock_jacs_config_env();
+            let mut agent =
+                Agent::from_config(config, None).expect("load fixture agent for config signing");
+            agent.sign_config(&raw).expect("sign temp fixture config")
+        };
+
+        fs::write(
+            config_path,
+            serde_json::to_vec_pretty(&signed).expect("encode signed fixture config"),
+        )
+        .expect("write signed temp config");
     }
 
     #[test]
