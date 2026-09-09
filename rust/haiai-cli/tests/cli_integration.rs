@@ -419,9 +419,26 @@ fn mcp_serves_hai_and_jacs_tools() {
         tools.contains(&"hai_register_agent".to_string()),
         "missing hai_register_agent in {tools:?}"
     );
+    // JACS 0.11.4 fail-closed profiles: `haiai mcp` authorizes `local-sign`
+    // from the loaded signed config, so document/agreement signing and
+    // verification are served. Identity and key administration tools such as
+    // `jacs_export_agent` are outside every startable profile and must not be
+    // advertised.
     assert!(
-        tools.contains(&"jacs_export_agent".to_string()),
-        "missing jacs_export_agent in {tools:?}"
+        tools.contains(&"jacs_sign_document".to_string()),
+        "missing jacs_sign_document in {tools:?}"
+    );
+    assert!(
+        tools.contains(&"jacs_verify_document".to_string()),
+        "missing jacs_verify_document in {tools:?}"
+    );
+    assert!(
+        !tools.contains(&"jacs_export_agent".to_string()),
+        "jacs_export_agent must not be advertised in {tools:?}"
+    );
+    assert!(
+        !tools.contains(&"jacs_rotate_keys".to_string()),
+        "jacs_rotate_keys must not be advertised in {tools:?}"
     );
     assert!(
         tools.contains(&"hai_send_email".to_string()),

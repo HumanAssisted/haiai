@@ -19,8 +19,18 @@ impl HaiMcpServer {
         Self { jacs, context }
     }
 
+    /// Advertise only the JACS tools the embedded server will actually
+    /// dispatch under its active runtime profile.
+    ///
+    /// `JacsMcpServer::tools()` is the full compiled-in inventory kept for
+    /// contract snapshots. Since JACS 0.11.4 every tool outside the active
+    /// profile is refused at dispatch with `LOCAL_SIGNING_NOT_AUTHORIZED`, so
+    /// listing the full inventory would advertise capabilities this process
+    /// does not have. `active_tools()` is the fail-closed surface.
     fn combined_tools(&self) -> Vec<Tool> {
-        let mut tools: Vec<Tool> = JacsMcpServer::tools()
+        let mut tools: Vec<Tool> = self
+            .jacs
+            .active_tools()
             .into_iter()
             .filter(|tool| tool.name != "jacs_memory_save")
             .collect();

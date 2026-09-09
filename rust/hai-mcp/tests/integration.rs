@@ -556,7 +556,16 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     assert!(tools.contains(&"hai_register_agent".to_string()));
     assert!(tools.contains(&"hai_send_email".to_string()));
     assert!(tools.contains(&"hai_save_memory".to_string()));
-    assert!(tools.contains(&"jacs_export_agent".to_string()));
+    // JACS 0.11.4 fail-closed profiles: the embedded server advertises only
+    // what its active profile will dispatch. `haiai mcp` authorizes
+    // `local-sign` from the loaded signed config, so document verification and
+    // signing are served; identity/key administration tools such as
+    // `jacs_export_agent` are outside every startable profile and must not be
+    // advertised at all.
+    assert!(tools.contains(&"jacs_verify_document".to_string()));
+    assert!(tools.contains(&"jacs_sign_document".to_string()));
+    assert!(!tools.contains(&"jacs_export_agent".to_string()));
+    assert!(!tools.contains(&"jacs_create_agent".to_string()));
     assert!(!tools.contains(&"jacs_memory_save".to_string()));
     assert!(!tools.contains(&"jacs_memory_recall".to_string()));
     assert!(!tools.contains(&"jacs_memory_list".to_string()));
@@ -574,13 +583,22 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     );
     assert!(saved_memory["structuredContent"]["key"].as_str().is_some());
 
-    let exported = session.call_tool(10, "jacs_export_agent", json!({}));
-    let export_text = exported["content"][0]["text"]
+    let signed = session.call_tool(
+        10,
+        "jacs_sign_document",
+        json!({ "content": json!({"hello": "embedded jacs"}).to_string() }),
+    );
+    let signed_text = signed["content"][0]["text"]
         .as_str()
-        .expect("jacs_export_agent text");
-    let export_json: Value = serde_json::from_str(export_text).expect("decode export result");
-    assert_eq!(export_json["success"].as_bool(), Some(true));
-    assert!(export_json["agent_id"].as_str().is_some());
+        .expect("jacs_sign_document text");
+    let signed_json: Value = serde_json::from_str(signed_text).expect("decode sign result");
+    assert_eq!(
+        signed_json["success"].as_bool(),
+        Some(true),
+        "jacs_sign_document must succeed under the local-sign scope: {signed_json}"
+    );
+    assert!(signed_json["signed_document"].as_str().is_some());
+    assert!(signed_json["jacs_document_id"].as_str().is_some());
 
     let email_status = session.call_tool(
         12,

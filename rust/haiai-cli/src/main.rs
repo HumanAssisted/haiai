@@ -1668,8 +1668,35 @@ async fn main() -> anyhow::Result<()> {
             if let Some(email) = shared_agent.agent_email() {
                 context.remember_agent_email(&fallback_jacs_id, email);
             }
-            let server =
-                HaiMcpServer::new(JacsMcpServer::new(shared_agent.agent_wrapper()), context);
+            // JACS 0.11.4 fail-closed profiles: an embedded `JacsMcpServer`
+            // built from an agent handle alone runs `verify-only` and refuses
+            // every other JACS tool at dispatch. `haiai mcp` has already loaded
+            // and unlocked an existing signed config, which is exactly the
+            // `local-sign` precondition, so authorize that scope from the same
+            // config to keep JACS document/agreement signing available. If JACS
+            // refuses (unsigned config, non-fs storage, or an ambient network
+            // capability enabled) fall back to verify-only rather than failing
+            // startup — the HAI platform tools must still serve.
+            let jacs_server =
+                match JacsMcpServer::local_signing_from_config(shared_agent.config_path()) {
+                    Ok(server) => {
+                        tracing::info!(
+                            profile = "local-sign",
+                            "JACS MCP local signing authorized from the loaded config"
+                        );
+                        server
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            event = "mcp_local_signing_denied",
+                            reason = %error,
+                            profile = "verify-only",
+                            "JACS MCP local signing unavailable; serving verification tools only"
+                        );
+                        JacsMcpServer::new(shared_agent.agent_wrapper())
+                    }
+                };
+            let server = HaiMcpServer::new(jacs_server, context);
 
             tracing::info!("haiai mcp ready, waiting for MCP client on stdio");
 
