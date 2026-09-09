@@ -2125,7 +2125,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jacs"
-version = "0.11.4"
+version = "0.12.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -2195,7 +2195,7 @@ dependencies = [
 
 [[package]]
 name = "jacs-binding-core"
-version = "0.11.4"
+version = "0.12.0"
 dependencies = [
  "base64 0.22.1",
  "jacs",
@@ -2209,7 +2209,7 @@ dependencies = [
 
 [[package]]
 name = "jacs-core"
-version = "0.11.4"
+version = "0.12.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -2220,6 +2220,7 @@ dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
  "jsonschema",
+ "p256",
  "pbkdf2",
  "phf",
  "rand 0.9.5",
@@ -2235,7 +2236,7 @@ dependencies = [
 
 [[package]]
 name = "jacs-mcp"
-version = "0.11.4"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2254,7 +2255,7 @@ dependencies = [
 
 [[package]]
 name = "jacs-media"
-version = "0.11.4"
+version = "0.12.0"
 dependencies = [
  "base64 0.22.1",
  "image",

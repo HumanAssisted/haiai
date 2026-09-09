@@ -279,19 +279,62 @@ impl JacsSigner for AgentSigner {
             errors.push(format!("Hash verification failed: {e}"));
         }
 
-        let valid = errors.is_empty();
-        let signer_id = jacs_doc
+        // Mirror `jacs::simple::SimpleAgent::build_verification_result`: local
+        // enrollment evidence is only consulted once the cryptographic checks
+        // pass, and a trust-store error is an additional verification error
+        // rather than a silent downgrade.
+        let identity_binding_status = if errors.is_empty() {
+            match jacs::trust::verify_document_identity_binding(&jacs_doc.value) {
+                Ok(status) => status,
+                Err(error) => {
+                    errors.push(error.to_string());
+                    Default::default()
+                }
+            }
+        } else {
+            Default::default()
+        };
+
+        if !errors.is_empty() {
+            // A failed verification authenticates nothing, so it must not
+            // surface the document's self-asserted signer or timestamp.
+            return Ok(VerificationResult {
+                valid: false,
+                identity_binding_status: Default::default(),
+                data: serde_json::Value::Null,
+                signer_id: String::new(),
+                signer_name: None,
+                timestamp: String::new(),
+                attachments: vec![],
+                errors,
+            });
+        }
+
+        // Legacy-v1 signatures (no `signatureContentVersion`) authenticate
+        // payload fields only; their signer/date metadata is mutable and is
+        // never surfaced on a successful result.
+        let legacy_signature = jacs_doc
             .value
-            .pointer("/jacsSignature/agentID")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let timestamp = jacs_doc
-            .value
-            .pointer("/jacsSignature/date")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+            .pointer("/jacsSignature/signatureContentVersion")
+            .is_none();
+        let (signer_id, timestamp) = if legacy_signature {
+            (String::new(), String::new())
+        } else {
+            (
+                jacs_doc
+                    .value
+                    .pointer("/jacsSignature/agentID")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                jacs_doc
+                    .value
+                    .pointer("/jacsSignature/date")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            )
+        };
         let data = jacs_doc
             .value
             .get("content")
@@ -299,7 +342,8 @@ impl JacsSigner for AgentSigner {
             .unwrap_or_else(|| jacs_doc.value.clone());
 
         Ok(VerificationResult {
-            valid,
+            valid: true,
+            identity_binding_status,
             data,
             signer_id,
             signer_name: None,

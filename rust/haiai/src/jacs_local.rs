@@ -2304,7 +2304,14 @@ mod agreement_v2_tests {
         let report = provider
             .verify_agreement_v2(&signed.json)
             .expect("verify agreement v2");
-        assert_eq!(report["valid"], true, "report: {report}");
+        // JACS >= 0.11.4: `valid` is a fail-closed wire-migration field that is
+        // always false, and `policyAccepted` is always false, because portable
+        // agreement v2 inspection cannot authenticate role/quorum/lineage.
+        // `mathematicalChecksValid` is the truthful cryptographic/structural
+        // result, so that is what a round-trip may assert on.
+        assert_eq!(report["mathematicalChecksValid"], true, "report: {report}");
+        assert_eq!(report["valid"], false, "report: {report}");
+        assert_eq!(report["policyAccepted"], false, "report: {report}");
         assert_eq!(report["signerCount"], 1, "report: {report}");
     }
 

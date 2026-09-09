@@ -15,7 +15,7 @@ env:
   # Use crate/v* as the canonical source/API release ref; the JACS release
   # workflow verifies it against jacs-core, jacs-media, jacs, binding-core,
   # jacs-mcp, and jacs-cli.
-  JACS_REF: crate/v0.11.4
+  JACS_REF: crate/v0.12.0
 
 jobs:
   crypto-policy:
