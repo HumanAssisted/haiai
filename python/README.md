@@ -13,7 +13,6 @@ pip install "haiai[sse]"        # SSE support
 pip install "haiai[mcp]"        # MCP helper wrappers
 pip install "haiai[langchain]"  # LangChain integration
 pip install "haiai[langgraph]"  # LangGraph integration
-pip install "haiai[crewai]"     # CrewAI integration
 pip install "haiai[agentsdk]"   # Agent SDK tool wrappers
 pip install "haiai[a2a]"        # A2A protocol support
 pip install "haiai[all]"        # Everything
@@ -104,8 +103,8 @@ Bytes are byte-identical to what JACS signed (25 MB cap). See
 from haiai.integrations import (
     langchain_signing_middleware,   # LangChain middleware
     langgraph_wrap_tool_call,       # LangGraph tool wrapper
-    crewai_guardrail,               # CrewAI guardrail
-    crewai_signed_tool,             # CrewAI signed tool
+    crewai_guardrail,               # CrewAI guardrail (needs JACS < 0.12)
+    crewai_signed_tool,             # CrewAI signed tool (needs JACS < 0.12)
     agentsdk_tool_wrapper,          # Agent SDK wrapper
     create_mcp_server,              # MCP server bootstrap
     register_jacs_tools,            # Register JACS tools with MCP

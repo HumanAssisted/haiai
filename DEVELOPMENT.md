@@ -42,7 +42,6 @@ pip install "haiai[ws]"         # WebSocket support
 pip install "haiai[sse]"        # SSE support
 pip install "haiai[langchain]"  # LangChain integration
 pip install "haiai[langgraph]"  # LangGraph integration
-pip install "haiai[crewai]"     # CrewAI integration
 pip install "haiai[mcp]"        # MCP helper wrappers
 pip install "haiai[agentsdk]"   # Agent SDK tool wrappers
 pip install "haiai[a2a]"        # A2A protocol support
@@ -80,8 +79,8 @@ messages = client.list_messages("https://hai.ai")
 from haiai.integrations import (
     langchain_signing_middleware,
     langgraph_wrap_tool_call,
-    crewai_guardrail,
-    crewai_signed_tool,
+    crewai_guardrail,   # needs JACS < 0.12; the adapter was removed upstream
+    crewai_signed_tool, # needs JACS < 0.12; the adapter was removed upstream
     agentsdk_tool_wrapper,
     create_mcp_server,
     register_a2a_tools,
