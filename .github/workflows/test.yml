@@ -15,7 +15,7 @@ env:
   # Use crate/v* as the canonical source/API release ref; the JACS release
   # workflow verifies it against jacs-core, jacs-media, jacs, binding-core,
   # jacs-mcp, and jacs-cli.
-  JACS_REF: crate/v0.12.0
+  JACS_REF: crate/v0.13.0
 
 jobs:
   crypto-policy:
@@ -171,7 +171,7 @@ jobs:
         # committed package.json keeps the local-dev file:../../JACS/jacsnpm
         # path; building the napi addon here makes the JACS loader's
         # `existsSync(./jacs.linux-x64-gnu.node)` branch succeed without the
-        # missing registry subpackages. Once JACS 0.12.0 and its platform
+        # missing registry subpackages. Once JACS 0.13.0 and its platform
         # packages publish, restore `npm run deps:prod`.
         run: |
           cd "${{ github.workspace }}/../JACS/jacsnpm"

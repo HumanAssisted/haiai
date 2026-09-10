@@ -4,7 +4,7 @@
 
 ### Breaking
 
-- **`haiai[crewai]` is gone**, following JACS 0.12.0, which removed the CrewAI
+- **`haiai[crewai]` is gone**, following JACS 0.13.0, which removed the CrewAI
   adapter and the `jacs[crewai]` extra because CrewAI pins a `chromadb`
   release with four unpatched advisories. `pip install "haiai[crewai]"` could
   not resolve, and neither could `haiai[all]`, which listed it. The four
@@ -44,11 +44,11 @@
 - **Signed-email inputs are strict in HTML-inline mode.** The SDK owns HTML rendering for now: callers pass plain text, and the SDK rejects user HTML tokens plus reserved HAI/JACS inline markers before signing so generated signature artifacts cannot be injected or confused with user content.
 - Node and Go signed-email facades now pass `html_inline_jacs` explicitly when callers omit a generation type, matching Python and keeping the cross-language default visible at the FFI boundary.
 - **JACS schema consolidation compatibility.** HAIAI now treats retired JACS application schemas as generic signed documents in MCP/docs/email assertions and refreshes embedded self-knowledge from the current JACS docs.
-- **JACS is pinned to 0.12.0** across the Rust manifests, `python/pyproject.toml`
-  (`>=0.12.0,<0.13`), `node/publish.deps.json`, all three lockfiles, and CI's
+- **JACS is pinned to 0.13.0** across the Rust manifests, `python/pyproject.toml`
+  (`>=0.13.0,<0.14`), `node/publish.deps.json`, all three lockfiles, and CI's
   `JACS_REF`. These are forward-looking: crates.io and PyPI publish 0.11.3 and
-  npm publishes 0.10.1, so CI cannot clone `crate/v0.12.0` until JACS tags it.
-- **`haiai mcp` starts JACS in the `local-sign` profile.** JACS 0.12.0 made MCP
+  npm publishes 0.10.1, so CI cannot clone `crate/v0.13.0` until JACS tags it.
+- **`haiai mcp` starts JACS in the `local-sign` profile.** JACS 0.13.0 made MCP
   tool profiles fail-closed: a server built from an agent handle alone runs
   `verify-only` and refuses every other JACS tool at dispatch, so haiai was
   advertising an inventory it could no longer serve. `haiai mcp` authorizes
@@ -58,7 +58,7 @@
   than failing startup. Only the active profile's tools are advertised, so
   identity and key administration tools (`jacs_export_agent`,
   `jacs_create_agent`, `jacs_rotate_keys`) no longer appear.
-- **Agreement v2 reports read `mathematicalChecksValid`.** In JACS 0.12.0 an
+- **Agreement v2 reports read `mathematicalChecksValid`.** In JACS 0.13.0 an
   agreement v2 report keeps `valid` and `policyAccepted` false as a fail-closed
   wire-migration field, because portable inspection cannot authenticate role,
   quorum, or lineage; the truthful cryptographic and structural result is
