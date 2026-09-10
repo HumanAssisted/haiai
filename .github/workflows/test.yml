@@ -10,6 +10,13 @@ concurrency:
   group: test-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  # JACS `make release-everything` creates package-scoped tags, not bare v* tags.
+  # Use crate/v* as the canonical source/API release ref; the JACS release
+  # workflow verifies it against jacs-core, jacs-media, jacs, binding-core,
+  # jacs-mcp, and jacs-cli.
+  JACS_REF: crate/v0.13.0
+
 jobs:
   crypto-policy:
     runs-on: ubuntu-latest
@@ -71,7 +78,7 @@ jobs:
       - name: Setup Rust (for haiipy build via maturin)
         uses: dtolnay/rust-toolchain@stable
       - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
       - name: Create virtualenv and install maturin
         run: |
           python -m venv .venv
@@ -150,7 +157,7 @@ jobs:
       - name: Setup Rust (for haiinpm build via napi-rs)
         uses: dtolnay/rust-toolchain@stable
       - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
       - name: Build haiinpm native addon
         run: |
           cd rust/haiinpm
@@ -158,13 +165,14 @@ jobs:
           npx napi build --release
         timeout-minutes: 10
       - name: Build JACS napi addon (jacs.linux-x64-gnu.node)
-        # @hai.ai/jacs@0.10.0 is published on npm but its platform-binary
-        # subpackages (@hai.ai/jacs-linux-x64-gnu, etc.) were not published
-        # alongside it. The committed package.json keeps the local-dev
-        # file:../../JACS/jacsnpm path; building the napi addon here makes
-        # the JACS loader's `existsSync(./jacs.linux-x64-gnu.node)` branch
-        # succeed without needing the missing registry subpackages. Once
-        # JACS publishes the platform binaries, restore `npm run deps:prod`.
+        # npm publishes @hai.ai/jacs 0.10.1, which predates the strict signed
+        # event verifier, and no platform-binary subpackages
+        # (@hai.ai/jacs-linux-x64-gnu, etc.) were published alongside it. The
+        # committed package.json keeps the local-dev file:../../JACS/jacsnpm
+        # path; building the napi addon here makes the JACS loader's
+        # `existsSync(./jacs.linux-x64-gnu.node)` branch succeed without the
+        # missing registry subpackages. Once JACS 0.13.0 and its platform
+        # packages publish, restore `npm run deps:prod`.
         run: |
           cd "${{ github.workspace }}/../JACS/jacsnpm"
           npm install @napi-rs/cli
@@ -236,13 +244,13 @@ jobs:
       - name: Setup Rust (for jacsgo build)
         uses: dtolnay/rust-toolchain@stable
       - name: Clone JACS (for workspace patch + jacsgo build)
-        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
       - name: Cache jacsgo shared library
         id: cache-jacsgo
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/../JACS/jacsgo/build
-          key: jacsgo-${{ runner.os }}-${{ hashFiles('.github/workflows/test.yml') }}
+          key: jacsgo-${{ runner.os }}-${{ env.JACS_REF }}-${{ hashFiles('.github/workflows/test.yml') }}
       - name: Build jacsgo shared library
         if: steps.cache-jacsgo.outputs.cache-hit != 'true'
         run: cd ${{ github.workspace }}/../JACS/jacsgo && make build-rust
@@ -291,7 +299,7 @@ jobs:
         with:
           toolchain: ${{ matrix.rust-version }}
       - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
       - name: Run tests (all workspace crates including hai-binding-core, haiinpm, haiipy, haiigo)
         run: |
           cd rust
@@ -331,7 +339,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Clone JACS (for workspace patch + jacsgo build)
-        run: git clone --depth 1 https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
 
       # Build all native FFI artifacts up front.
       - name: Build haiigo cdylib (libhaiigo)
@@ -435,4 +443,3 @@ jobs:
           LD_LIBRARY_PATH: "${{ github.workspace }}/../JACS/jacsgo/build:${{ github.workspace }}/rust/target/release"
           JACS_PRIVATE_KEY_PASSWORD: smoke-password
         run: make smoke-go
-

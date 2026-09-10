@@ -217,12 +217,83 @@ describe('Generic JACS Document Store CRUD (Issue 025)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// FFI surface area — every D5/D9 method appears in the parity fixture.
+// Conflict document helpers
 // ---------------------------------------------------------------------------
 
-describe('D5/D9 methods are in parity fixture (Issue 025)', () => {
+describe('Conflict document wrappers', () => {
+  it('conflictCreate passes body JSON through and parses signed document JSON', async () => {
+    const ffi = createMockFFI({
+      conflictCreate: async (bodyJson) => {
+        expect(bodyJson).toBe('{"title":"race"}');
+        return { jacsId: 'conflict-1', jacsType: 'conflict' };
+      },
+    });
+    const out = await ffi.conflictCreate('{"title":"race"}');
+    expect(out).toEqual({ jacsId: 'conflict-1', jacsType: 'conflict' });
+  });
+
+  it('conflictUpdate forwards key and mutation JSON', async () => {
+    const ffi = createMockFFI({
+      conflictUpdate: async (keyOrId, mutationJson) => {
+        expect(keyOrId).toBe('conflict-1:v1');
+        expect(mutationJson).toBe('{"op":"addPosition"}');
+        return { jacsId: 'conflict-1', version: 'v2' };
+      },
+    });
+    const out = await ffi.conflictUpdate('conflict-1:v1', '{"op":"addPosition"}');
+    expect(out).toEqual({ jacsId: 'conflict-1', version: 'v2' });
+  });
+
+  it('conflictGet returns signed document JSON', async () => {
+    const envelope = '{"jacsId":"conflict-1","jacsType":"conflict"}';
+    const ffi = createMockFFI({
+      conflictGet: async (key) => {
+        expect(key).toBe('conflict-1:v1');
+        return envelope;
+      },
+    });
+    const out = await ffi.conflictGet('conflict-1:v1');
+    expect(out).toBe(envelope);
+  });
+
+  it('conflictList forwards limit + offset and parses key list', async () => {
+    const ffi = createMockFFI({
+      conflictList: async (limit, offset) => {
+        expect(limit).toBe(10);
+        expect(offset).toBe(2);
+        return ['conflict-1:v1', 'conflict-2:v1'];
+      },
+    });
+    const out = await ffi.conflictList(10, 2);
+    expect(out).toEqual(['conflict-1:v1', 'conflict-2:v1']);
+  });
+
+  it('conflictCheckReadiness returns readiness JSON', async () => {
+    const ffi = createMockFFI({
+      conflictCheckReadiness: async (keyOrId) => {
+        expect(keyOrId).toBe('conflict-1');
+        return { ready: true };
+      },
+    });
+    const out = await ffi.conflictCheckReadiness('conflict-1');
+    expect(out).toEqual({ ready: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FFI surface area — every D5/D9/conflict method appears in the parity fixture.
+// ---------------------------------------------------------------------------
+
+describe('D5/D9/conflict methods are in parity fixture (Issue 025)', () => {
   const D5_METHODS = ['save_memory', 'save_soul', 'get_memory', 'get_soul'];
   const D9_METHODS = ['store_text_file', 'store_image_file', 'get_record_bytes'];
+  const CONFLICT_METHODS = [
+    'conflict_create',
+    'conflict_update',
+    'conflict_get',
+    'conflict_list',
+    'conflict_check_readiness',
+  ];
 
   function fixtureMethodNames(): Set<string> {
     const fixture = loadParityFixture();
@@ -245,6 +316,13 @@ describe('D5/D9 methods are in parity fixture (Issue 025)', () => {
   it('all D9 methods appear in parity', () => {
     const parity = fixtureMethodNames();
     for (const name of D9_METHODS) {
+      expect(parity.has(name), `missing ${name}`).toBe(true);
+    }
+  });
+
+  it('all conflict methods appear in parity', () => {
+    const parity = fixtureMethodNames();
+    for (const name of CONFLICT_METHODS) {
       expect(parity.has(name), `missing ${name}`).toBe(true);
     }
   });

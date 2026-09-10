@@ -198,7 +198,7 @@ pub trait JacsProvider: Send + Sync {
     /// Return the key identifier used for signing.
     fn key_id(&self) -> &str;
 
-    /// Return the signing algorithm name (e.g., "ed25519", "rsa-pss-sha256").
+    /// Return the signing algorithm name (e.g., "ed25519", "pq2025").
     fn algorithm(&self) -> &str;
 
     /// Return canonical JSON text for `value` in the same way JACS signs.
@@ -232,6 +232,36 @@ pub trait JacsProvider: Send + Sync {
              or any provider that wraps a real JACS SimpleAgent"
                 .to_string(),
         ))
+    }
+
+    /// Sign the canonical HTML-inline email pre-image as a hidden JACS envelope.
+    fn sign_html_inline_email_envelope(
+        &self,
+        raw_email: &[u8],
+    ) -> Result<crate::email_inline::HtmlInlineJacsEnvelope> {
+        #[cfg(feature = "jacs-crate")]
+        let content = {
+            let payload = jacs::email::build_html_inline_email_signature_payload(raw_email)
+                .map_err(|e| {
+                    HaiError::Provider(format!("JACS inline email payload failed: {e}"))
+                })?;
+            serde_json::to_value(payload)?
+        };
+
+        #[cfg(not(feature = "jacs-crate"))]
+        let content = {
+            use sha2::Digest as _;
+            let digest = sha2::Sha256::digest(raw_email);
+            let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+            serde_json::json!({ "raw_email_sha256": format!("sha256:{hash}") })
+        };
+
+        let signed = self.sign_envelope(&serde_json::json!({
+            "jacsType": "email_inline_signature",
+            "jacsLevel": "raw",
+            "content": content,
+        }))?;
+        crate::email_inline::build_hidden_jacs_envelope(&signed)
     }
 
     /// Sign a file as a JACS file envelope (JACS attachment pipeline).
@@ -1109,6 +1139,32 @@ fn extract_jacs_type_from_text(text: &str) -> Option<String> {
 }
 
 // =============================================================================
+// Layer 2a: Conflict Documents (feature-gated)
+// =============================================================================
+
+/// Extension trait for signed, versioned conflict documents.
+#[cfg(feature = "conflict")]
+pub trait JacsConflictProvider: JacsDocumentProvider {
+    /// Create and persist a standalone `conflict/v1` document.
+    fn create_conflict(&self, body: Value) -> Result<SignedDocument>;
+
+    /// Apply a typed conflict mutation to a key or document id, producing a new version.
+    fn update_conflict(&self, key_or_id: &str, mutation: Value) -> Result<SignedDocument>;
+
+    /// Fetch a specific conflict version by key (`id:version`).
+    fn get_conflict(&self, key: &str) -> Result<String>;
+
+    /// Fetch the latest conflict version by document id.
+    fn get_latest_conflict(&self, id: &str) -> Result<String>;
+
+    /// List conflict document keys via the shared document store.
+    fn list_conflicts(&self, limit: usize, offset: usize) -> Result<Vec<String>>;
+
+    /// Run the deterministic JACS readiness checker for a conflict key or id.
+    fn check_conflict_readiness(&self, key_or_id: &str) -> Result<Value>;
+}
+
+// =============================================================================
 // Layer 3: Batch Operations (JacsBatchProvider)
 // =============================================================================
 
@@ -1124,6 +1180,27 @@ pub trait JacsBatchProvider: JacsProvider {
 // =============================================================================
 // Layer 4: Verification (JacsVerificationProvider)
 // =============================================================================
+
+/// Map a JACS `VerificationResult` to haiai's `DocVerificationResult`.
+/// Single source of truth for the mapping — used by `LocalJacsProvider` and
+/// `RemoteJacsProvider` verification impls.
+#[cfg(feature = "jacs-crate")]
+pub(crate) fn map_verification_result(
+    result: jacs::simple::VerificationResult,
+) -> crate::types::DocVerificationResult {
+    crate::types::DocVerificationResult {
+        key: result.signer_id.clone(),
+        valid: result.valid,
+        error: if result.errors.is_empty() {
+            None
+        } else {
+            Some(result.errors.join("; "))
+        },
+        signer_id: Some(result.signer_id),
+        timestamp: Some(result.timestamp),
+        signer_name: result.signer_name,
+    }
+}
 
 /// Extension trait for document verification, DNS trust, and auth headers.
 pub trait JacsVerificationProvider: JacsProvider {
@@ -1144,9 +1221,12 @@ pub trait JacsVerificationProvider: JacsProvider {
 
     /// Unwrap a signed event, verifying its signature against known server public keys.
     ///
-    /// Returns a tuple of (unwrapped data, was_verified). If the signer's key is found
-    /// in `server_public_keys`, the signature is verified and `was_verified` is `true`.
-    /// If the signer's key is not found, the data is returned unverified.
+    /// Returns a tuple of (unwrapped data, was_verified) only after strict v2
+    /// envelope verification succeeds. `was_verified` is therefore always
+    /// `true`; unknown keys, plain/legacy events, stale timestamps, replay, and
+    /// invalid signatures are errors and never return payload data. New live
+    /// transport code should prefer `HaiEvent::verification`, which preserves
+    /// the complete signer provenance instead of this compatibility tuple.
     fn unwrap_signed_event(
         &self,
         event: &Value,
@@ -1165,6 +1245,15 @@ pub trait JacsEmailProvider: JacsProvider {
 
     /// Verify a signed email with the given public key.
     fn verify_email(&self, raw: &[u8], key: Vec<u8>) -> Result<Value>;
+
+    /// Verify either attachment or HTML-inline signed email through JACS.
+    #[cfg(feature = "jacs-crate")]
+    fn verify_signed_email_transport(
+        &self,
+        raw: &[u8],
+        key: Vec<u8>,
+        mode: jacs::email::VerificationMode,
+    ) -> Result<jacs::email::SignedEmailVerificationResult>;
 
     /// Add a JACS attachment to an email.
     fn add_jacs_attachment(&self, email: &[u8], doc: &[u8]) -> Result<Vec<u8>>;
@@ -1238,6 +1327,43 @@ pub trait JacsMediaProvider: JacsProvider {
 /// Extension trait for multi-party agreements.
 #[cfg(feature = "agreements")]
 pub trait JacsAgreementProvider: JacsProvider {
+    /// Create a standalone JACS agreement v2 document.
+    fn create_agreement_v2(&self, input: Value) -> Result<SignedDocument>;
+
+    /// Apply a policy-controlled v2 agreement mutation.
+    fn apply_agreement_v2(&self, document: &str, mutation: Value) -> Result<SignedDocument>;
+
+    /// Add a signer, witness, or notary signature to a v2 agreement.
+    fn sign_agreement_v2(&self, document: &str, role: &str) -> Result<SignedDocument>;
+
+    /// Verify v2 agreement structure, hashes, policy, and signatures.
+    fn verify_agreement_v2(&self, document: &str) -> Result<Value>;
+
+    /// Compare two v2 agreement branches against their shared base.
+    fn detect_agreement_branch_conflict(
+        &self,
+        base_document: &str,
+        left_document: &str,
+        right_document: &str,
+    ) -> Result<Value>;
+
+    /// Auto-merge two transcript-only v2 agreement branches.
+    fn merge_agreement_transcript_branches(
+        &self,
+        base_document: &str,
+        left_document: &str,
+        right_document: &str,
+    ) -> Result<SignedDocument>;
+
+    /// Resolve a v2 agreement branch conflict with an explicit mutation.
+    fn resolve_agreement_branch_conflict(
+        &self,
+        base_document: &str,
+        previous_document: &str,
+        side_branch_document: &str,
+        resolution: Value,
+    ) -> Result<SignedDocument>;
+
     /// Create an agreement with specified agents and optional quorum.
     fn create_agreement(
         &self,
@@ -1298,6 +1424,21 @@ impl JacsProvider for Box<dyn JacsProvider> {
 
     fn canonical_json(&self, value: &Value) -> Result<String> {
         (**self).canonical_json(value)
+    }
+
+    fn sign_envelope(&self, value: &Value) -> Result<String> {
+        (**self).sign_envelope(value)
+    }
+
+    fn sign_html_inline_email_envelope(
+        &self,
+        raw_email: &[u8],
+    ) -> Result<crate::email_inline::HtmlInlineJacsEnvelope> {
+        (**self).sign_html_inline_email_envelope(raw_email)
+    }
+
+    fn sign_file_envelope(&self, path: &str, embed: bool) -> Result<SignedDocument> {
+        (**self).sign_file_envelope(path, embed)
     }
 
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
@@ -1377,6 +1518,21 @@ impl JacsProvider for Box<dyn JacsMediaProvider> {
 
     fn canonical_json(&self, value: &Value) -> Result<String> {
         (**self).canonical_json(value)
+    }
+
+    fn sign_envelope(&self, value: &Value) -> Result<String> {
+        (**self).sign_envelope(value)
+    }
+
+    fn sign_html_inline_email_envelope(
+        &self,
+        raw_email: &[u8],
+    ) -> Result<crate::email_inline::HtmlInlineJacsEnvelope> {
+        (**self).sign_html_inline_email_envelope(raw_email)
+    }
+
+    fn sign_file_envelope(&self, path: &str, embed: bool) -> Result<SignedDocument> {
+        (**self).sign_file_envelope(path, embed)
     }
 
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
@@ -1897,7 +2053,7 @@ mod tests {
             intent: SaveIntent::Upsert,
         };
         assert_eq!(req.jacs_type, "soul");
-        assert_eq!(req.singleton, true);
+        assert!(req.singleton);
         assert!(matches!(req.intent, SaveIntent::Upsert));
         assert_eq!(req.logical_name, Some("SOUL.md".into()));
         assert_eq!(req.content_type, "text/markdown; profile=jacs-text-v1");

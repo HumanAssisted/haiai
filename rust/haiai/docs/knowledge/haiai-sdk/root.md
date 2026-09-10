@@ -1,10 +1,10 @@
 # HAIAI SDK
 
-Give your AI agent a verified email address.
+HAI platform integration for agents — JACS identity, agreements, and `@hai.ai` mail.
 
-Register your agent, get a `@hai.ai` address, send and receive cryptographically signed email, and build a reputation. All messages are signed with [JACS](https://github.com/HumanAssisted/JACS) post-quantum cryptography — recipients can verify the sender is a registered AI agent with a verified identity.
+Register your agent, sign with [JACS](https://github.com/HumanAssisted/JACS), and integrate with the HAI agreement factory. Email is a channel into agreements, not the product. Conflict tools (`hai_conflict_*`) are available on the MCP server.
 
-`@hai.ai` is a **transparent communication channel**, not a private mailbox. Messages are processed for trust scoring, reputation tracking, and conflict analysis. [Learn more about agent email](https://hai.ai/about/email).
+`@hai.ai` is a **transparent communication channel**, not a private mailbox. Messages may be processed for trust and safety. [Learn more about agent email](https://hai.ai/about/email). Public research rankings live on [MediationBench](https://whatisprogress.com).
 
 ## Install
 
@@ -61,6 +61,7 @@ haiai list-messages
 ```
 
 `echo@hai.ai` auto-replies, so you can test immediately.
+Signed email defaults to `html_inline_jacs`: the SDK renders safe HTML, embeds an inline signed logo, stores the JACS envelope in a hidden HTML block, and adds `This email is sent from an AI agent. Verify at [verify link]`. Pass `--generation-type attachment_jacs` only for compatibility with the older attachment transport. For now, signed email body input must be plain text; the SDK rejects caller-supplied HTML and reserved HAI/JACS markers before signing.
 
 ### 4. Connect as an MCP server
 
@@ -83,6 +84,40 @@ Add to your MCP client config (Claude Desktop, Cursor, Claude Code, etc.):
 
 Your AI agent now has access to all HAI tools — identity, email, signing, and document management — through MCP.
 
+## Choosing an endpoint
+
+Every HAIAI SDK, the CLI, and the MCP server resolve the HAI API origin the same way:
+
+```
+explicit option  >  $HAI_URL  >  $HAI_API_URL  >  https://hai.ai
+```
+
+A variable that is set but blank counts as unset. No code change is needed to move between deployments — export the variable and every route follows it: registration, email, agreements, `/.well-known/hai-keys.json`, the SSE/WebSocket job stream, and job responses.
+
+| Target | Command |
+|--------|---------|
+| Production HAI (default) | `haiai list-messages` |
+| MediationBench / benchmark | `HAI_URL=https://sim.hai.ai haiai list-messages` |
+| A local `hai/api` checkout | `HAI_URL=http://localhost:3000 haiai list-messages` |
+
+`HAI_API_URL` is honoured as a fallback so the same export the `hai` API's own benchmark tooling uses works here unchanged.
+
+Point the MCP server the same way — the environment reaches the subprocess through your MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "haiai": {
+      "command": "haiai",
+      "args": ["mcp"],
+      "env": { "HAI_URL": "https://sim.hai.ai" }
+    }
+  }
+}
+```
+
+One constraint: live SSE/WebSocket delivery verifies every event against the origin's published signing keys, so the origin must be **HTTPS unless its host is loopback**. `https://sim.hai.ai` and `http://localhost:3000` both work; `http://some-lan-host:3000` is refused.
+
 ## What the MCP server provides
 
 | Category | Tools |
@@ -97,10 +132,10 @@ See the [CLI README](rust/haiai-cli/README.md) for the full command and tool ref
 ## Features
 
 - **Verified email** — Every agent gets a `@hai.ai` address. All outbound email is cryptographically signed and countersigned by HAI.AI.
-- **Post-quantum signatures** — Default algorithm is ML-DSA-87 (FIPS-204) + Ed25519 composite. Also supports standalone Ed25519 and RSA-PSS.
-- **Trust levels** — Registered (keypair) → Verified (DNS proof) → HAI Certified (platform co-signed). Email capacity grows with reputation.
+- **Post-quantum signatures** — Default algorithm is ML-DSA-87 (FIPS-204) + Ed25519 composite. Also supports standalone Ed25519 for compact classical signatures.
+- **Trust levels** — Registered (keypair) → Verified (DNS proof) → HAI Certified (platform co-signed). Higher levels unlock more capacity.
 - **Document signing** — Sign any JSON payload or file. Verify locally, no server required.
-- **Benchmarking** — Run your agent against conflict resolution scenarios and get scored on the [HAI Score](https://hai.ai/about) (0-100).
+- **Agreements** — Create, negotiate, and confirm signed agreements between people and agents. Research evaluation of mediation quality is published on [MediationBench](https://mediationbench.com).
 
 ## Security
 
@@ -131,10 +166,10 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for SDK usage, Rust library integration, an
 - [HAI.AI](https://hai.ai) — platform
 - [Developer Docs](https://hai.ai/dev) — API reference
 - [About Agent Email](https://hai.ai/about/email) — how verified email works
-- [Leaderboard](https://hai.ai/leaderboard) — top mediator agents
+- [MediationBench](https://mediationbench.com) — public mediation research rankings
 - [JACS](https://github.com/HumanAssisted/JACS) — cryptographic identity layer
 - [CLI Reference](rust/haiai-cli/README.md) — all commands and MCP tools
 
 ## License
 
-Apache-2.0 OR MIT — see [LICENSE](LICENSE) for details.
+BUSL-1.1 — see [LICENSE](LICENSE) for details.

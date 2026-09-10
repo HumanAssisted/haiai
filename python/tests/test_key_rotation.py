@@ -8,15 +8,18 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
+from dataclasses import replace
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 from haiai.client import HaiClient
-from haiai.config import load, reset, get_config
+from haiai.config import load, reset
 from haiai.errors import HaiAuthError
-from haiai.models import AgentConfig, RotationResult
+from haiai.models import RotationResult
+from tests.jacs_test_utils import create_signed_jacs_agent
 
 
 @pytest.fixture(autouse=True)
@@ -29,64 +32,45 @@ def _reset_config():
 
 @pytest.fixture
 def agent_dir(tmp_path, monkeypatch):
-    """Create a temporary agent directory with config and placeholder keys.
+    """Create a temporary signed agent or placeholder fallback.
 
     Uses JACS SimpleAgent.create_agent() if bindings are available,
     otherwise creates placeholder files for config.load() testing.
     """
-    key_dir = tmp_path / "keys"
-    key_dir.mkdir()
-    data_dir = tmp_path / "jacs_data"
-    data_dir.mkdir()
-
     password = "TestRotation!2026"
     monkeypatch.setenv("JACS_PRIVATE_KEY_PASSWORD", password)
 
     # Try to create a real JACS agent
     try:
-        from jacs import SimpleAgent as _SimpleAgent
-
-        config_path = tmp_path / "jacs.config.json"
-        _agent, info = _SimpleAgent.create_agent(
+        fixture = create_signed_jacs_agent(
+            tmp_path,
             name="test-rotation-agent",
             password=password,
-            algorithm="ring-Ed25519",
-            data_directory=str(data_dir),
-            key_directory=str(key_dir),
-            config_path=str(config_path),
-            description="",
-            domain="",
-            default_storage="fs",
         )
-
-        # Find generated key files
-        priv_path = Path(info.get("private_key_path", str(key_dir / "agent_private_key.pem")))
-        pub_path = Path(info.get("public_key_path", str(key_dir / "agent_public_key.pem")))
-
-        # Write a HAI-format config
-        config = {
-            "jacsAgentName": "test-rotation-agent",
-            "jacsAgentVersion": "v1-original",
-            "jacsKeyDir": str(key_dir),
-            "jacsId": "test-jacs-id-12345",
-        }
-        config_path.write_text(json.dumps(config, indent=2))
 
         yield {
             "tmp_path": tmp_path,
-            "key_dir": key_dir,
-            "config_path": str(config_path),
-            "priv_path": priv_path if priv_path.is_file() else key_dir / "agent_private_key.pem",
-            "pub_path": pub_path if pub_path.is_file() else key_dir / "agent_public_key.pem",
+            "key_dir": fixture.key_dir,
+            "config_path": str(fixture.config_path),
+            "priv_path": fixture.private_key_path,
+            "pub_path": fixture.public_key_path,
+            "jacs_id": fixture.jacs_id,
+            "version": fixture.version,
             "has_real_jacs": True,
         }
 
     except ImportError:
         # No JACS bindings -- create placeholder files
+        key_dir = tmp_path / "keys"
+        key_dir.mkdir()
         priv_path = key_dir / "agent_private_key.pem"
         pub_path = key_dir / "agent_public_key.pem"
-        priv_path.write_text("-----BEGIN ENCRYPTED PRIVATE KEY-----\nplaceholder\n-----END ENCRYPTED PRIVATE KEY-----\n")
-        pub_path.write_text("-----BEGIN PUBLIC KEY-----\nplaceholder\n-----END PUBLIC KEY-----\n")
+        priv_path.write_text(
+            "-----BEGIN ENCRYPTED PRIVATE KEY-----\nplaceholder\n-----END ENCRYPTED PRIVATE KEY-----\n"
+        )
+        pub_path.write_text(
+            "-----BEGIN PUBLIC KEY-----\nplaceholder\n-----END PUBLIC KEY-----\n"
+        )
 
         config = {
             "jacsAgentName": "test-rotation-agent",
@@ -103,6 +87,8 @@ def agent_dir(tmp_path, monkeypatch):
             "config_path": str(config_path),
             "priv_path": priv_path,
             "pub_path": pub_path,
+            "jacs_id": "test-jacs-id-12345",
+            "version": "v1-original",
             "has_real_jacs": False,
         }
 
@@ -123,16 +109,20 @@ class TestRotateKeysRequiresExistingAgent:
         with pytest.raises(RuntimeError):
             client.rotate_keys(register_with_hai=False)
 
-    def test_raises_without_jacs_id(self, agent_dir):
+    def test_raises_without_jacs_id(self, agent_dir, monkeypatch):
         if not agent_dir["has_real_jacs"]:
             pytest.skip("JACS bindings not available")
 
-        # Modify config to remove jacsId
-        config = json.loads(Path(agent_dir["config_path"]).read_text())
-        del config["jacsId"]
-        Path(agent_dir["config_path"]).write_text(json.dumps(config))
-
         _load_agent(agent_dir)
+        from haiai import config as config_mod
+
+        # Exercise the SDK guard without corrupting the signed on-disk JACS
+        # identity. A valid existing-agent config always has a JACS ID.
+        monkeypatch.setattr(
+            config_mod,
+            "_config",
+            replace(config_mod.get_config(), jacs_id=None),
+        )
         client = HaiClient()
         with pytest.raises(HaiAuthError, match="no jacsId"):
             client.rotate_keys(register_with_hai=False)
@@ -143,7 +133,7 @@ class TestRotateKeysGeneratesNewKeypair:
         _load_agent(agent_dir)
         client = HaiClient()
 
-        result = client.rotate_keys(
+        client.rotate_keys(
             register_with_hai=False,
             config_path=agent_dir["config_path"],
         )
@@ -154,8 +144,7 @@ class TestRotateKeysGeneratesNewKeypair:
 
         # Old keys should be archived with version suffix
         key_dir = agent_dir["key_dir"]
-        orig_priv = agent_dir["priv_path"]
-        archive_priv = orig_priv.with_suffix(f".v1-original.pem")
+        archive_priv = key_dir / f"jacs.private.{agent_dir['version']}.pem.enc"
         assert archive_priv.is_file(), (
             f"Old private key should be archived at {archive_priv}. "
             f"Files in key_dir: {list(key_dir.iterdir())}"
@@ -170,11 +159,68 @@ class TestRotateKeysGeneratesNewKeypair:
             config_path=agent_dir["config_path"],
         )
 
-        # Config should have the new version
+        # JACS owns and re-signs its canonical config after rotation.
         config_str = Path(agent_dir["config_path"]).read_text()
         config = json.loads(config_str)
-        assert config["jacsAgentVersion"] == result.new_version
-        assert config["jacsId"] == "test-jacs-id-12345"
+        assert config["jacs_agent_id_and_version"] == (
+            f"{agent_dir['jacs_id']}:{result.new_version}"
+        )
+        assert isinstance(config.get("jacsSignature"), dict)
+        assert "jacsAgentVersion" not in config
+
+    def test_rotated_config_reloads_in_fresh_process(self, agent_dir):
+        _load_agent(agent_dir)
+        result = HaiClient().rotate_keys(
+            register_with_hai=False,
+            config_path=agent_dir["config_path"],
+        )
+
+        env = os.environ.copy()
+        env.pop("JACS_ALLOW_UNSIGNED_AGENT_CONFIG", None)
+        source_root = Path(__file__).parent.parent / "src"
+        existing_pythonpath = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = (
+            f"{source_root}{os.pathsep}{existing_pythonpath}"
+            if existing_pythonpath
+            else str(source_root)
+        )
+        script = """
+import sys
+from haiai.config import get_config, load
+load(sys.argv[1])
+cfg = get_config()
+expected_id, expected_version = sys.argv[2], sys.argv[3]
+assert cfg.jacs_id == expected_id, (cfg.jacs_id, expected_id)
+assert cfg.version == expected_version, (cfg.version, expected_version)
+"""
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                script,
+                agent_dir["config_path"],
+                agent_dir["jacs_id"],
+                result.new_version,
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+
+    def test_rejects_rotation_for_a_different_config_path(self, agent_dir):
+        _load_agent(agent_dir)
+        original_config = Path(agent_dir["config_path"]).read_bytes()
+
+        with pytest.raises(HaiAuthError, match="different config path"):
+            HaiClient().rotate_keys(
+                register_with_hai=False,
+                config_path=str(agent_dir["tmp_path"] / "other.config.json"),
+            )
+
+        assert Path(agent_dir["config_path"]).read_bytes() == original_config
 
 
 class TestRotateKeysRegistersWithHai:
@@ -212,9 +258,11 @@ class TestRotateKeysHaiFailureKeepsLocal:
 
         def patched_get_ffi(self_client):
             ffi = original_get_ffi(self_client)
+
             # Make register always raise
             def raise_on_register(options):
                 raise HaiApiError("Internal Server Error", status_code=500)
+
             ffi.responses["register"] = raise_on_register
             return ffi
 
@@ -227,8 +275,8 @@ class TestRotateKeysHaiFailureKeepsLocal:
         )
 
         # Local rotation should succeed
-        assert result.new_version != "v1-original"
-        assert result.jacs_id == "test-jacs-id-12345"
+        assert result.new_version != agent_dir["version"]
+        assert result.jacs_id == agent_dir["jacs_id"]
         # But HAI registration should have failed
         assert result.registered_with_hai is False
 
@@ -244,9 +292,9 @@ class TestRotateKeysResultFields:
         )
 
         assert isinstance(result, RotationResult)
-        assert result.jacs_id == "test-jacs-id-12345"
-        assert result.old_version == "v1-original"
-        assert result.new_version != "v1-original"
+        assert result.jacs_id == agent_dir["jacs_id"]
+        assert result.old_version == agent_dir["version"]
+        assert result.new_version != agent_dir["version"]
         assert len(result.new_version) > 0
         assert len(result.new_public_key_hash) == 64  # SHA-256 hex
         assert result.registered_with_hai is False
@@ -254,9 +302,9 @@ class TestRotateKeysResultFields:
 
         # Signed agent JSON should be valid and contain expected fields
         doc = json.loads(result.signed_agent_json)
-        assert doc["jacsId"] == "test-jacs-id-12345"
+        assert doc["jacsId"] == agent_dir["jacs_id"]
         assert doc["jacsVersion"] == result.new_version
-        assert doc["jacsPreviousVersion"] == "v1-original"
+        assert doc["jacsPreviousVersion"] == agent_dir["version"]
         assert "jacsSignature" in doc
 
 
@@ -280,7 +328,9 @@ class TestRotateKeysVersionIsUUID:
 class TestRotateKeysFixtureContract:
     def test_rotation_result_fields_match_fixture(self):
         """Verify RotationResult has all fields defined in the shared fixture."""
-        fixture_path = Path(__file__).parent.parent.parent / "fixtures" / "rotation_result.json"
+        fixture_path = (
+            Path(__file__).parent.parent.parent / "fixtures" / "rotation_result.json"
+        )
         if not fixture_path.is_file():
             pytest.skip("Shared fixture not found")
 
@@ -288,6 +338,7 @@ class TestRotateKeysFixtureContract:
         fixture_fields = set(fixture.keys())
 
         import dataclasses
+
         result_fields = {f.name for f in dataclasses.fields(RotationResult)}
 
         assert fixture_fields == result_fields, (

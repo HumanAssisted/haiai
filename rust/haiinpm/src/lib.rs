@@ -1,3 +1,10 @@
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 //! Node.js bindings for HAI SDK via napi-rs.
 //!
 //! Every `HaiClientWrapper` method is exposed as a JavaScript `Promise<string>`-
@@ -282,6 +289,127 @@ impl HaiClient {
     pub async fn verify_email_raw(&self, raw_email_b64: String) -> Result<String> {
         self.inner
             .verify_email_raw(&raw_email_b64)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    // =========================================================================
+    // Agreements
+    // =========================================================================
+
+    #[napi]
+    pub async fn save_agreement(&self, request_json: String) -> Result<String> {
+        self.inner
+            .save_agreement(&request_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn search_agreements(&self, request_json: String) -> Result<String> {
+        self.inner
+            .search_agreements(&request_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn get_agreement(&self, agreement_id: String) -> Result<String> {
+        self.inner
+            .get_agreement(&agreement_id)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn countersign_agreement(
+        &self,
+        agreement_id: String,
+        request_json: String,
+    ) -> Result<String> {
+        self.inner
+            .countersign_agreement(&agreement_id, &request_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn create_agreement_v2(&self, input_json: String) -> Result<String> {
+        self.inner
+            .create_agreement_v2(&input_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn apply_agreement_v2(
+        &self,
+        document: String,
+        mutation_json: String,
+    ) -> Result<String> {
+        self.inner
+            .apply_agreement_v2(&document, &mutation_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn sign_agreement_v2(&self, document: String, role: String) -> Result<String> {
+        self.inner
+            .sign_agreement_v2(&document, &role)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn verify_agreement_v2(&self, document: String) -> Result<String> {
+        self.inner
+            .verify_agreement_v2(&document)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn detect_agreement_branch_conflict(
+        &self,
+        base_document: String,
+        left_document: String,
+        right_document: String,
+    ) -> Result<String> {
+        self.inner
+            .detect_agreement_branch_conflict(&base_document, &left_document, &right_document)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn merge_agreement_transcript_branches(
+        &self,
+        base_document: String,
+        left_document: String,
+        right_document: String,
+    ) -> Result<String> {
+        self.inner
+            .merge_agreement_transcript_branches(&base_document, &left_document, &right_document)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn resolve_agreement_branch_conflict(
+        &self,
+        base_document: String,
+        previous_document: String,
+        side_branch_document: String,
+        resolution_json: String,
+    ) -> Result<String> {
+        self.inner
+            .resolve_agreement_branch_conflict(
+                &base_document,
+                &previous_document,
+                &side_branch_document,
+                &resolution_json,
+            )
             .await
             .map_err(to_napi_err)
     }
@@ -811,6 +939,47 @@ impl HaiClient {
             .await
             .map_err(to_napi_err)?;
         Ok(Buffer::from(bytes))
+    }
+
+    #[napi]
+    pub async fn conflict_create(&self, body_json: String) -> Result<String> {
+        self.inner
+            .conflict_create(body_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn conflict_update(
+        &self,
+        key_or_id: String,
+        mutation_json: String,
+    ) -> Result<String> {
+        self.inner
+            .conflict_update(key_or_id, mutation_json)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn conflict_get(&self, key: String) -> Result<String> {
+        self.inner.conflict_get(key).await.map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn conflict_list(&self, limit: u32, offset: u32) -> Result<String> {
+        self.inner
+            .conflict_list(limit as usize, offset as usize)
+            .await
+            .map_err(to_napi_err)
+    }
+
+    #[napi]
+    pub async fn conflict_check_readiness(&self, key_or_id: String) -> Result<String> {
+        self.inner
+            .conflict_check_readiness(key_or_id)
+            .await
+            .map_err(to_napi_err)
     }
 }
 

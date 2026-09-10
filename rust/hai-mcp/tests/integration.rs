@@ -166,8 +166,44 @@ impl TestWorkspace {
             serde_json::to_vec_pretty(&value).expect("encode temp config"),
         )
         .expect("write temp config");
+        sign_fixture_config(&config_path, &value);
         config_path
     }
+}
+
+/// Sign the staged temp config with the fixture agent's own key.
+///
+/// JACS >= 0.11.4 refuses to load an unsigned *persisted* config for an
+/// existing-agent load, and the directory fields rewritten above sit inside the
+/// signed payload, so the signature has to be produced after the rewrite. The
+/// signing agent is loaded from a programmatic config (no `raw_json`, so the
+/// caller is the trust source); the `JACS_ALLOW_UNSIGNED_AGENT_CONFIG` hatch is
+/// deliberately not used, so the spawned server still takes the strict path.
+fn sign_fixture_config(config_path: &Path, value: &Value) {
+    std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "secretpassord");
+    let field = |name: &str| value.get(name).and_then(Value::as_str).map(str::to_string);
+    let mut config = jacs::config::Config::new(
+        field("jacs_use_security"),
+        field("jacs_data_directory"),
+        field("jacs_key_directory"),
+        field("jacs_agent_private_key_filename"),
+        field("jacs_agent_public_key_filename"),
+        field("jacs_agent_key_algorithm"),
+        None,
+        field("jacs_agent_id_and_version"),
+        field("jacs_default_storage"),
+    );
+    config.set_config_dir(config_path.parent().map(PathBuf::from));
+    let mut agent = jacs::agent::Agent::from_config(config, None)
+        .expect("load fixture agent for config signing");
+    let signed = agent
+        .sign_config(value)
+        .expect("sign staged fixture config");
+    std::fs::write(
+        config_path,
+        serde_json::to_vec_pretty(&signed).expect("encode signed fixture config"),
+    )
+    .expect("write signed fixture config");
 }
 
 struct McpSession {
@@ -520,12 +556,21 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
     assert!(tools.contains(&"hai_register_agent".to_string()));
     assert!(tools.contains(&"hai_send_email".to_string()));
     assert!(tools.contains(&"hai_save_memory".to_string()));
-    assert!(tools.contains(&"jacs_export_agent".to_string()));
+    // JACS 0.11.4 fail-closed profiles: the embedded server advertises only
+    // what its active profile will dispatch. `haiai mcp` authorizes
+    // `local-sign` from the loaded signed config, so document verification and
+    // signing are served; identity/key administration tools such as
+    // `jacs_export_agent` are outside every startable profile and must not be
+    // advertised at all.
+    assert!(tools.contains(&"jacs_verify_document".to_string()));
+    assert!(tools.contains(&"jacs_sign_document".to_string()));
+    assert!(!tools.contains(&"jacs_export_agent".to_string()));
+    assert!(!tools.contains(&"jacs_create_agent".to_string()));
     assert!(!tools.contains(&"jacs_memory_save".to_string()));
-    assert!(tools.contains(&"jacs_memory_recall".to_string()));
-    assert!(tools.contains(&"jacs_memory_list".to_string()));
-    assert!(tools.contains(&"jacs_memory_forget".to_string()));
-    assert!(tools.contains(&"jacs_memory_update".to_string()));
+    assert!(!tools.contains(&"jacs_memory_recall".to_string()));
+    assert!(!tools.contains(&"jacs_memory_list".to_string()));
+    assert!(!tools.contains(&"jacs_memory_forget".to_string()));
+    assert!(!tools.contains(&"jacs_memory_update".to_string()));
     assert!(!tools.contains(&"hai_create_agent".to_string()));
     assert!(tools.contains(&"hai_self_knowledge".to_string()));
 
@@ -536,18 +581,24 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
             "content": "MCP routed provider saves locally when storage is fs"
         }),
     );
-    assert_eq!(
-        saved_memory["structuredContent"]["key"].as_str().is_some(),
-        true
-    );
+    assert!(saved_memory["structuredContent"]["key"].as_str().is_some());
 
-    let exported = session.call_tool(10, "jacs_export_agent", json!({}));
-    let export_text = exported["content"][0]["text"]
+    let signed = session.call_tool(
+        10,
+        "jacs_sign_document",
+        json!({ "content": json!({"hello": "embedded jacs"}).to_string() }),
+    );
+    let signed_text = signed["content"][0]["text"]
         .as_str()
-        .expect("jacs_export_agent text");
-    let export_json: Value = serde_json::from_str(export_text).expect("decode export result");
-    assert_eq!(export_json["success"].as_bool(), Some(true));
-    assert!(export_json["agent_id"].as_str().is_some());
+        .expect("jacs_sign_document text");
+    let signed_json: Value = serde_json::from_str(signed_text).expect("decode sign result");
+    assert_eq!(
+        signed_json["success"].as_bool(),
+        Some(true),
+        "jacs_sign_document must succeed under the local-sign scope: {signed_json}"
+    );
+    assert!(signed_json["signed_document"].as_str().is_some());
+    assert!(signed_json["jacs_document_id"].as_str().is_some());
 
     let email_status = session.call_tool(
         12,
@@ -619,10 +670,7 @@ fn hai_save_memory_traces_tool_storage_and_outcome() {
             "content": "MCP tracing proves local routed storage"
         }),
     );
-    assert_eq!(
-        saved_memory["structuredContent"]["key"].as_str().is_some(),
-        true
-    );
+    assert!(saved_memory["structuredContent"]["key"].as_str().is_some());
 
     thread::sleep(Duration::from_millis(100));
     let logs = std::fs::read_to_string(&log_file).expect("read mcp log file");

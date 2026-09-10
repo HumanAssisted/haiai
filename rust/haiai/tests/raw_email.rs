@@ -65,7 +65,10 @@ async fn get_raw_email_auth_header_present() {
         .mock_async(|when, then| {
             when.method(GET)
                 .path("/api/agents/agent-2/email/messages/x/raw")
-                .header_matches("authorization", r"^JACS [^:]+:\d+:[A-Za-z0-9+/=_\-]+$");
+                .header_matches(
+                    "authorization",
+                    r"^JACS [^:]+:\d+:[A-Za-z0-9_-]+:[A-Za-z0-9+/=_\-]+$",
+                );
             then.status(200).json_body(json!({
                 "message_id": "x",
                 "available": false,

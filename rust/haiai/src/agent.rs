@@ -16,12 +16,7 @@
 //!     to: "other@hai.ai".into(),
 //!     subject: "Hello".into(),
 //!     body: "World".into(),
-//!     cc: vec![],
-//!     bcc: vec![],
-//!     in_reply_to: None,
-//!     attachments: vec![],
-//!     labels: vec![],
-//!     append_footer: None,
+//!     ..Default::default()
 //! }).await?;
 //! # Ok(())
 //! # }
@@ -58,10 +53,24 @@ impl Agent {
     /// provider, and creates the email namespace. If `config_path` is None,
     /// looks for `JACS_CONFIG_PATH` env var or `./jacs.config.json`.
     ///
+    /// The HAI origin comes from [`crate::base_url_from_env`]
+    /// (`HAI_URL` > `HAI_API_URL` > `https://hai.ai`), so an agent can be
+    /// pointed at a benchmark or staging deployment without a code change.
+    /// This mirrors the Python `HaiClient()` and Node `HaiClient.create()`
+    /// factories. Use [`Agent::from_config_with_options`] to pin the origin
+    /// explicitly and ignore the environment.
+    ///
     /// # Arguments
     /// * `config_path` - Path to jacs.config.json (None for default discovery)
     pub async fn from_config(config_path: Option<&Path>) -> Result<Self> {
-        Self::from_config_with_options(config_path, HaiClientOptions::default()).await
+        Self::from_config_with_options(
+            config_path,
+            HaiClientOptions {
+                base_url: crate::client::base_url_from_env(),
+                ..HaiClientOptions::default()
+            },
+        )
+        .await
     }
 
     /// Create an Agent with custom client options.

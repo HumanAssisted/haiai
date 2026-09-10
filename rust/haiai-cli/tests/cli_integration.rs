@@ -419,9 +419,26 @@ fn mcp_serves_hai_and_jacs_tools() {
         tools.contains(&"hai_register_agent".to_string()),
         "missing hai_register_agent in {tools:?}"
     );
+    // JACS 0.11.4 fail-closed profiles: `haiai mcp` authorizes `local-sign`
+    // from the loaded signed config, so document/agreement signing and
+    // verification are served. Identity and key administration tools such as
+    // `jacs_export_agent` are outside every startable profile and must not be
+    // advertised.
     assert!(
-        tools.contains(&"jacs_export_agent".to_string()),
-        "missing jacs_export_agent in {tools:?}"
+        tools.contains(&"jacs_sign_document".to_string()),
+        "missing jacs_sign_document in {tools:?}"
+    );
+    assert!(
+        tools.contains(&"jacs_verify_document".to_string()),
+        "missing jacs_verify_document in {tools:?}"
+    );
+    assert!(
+        !tools.contains(&"jacs_export_agent".to_string()),
+        "jacs_export_agent must not be advertised in {tools:?}"
+    );
+    assert!(
+        !tools.contains(&"jacs_rotate_keys".to_string()),
+        "jacs_rotate_keys must not be advertised in {tools:?}"
     );
     assert!(
         tools.contains(&"hai_send_email".to_string()),
@@ -526,7 +543,48 @@ fn prepare_jacs_fixture() -> (tempfile::TempDir, PathBuf) {
         serde_json::to_vec_pretty(&value).expect("encode"),
     )
     .expect("write");
+    sign_fixture_config(&config_path, &value);
     (temp, config_path)
+}
+
+/// Sign the staged temp config with the fixture agent's own key.
+///
+/// JACS >= 0.11.4 refuses to load an unsigned *persisted* config for an
+/// existing-agent load, and the directory fields rewritten above sit inside the
+/// signed payload, so the signature has to be produced here. The signing agent
+/// is loaded from a programmatic config (no `raw_json`, so the caller is the
+/// trust source); the `JACS_ALLOW_UNSIGNED_AGENT_CONFIG` migration hatch is
+/// deliberately not used, so the CLI under test still takes the strict path.
+fn sign_fixture_config(config_path: &Path, value: &serde_json::Value) {
+    std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "secretpassord");
+    let field = |name: &str| {
+        value
+            .get(name)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    let mut config = jacs::config::Config::new(
+        field("jacs_use_security"),
+        field("jacs_data_directory"),
+        field("jacs_key_directory"),
+        field("jacs_agent_private_key_filename"),
+        field("jacs_agent_public_key_filename"),
+        field("jacs_agent_key_algorithm"),
+        None,
+        field("jacs_agent_id_and_version"),
+        field("jacs_default_storage"),
+    );
+    config.set_config_dir(config_path.parent().map(PathBuf::from));
+    let mut agent = jacs::agent::Agent::from_config(config, None)
+        .expect("load fixture agent for config signing");
+    let signed = agent
+        .sign_config(value)
+        .expect("sign staged fixture config");
+    std::fs::write(
+        config_path,
+        serde_json::to_vec_pretty(&signed).expect("encode signed fixture config"),
+    )
+    .expect("write signed fixture config");
 }
 
 fn copy_fixture_dir(src: &Path, dst: &Path) {

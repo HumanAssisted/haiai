@@ -85,7 +85,7 @@ pub static CHAPTERS: &[(&str, &str, &str)] = &[
     ),
     (
         "jacsbook/rust/agreements.md",
-        "Creating and Using Agreements",
+        "Agreement v2 and Legacy Agreements",
         include_str!("../docs/knowledge/jacsbook/rust/agreements.md"),
     ),
     (
@@ -154,6 +154,11 @@ pub static CHAPTERS: &[(&str, &str, &str)] = &[
         include_str!("../docs/knowledge/jacsbook/nodejs/api.md"),
     ),
     (
+        "jacsbook/wasm/building.md",
+        "Browser WASM Package",
+        include_str!("../docs/knowledge/jacsbook/wasm/building.md"),
+    ),
+    (
         "jacsbook/python/installation.md",
         "Installation",
         include_str!("../docs/knowledge/jacsbook/python/installation.md"),
@@ -202,31 +207,6 @@ pub static CHAPTERS: &[(&str, &str, &str)] = &[
         "jacsbook/schemas/document.md",
         "Document Schema",
         include_str!("../docs/knowledge/jacsbook/schemas/document.md"),
-    ),
-    (
-        "jacsbook/schemas/task.md",
-        "Task Schema",
-        include_str!("../docs/knowledge/jacsbook/schemas/task.md"),
-    ),
-    (
-        "jacsbook/schemas/agentstate.md",
-        "Agent State Schema",
-        include_str!("../docs/knowledge/jacsbook/schemas/agentstate.md"),
-    ),
-    (
-        "jacsbook/schemas/commitment.md",
-        "Commitment Schema",
-        include_str!("../docs/knowledge/jacsbook/schemas/commitment.md"),
-    ),
-    (
-        "jacsbook/schemas/todo.md",
-        "Todo List Schema",
-        include_str!("../docs/knowledge/jacsbook/schemas/todo.md"),
-    ),
-    (
-        "jacsbook/schemas/conversation.md",
-        "Conversation Schema",
-        include_str!("../docs/knowledge/jacsbook/schemas/conversation.md"),
     ),
     (
         "jacsbook/schemas/configuration.md",
@@ -304,6 +284,11 @@ pub static CHAPTERS: &[(&str, &str, &str)] = &[
         include_str!("../docs/knowledge/jacsbook/integrations/a2a.md"),
     ),
     (
+        "jacsbook/integrations/ap2.md",
+        "AP2 Mandate Export",
+        include_str!("../docs/knowledge/jacsbook/integrations/ap2.md"),
+    ),
+    (
         "jacsbook/guides/a2a-quickstart.md",
         "A2A Quickstart",
         include_str!("../docs/knowledge/jacsbook/guides/a2a-quickstart.md"),
@@ -327,6 +312,11 @@ pub static CHAPTERS: &[(&str, &str, &str)] = &[
         "jacsbook/guides/sign-vs-attest.md",
         "Sign vs. Attest Decision Guide",
         include_str!("../docs/knowledge/jacsbook/guides/sign-vs-attest.md"),
+    ),
+    (
+        "jacsbook/guides/agreement-v2.md",
+        "Agreement v2 Developer Guide",
+        include_str!("../docs/knowledge/jacsbook/guides/agreement-v2.md"),
     ),
     (
         "jacsbook/guides/attestation-tutorial.md",

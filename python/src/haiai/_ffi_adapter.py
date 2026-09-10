@@ -42,20 +42,20 @@ def map_ffi_error(err: Exception) -> HaiError:
     message = str(err)
 
     if message.startswith("AuthFailed:"):
-        return HaiAuthError(message[len("AuthFailed:"):].strip(), status_code=401)
+        return HaiAuthError(message[len("AuthFailed:") :].strip(), status_code=401)
     if message.startswith("RateLimited:"):
-        return RateLimited(message[len("RateLimited:"):].strip(), status_code=429)
+        return RateLimited(message[len("RateLimited:") :].strip(), status_code=429)
     if message.startswith("NotFound:"):
-        msg = message[len("NotFound:"):].strip()
+        msg = message[len("NotFound:") :].strip()
         if "email not active" in msg.lower():
             return EmailNotActive(msg, status_code=403)
         if "recipient" in msg.lower():
             return RecipientNotFound(msg, status_code=400)
         return HaiApiError(msg, status_code=404)
     if message.startswith("NetworkFailed:"):
-        return HaiConnectionError(message[len("NetworkFailed:"):].strip())
+        return HaiConnectionError(message[len("NetworkFailed:") :].strip())
     if message.startswith("ApiError:"):
-        msg = message[len("ApiError:"):].strip()
+        msg = message[len("ApiError:") :].strip()
         # Try to extract status code
         match = re.search(r"status (\d+)", msg)
         status = int(match.group(1)) if match else None
@@ -65,13 +65,13 @@ def map_ffi_error(err: Exception) -> HaiError:
             return RecipientNotFound(msg, status_code=status or 400)
         return HaiApiError(msg, status_code=status or 0)
     if message.startswith("ConfigFailed:"):
-        return HaiError(message[len("ConfigFailed:"):].strip())
+        return HaiError(message[len("ConfigFailed:") :].strip())
     if message.startswith("SerializationFailed:"):
-        return HaiError(message[len("SerializationFailed:"):].strip())
+        return HaiError(message[len("SerializationFailed:") :].strip())
     if message.startswith("InvalidArgument:"):
-        return HaiError(message[len("InvalidArgument:"):].strip())
+        return HaiError(message[len("InvalidArgument:") :].strip())
     if message.startswith("ProviderError:"):
-        return HaiAuthError(message[len("ProviderError:"):].strip())
+        return HaiAuthError(message[len("ProviderError:") :].strip())
 
     return HaiError(message)
 
@@ -319,6 +319,110 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
+    # --- Agreements ---
+
+    def save_agreement(self, request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.save_agreement_sync(json.dumps(request))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def search_agreements(self, request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.search_agreements_sync(json.dumps(request))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def get_agreement(self, agreement_id: str) -> dict[str, Any]:
+        try:
+            raw = self._native.get_agreement_sync(agreement_id)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def countersign_agreement(
+        self, agreement_id: str, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            raw = self._native.countersign_agreement_sync(
+                agreement_id, json.dumps(request)
+            )
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def create_agreement_v2(self, input_data: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = self._native.create_agreement_v2_sync(json.dumps(input_data))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def apply_agreement_v2(
+        self, document: str, mutation: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            raw = self._native.apply_agreement_v2_sync(document, json.dumps(mutation))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def sign_agreement_v2(self, document: str, role: str) -> dict[str, Any]:
+        try:
+            raw = self._native.sign_agreement_v2_sync(document, role)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def verify_agreement_v2(self, document: str) -> dict[str, Any]:
+        try:
+            raw = self._native.verify_agreement_v2_sync(document)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def detect_agreement_branch_conflict(
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict[str, Any]:
+        try:
+            raw = self._native.detect_agreement_branch_conflict_sync(
+                base_document, left_document, right_document
+            )
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def merge_agreement_transcript_branches(
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict[str, Any]:
+        try:
+            raw = self._native.merge_agreement_transcript_branches_sync(
+                base_document, left_document, right_document
+            )
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def resolve_agreement_branch_conflict(
+        self,
+        base_document: str,
+        previous_document: str,
+        side_branch_document: str,
+        resolution: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            raw = self._native.resolve_agreement_branch_conflict_sync(
+                base_document,
+                previous_document,
+                side_branch_document,
+                json.dumps(resolution),
+            )
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
     # --- Local Media (Layer 8 / TASK_007) ---
 
     def sign_text(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
@@ -335,7 +439,9 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    def sign_image(self, in_path: str, out_path: str, opts: dict[str, Any]) -> dict[str, Any]:
+    def sign_image(
+        self, in_path: str, out_path: str, opts: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
             raw = self._native.sign_image_sync(in_path, out_path, json.dumps(opts))
             return json.loads(raw)
@@ -349,7 +455,9 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    def extract_media_signature(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+    def extract_media_signature(
+        self, path: str, opts: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
             raw = self._native.extract_media_signature_sync(path, json.dumps(opts))
             return json.loads(raw)
@@ -409,9 +517,13 @@ class FFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    def update_email_template(self, template_id: str, options: dict[str, Any]) -> dict[str, Any]:
+    def update_email_template(
+        self, template_id: str, options: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
-            raw = self._native.update_email_template_sync(template_id, json.dumps(options))
+            raw = self._native.update_email_template_sync(
+                template_id, json.dumps(options)
+            )
             return json.loads(raw)
         except RuntimeError as err:
             raise map_ffi_error(err) from err
@@ -484,7 +596,9 @@ class FFIAdapter:
 
     # --- Benchmarks ---
 
-    def benchmark(self, name: Optional[str] = None, tier: Optional[str] = None) -> dict[str, Any]:
+    def benchmark(
+        self, name: Optional[str] = None, tier: Optional[str] = None
+    ) -> dict[str, Any]:
         try:
             raw = self._native.benchmark_sync(name, tier)
             return json.loads(raw)
@@ -704,6 +818,41 @@ class FFIAdapter:
     def get_record_bytes(self, key: str) -> bytes:
         try:
             return self._native.get_record_bytes_sync(key)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # Conflict documents
+    def conflict_create(self, body_json: str) -> dict[str, Any]:
+        try:
+            raw = self._native.conflict_create_sync(body_json)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def conflict_update(self, key_or_id: str, mutation_json: str) -> dict[str, Any]:
+        try:
+            raw = self._native.conflict_update_sync(key_or_id, mutation_json)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def conflict_get(self, key: str) -> str:
+        try:
+            return self._native.conflict_get_sync(key)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def conflict_list(self, limit: int = 25, offset: int = 0) -> list[str]:
+        try:
+            raw = self._native.conflict_list_sync(limit, offset)
+            return list(json.loads(raw))
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    def conflict_check_readiness(self, key_or_id: str) -> dict[str, Any]:
+        try:
+            raw = self._native.conflict_check_readiness_sync(key_or_id)
+            return json.loads(raw)
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
@@ -1035,6 +1184,110 @@ class AsyncFFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
+    # --- Agreements ---
+
+    async def save_agreement(self, request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.save_agreement(json.dumps(request))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def search_agreements(self, request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.search_agreements(json.dumps(request))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def get_agreement(self, agreement_id: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.get_agreement(agreement_id)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def countersign_agreement(
+        self, agreement_id: str, request: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            raw = await self._native.countersign_agreement(
+                agreement_id, json.dumps(request)
+            )
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def create_agreement_v2(self, input_data: dict[str, Any]) -> dict[str, Any]:
+        try:
+            raw = await self._native.create_agreement_v2(json.dumps(input_data))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def apply_agreement_v2(
+        self, document: str, mutation: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            raw = await self._native.apply_agreement_v2(document, json.dumps(mutation))
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def sign_agreement_v2(self, document: str, role: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.sign_agreement_v2(document, role)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def verify_agreement_v2(self, document: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.verify_agreement_v2(document)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def detect_agreement_branch_conflict(
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict[str, Any]:
+        try:
+            raw = await self._native.detect_agreement_branch_conflict(
+                base_document, left_document, right_document
+            )
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def merge_agreement_transcript_branches(
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict[str, Any]:
+        try:
+            raw = await self._native.merge_agreement_transcript_branches(
+                base_document, left_document, right_document
+            )
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def resolve_agreement_branch_conflict(
+        self,
+        base_document: str,
+        previous_document: str,
+        side_branch_document: str,
+        resolution: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            raw = await self._native.resolve_agreement_branch_conflict(
+                base_document,
+                previous_document,
+                side_branch_document,
+                json.dumps(resolution),
+            )
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
     # --- Local Media (Layer 8 / TASK_007) ---
 
     async def sign_text(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
@@ -1051,7 +1304,9 @@ class AsyncFFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    async def sign_image(self, in_path: str, out_path: str, opts: dict[str, Any]) -> dict[str, Any]:
+    async def sign_image(
+        self, in_path: str, out_path: str, opts: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
             raw = await self._native.sign_image(in_path, out_path, json.dumps(opts))
             return json.loads(raw)
@@ -1065,7 +1320,9 @@ class AsyncFFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    async def extract_media_signature(self, path: str, opts: dict[str, Any]) -> dict[str, Any]:
+    async def extract_media_signature(
+        self, path: str, opts: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
             raw = await self._native.extract_media_signature(path, json.dumps(opts))
             return json.loads(raw)
@@ -1125,9 +1382,13 @@ class AsyncFFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    async def update_email_template(self, template_id: str, options: dict[str, Any]) -> dict[str, Any]:
+    async def update_email_template(
+        self, template_id: str, options: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
-            raw = await self._native.update_email_template(template_id, json.dumps(options))
+            raw = await self._native.update_email_template(
+                template_id, json.dumps(options)
+            )
             return json.loads(raw)
         except RuntimeError as err:
             raise map_ffi_error(err) from err
@@ -1140,7 +1401,9 @@ class AsyncFFIAdapter:
 
     # --- Key Operations ---
 
-    async def fetch_remote_key(self, jacs_id: str, version: str = "latest") -> dict[str, Any]:
+    async def fetch_remote_key(
+        self, jacs_id: str, version: str = "latest"
+    ) -> dict[str, Any]:
         try:
             raw = await self._native.fetch_remote_key(jacs_id, version)
             return json.loads(raw)
@@ -1200,7 +1463,9 @@ class AsyncFFIAdapter:
 
     # --- Benchmarks ---
 
-    async def benchmark(self, name: Optional[str] = None, tier: Optional[str] = None) -> dict[str, Any]:
+    async def benchmark(
+        self, name: Optional[str] = None, tier: Optional[str] = None
+    ) -> dict[str, Any]:
         try:
             raw = await self._native.benchmark(name, tier)
             return json.loads(raw)
@@ -1333,9 +1598,7 @@ class AsyncFFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    async def query_by_type(
-        self, doc_type: str, limit: int, offset: int
-    ) -> list[str]:
+    async def query_by_type(self, doc_type: str, limit: int, offset: int) -> list[str]:
         # Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
         try:
             raw = await self._native.query_by_type(doc_type, limit, offset)
@@ -1353,9 +1616,7 @@ class AsyncFFIAdapter:
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 
-    async def query_by_agent(
-        self, agent_id: str, limit: int, offset: int
-    ) -> list[str]:
+    async def query_by_agent(self, agent_id: str, limit: int, offset: int) -> list[str]:
         # Trait returns Vec<String>; binding-core JSON-serialises to ["k1","k2"].
         try:
             raw = await self._native.query_by_agent(agent_id, limit, offset)
@@ -1418,6 +1679,43 @@ class AsyncFFIAdapter:
     async def get_record_bytes(self, key: str) -> bytes:
         try:
             return await self._native.get_record_bytes(key)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    # Conflict documents
+    async def conflict_create(self, body_json: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.conflict_create(body_json)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def conflict_update(
+        self, key_or_id: str, mutation_json: str
+    ) -> dict[str, Any]:
+        try:
+            raw = await self._native.conflict_update(key_or_id, mutation_json)
+            return json.loads(raw)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def conflict_get(self, key: str) -> str:
+        try:
+            return await self._native.conflict_get(key)
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def conflict_list(self, limit: int = 25, offset: int = 0) -> list[str]:
+        try:
+            raw = await self._native.conflict_list(limit, offset)
+            return list(json.loads(raw))
+        except RuntimeError as err:
+            raise map_ffi_error(err) from err
+
+    async def conflict_check_readiness(self, key_or_id: str) -> dict[str, Any]:
+        try:
+            raw = await self._native.conflict_check_readiness(key_or_id)
+            return json.loads(raw)
         except RuntimeError as err:
             raise map_ffi_error(err) from err
 

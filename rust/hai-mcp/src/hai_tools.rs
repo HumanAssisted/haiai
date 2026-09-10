@@ -1,13 +1,13 @@
 use haiai::{
     generate_verify_link, generate_verify_link_hosted, media_verify_status_to_str,
-    text_signature_status_to_str, CreateEmailTemplateOptions, HaiClient, JacsMediaProvider,
-    JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions, MediaVerifyStatus,
-    RegisterAgentOptions, SearchOptions, SendEmailOptions, SignImageOptions, SignTextOptions,
-    TextSignatureStatus, UpdateEmailTemplateOptions, VerifyImageOptions, VerifyTextOptions,
-    VerifyTextResult,
+    text_signature_status_to_str, CreateEmailTemplateOptions, EmailGenerationType, HaiClient,
+    JacsMediaProvider, JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions,
+    MediaVerifyStatus, RegisterAgentOptions, SearchOptions, SendEmailOptions, SignImageOptions,
+    SignTextOptions, TextSignatureStatus, UpdateEmailTemplateOptions, VerifyImageOptions,
+    VerifyTextOptions, VerifyTextResult,
 };
 use jacs_mcp::path_policy::{resolve_input_path, resolve_output_path};
-use rmcp::model::{CallToolResult, Content, JsonObject, Tool};
+use rmcp::model::{CallToolResult, ContentBlock, JsonObject, Tool};
 use rmcp::ErrorData as McpError;
 use serde_json::{json, Value};
 
@@ -69,6 +69,11 @@ pub fn has_tool(name: &str) -> bool {
             | "hai_store_text_file"
             | "hai_store_image_file"
             | "hai_get_record_bytes"
+            | "hai_conflict_create"
+            | "hai_conflict_update"
+            | "hai_conflict_get"
+            | "hai_conflict_list"
+            | "hai_conflict_check_readiness"
     )
 }
 
@@ -127,6 +132,11 @@ pub async fn dispatch(
         "hai_store_text_file" => call_store_text_file(context, &args).await,
         "hai_store_image_file" => call_store_image_file(context, &args).await,
         "hai_get_record_bytes" => call_get_record_bytes(context, &args).await,
+        "hai_conflict_create" => call_conflict_create(context, &args).await,
+        "hai_conflict_update" => call_conflict_update(context, &args).await,
+        "hai_conflict_get" => call_conflict_get(context, &args).await,
+        "hai_conflict_list" => call_conflict_list(context, &args).await,
+        "hai_conflict_check_readiness" => call_conflict_check_readiness(context, &args).await,
         _ => Err(ToolError::InvalidParams(format!(
             "unknown HAI tool: {name}"
         ))),
@@ -213,6 +223,11 @@ fn definition_values() -> Vec<Value> {
                     "bcc": { "type": "array", "items": { "type": "string" }, "description": "BCC recipients" },
                     "labels": { "type": "array", "items": { "type": "string" }, "description": "Labels/tags for the message" },
                     "in_reply_to": { "type": "string", "description": "Message-ID to reply to (for threading)" },
+                    "generation_type": {
+                        "type": "string",
+                        "enum": ["html_inline_jacs", "attachment_jacs"],
+                        "description": "Signed email generation type. Default: html_inline_jacs; use attachment_jacs for compatibility."
+                    },
                     "agent_id": { "type": "string", "description": "Optional HAI agent UUID for stateless MCP sessions" },
                     "config_path": { "type": "string" }
                 },
@@ -692,6 +707,73 @@ fn definition_values() -> Vec<Value> {
                 "required": ["key"]
             }
         }),
+        // ===================================================================
+        // Conflict memory MVP tools.
+        //
+        // Thin MCP wrappers over `JacsConflictProvider`: local JACS creates,
+        // updates, fetches, lists, and readiness-checks signed conflict docs.
+        // ===================================================================
+        json!({
+            "name": "hai_conflict_create",
+            "description": "Create and sign a conflict document. Returns the conflict key (id:version) and signed JSON.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "body": { "type": "object", "description": "Conflict document body" },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
+                },
+                "required": ["body"]
+            }
+        }),
+        json!({
+            "name": "hai_conflict_update",
+            "description": "Apply a conflict mutation to a conflict key or id, creating a new signed version.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string", "description": "Conflict key (id:version) or document id" },
+                    "mutation": { "type": "object", "description": "Typed conflict mutation" },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
+                },
+                "required": ["key", "mutation"]
+            }
+        }),
+        json!({
+            "name": "hai_conflict_get",
+            "description": "Fetch a signed conflict document by key (id:version).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string", "description": "Conflict key in id:version format" },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
+                },
+                "required": ["key"]
+            }
+        }),
+        json!({
+            "name": "hai_conflict_list",
+            "description": "List signed conflict document keys.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "integer", "description": "Max conflict keys to return (default 20)" },
+                    "offset": { "type": "integer", "description": "Pagination offset" },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
+                }
+            }
+        }),
+        json!({
+            "name": "hai_conflict_check_readiness",
+            "description": "Run the JACS conflict readiness checker for a conflict key or id.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string", "description": "Conflict key (id:version) or document id" },
+                    "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
+                },
+                "required": ["key"]
+            }
+        }),
     ]
 }
 
@@ -849,18 +931,23 @@ async fn prepare_email_client(
 
 async fn call_send_email(context: &HaiServerContext, args: &Value) -> ToolResult {
     let client = prepare_email_client(context, args).await?;
+    let generation_type = optional_email_generation_type(args)?;
     let result = client
-        .send_signed_email(&SendEmailOptions {
-            to: required_string(args, "to")?.to_string(),
-            subject: required_string(args, "subject")?.to_string(),
-            body: required_string(args, "body")?.to_string(),
-            cc: optional_string_array(args, "cc"),
-            bcc: optional_string_array(args, "bcc"),
-            in_reply_to: optional_string(args, "in_reply_to").map(ToString::to_string),
-            attachments: vec![],
-            labels: optional_string_array(args, "labels"),
-            append_footer: None,
-        })
+        .send_signed_email_with_generation_type(
+            &SendEmailOptions {
+                to: required_string(args, "to")?.to_string(),
+                subject: required_string(args, "subject")?.to_string(),
+                body: required_string(args, "body")?.to_string(),
+                cc: optional_string_array(args, "cc"),
+                bcc: optional_string_array(args, "bcc"),
+                in_reply_to: optional_string(args, "in_reply_to").map(ToString::to_string),
+                attachments: vec![],
+                labels: optional_string_array(args, "labels"),
+                append_footer: None,
+                idempotency_key: None,
+            },
+            generation_type,
+        )
         .await
         .map_err(tool_message)?;
 
@@ -1411,6 +1498,225 @@ async fn call_get_record_bytes(context: &HaiServerContext, args: &Value) -> Tool
     ))
 }
 
+fn conflict_document_value(json: &str) -> Result<Value, ToolError> {
+    serde_json::from_str(json).map_err(tool_message)
+}
+
+async fn call_conflict_create(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let config_path = optional_string(args, "config_path");
+    let storage = context
+        .document_storage_label(config_path)
+        .map_err(ToolError::Message)?;
+    tracing::info!(
+        tool = "hai_conflict_create",
+        storage = %storage,
+        "dispatching routed conflict create"
+    );
+    let provider = context
+        .conflict_provider(config_path)
+        .map_err(ToolError::Message)?;
+    let body = args
+        .get("body")
+        .cloned()
+        .ok_or_else(|| ToolError::InvalidParams("body is required".to_string()))?;
+    let signed = match provider.create_conflict(body) {
+        Ok(signed) => signed,
+        Err(e) => {
+            tracing::warn!(
+                tool = "hai_conflict_create",
+                storage = %storage,
+                error = %e,
+                "routed conflict create failed"
+            );
+            return Err(tool_message(e));
+        }
+    };
+    let document = conflict_document_value(&signed.json)?;
+    tracing::info!(
+        tool = "hai_conflict_create",
+        storage = %storage,
+        key = %signed.key,
+        "routed conflict create completed"
+    );
+    Ok(success_tool_result(
+        format!("conflict_create key={}", signed.key),
+        json!({ "key": signed.key, "document": document }),
+    ))
+}
+
+async fn call_conflict_update(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let key = required_string(args, "key")?;
+    let mutation = args
+        .get("mutation")
+        .cloned()
+        .ok_or_else(|| ToolError::InvalidParams("mutation is required".to_string()))?;
+    let config_path = optional_string(args, "config_path");
+    let storage = context
+        .document_storage_label(config_path)
+        .map_err(ToolError::Message)?;
+    tracing::info!(
+        tool = "hai_conflict_update",
+        storage = %storage,
+        key = %key,
+        "dispatching routed conflict update"
+    );
+    let provider = context
+        .conflict_provider(config_path)
+        .map_err(ToolError::Message)?;
+    let signed = match provider.update_conflict(key, mutation) {
+        Ok(signed) => signed,
+        Err(e) => {
+            tracing::warn!(
+                tool = "hai_conflict_update",
+                storage = %storage,
+                key = %key,
+                error = %e,
+                "routed conflict update failed"
+            );
+            return Err(tool_message(e));
+        }
+    };
+    let document = conflict_document_value(&signed.json)?;
+    tracing::info!(
+        tool = "hai_conflict_update",
+        storage = %storage,
+        key = %signed.key,
+        "routed conflict update completed"
+    );
+    Ok(success_tool_result(
+        format!("conflict_update key={}", signed.key),
+        json!({ "key": signed.key, "document": document }),
+    ))
+}
+
+async fn call_conflict_get(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let key = required_string(args, "key")?;
+    let config_path = optional_string(args, "config_path");
+    let storage = context
+        .document_storage_label(config_path)
+        .map_err(ToolError::Message)?;
+    tracing::info!(
+        tool = "hai_conflict_get",
+        storage = %storage,
+        key = %key,
+        "dispatching routed conflict get"
+    );
+    let provider = context
+        .conflict_provider(config_path)
+        .map_err(ToolError::Message)?;
+    let raw = match provider.get_conflict(key) {
+        Ok(raw) => raw,
+        Err(e) => {
+            tracing::warn!(
+                tool = "hai_conflict_get",
+                storage = %storage,
+                key = %key,
+                error = %e,
+                "routed conflict get failed"
+            );
+            return Err(tool_message(e));
+        }
+    };
+    let document = conflict_document_value(&raw)?;
+    tracing::info!(
+        tool = "hai_conflict_get",
+        storage = %storage,
+        key = %key,
+        "routed conflict get completed"
+    );
+    Ok(success_tool_result(
+        format!("conflict_get key={key}"),
+        json!({ "key": key, "document": document, "raw": raw }),
+    ))
+}
+
+async fn call_conflict_list(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let limit = optional_u32(args, "limit").unwrap_or(20) as usize;
+    let offset = optional_u32(args, "offset").unwrap_or(0) as usize;
+    let config_path = optional_string(args, "config_path");
+    let storage = context
+        .document_storage_label(config_path)
+        .map_err(ToolError::Message)?;
+    tracing::info!(
+        tool = "hai_conflict_list",
+        storage = %storage,
+        limit,
+        offset,
+        "dispatching routed conflict list"
+    );
+    let provider = context
+        .conflict_provider(config_path)
+        .map_err(ToolError::Message)?;
+    let keys = match provider.list_conflicts(limit, offset) {
+        Ok(keys) => keys,
+        Err(e) => {
+            tracing::warn!(
+                tool = "hai_conflict_list",
+                storage = %storage,
+                error = %e,
+                "routed conflict list failed"
+            );
+            return Err(tool_message(e));
+        }
+    };
+    let count = keys.len();
+    tracing::info!(
+        tool = "hai_conflict_list",
+        storage = %storage,
+        count,
+        "routed conflict list completed"
+    );
+    Ok(success_tool_result(
+        format!("conflict_list count={count}"),
+        json!({ "keys": keys, "count": count, "limit": limit, "offset": offset }),
+    ))
+}
+
+async fn call_conflict_check_readiness(context: &HaiServerContext, args: &Value) -> ToolResult {
+    let key = required_string(args, "key")?;
+    let config_path = optional_string(args, "config_path");
+    let storage = context
+        .document_storage_label(config_path)
+        .map_err(ToolError::Message)?;
+    tracing::info!(
+        tool = "hai_conflict_check_readiness",
+        storage = %storage,
+        key = %key,
+        "dispatching routed conflict readiness check"
+    );
+    let provider = context
+        .conflict_provider(config_path)
+        .map_err(ToolError::Message)?;
+    let readiness = match provider.check_conflict_readiness(key) {
+        Ok(readiness) => readiness,
+        Err(e) => {
+            tracing::warn!(
+                tool = "hai_conflict_check_readiness",
+                storage = %storage,
+                key = %key,
+                error = %e,
+                "routed conflict readiness check failed"
+            );
+            return Err(tool_message(e));
+        }
+    };
+    let ready = readiness
+        .get("ready")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    tracing::info!(
+        tool = "hai_conflict_check_readiness",
+        storage = %storage,
+        key = %key,
+        ready,
+        "routed conflict readiness check completed"
+    );
+    Ok(success_tool_result(
+        format!("conflict_check_readiness key={key} ready={ready}"),
+        json!({ "key": key, "readiness": readiness }),
+    ))
+}
+
 async fn call_delete_message(context: &HaiServerContext, args: &Value) -> ToolResult {
     let message_id = required_string(args, "message_id")?;
     let client = prepare_email_client(context, args).await?;
@@ -1712,21 +2018,15 @@ async fn call_delete_email_template(context: &HaiServerContext, args: &Value) ->
 }
 
 fn success_tool_result(text: String, structured: Value) -> CallToolResult {
-    CallToolResult {
-        content: vec![Content::text(text)],
-        structured_content: Some(structured),
-        is_error: Some(false),
-        meta: None,
-    }
+    let mut result = CallToolResult::success(vec![ContentBlock::text(text)]);
+    result.structured_content = Some(structured);
+    result
 }
 
 fn error_tool_result(message: String) -> CallToolResult {
-    CallToolResult {
-        content: vec![Content::text(message.clone())],
-        structured_content: Some(json!({ "error": message })),
-        is_error: Some(true),
-        meta: None,
-    }
+    let mut result = CallToolResult::error(vec![ContentBlock::text(message.clone())]);
+    result.structured_content = Some(json!({ "error": message }));
+    result
 }
 
 fn required_string<'a>(args: &'a Value, key: &str) -> Result<&'a str, ToolError> {
@@ -1737,6 +2037,16 @@ fn required_string<'a>(args: &'a Value, key: &str) -> Result<&'a str, ToolError>
 
 fn optional_string<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
     args.get(key).and_then(Value::as_str)
+}
+
+fn optional_email_generation_type(args: &Value) -> Result<EmailGenerationType, ToolError> {
+    match optional_string(args, "generation_type") {
+        None | Some("html_inline_jacs") => Ok(EmailGenerationType::HtmlInlineJacs),
+        Some("attachment_jacs") => Ok(EmailGenerationType::AttachmentJacs),
+        Some(value) => Err(ToolError::InvalidParams(format!(
+            "generation_type must be html_inline_jacs or attachment_jacs, got {value}"
+        ))),
+    }
 }
 
 fn optional_u32(args: &Value, key: &str) -> Option<u32> {
@@ -1956,6 +2266,35 @@ mod tests {
     }
 
     #[test]
+    fn optional_email_generation_type_defaults_to_html_inline() {
+        let args = json!({});
+        let generation_type = optional_email_generation_type(&args).expect("generation type");
+        assert!(matches!(
+            generation_type,
+            EmailGenerationType::HtmlInlineJacs
+        ));
+    }
+
+    #[test]
+    fn optional_email_generation_type_accepts_attachment_compatibility() {
+        let args = json!({ "generation_type": "attachment_jacs" });
+        let generation_type = optional_email_generation_type(&args).expect("generation type");
+        assert!(matches!(
+            generation_type,
+            EmailGenerationType::AttachmentJacs
+        ));
+    }
+
+    #[test]
+    fn optional_email_generation_type_rejects_unknown_value() {
+        let args = json!({ "generation_type": "legacy" });
+        let err = optional_email_generation_type(&args).expect_err("invalid generation type");
+        assert!(
+            matches!(err, ToolError::InvalidParams(message) if message.contains("generation_type must be html_inline_jacs or attachment_jacs"))
+        );
+    }
+
+    #[test]
     fn hai_self_knowledge_tool_is_recognized() {
         assert!(has_tool("hai_self_knowledge"));
     }
@@ -2070,11 +2409,116 @@ mod tests {
         }
     }
 
+    const CONFLICT_TOOL_NAMES: &[&str] = &[
+        "hai_conflict_create",
+        "hai_conflict_update",
+        "hai_conflict_get",
+        "hai_conflict_list",
+        "hai_conflict_check_readiness",
+    ];
+
     #[test]
-    fn mcp_tool_contract_total_count_is_39() {
+    fn has_tool_includes_conflict_tools() {
+        for name in CONFLICT_TOOL_NAMES {
+            assert!(has_tool(name), "has_tool should return true for {name}");
+        }
+    }
+
+    #[test]
+    fn definitions_include_conflict_tools() {
+        let names: Vec<String> = definitions().iter().map(|t| t.name.to_string()).collect();
+        for required in CONFLICT_TOOL_NAMES {
+            assert!(
+                names.iter().any(|name| name == required),
+                "definitions() missing {required}; got {names:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_conflict_create_returns_key() {
+        let (context, _temp_dir, config_path) = build_conflict_context_with_fixture();
+
+        let result = dispatch(
+            &context,
+            "hai_conflict_create",
+            Some(
+                json!({
+                    "config_path": config_path.to_string_lossy(),
+                    "body": conflict_body()
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch conflict create");
+        let env = structured_of(&result);
+        let key = env["key"].as_str().expect("key");
+        assert!(
+            key.contains(':'),
+            "conflict key should be id:version: {env}"
+        );
+        assert_eq!(env["document"]["jacsType"].as_str(), Some("conflict"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_conflict_check_readiness_returns_report() {
+        let (context, _temp_dir, config_path) = build_conflict_context_with_fixture();
+
+        let created = dispatch(
+            &context,
+            "hai_conflict_create",
+            Some(
+                json!({
+                    "config_path": config_path.to_string_lossy(),
+                    "body": conflict_body()
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch conflict create");
+        let key = structured_of(&created)["key"]
+            .as_str()
+            .expect("key")
+            .to_string();
+
+        let readiness = dispatch(
+            &context,
+            "hai_conflict_check_readiness",
+            Some(
+                json!({
+                    "config_path": config_path.to_string_lossy(),
+                    "key": key
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            ),
+        )
+        .await
+        .expect("dispatch conflict readiness");
+        let env = structured_of(&readiness);
+        assert_eq!(env["readiness"]["ready"].as_bool(), Some(false), "{env}");
+        assert!(
+            env["readiness"]["blockers"]
+                .as_array()
+                .map(|blockers| !blockers.is_empty())
+                .unwrap_or(false),
+            "sparse conflict should report readiness blockers: {env}"
+        );
+    }
+
+    #[test]
+    fn mcp_tool_contract_total_count_is_44() {
         // Issue 004: count bumped from 32 to 39 with the seven D5/D9 record-store
         // tools (hai_save_memory, hai_get_memory, hai_save_soul, hai_get_soul,
         // hai_store_text_file, hai_store_image_file, hai_get_record_bytes).
+        // Conflict memory MVP then bumps 39 to 44 with five hai_conflict_* tools.
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/mcp_tool_contract.json");
         let raw = std::fs::read_to_string(&path).expect("read mcp_tool_contract.json");
@@ -2084,8 +2528,8 @@ mod tests {
             .as_array()
             .expect("required_tools")
             .len() as u64;
-        assert_eq!(total, 39);
-        assert_eq!(count, 39);
+        assert_eq!(total, 44);
+        assert_eq!(count, 44);
     }
 
     /// Issue 015: the `format` hint is a JACS REVIEW_002 dead parameter
@@ -2135,8 +2579,8 @@ mod tests {
         let text = result
             .content
             .first()
-            .and_then(|c| match c.raw {
-                rmcp::model::RawContent::Text(ref t) => Some(t.text.clone()),
+            .and_then(|c| match c {
+                rmcp::model::ContentBlock::Text(ref t) => Some(t.text.clone()),
                 _ => None,
             })
             .unwrap_or_default();
@@ -2253,6 +2697,47 @@ mod tests {
             embedded,
         );
         (context, temp_dir, config_path)
+    }
+
+    fn build_conflict_context_with_fixture(
+    ) -> (HaiServerContext, tempfile::TempDir, std::path::PathBuf) {
+        use crate::embedded_provider::LoadedSharedAgent;
+
+        let (temp_dir, config_path) =
+            crate::embedded_provider::tests::write_temp_fixture_config_pub();
+        let shared = LoadedSharedAgent::load_from_config_path(&config_path)
+            .expect("load shared agent from fixture");
+        let embedded = shared.embedded_provider().expect("embedded provider");
+        let context = HaiServerContext::from_process_env(
+            shared.config_path().to_string_lossy().into_owned(),
+            Some(shared.config_path().to_string_lossy().into_owned()),
+            embedded,
+        );
+        (context, temp_dir, config_path)
+    }
+
+    fn conflict_body() -> Value {
+        json!({
+            "title": "GPU scheduling disagreement",
+            "description": "Two parties disagree about who gets a shared GPU window.",
+            "participants": [
+                {
+                    "agentId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100010",
+                    "agentType": "human",
+                    "displayName": "Alice",
+                    "role": "party"
+                },
+                {
+                    "agentId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100011",
+                    "agentType": "human",
+                    "displayName": "Bob",
+                    "role": "party"
+                }
+            ],
+            "positions": [],
+            "divergences": [],
+            "phase": "surfacing"
+        })
     }
 
     /// Pull the structured envelope JSON out of a `CallToolResult`.
@@ -2378,7 +2863,7 @@ mod tests {
         let venv = structured_of(&verified);
         assert_eq!(venv["success"].as_bool(), Some(true));
         assert_eq!(venv["status"].as_str(), Some("signed"));
-        assert!(venv["signatures"].as_array().unwrap().len() >= 1);
+        assert!(!venv["signatures"].as_array().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -2650,8 +3135,8 @@ mod tests {
         let text = result
             .content
             .first()
-            .and_then(|c| match c.raw {
-                rmcp::model::RawContent::Text(ref t) => Some(t.text.clone()),
+            .and_then(|c| match c {
+                rmcp::model::ContentBlock::Text(ref t) => Some(t.text.clone()),
                 _ => None,
             })
             .unwrap_or_default();
@@ -2690,8 +3175,8 @@ mod tests {
         let text = result
             .content
             .first()
-            .and_then(|c| match c.raw {
-                rmcp::model::RawContent::Text(ref t) => Some(t.text.clone()),
+            .and_then(|c| match c {
+                rmcp::model::ContentBlock::Text(ref t) => Some(t.text.clone()),
                 _ => None,
             })
             .unwrap_or_default();

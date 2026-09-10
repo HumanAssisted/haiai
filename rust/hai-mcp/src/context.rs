@@ -4,7 +4,7 @@ use std::sync::Mutex as StdMutex;
 
 use haiai::{
     build_document_provider, resolve_storage_backend, HaiClient, HaiClientOptions,
-    JacsDocumentProvider, JacsProvider, LocalJacsProvider, NoopJacsProvider,
+    JacsConflictProvider, JacsDocumentProvider, JacsProvider, LocalJacsProvider, NoopJacsProvider,
 };
 
 use crate::embedded_provider::EmbeddedJacsProvider;
@@ -44,9 +44,10 @@ impl HaiServerContext {
         embedded_provider: EmbeddedJacsProvider,
         storage_override: Option<String>,
     ) -> Self {
-        let base_url = normalize_base_url(
-            &std::env::var("HAI_URL").unwrap_or_else(|_| haiai::DEFAULT_BASE_URL.to_string()),
-        );
+        // `HAI_URL` > `HAI_API_URL` > `DEFAULT_BASE_URL`, the same precedence
+        // every HAIAI SDK uses; this is how an operator points `haiai mcp` at
+        // a benchmark or staging deployment.
+        let base_url = normalize_base_url(&haiai::base_url_from_env());
         let default_config_path = default_config_path.map(PathBuf::from);
         Self {
             base_url,
@@ -133,6 +134,36 @@ impl HaiServerContext {
             Some(self.resolve_base_url(None)?),
         )
         .map_err(|e| format!("failed to build routed JACS document provider: {e}"))
+    }
+
+    pub fn conflict_provider(
+        &self,
+        config_path: Option<&str>,
+    ) -> Result<Box<dyn JacsConflictProvider>, String> {
+        self.validate_embedded_config_path(config_path)?;
+        let backend = resolve_storage_backend(
+            self.storage_override.as_deref(),
+            self.effective_config_path(config_path),
+        )
+        .map_err(|e| format!("failed to resolve routed JACS conflict storage: {e}"))?;
+
+        match backend.as_str() {
+            "fs" | "rusqlite" | "sqlite" => {
+                let provider = LocalJacsProvider::from_config_path(
+                    self.effective_config_path(config_path),
+                    Some(backend.as_str()),
+                )
+                .map_err(|e| format!("failed to build routed JACS conflict provider: {e}"))?;
+                Ok(Box::new(provider))
+            }
+            "remote" => Err(
+                "conflict tools require a local JACS conflict provider; remote conflict storage is not implemented"
+                    .to_string(),
+            ),
+            other => Err(format!(
+                "Unsupported storage backend '{other}'. Valid routed labels: fs, rusqlite, sqlite, remote"
+            )),
+        }
     }
 
     pub fn document_storage_label(&self, config_path: Option<&str>) -> Result<String, String> {

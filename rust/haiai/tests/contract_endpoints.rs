@@ -85,13 +85,17 @@ async fn submit_response_uses_shared_method_path_auth_contract() {
     let fixture = load_contract_fixture();
     let server = MockServer::start_async().await;
 
-    let expected_path = fixture.submit_response.path.replace("{job_id}", "job-123");
+    let job_id = "550e8400-e29b-41d4-a716-446655440000";
+    let expected_path = fixture.submit_response.path.replace("{job_id}", job_id);
 
     let mock = server
         .mock_async(|when, then| {
             let when = when
                 .method(method_from_fixture(&fixture.submit_response.method))
-                .path(expected_path);
+                .path(expected_path)
+                .body_includes(r#"\"contract\":\"hai.job-response\""#)
+                .body_includes(r#"\"version\":2"#)
+                .body_includes(format!(r#"\"job_id\":\"{job_id}\""#));
             let _when = if fixture.submit_response.auth_required {
                 when.header_exists("authorization")
             } else {
@@ -99,7 +103,7 @@ async fn submit_response_uses_shared_method_path_auth_contract() {
             };
             then.status(200).json_body(json!({
                 "success": true,
-                "job_id": "job-123",
+                "job_id": job_id,
                 "message": "ok"
             }));
         })
@@ -107,7 +111,7 @@ async fn submit_response_uses_shared_method_path_auth_contract() {
 
     let client = make_client(&server.base_url());
     client
-        .submit_response("job-123", "response body", None, 0)
+        .submit_response(job_id, "response body", None, 0)
         .await
         .expect("submit response");
 
@@ -201,7 +205,7 @@ async fn register_is_unauthenticated() {
     assert_eq!(result.jacs_id, "agent-1");
     // The JACS auth mock should have zero hits (register doesn't send auth)
     assert_eq!(
-        mock_no_auth.hits_async().await,
+        mock_no_auth.calls_async().await,
         0,
         "register must NOT send Authorization header"
     );
@@ -255,7 +259,7 @@ async fn register_omits_private_key() {
     assert_eq!(result.jacs_id, "agent-1");
     // The private key trap mock should have zero hits
     assert_eq!(
-        private_key_trap.hits_async().await,
+        private_key_trap.calls_async().await,
         0,
         "register body must NOT contain PRIVATE KEY"
     );

@@ -1,6 +1,6 @@
 use jacs_mcp::JacsMcpServer;
 use rmcp::model::{
-    CallToolRequestParam, Implementation, ListToolsResult, PaginatedRequestParam,
+    CallToolRequestParams, Implementation, ListToolsResult, PaginatedRequestParams,
     ServerCapabilities, ServerInfo, Tool, ToolsCapability,
 };
 use rmcp::service::RequestContext;
@@ -19,8 +19,18 @@ impl HaiMcpServer {
         Self { jacs, context }
     }
 
+    /// Advertise only the JACS tools the embedded server will actually
+    /// dispatch under its active runtime profile.
+    ///
+    /// `JacsMcpServer::tools()` is the full compiled-in inventory kept for
+    /// contract snapshots. Since JACS 0.11.4 every tool outside the active
+    /// profile is refused at dispatch with `LOCAL_SIGNING_NOT_AUTHORIZED`, so
+    /// listing the full inventory would advertise capabilities this process
+    /// does not have. `active_tools()` is the fail-closed surface.
     fn combined_tools(&self) -> Vec<Tool> {
-        let mut tools: Vec<Tool> = JacsMcpServer::tools()
+        let mut tools: Vec<Tool> = self
+            .jacs
+            .active_tools()
             .into_iter()
             .filter(|tool| tool.name != "jacs_memory_save")
             .collect();
@@ -31,33 +41,30 @@ impl HaiMcpServer {
 
 impl ServerHandler for HaiMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: Default::default(),
-            capabilities: ServerCapabilities {
-                tools: Some(ToolsCapability {
-                    list_changed: Some(false),
-                }),
-                ..Default::default()
-            },
-            server_info: Implementation {
-                name: "hai-mcp".to_string(),
-                title: Some("HAIAI MCP Server".to_string()),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                icons: None,
-                website_url: Some(haiai::DEFAULT_BASE_URL.to_string()),
-            },
-            instructions: Some(
+        let mut implementation = Implementation::new("hai-mcp", env!("CARGO_PKG_VERSION"));
+        implementation.title = Some("HAIAI MCP Server".to_string());
+        implementation.website_url = Some(haiai::DEFAULT_BASE_URL.to_string());
+
+        let capabilities = ServerCapabilities::builder()
+            .enable_tools_with({
+                let mut tools = ToolsCapability::default();
+                tools.list_changed = Some(false);
+                tools
+            })
+            .build();
+
+        ServerInfo::new(capabilities)
+            .with_server_info(implementation)
+            .with_instructions(
                 "This MCP server runs locally over stdio only. It embeds the canonical JACS MCP \
                  server in-process and adds HAI platform tools for registration, authenticated \
-                 agent operations, and mailbox/email workflows."
-                    .to_string(),
-            ),
-        }
+                 agent operations, and mailbox/email workflows.",
+            )
     }
 
     async fn list_tools(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         Ok(ListToolsResult {
@@ -68,9 +75,9 @@ impl ServerHandler for HaiMcpServer {
 
     async fn call_tool(
         &self,
-        request: CallToolRequestParam,
+        request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<rmcp::model::CallToolResult, McpError> {
+    ) -> Result<rmcp::model::CallToolResponse, McpError> {
         if request.name.as_ref() == "jacs_memory_save" {
             return Err(McpError::invalid_request(
                 "jacs_memory_save is hidden in hai-mcp; use hai_save_memory",
@@ -80,7 +87,9 @@ impl ServerHandler for HaiMcpServer {
 
         if hai_tools::has_tool(request.name.as_ref()) {
             let name = request.name.to_string();
-            return hai_tools::dispatch(&self.context, &name, request.arguments).await;
+            return hai_tools::dispatch(&self.context, &name, request.arguments)
+                .await
+                .map(Into::into);
         }
 
         // NOTE: JACS document operations (sign, verify, search, store) are synchronous.

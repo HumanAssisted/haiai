@@ -138,6 +138,27 @@ echo "Plugin:"
 sed -i '' "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW_VERSION\"/" .claude-plugin/plugin.json
 echo "  .claude-plugin/plugin.json"
 
+# --- LICENSE (BSL parameters) ---
+#
+# The BSL requires per-version parameters: the Licensed Work version, the
+# Change Date (4 years from first public release of this version), and the
+# copyright year. Bumping the version renews the BSL clock for the new
+# release, so all three fields must be updated together.
+
+echo ""
+echo "LICENSE (BSL parameters):"
+CURRENT_YEAR=$(date +%Y)
+NEW_CHANGE_DATE=$(date -v +4y +%Y-%m-%d)
+
+sed -i '' "s/^Licensed Work:        haiai version $CURRENT$/Licensed Work:        haiai version $NEW_VERSION/" LICENSE
+echo "  LICENSE: Licensed Work version -> $NEW_VERSION"
+
+sed -i '' -E "s/^Change Date:          [0-9]{4}-[0-9]{2}-[0-9]{2}$/Change Date:          $NEW_CHANGE_DATE/" LICENSE
+echo "  LICENSE: Change Date -> $NEW_CHANGE_DATE"
+
+sed -i '' -E "s/Copyright \(c\) [0-9]{4}\$/Copyright (c) $CURRENT_YEAR/" LICENSE
+echo "  LICENSE: Copyright year -> $CURRENT_YEAR"
+
 # --- Regenerate lockfiles ---
 
 echo ""

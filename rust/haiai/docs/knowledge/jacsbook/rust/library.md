@@ -22,6 +22,7 @@ jacs = { version = "0.3", features = ["cli", "observability"] }
 |---------|-------------|
 | `sqlite` | Lightweight sync SQLite backend (default) |
 | `sqlx-sqlite` | Async SQLite backend via sqlx (requires tokio) |
+| `s3` | AWS S3 storage; opt-in because it adds cloud HTTP/XML dependencies |
 | `otlp-logs` | OTLP log export support |
 | `otlp-metrics` | OTLP metrics export support |
 | `otlp-tracing` | OTLP distributed tracing support |
@@ -235,28 +236,6 @@ agent.save_document(
     Some(true),                       // export embedded files
     None,                             // extract only
 )?;
-```
-
-## Creating Tasks
-
-```rust
-use jacs::{get_empty_agent, create_task};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut agent = get_empty_agent();
-    agent.load_by_config("./jacs.config.json".to_string())?;
-
-    // Create a task
-    let task_json = create_task(
-        &mut agent,
-        "Review Code".to_string(),
-        "Review pull request #123".to_string(),
-    )?;
-
-    println!("Task created: {}", task_json);
-
-    Ok(())
-}
 ```
 
 ## Signing and Verification
@@ -481,7 +460,7 @@ std::thread::spawn(move || {
 ## Complete Example
 
 ```rust
-use jacs::{get_empty_agent, create_task};
+use jacs::get_empty_agent;
 use jacs::agent::document::DocumentTraits;
 use serde_json::json;
 
@@ -511,15 +490,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Save to file
     agent.save_document(&doc.getkey(), Some("proposal.json".to_string()), None, None)?;
-
-    // Create a task
-    let task = create_task(
-        &mut agent,
-        "Review Proposal".to_string(),
-        "Review and approve the project proposal".to_string(),
-    )?;
-
-    println!("Task created");
 
     Ok(())
 }

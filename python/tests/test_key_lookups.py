@@ -201,7 +201,9 @@ class TestAsyncFetchKeyByHash:
         mock_ffi = client._get_ffi()
         mock_ffi.responses["fetch_key_by_hash"] = _KEY_RESPONSE
 
-        result = await client.fetch_key_by_hash("https://hai.ai", "sha256:abcdef1234567890")
+        result = await client.fetch_key_by_hash(
+            "https://hai.ai", "sha256:abcdef1234567890"
+        )
 
         assert result.jacs_id == "agent-abc"
         assert result.algorithm == "Ed25519"

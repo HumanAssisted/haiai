@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Usage: ./scripts/bump-jacs-version.sh <version>
 # Bumps the JACS dependency version across all SDK packages.
-# Affects: rust/haiai, rust/haiai-cli, rust/hai-mcp, python, node
+# Affects: rust/haiai, rust/haiai-cli, rust/hai-mcp, python, node, CI JACS ref
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -30,7 +30,7 @@ fi
 echo "JACS dependency: $CURRENT -> $NEW_VERSION"
 echo ""
 
-# --- Rust crates (pinned =X.Y.Z for jacs, jacs-mcp, jacs-binding-core) ---
+# --- Rust crates (caret floor X.Y.Z for jacs, jacs-mcp, jacs-binding-core, jacs-media) ---
 
 echo "Rust crates:"
 
@@ -41,8 +41,10 @@ RUST_JACS_FILES=(
 )
 
 for f in "${RUST_JACS_FILES[@]}"; do
-  # Update jacs = { version = "=X.Y.Z", ... } and jacs-* deps
-  sed -i '' "s/\"=$CURRENT\"/\"=$NEW_VERSION\"/g" "$f"
+  # Inline-table form: jacs* = { version = "X.Y.Z", ... }
+  sed -i '' -E "s|^(jacs[a-z-]* = \{ version = )\"$CURRENT\"|\1\"$NEW_VERSION\"|" "$f"
+  # Plain form: jacs* = "X.Y.Z"
+  sed -i '' -E "s|^(jacs[a-z-]* = )\"$CURRENT\"|\1\"$NEW_VERSION\"|" "$f"
   echo "  $f"
 done
 
@@ -50,7 +52,8 @@ done
 
 echo ""
 echo "Python:"
-sed -i '' "s/jacs==$CURRENT/jacs==$NEW_VERSION/" python/pyproject.toml
+# Handles both pinned (jacs==X.Y.Z) and range floor (jacs>=X.Y.Z,<X.Y) forms.
+sed -i '' -E "s/jacs([>=])=$CURRENT/jacs\1=$NEW_VERSION/" python/pyproject.toml
 echo "  python/pyproject.toml"
 
 # --- Node ---
@@ -67,6 +70,15 @@ case "$CURRENT_NODE" in
     echo "  node/package.json"
     ;;
 esac
+node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('node/publish.deps.json','utf8'));p['@hai.ai/jacs']='$NEW_VERSION';fs.writeFileSync('node/publish.deps.json',JSON.stringify(p,null,2)+'\\n')"
+echo "  node/publish.deps.json"
+
+# --- CI JACS checkout ref ---
+
+echo ""
+echo "CI:"
+sed -i '' -E "s|JACS_REF: ([^ ]*/)?v$CURRENT|JACS_REF: crate/v$NEW_VERSION|" .github/workflows/test.yml
+echo "  .github/workflows/test.yml"
 
 # --- Regenerate lockfiles ---
 
@@ -77,6 +89,10 @@ echo "Regenerating Cargo.lock..."
 echo ""
 echo "Regenerating package-lock.json..."
 (cd node && npm install --package-lock-only 2>/dev/null) || echo "  (skipped — npm not available or package not yet published)"
+
+echo ""
+echo "Regenerating uv.lock..."
+(cd python && uv lock 2>/dev/null) || echo "  (skipped — uv not available or package not yet published)"
 
 # --- Verify ---
 

@@ -22,4 +22,4 @@ def should_retry(status_code: int) -> bool:
 
 def backoff(attempt: int) -> float:
     """Return exponential backoff delay (capped) for the given attempt number."""
-    return min(RETRY_BACKOFF_BASE * (2 ** attempt), RETRY_BACKOFF_MAX)
+    return min(RETRY_BACKOFF_BASE * (2**attempt), RETRY_BACKOFF_MAX)

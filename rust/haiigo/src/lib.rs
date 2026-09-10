@@ -1,3 +1,11 @@
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 //! Go C FFI binding for HAI SDK.
 //!
 //! Produces a cdylib (`libhaiigo.dylib`/`.so`) loaded by Go via CGo or purego.
@@ -273,6 +281,40 @@ macro_rules! ffi_method_str_three_args {
                 let (tx, rx) = std::sync::mpsc::channel();
                 RT.spawn(async move {
                     let r = client.$method(&arg1, &arg2, &arg3).await;
+                    let _ = tx.send(r);
+                });
+                to_c_string(result_to_json(rx.recv().unwrap()))
+            }));
+            result.unwrap_or_else(|_| panic_json())
+        }
+    };
+}
+
+/// Generate a simple FFI function that takes a handle and four string args.
+macro_rules! ffi_method_str_four_args {
+    ($fn_name:ident, $method:ident) => {
+        #[no_mangle]
+        pub extern "C" fn $fn_name(
+            handle: HaiClientHandle,
+            arg1: *const c_char,
+            arg2: *const c_char,
+            arg3: *const c_char,
+            arg4: *const c_char,
+        ) -> *mut c_char {
+            if handle.is_null() {
+                return to_c_string(
+                    r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string(),
+                );
+            }
+            let client = unsafe { &*handle }.clone();
+            let arg1 = unsafe { c_str_to_string(arg1) };
+            let arg2 = unsafe { c_str_to_string(arg2) };
+            let arg3 = unsafe { c_str_to_string(arg3) };
+            let arg4 = unsafe { c_str_to_string(arg4) };
+            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                let (tx, rx) = std::sync::mpsc::channel();
+                RT.spawn(async move {
+                    let r = client.$method(&arg1, &arg2, &arg3, &arg4).await;
                     let _ = tx.send(r);
                 });
                 to_c_string(result_to_json(rx.recv().unwrap()))
@@ -560,6 +602,31 @@ ffi_method_noarg!(hai_fetch_server_keys, fetch_server_keys);
 
 ffi_method_str!(hai_sign_email_raw, sign_email_raw);
 ffi_method_str!(hai_verify_email_raw, verify_email_raw);
+
+// =============================================================================
+// FFI Methods — Agreements
+// =============================================================================
+
+ffi_method_str!(hai_save_agreement, save_agreement);
+ffi_method_str!(hai_search_agreements, search_agreements);
+ffi_method_str!(hai_get_agreement, get_agreement);
+ffi_method_str_two_args!(hai_countersign_agreement, countersign_agreement);
+ffi_method_str!(hai_create_agreement_v2, create_agreement_v2);
+ffi_method_str_two_args!(hai_apply_agreement_v2, apply_agreement_v2);
+ffi_method_str_two_args!(hai_sign_agreement_v2, sign_agreement_v2);
+ffi_method_str!(hai_verify_agreement_v2, verify_agreement_v2);
+ffi_method_str_three_args!(
+    hai_detect_agreement_branch_conflict,
+    detect_agreement_branch_conflict
+);
+ffi_method_str_three_args!(
+    hai_merge_agreement_transcript_branches,
+    merge_agreement_transcript_branches
+);
+ffi_method_str_four_args!(
+    hai_resolve_agreement_branch_conflict,
+    resolve_agreement_branch_conflict
+);
 
 // Layer 8: Local Media (TASK_009)
 ffi_method_str_two_args!(hai_sign_text, sign_text);
@@ -956,10 +1023,7 @@ pub extern "C" fn hai_connect_sse(handle: HaiClientHandle) -> u64 {
             let r = client.connect_sse().await;
             let _ = tx.send(r);
         });
-        match rx.recv().unwrap() {
-            Ok(h) => h,
-            Err(_) => 0,
-        }
+        rx.recv().unwrap().unwrap_or_default()
     }));
     result.unwrap_or(0)
 }
@@ -1009,10 +1073,7 @@ pub extern "C" fn hai_connect_ws(handle: HaiClientHandle) -> u64 {
             let r = client.connect_ws().await;
             let _ = tx.send(r);
         });
-        match rx.recv().unwrap() {
-            Ok(h) => h,
-            Err(_) => 0,
-        }
+        rx.recv().unwrap().unwrap_or_default()
     }));
     result.unwrap_or(0)
 }
@@ -1514,6 +1575,120 @@ pub extern "C" fn hai_get_record_bytes(
     ptr
 }
 
+#[no_mangle]
+pub extern "C" fn hai_conflict_create(
+    handle: HaiClientHandle,
+    body_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(
+            r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string(),
+        );
+    }
+    let client = unsafe { &*handle }.clone();
+    let arg = unsafe { c_str_to_string(body_json) };
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.conflict_create(arg).await;
+            let _ = tx.send(r);
+        });
+        to_c_string(result_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+#[no_mangle]
+pub extern "C" fn hai_conflict_update(
+    handle: HaiClientHandle,
+    key_or_id: *const c_char,
+    mutation_json: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(
+            r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string(),
+        );
+    }
+    let client = unsafe { &*handle }.clone();
+    let key_or_id = unsafe { c_str_to_string(key_or_id) };
+    let mutation_json = unsafe { c_str_to_string(mutation_json) };
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.conflict_update(key_or_id, mutation_json).await;
+            let _ = tx.send(r);
+        });
+        to_c_string(result_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+#[no_mangle]
+pub extern "C" fn hai_conflict_get(handle: HaiClientHandle, key: *const c_char) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(
+            r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string(),
+        );
+    }
+    let client = unsafe { &*handle }.clone();
+    let key = unsafe { c_str_to_string(key) };
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.conflict_get(key).await;
+            let _ = tx.send(r);
+        });
+        to_c_string(result_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+#[no_mangle]
+pub extern "C" fn hai_conflict_list(
+    handle: HaiClientHandle,
+    limit: usize,
+    offset: usize,
+) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(
+            r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string(),
+        );
+    }
+    let client = unsafe { &*handle }.clone();
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.conflict_list(limit, offset).await;
+            let _ = tx.send(r);
+        });
+        to_c_string(result_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
+#[no_mangle]
+pub extern "C" fn hai_conflict_check_readiness(
+    handle: HaiClientHandle,
+    key_or_id: *const c_char,
+) -> *mut c_char {
+    if handle.is_null() {
+        return to_c_string(
+            r#"{"error":{"kind":"Generic","message":"null client handle"}}"#.to_string(),
+        );
+    }
+    let client = unsafe { &*handle }.clone();
+    let key_or_id = unsafe { c_str_to_string(key_or_id) };
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        RT.spawn(async move {
+            let r = client.conflict_check_readiness(key_or_id).await;
+            let _ = tx.send(r);
+        });
+        to_c_string(result_to_json(rx.recv().unwrap()))
+    }));
+    result.unwrap_or_else(|_| panic_json())
+}
+
 /// Free a byte buffer returned by `hai_get_record_bytes`.
 #[no_mangle]
 pub extern "C" fn hai_free_bytes(ptr: *mut u8, len: usize) {
@@ -1521,7 +1696,7 @@ pub extern "C" fn hai_free_bytes(ptr: *mut u8, len: usize) {
         return;
     }
     let _ = std::panic::catch_unwind(|| unsafe {
-        let _ = Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
+        let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len));
     });
 }
 

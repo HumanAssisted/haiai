@@ -8,7 +8,6 @@ appropriate Python exception classes.
 
 from __future__ import annotations
 
-import pytest
 
 from haiai._ffi_adapter import map_ffi_error
 from haiai.errors import (
@@ -109,6 +108,7 @@ class TestFFIAdapterImport:
 
     def test_import_ffi_adapter(self):
         from haiai._ffi_adapter import FFIAdapter, AsyncFFIAdapter
+
         assert FFIAdapter is not None
         assert AsyncFFIAdapter is not None
 
@@ -118,6 +118,7 @@ class TestFFIAdapterImport:
         # This test verifies the error handling path.
         try:
             from haiai._ffi_adapter import FFIAdapter
+
             adapter = FFIAdapter('{"base_url":"https://test.hai.ai","jacs_id":"test"}')
             # If haiipy IS installed, construction should succeed
             assert adapter is not None

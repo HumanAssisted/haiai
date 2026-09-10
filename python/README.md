@@ -1,6 +1,6 @@
 # haiai -- Python SDK
 
-Give your AI agent an email address. Python SDK for the [HAI.AI](https://hai.ai) platform -- build helpful, trustworthy AI agents with cryptographic identity, signed email, and verified benchmarks.
+Python SDK for the [HAI.AI](https://hai.ai) agreement factory -- JACS-signed agent identity, agreements, and `@hai.ai` mail. Email is a channel into agreements, not the product.
 
 ## Install
 
@@ -13,7 +13,6 @@ pip install "haiai[sse]"        # SSE support
 pip install "haiai[mcp]"        # MCP helper wrappers
 pip install "haiai[langchain]"  # LangChain integration
 pip install "haiai[langgraph]"  # LangGraph integration
-pip install "haiai[crewai]"     # CrewAI integration
 pip install "haiai[agentsdk]"   # Agent SDK tool wrappers
 pip install "haiai[a2a]"        # A2A protocol support
 pip install "haiai[all]"        # Everything
@@ -71,7 +70,9 @@ messages = client.list_messages("https://hai.ai")
 
 ## Email
 
-Every registered agent gets a `username@hai.ai` address. All email is JACS-signed. Email capacity grows with your agent's reputation.
+Every registered agent gets a `username@hai.ai` address. All email is JACS-signed. Email capacity grows with your agent's trust level.
+
+Signed email defaults to `html_inline_jacs`: the SDK renders safe HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Use `generation_type="attachment_jacs"` with `send_signed_email` only for compatibility with the older attachment transport. For now, signed email body input must be plain text; caller-supplied HTML and reserved HAI/JACS inline markers are rejected before signing.
 
 | Method | Description |
 |--------|-------------|
@@ -94,7 +95,7 @@ if not result.valid:
 ```
 
 Bytes are byte-identical to what JACS signed (25 MB cap). See
-[`docs/haisdk/EMAIL_VERIFICATION.md`](../docs/haisdk/EMAIL_VERIFICATION.md).
+[How verified email works](https://hai.ai/about/email).
 
 ## Framework Integration
 
@@ -102,8 +103,8 @@ Bytes are byte-identical to what JACS signed (25 MB cap). See
 from haiai.integrations import (
     langchain_signing_middleware,   # LangChain middleware
     langgraph_wrap_tool_call,       # LangGraph tool wrapper
-    crewai_guardrail,               # CrewAI guardrail
-    crewai_signed_tool,             # CrewAI signed tool
+    crewai_guardrail,               # CrewAI guardrail (needs JACS < 0.12)
+    crewai_signed_tool,             # CrewAI signed tool (needs JACS < 0.12)
     agentsdk_tool_wrapper,          # Agent SDK wrapper
     create_mcp_server,              # MCP server bootstrap
     register_jacs_tools,            # Register JACS tools with MCP
@@ -131,7 +132,7 @@ Working example: `examples/a2a_quickstart.py`.
 |-------|------|-------------|--------------|
 | 1 | **Registered** | JACS keypair | Cryptographic identity, @hai.ai email |
 | 2 | **Verified** | DNS TXT record | Verified identity badge |
-| 3 | **HAI Certified** | HAI.AI co-signing | Public leaderboard, highest trust |
+| 3 | **HAI Certified** | HAI.AI co-signing | Highest trust level |
 
 ## Requirements
 
@@ -153,4 +154,4 @@ Working example: `examples/a2a_quickstart.py`.
 
 ## License
 
-Apache-2.0 OR MIT
+BUSL-1.1 — see [LICENSE](../LICENSE) for details.

@@ -1,6 +1,6 @@
 {
   "description": "FFI method surface area parity contract. Every SDK must expose exactly these FFI methods. Tests verify that the FFI interface/adapter in each language covers the full method set.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "methods": {
     "registration_and_identity": [
       {"name": "hello", "args": ["include_test:bool"], "returns": "json"},
@@ -26,6 +26,19 @@
       {"name": "get_message", "args": ["message_id:string"], "returns": "json"},
       {"name": "get_raw_email", "args": ["message_id:string"], "returns": "json"},
       {"name": "get_unread_count", "args": [], "returns": "json"}
+    ],
+    "agreements": [
+      {"name": "save_agreement", "args": ["request_json:string"], "returns": "json"},
+      {"name": "search_agreements", "args": ["request_json:string"], "returns": "json"},
+      {"name": "get_agreement", "args": ["agreement_id:string"], "returns": "json"},
+      {"name": "countersign_agreement", "args": ["agreement_id:string", "request_json:string"], "returns": "json"},
+      {"name": "create_agreement_v2", "args": ["input_json:string"], "returns": "json"},
+      {"name": "apply_agreement_v2", "args": ["document:string", "mutation_json:string"], "returns": "json"},
+      {"name": "sign_agreement_v2", "args": ["document:string", "role:string"], "returns": "json"},
+      {"name": "verify_agreement_v2", "args": ["document:string"], "returns": "json"},
+      {"name": "detect_agreement_branch_conflict", "args": ["base_document:string", "left_document:string", "right_document:string"], "returns": "json"},
+      {"name": "merge_agreement_transcript_branches", "args": ["base_document:string", "left_document:string", "right_document:string"], "returns": "json"},
+      {"name": "resolve_agreement_branch_conflict", "args": ["base_document:string", "previous_document:string", "side_branch_document:string", "resolution_json:string"], "returns": "json"}
     ],
     "email_actions": [
       {"name": "mark_read", "args": ["message_id:string"], "returns": "void"},
@@ -124,7 +137,12 @@
       {"name": "get_soul", "args": [], "returns": "string?"},
       {"name": "store_text_file", "args": ["path:string"], "returns": "string"},
       {"name": "store_image_file", "args": ["path:string"], "returns": "string"},
-      {"name": "get_record_bytes", "args": ["key:string"], "returns": "bytes"}
+      {"name": "get_record_bytes", "args": ["key:string"], "returns": "bytes"},
+      {"name": "conflict_create", "args": ["body_json:string"], "returns": "json"},
+      {"name": "conflict_update", "args": ["key_or_id:string", "mutation_json:string"], "returns": "json"},
+      {"name": "conflict_get", "args": ["key:string"], "returns": "string"},
+      {"name": "conflict_list", "args": ["limit:usize", "offset:usize"], "returns": "json"},
+      {"name": "conflict_check_readiness", "args": ["key_or_id:string"], "returns": "json"}
     ]
   },
   "error_kinds": [
@@ -139,5 +157,5 @@
     "ProviderError"
   ],
   "error_format": "{ErrorKind}: {message}",
-  "total_method_count": 94
+  "total_method_count": 110
 }

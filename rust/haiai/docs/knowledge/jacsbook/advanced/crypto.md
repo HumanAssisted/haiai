@@ -2,20 +2,25 @@
 
 JACS supports multiple cryptographic algorithms for digital signatures, providing flexibility for different security requirements and future-proofing against quantum computing threats.
 
+**`pq2025` (ML-DSA-87 / FIPS-204) is the native default.** Explicit
+`ed25519` selection creates genuine Ed25519 keys and emits the canonical
+`ring-Ed25519` wire label; JACS never silently substitutes one supported
+algorithm for another. Every key rotation currently resolves to `pq2025`.
+ES256 exists in JACS only as an ecosystem
+compatibility key for targeted exports; it is never a native
+`jacsSignature` algorithm. See the
+[Algorithm Selection Guide](algorithm-guide.md).
+
 ## Supported Algorithms
 
-| Algorithm | Config Value | Type | Key Size | Signature Size | Recommended Use |
-|-----------|--------------|------|----------|----------------|-----------------|
-| Ed25519 | `ring-Ed25519` | Elliptic Curve | 32 bytes | 64 bytes | General purpose (default) |
-| RSA-PSS | `RSA-PSS` | RSA | 2048-4096 bits | 256-512 bytes | Legacy verification only |
-| Dilithium | `pq-dilithium` | Lattice-based | ~1.3 KB | ~2.4 KB | Post-quantum |
-| PQ2025 | `pq2025` | Hybrid | ~1.3 KB | ~2.5 KB | Transitional |
-
-`RSA-PSS` remains documented because JACS still verifies historical RSA-signed artifacts. New RSA key generation, signing, and rotation are intentionally unsupported.
+| Algorithm | Config Value | Type | Key Size | Signature Size | Role |
+|-----------|--------------|------|----------|----------------|------|
+| PQ2025 | `pq2025` | ML-DSA-87 | 2,592 bytes | 4,627 bytes | Native root default; post-quantum |
+| Ed25519 | `ring-Ed25519` (input: `ed25519`) | Elliptic Curve | 32 bytes | 64 bytes | Supported native creation, signing, and verification |
 
 ## Ed25519 (ring-Ed25519)
 
-The recommended algorithm for most use cases.
+Supported for creation, signing, and verification across native bindings.
 
 ### Overview
 
@@ -36,12 +41,14 @@ Ed25519 is an elliptic curve signature scheme using Curve25519. JACS uses the `r
 }
 ```
 
+For user-facing CLI and SDK input, prefer `ed25519`. Configuration and signed
+documents store the canonical `ring-Ed25519` wire label.
+
 ### Use Cases
 
-- General agent communication
-- MCP message signing
-- HTTP request/response signing
-- Document signing
+- Bandwidth-sensitive or high-throughput signing
+- Interoperability with existing Ed25519 identities
+- Shorter-lived signatures where post-quantum resistance is not required
 
 ### Example
 
@@ -49,62 +56,31 @@ Ed25519 is an elliptic curve signature scheme using Curve25519. JACS uses the `r
 import jacs
 import json
 
-agent = jacs.JacsAgent()
-agent.load('./jacs.config.json')  # Using ring-Ed25519
+agent, info = jacs.SimpleAgent.ephemeral(algorithm="ed25519")
+assert info["algorithm"] == "ring-Ed25519"
 
-# Sign a message
-signature = agent.sign_string("Hello, World!")
-print(f"Signature (64 bytes): {len(signature)} characters base64")
+signed = agent.sign_message({"message": "Hello, World!"})
+assert json.loads(signed["raw"])["jacsSignature"]["signingAlgorithm"] == "ring-Ed25519"
 ```
 
-## RSA-PSS (Legacy Verification Only)
-
-Industry-standard RSA with Probabilistic Signature Scheme padding.
+## PQ2025
 
 ### Overview
 
-RSA-PSS support exists so JACS can verify older artifacts that were already signed with RSA. JACS no longer supports creating new RSA signing keys or rotating agents into RSA.
+PQ2025 uses ML-DSA-87, the FIPS-204 post-quantum signature algorithm currently supported by JACS. It is the default native root algorithm.
 
 ### Characteristics
 
-- **Speed**: Slower than Ed25519
-- **Key Size**: 2048-4096 bits
-- **Signature Size**: Same as key size (256-512 bytes)
-- **Security Level**: ~112-128 bits (2048-bit key)
-
-### Use Cases
-
-- Verifying historical RSA-signed documents
-- Interoperating with legacy systems while migrating them to Ed25519 or pq2025
-- Reading old configs or agent records that still declare `RSA-PSS`
-
-### Considerations
-
-- Larger signatures increase document size
-- Slower than Ed25519
-- Larger keys needed for equivalent security
-- New RSA signing operations are disabled due to `RUSTSEC-2023-0071`
-
-## Dilithium (pq-dilithium)
-
-NIST-standardized post-quantum digital signature algorithm.
-
-### Overview
-
-Dilithium is a lattice-based signature scheme selected by NIST for post-quantum cryptography standardization. It provides security against both classical and quantum computers.
-
-### Characteristics
-
-- **Speed**: Moderate (faster than RSA, slower than Ed25519)
-- **Key Size**: ~1.3 KB public key, ~2.5 KB private key
-- **Signature Size**: ~2.4 KB
+- **Speed**: Moderate (slower than Ed25519)
+- **Key Size**: 2,592-byte public keys
+- **Signature Size**: 4,627 bytes
 - **Security Level**: NIST Level 3 (quantum-resistant)
 
 ### Configuration
 
 ```json
 {
-  "jacs_agent_key_algorithm": "pq-dilithium"
+  "jacs_agent_key_algorithm": "pq2025"
 }
 ```
 
@@ -117,73 +93,54 @@ Dilithium is a lattice-based signature scheme selected by NIST for post-quantum 
 
 ### Considerations
 
-- Larger signatures and keys than classical algorithms
-- Newer algorithm (less battle-tested)
+- Larger signatures and keys than Ed25519
+- Use for compliance or long-lived signatures where post-quantum readiness matters
 - May be required for future compliance
 
-## PQ2025 (Hybrid)
+## ES256 (Compatibility Key — Never Native)
 
-Transitional hybrid scheme combining classical and post-quantum algorithms.
+ES256 (ECDSA P-256) appears in JACS only as the **ecosystem compatibility
+key** used by the targeted exporters (JWKS, DID/W3C identity, A2A agent
+card, AP2 mandate, Agreement-v2 Verifiable Credential). It is never a
+valid native `jacsSignature` algorithm: the signature schema permits only
+`ring-Ed25519` and `pq2025`, and native verification rejects `ES256`.
 
-### Overview
-
-PQ2025 combines Ed25519 with Dilithium, providing security even if one algorithm is broken. This approach is recommended by security researchers during the quantum transition period.
-
-### Characteristics
-
-- **Speed**: Slower (two signatures computed)
-- **Key Size**: Combined Ed25519 + Dilithium
-- **Signature Size**: ~2.5 KB (combined)
-- **Security Level**: Max of both algorithms
-
-### Configuration
-
-```json
-{
-  "jacs_agent_key_algorithm": "pq2025"
-}
-```
-
-### Use Cases
-
-- Transitioning to post-quantum
-- Maximum security requirements
-- Uncertainty about algorithm security
-- Long-lived documents
-
-### Considerations
-
-- Largest signatures
-- Slowest signing/verification
-- Best for paranoid security requirements
+An ES256 signature on an exported artifact proves possession of the
+compatibility key, nothing more — it does not by itself establish native
+JACS trust. The native-root-signed **compatibility key binding** is what ties
+the ES256 key to the agent; see the
+[Security Model](security.md#compatibility-key-binding-p2) for the
+binding lifecycle. Verifying incoming AP2 mandates or third-party VCs is
+out of scope in P2.
 
 ## Algorithm Selection Guide
 
+Choose the native algorithm at agent creation. `pq2025` is the default;
+`ed25519` is an explicit size/performance tradeoff.
+
 ### Decision Matrix
 
-| Requirement | Recommended Algorithm |
-|-------------|----------------------|
-| Best performance | `ring-Ed25519` |
-| Smallest signatures | `ring-Ed25519` |
-| Legacy compatibility | Verify historical `RSA-PSS` artifacts, but create new keys with `ring-Ed25519` |
-| Quantum resistance | `pq-dilithium` |
-| Maximum security | `pq2025` |
-| General purpose | `ring-Ed25519` |
+| Requirement | Algorithm |
+|-------------|-----------|
+| New agent requiring post-quantum assurance | `pq2025` (default) |
+| New agent prioritizing small keys/signatures | `ed25519` (stored/emitted as `ring-Ed25519`) |
+| Verifying Ed25519 documents | `ring-Ed25519` (verification is automatic) |
+| JOSE/W3C ecosystem interop (JWKS, AP2, VC) | ES256 compatibility key — export-only, never native |
 
 ### By Use Case
 
 **Web APIs and MCP**:
 ```json
 {
-  "jacs_agent_key_algorithm": "ring-Ed25519"
+  "jacs_agent_key_algorithm": "pq2025"
 }
 ```
-Fast signing is critical for real-time communication.
+Native signing defaults to `pq2025`; explicitly selected Ed25519 agents remain Ed25519 until rotation.
 
 **Legal/Financial Documents**:
 ```json
 {
-  "jacs_agent_key_algorithm": "pq-dilithium"
+  "jacs_agent_key_algorithm": "pq2025"
 }
 ```
 Long-term validity requires quantum resistance.
@@ -191,10 +148,10 @@ Long-term validity requires quantum resistance.
 **Enterprise Integration**:
 ```json
 {
-  "jacs_agent_key_algorithm": "ring-Ed25519"
+  "jacs_agent_key_algorithm": "pq2025"
 }
 ```
-Use Ed25519 for new agents and keep RSA-PSS only for verifying older infrastructure outputs.
+Use `pq2025` where cross-organization retention or compliance expectations favor post-quantum signatures.
 
 **High-Security**:
 ```json
@@ -220,9 +177,7 @@ jacs_keys/
 | Algorithm | Private Key Format | Public Key Format |
 |-----------|-------------------|-------------------|
 | ring-Ed25519 | PEM (PKCS#8) | PEM (SPKI) |
-| RSA-PSS | PEM (PKCS#8) | PEM (SPKI) |
-| pq-dilithium | PEM (custom) | PEM (custom) |
-| pq2025 | PEM (combined) | PEM (combined) |
+| pq2025 | Raw ML-DSA-87 bytes | Raw ML-DSA-87 bytes |
 
 ## Signature Structure
 
@@ -236,13 +191,13 @@ Signatures in JACS documents include algorithm metadata:
     "date": "2024-01-15T10:30:00Z",
     "signature": "base64-encoded-signature",
     "publicKeyHash": "sha256-of-public-key",
-    "signingAlgorithm": "ring-Ed25519",
+    "signingAlgorithm": "pq2025",
     "fields": ["jacsId", "jacsVersion", "content"]
   }
 }
 ```
 
-The `signingAlgorithm` field enables verifiers to use the correct verification method.
+The `signingAlgorithm` field enables verifiers to use the correct verification method. The native signature schema permits only `ring-Ed25519` and `pq2025`; a native document whose `signingAlgorithm` is anything else (for example `ES256`) fails verification.
 
 ## Hashing
 
@@ -260,35 +215,27 @@ JACS uses SHA-256 for all hash operations:
 
 ## Algorithm Migration
 
-To migrate to a new algorithm:
+**Key rotation is the designated Ed25519 → `pq2025` migration path.**
+Every rotation resolves to `pq2025` — with or without an explicit
+algorithm argument — so an Ed25519 agent becomes PQ-rooted
+the first time it rotates. Requesting any other rotation target is a
+typed error.
 
-1. **Generate New Keys**
-   ```json
-   {
-     "jacs_agent_key_algorithm": "pq-dilithium"
-   }
+1. **Rotate Keys**
+   ```bash
+   jacs agent rotate-keys
    ```
 
-2. **Create New Agent Version**
-   ```python
-   # Load with old algorithm
-   agent.load('./old-config.json')
+2. **Re-issue the Compatibility Key Binding (if present)**
 
-   # Update to new algorithm and generate new version
-   new_agent = agent.update_agent(json.dumps({
-       # ... agent data with new keys
-   }))
+   The ES256 compatibility key binding is signed by the native root, so
+   rotation supersedes it. Ecosystem exports fail with a "re-issue"
+   error until a new binding is signed by the current native root:
+   ```bash
+   jacs agent issue-compat-binding
    ```
 
-3. **Update Configuration**
-   ```json
-   {
-     "jacs_agent_id_and_version": "agent-id:new-version",
-     "jacs_agent_key_algorithm": "pq-dilithium"
-   }
-   ```
-
-4. **Maintain Backward Compatibility**
+3. **Maintain Backward Compatibility**
    - Keep old agent versions for verifying old documents
    - Old signatures remain valid with old public keys
 
@@ -299,8 +246,6 @@ Approximate performance (varies by hardware):
 | Algorithm | Sign (ops/sec) | Verify (ops/sec) | Key Gen (ms) |
 |-----------|---------------|------------------|--------------|
 | ring-Ed25519 | ~50,000 | ~20,000 | <1 |
-| RSA-PSS (2048) | ~1,000 | ~30,000 | ~100 |
-| pq-dilithium | ~5,000 | ~10,000 | ~1 |
 | pq2025 | ~4,000 | ~8,000 | ~2 |
 
 ## Security Considerations

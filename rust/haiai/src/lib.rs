@@ -1,3 +1,10 @@
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 //! Rust HAIAI.
 //!
 //! This crate is intentionally a thin HAI-platform wrapper around JACS.
@@ -23,12 +30,7 @@
 //!     to: "other@hai.ai".into(),
 //!     subject: "Hello".into(),
 //!     body: "World".into(),
-//!     cc: vec![],
-//!     bcc: vec![],
-//!     in_reply_to: None,
-//!     attachments: vec![],
-//!     labels: vec![],
-//!     append_footer: None,
+//!     ..Default::default()
 //! }).await?;
 //! # Ok(())
 //! # }
@@ -42,6 +44,7 @@ pub mod config;
 pub mod document_store;
 #[cfg(feature = "jacs-crate")]
 pub mod email;
+pub mod email_inline;
 pub mod error;
 pub mod jacs;
 #[cfg(feature = "jacs-crate")]
@@ -54,20 +57,6 @@ pub mod types;
 pub mod validation;
 pub mod verify;
 
-#[cfg(test)]
-pub(crate) mod test_support {
-    use std::sync::{Mutex, MutexGuard};
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
-        match ENV_LOCK.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        }
-    }
-}
-
 pub use a2a::{
     A2AAgentCapabilities, A2AAgentCard, A2AAgentExtension, A2AAgentInterface, A2AAgentSkill,
     A2AArtifactSignature, A2AArtifactVerificationResult, A2AChainEntry, A2AChainOfCustody,
@@ -77,8 +66,9 @@ pub use a2a::{
 #[cfg(feature = "jacs-crate")]
 pub use agent::{Agent, EmailNamespace};
 pub use client::{
-    HaiClient, HaiClientOptions, SseConnection, WsConnection, DEFAULT_BASE_URL,
-    DEFAULT_DNS_RESOLVER, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT_SECS,
+    base_url_from_env, base_url_from_env_opt, HaiClient, HaiClientOptions, SseConnection,
+    WsConnection, DEFAULT_BASE_URL, DEFAULT_DNS_RESOLVER, DEFAULT_MAX_RETRIES,
+    DEFAULT_TIMEOUT_SECS,
 };
 #[cfg(feature = "jacs-crate")]
 pub use config::resolve_log_filter;
@@ -107,11 +97,14 @@ pub use email::{
     ParsedEmailParts,
     SignedHeaderEntry,
 };
+pub use email_inline::*;
 pub use error::{HaiError, Result};
 #[cfg(feature = "agreements")]
 pub use jacs::JacsAgreementProvider;
 #[cfg(feature = "attestation")]
 pub use jacs::JacsAttestationProvider;
+#[cfg(feature = "conflict")]
+pub use jacs::JacsConflictProvider;
 #[cfg(feature = "jacs-crate")]
 pub use jacs::{
     media_verify_result_to_json, media_verify_status_to_str, text_signature_status_to_str,
@@ -132,3 +125,42 @@ pub use verify::{
     generate_verify_link, generate_verify_link_hosted, MAX_VERIFY_DOCUMENT_BYTES,
     MAX_VERIFY_URL_LEN,
 };
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) fn env_lock() -> MutexGuard<'static, ()> {
+        match ENV_LOCK.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    /// Create a real Ed25519 JACS agent in an isolated tempdir and return the
+    /// tempdir guard plus the written `jacs.config.json` path. Shared by
+    /// `document_store` and `jacs_remote` tests (real signing, no fakes).
+    #[cfg(feature = "jacs-crate")]
+    pub(crate) fn create_test_agent(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let base = dir.path().canonicalize().expect("canonical tempdir");
+        let config_path = base.join("jacs.config.json");
+        let data_dir = base.join("jacs_data");
+        let key_dir = base.join("jacs_keys");
+        std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123");
+        crate::jacs_local::LocalJacsProvider::create_agent(jacs::simple::CreateAgentParams {
+            name: name.to_string(),
+            password: "TestPass!123".to_string(),
+            config_path: config_path.to_string_lossy().into_owned(),
+            data_directory: data_dir.to_string_lossy().into_owned(),
+            key_directory: key_dir.to_string_lossy().into_owned(),
+            algorithm: "ed25519".to_string(),
+            default_storage: "fs".to_string(),
+            ..jacs::simple::CreateAgentParams::default()
+        })
+        .expect("create agent");
+        (dir, config_path)
+    }
+}

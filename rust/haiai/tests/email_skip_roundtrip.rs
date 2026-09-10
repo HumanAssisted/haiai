@@ -43,11 +43,12 @@ fn make_client_without_email(base_url: &str) -> HaiClient<StaticJacsProvider> {
 async fn cached_email_skips_get_email_status_on_send() {
     let server = MockServer::start_async().await;
 
-    // Mock the send endpoint (should be called)
+    // Mock the canonical signed send endpoint (should be called)
     let send_mock = server
         .mock_async(|when, then| {
             when.method(POST)
-                .path("/api/agents/skip-test-agent/email/send");
+                .path("/api/agents/skip-test-agent/email/send-signed")
+                .header("content-type", "message/rfc822");
             then.status(200).json_body(json!({
                 "message_id": "msg-skip-001",
                 "status": "queued"
@@ -91,6 +92,7 @@ async fn cached_email_skips_get_email_status_on_send() {
             attachments: Vec::new(),
             labels: Vec::new(),
             append_footer: None,
+            idempotency_key: None,
         })
         .await
         .expect("send_email should succeed");

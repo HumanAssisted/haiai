@@ -262,7 +262,99 @@ func TestRemoveDocumentReturnsNil(t *testing.T) {
 }
 
 // =============================================================================
-// FFI surface area — every D5/D9 method appears in the parity fixture.
+// Conflict document helpers
+// =============================================================================
+
+func TestConflictCreatePassesBodyJSON(t *testing.T) {
+	mock := newMockFFIClient("http://localhost:0", "agent-test", "")
+	var captured string
+	mock.conflictCreateFn = func(bodyJSON string) (json.RawMessage, error) {
+		captured = bodyJSON
+		return json.RawMessage(`{"jacsId":"conflict-1","jacsType":"conflict"}`), nil
+	}
+	out, err := mock.ConflictCreate(`{"title":"race"}`)
+	if err != nil {
+		t.Fatalf("ConflictCreate returned error: %v", err)
+	}
+	if captured != `{"title":"race"}` {
+		t.Errorf("captured body mismatch: got %q", captured)
+	}
+	if !bytes.Equal(out, []byte(`{"jacsId":"conflict-1","jacsType":"conflict"}`)) {
+		t.Errorf("output mismatch: got %s", string(out))
+	}
+}
+
+func TestConflictUpdateForwardsKeyAndMutation(t *testing.T) {
+	mock := newMockFFIClient("http://localhost:0", "agent-test", "")
+	mock.conflictUpdateFn = func(keyOrID, mutationJSON string) (json.RawMessage, error) {
+		if keyOrID != "conflict-1:v1" || mutationJSON != `{"op":"addPosition"}` {
+			t.Errorf("unexpected args: key=%q mutation=%q", keyOrID, mutationJSON)
+		}
+		return json.RawMessage(`{"jacsId":"conflict-1","version":"v2"}`), nil
+	}
+	out, err := mock.ConflictUpdate("conflict-1:v1", `{"op":"addPosition"}`)
+	if err != nil {
+		t.Fatalf("ConflictUpdate returned error: %v", err)
+	}
+	if !bytes.Equal(out, []byte(`{"jacsId":"conflict-1","version":"v2"}`)) {
+		t.Errorf("output mismatch: got %s", string(out))
+	}
+}
+
+func TestConflictGetReturnsEnvelopeJSON(t *testing.T) {
+	mock := newMockFFIClient("http://localhost:0", "agent-test", "")
+	envelope := `{"jacsId":"conflict-1","jacsType":"conflict"}`
+	mock.conflictGetFn = func(key string) (string, error) {
+		if key != "conflict-1:v1" {
+			t.Errorf("unexpected key %q", key)
+		}
+		return envelope, nil
+	}
+	out, err := mock.ConflictGet("conflict-1:v1")
+	if err != nil {
+		t.Fatalf("ConflictGet returned error: %v", err)
+	}
+	if out != envelope {
+		t.Errorf("envelope mismatch: got %q, want %q", out, envelope)
+	}
+}
+
+func TestConflictListReturnsStringSlice(t *testing.T) {
+	mock := newMockFFIClient("http://localhost:0", "agent-test", "")
+	mock.conflictListFn = func(limit, offset int) ([]string, error) {
+		if limit != 10 || offset != 2 {
+			t.Errorf("unexpected pagination: %d %d", limit, offset)
+		}
+		return []string{"conflict-1:v1", "conflict-2:v1"}, nil
+	}
+	out, err := mock.ConflictList(10, 2)
+	if err != nil {
+		t.Fatalf("ConflictList returned error: %v", err)
+	}
+	if len(out) != 2 || out[0] != "conflict-1:v1" {
+		t.Errorf("expected conflict keys, got %v", out)
+	}
+}
+
+func TestConflictCheckReadinessReturnsJSON(t *testing.T) {
+	mock := newMockFFIClient("http://localhost:0", "agent-test", "")
+	mock.conflictReadinessFn = func(keyOrID string) (json.RawMessage, error) {
+		if keyOrID != "conflict-1" {
+			t.Errorf("unexpected key_or_id %q", keyOrID)
+		}
+		return json.RawMessage(`{"ready":true}`), nil
+	}
+	out, err := mock.ConflictCheckReadiness("conflict-1")
+	if err != nil {
+		t.Fatalf("ConflictCheckReadiness returned error: %v", err)
+	}
+	if !bytes.Equal(out, []byte(`{"ready":true}`)) {
+		t.Errorf("output mismatch: got %s", string(out))
+	}
+}
+
+// =============================================================================
+// FFI surface area — every D5/D9/conflict method appears in the parity fixture.
 // =============================================================================
 
 func TestD5MethodsAreInParityFixture(t *testing.T) {
@@ -293,6 +385,28 @@ func TestD9MethodsAreInParityFixture(t *testing.T) {
 	for _, name := range expected {
 		if !all[name] {
 			t.Errorf("D9 method %q missing from ffi_method_parity.json", name)
+		}
+	}
+}
+
+func TestConflictMethodsAreInParityFixture(t *testing.T) {
+	fixture := loadParityFixture(t)
+	expected := []string{
+		"conflict_create",
+		"conflict_update",
+		"conflict_get",
+		"conflict_list",
+		"conflict_check_readiness",
+	}
+	all := make(map[string]bool)
+	for _, group := range fixture.Methods {
+		for _, m := range group {
+			all[m.Name] = true
+		}
+	}
+	for _, name := range expected {
+		if !all[name] {
+			t.Errorf("conflict method %q missing from ffi_method_parity.json", name)
 		}
 	}
 }

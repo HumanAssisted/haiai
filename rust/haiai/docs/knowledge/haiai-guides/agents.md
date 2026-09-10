@@ -2,7 +2,15 @@
 
 ## Purpose
 
-HAIAI SDK -- HAI platform integration layer around `jacs`. Helps agents use JACS identity/provenance to register with HAI, receive benchmark jobs, interact with other agents, and send/receive agent email.
+HAIAI SDK -- HAI platform integration layer around `jacs`. Helps agents use JACS identity/provenance to register with HAI, run agreement/conflict workflows, and send/receive agent email. Lab benchmark jobs stay admin/lab.
+
+## Working Norms
+
+1. **Observability.** Good logging and how a system admin monitors the system. More 12-factor. Structured logs to stdout, env-driven config (`RUST_LOG`, `LOG_FORMAT`, `LOG_LEVEL`), request IDs propagated to the HAI API. Auth and verification failures log at WARN, not DEBUG. `--log-file` on `haiai mcp` (`rust/haiai-cli/src/main.rs` ~1434) is dev-only — production deployments rely on stdout. Every PRD says what the sysadmin sees when this fails: which log line, which metric, which alert.
+
+2. **Vertical integration.** In a buy-or-build decision, prefer a well-integrated monolith over a bloated open-source dependency we use 10% of, when the feature is simple, sure, and well known. Every PRD that introduces or depends on an external service includes a buy/build assessment: what surface we use, what ships unused, what the smallest owned alternative would cost.
+
+3. **Simplicity.** We don't want a cap on tasks. We want small reversible changes. 100 tasks is fine if each is clear, well-defined, simple, and atomic. The bar is per-task: each task is reversible — its diff can be reverted in one commit without dependent fallout. When stuck, cut scope before adding layers.
 
 ## Ownership Boundary
 
@@ -76,8 +84,6 @@ The Rust SDK exposes JACS capabilities through 9 layered extension traits define
 - **Layer 8** `JacsMediaProvider` -- Local image (PNG/JPEG/WebP) and inline-text sign/verify/extract
 
 Storage backend selection: `rust/haiai/src/config.rs` (`resolve_storage_backend()`). Labels: `fs`, `rusqlite`, `sqlite` (alias).
-
-Full parity map: `docs/haisdk/PARITY_MAP.md` (60 exposed, 19 excluded, 79 total).
 
 ## Rules
 
@@ -154,7 +160,7 @@ until that lands, inbound raw bytes return `available: false`.
 25 MB cap (matches existing attachment limit). Legacy rows predating the
 feature return `available: false` with `omitted_reason: "not_stored"`;
 oversize rows return `"oversize"`. Recipe + cross-language snippets live
-in `docs/haisdk/EMAIL_VERIFICATION.md`.
+in the verification sections of the per-language READMEs.
 
 ## Local JACS Development
 

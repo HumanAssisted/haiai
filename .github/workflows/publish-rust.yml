@@ -348,7 +348,7 @@ jobs:
             desc "CLI for HAI.AI agent identity, @hai.ai email, and MCP server"
             homepage "https://hai.ai"
             version "${VERSION}"
-            license "MIT"
+            license "BUSL-1.1"
 
             on_macos do
               on_arm do

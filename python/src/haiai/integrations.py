@@ -94,6 +94,17 @@ def langgraph_awrap_tool_call(
 # CrewAI (delegates to jacs.adapters.crewai)
 # ---------------------------------------------------------------------------
 
+# JACS 0.12.0 removed the CrewAI adapter and the `jacs[crewai]` extra: CrewAI
+# pins `chromadb ~=1.1.0`, which carries four advisories with no patched
+# release. These helpers stay so the import surface is stable, but they can
+# only succeed against a JACS older than 0.12.0 — there is no install command
+# that makes them work on a current JACS, so the hint must not offer one.
+CREWAI_REMOVED_HINT = (
+    "JACS removed the CrewAI adapter in 0.12.0 (CrewAI pins a chromadb release "
+    "with unpatched advisories). Use the LangChain, LangGraph, FastAPI, "
+    "Anthropic, or MCP integrations instead."
+)
+
 
 def crewai_guardrail(
     client: Any = None,
@@ -103,7 +114,7 @@ def crewai_guardrail(
     module = load_optional_module(
         "jacs.adapters.crewai",
         feature="CrewAI integration",
-        install_hint='Install with: pip install "haiai[crewai]"',
+        install_hint=CREWAI_REMOVED_HINT,
     )
     return module.jacs_guardrail(
         client=client,
@@ -121,7 +132,7 @@ def crewai_signed_task(
     module = load_optional_module(
         "jacs.adapters.crewai",
         feature="CrewAI signed task integration",
-        install_hint='Install with: pip install "haiai[crewai]"',
+        install_hint=CREWAI_REMOVED_HINT,
     )
     return module.signed_task(
         client=client,
@@ -140,13 +151,13 @@ def crewai_signed_tool(
     module = load_optional_module(
         "jacs.adapters.crewai",
         feature="CrewAI signed tool integration",
-        install_hint='Install with: pip install "haiai[crewai]"',
+        install_hint=CREWAI_REMOVED_HINT,
     )
     cls = require_attr(
         module,
         "JacsSignedTool",
         owner_name="jacs.adapters.crewai",
-        upgrade_hint='Install/upgrade JACS with CrewAI support: pip install -U "jacs[crewai]"',
+        upgrade_hint=CREWAI_REMOVED_HINT,
     )
     return cls(
         inner_tool,
@@ -165,13 +176,13 @@ def crewai_verified_input(
     module = load_optional_module(
         "jacs.adapters.crewai",
         feature="CrewAI verified input integration",
-        install_hint='Install with: pip install "haiai[crewai]"',
+        install_hint=CREWAI_REMOVED_HINT,
     )
     cls = require_attr(
         module,
         "JacsVerifiedInput",
         owner_name="jacs.adapters.crewai",
-        upgrade_hint='Install/upgrade JACS with CrewAI support: pip install -U "jacs[crewai]"',
+        upgrade_hint=CREWAI_REMOVED_HINT,
     )
     return cls(
         inner_tool,

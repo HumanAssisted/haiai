@@ -1,3 +1,10 @@
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 //! # hai-binding-core
 //!
 //! Shared core logic for HAI SDK language bindings (Python, Node.js, Go).
@@ -21,10 +28,12 @@ use std::path::Path;
 use haiai::client::{HaiClient, HaiClientOptions, SseConnection, WsConnection};
 use haiai::document_store::build_document_provider;
 use haiai::error::HaiError;
+#[cfg(feature = "agreements")]
+use haiai::jacs::JacsAgreementProvider;
 use haiai::jacs::{
-    media_verify_result_to_json, verify_text_result_to_json, JacsDocumentProvider,
-    JacsMediaProvider, JacsProvider, SaveDocumentRequest, SaveIntent, SignImageOptions,
-    SignTextOptions, StaticJacsProvider, VerifyImageOptions, VerifyTextOptions,
+    media_verify_result_to_json, verify_text_result_to_json, JacsConflictProvider,
+    JacsDocumentProvider, JacsMediaProvider, JacsProvider, SaveDocumentRequest, SaveIntent,
+    SignImageOptions, SignTextOptions, StaticJacsProvider, VerifyImageOptions, VerifyTextOptions,
 };
 use haiai::jacs_local::LocalJacsProvider;
 use std::path::PathBuf;
@@ -205,7 +214,7 @@ impl From<HaiError> for HaiBindingError {
             HaiError::MissingJacsId => {
                 HaiBindingError::new(ErrorKind::ConfigFailed, err.to_string())
             }
-            HaiError::Provider(_) => {
+            HaiError::Provider(_) | HaiError::SignedEventVerification { .. } => {
                 HaiBindingError::new(ErrorKind::ProviderError, err.to_string())
             }
             HaiError::Validation { .. } => {
@@ -769,9 +778,19 @@ impl HaiClientWrapper {
 
     /// Send a signed email (locally signed with agent JACS key).
     pub async fn send_signed_email(&self, options_json: &str) -> HaiBindingResult<String> {
-        let options: haiai::types::SendEmailOptions = serde_json::from_str(options_json)?;
+        #[derive(serde::Deserialize)]
+        struct SendSignedEmailOptions {
+            #[serde(flatten)]
+            options: haiai::types::SendEmailOptions,
+            #[serde(default)]
+            generation_type: haiai::types::EmailGenerationType,
+        }
+
+        let options: SendSignedEmailOptions = serde_json::from_str(options_json)?;
         let client = self.inner.read().await;
-        let result = client.send_signed_email(&options).await?;
+        let result = client
+            .send_signed_email_with_generation_type(&options.options, options.generation_type)
+            .await?;
         Ok(serde_json::to_string(&result)?)
     }
 
@@ -996,6 +1015,143 @@ impl HaiClientWrapper {
         let client = self.inner.read().await;
         let result = client.verify_email_raw(raw_email_b64).await?;
         Ok(serde_json::to_string(&result)?)
+    }
+
+    // =========================================================================
+    // Agreements (local JACS v2 + future HAI workflow API)
+    // =========================================================================
+
+    /// Save a signed agreement document through the future HAI agreement API.
+    pub async fn save_agreement(&self, request_json: &str) -> HaiBindingResult<String> {
+        let request: Value = serde_json::from_str(request_json)?;
+        let client = self.inner.read().await;
+        let result = client.save_agreement(&request).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    /// Search agreements through the future HAI agreement API.
+    pub async fn search_agreements(&self, request_json: &str) -> HaiBindingResult<String> {
+        let request: Value = serde_json::from_str(request_json)?;
+        let client = self.inner.read().await;
+        let result = client.search_agreements(&request).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    /// Retrieve one agreement through the future HAI agreement API.
+    pub async fn get_agreement(&self, agreement_id: &str) -> HaiBindingResult<String> {
+        let client = self.inner.read().await;
+        let result = client.get_agreement(agreement_id).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    /// Ask HAI to countersign/notarize an agreement workflow.
+    pub async fn countersign_agreement(
+        &self,
+        agreement_id: &str,
+        request_json: &str,
+    ) -> HaiBindingResult<String> {
+        let request: Value = serde_json::from_str(request_json)?;
+        let client = self.inner.read().await;
+        let result = client.countersign_agreement(agreement_id, &request).await?;
+        Ok(serde_json::to_string(&result)?)
+    }
+
+    /// Create a standalone JACS agreement v2 document locally.
+    #[cfg(feature = "agreements")]
+    pub async fn create_agreement_v2(&self, input_json: &str) -> HaiBindingResult<String> {
+        let provider = self.build_agreement_provider()?;
+        let input: Value = serde_json::from_str(input_json)?;
+        let signed = provider
+            .create_agreement_v2(input)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&signed)?)
+    }
+
+    /// Apply a JACS agreement v2 mutation locally.
+    #[cfg(feature = "agreements")]
+    pub async fn apply_agreement_v2(
+        &self,
+        document: &str,
+        mutation_json: &str,
+    ) -> HaiBindingResult<String> {
+        let provider = self.build_agreement_provider()?;
+        let mutation: Value = serde_json::from_str(mutation_json)?;
+        let signed = provider
+            .apply_agreement_v2(document, mutation)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&signed)?)
+    }
+
+    /// Add a signer, witness, or notary signature to a v2 agreement locally.
+    #[cfg(feature = "agreements")]
+    pub async fn sign_agreement_v2(&self, document: &str, role: &str) -> HaiBindingResult<String> {
+        let provider = self.build_agreement_provider()?;
+        let signed = provider
+            .sign_agreement_v2(document, role)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&signed)?)
+    }
+
+    /// Verify a v2 agreement locally.
+    #[cfg(feature = "agreements")]
+    pub async fn verify_agreement_v2(&self, document: &str) -> HaiBindingResult<String> {
+        let provider = self.build_agreement_provider()?;
+        let report = provider
+            .verify_agreement_v2(document)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&report)?)
+    }
+
+    /// Compare two v2 agreement branches against a shared base locally.
+    #[cfg(feature = "agreements")]
+    pub async fn detect_agreement_branch_conflict(
+        &self,
+        base_document: &str,
+        left_document: &str,
+        right_document: &str,
+    ) -> HaiBindingResult<String> {
+        let provider = self.build_agreement_provider()?;
+        let analysis = provider
+            .detect_agreement_branch_conflict(base_document, left_document, right_document)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&analysis)?)
+    }
+
+    /// Auto-merge two transcript-only v2 agreement branches locally.
+    #[cfg(feature = "agreements")]
+    pub async fn merge_agreement_transcript_branches(
+        &self,
+        base_document: &str,
+        left_document: &str,
+        right_document: &str,
+    ) -> HaiBindingResult<String> {
+        let provider = self.build_agreement_provider()?;
+        let signed = provider
+            .merge_agreement_transcript_branches(base_document, left_document, right_document)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&signed)?)
+    }
+
+    /// Resolve a v2 agreement branch conflict with an explicit mutation locally.
+    #[cfg(feature = "agreements")]
+    pub async fn resolve_agreement_branch_conflict(
+        &self,
+        base_document: &str,
+        previous_document: &str,
+        side_branch_document: &str,
+        resolution_json: &str,
+    ) -> HaiBindingResult<String> {
+        let provider = self.build_agreement_provider()?;
+        let resolution: Value = serde_json::from_str(resolution_json)?;
+        let signed = provider
+            .resolve_agreement_branch_conflict(
+                base_document,
+                previous_document,
+                side_branch_document,
+                resolution,
+            )
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&signed)?)
     }
 
     // =========================================================================
@@ -1442,6 +1598,74 @@ impl HaiClientWrapper {
                 ),
             )
         })
+    }
+
+    /// Build a local JACS provider for agreement v2 operations.
+    #[cfg(feature = "agreements")]
+    fn build_agreement_provider(&self) -> HaiBindingResult<LocalJacsProvider> {
+        let path = self.jacs_config_path.as_deref().ok_or_else(|| {
+            HaiBindingError::new(
+                ErrorKind::ProviderError,
+                "jacs_config_path required for agreement operations",
+            )
+        })?;
+        LocalJacsProvider::from_config_path(Some(path), self.jacs_storage_backend.as_deref())
+            .map_err(|e| {
+                HaiBindingError::new(
+                    ErrorKind::ConfigFailed,
+                    format!(
+                        "failed to build agreement provider from {}: {e}",
+                        path.display()
+                    ),
+                )
+            })
+    }
+
+    /// Build a local JACS provider for conflict document operations.
+    fn build_conflict_provider(&self) -> HaiBindingResult<Box<dyn JacsConflictProvider>> {
+        let path = self.jacs_config_path.as_deref().ok_or_else(|| {
+            HaiBindingError::new(
+                ErrorKind::ProviderError,
+                "jacs_config_path required for conflict operations",
+            )
+        })?;
+        let backend = haiai::config::resolve_storage_backend(
+            self.jacs_storage_backend.as_deref(),
+            Some(path),
+        )
+        .map_err(|e| {
+            HaiBindingError::new(
+                ErrorKind::ConfigFailed,
+                format!("failed to resolve conflict storage backend: {e}"),
+            )
+        })?;
+
+        match backend.as_str() {
+            "fs" | "rusqlite" | "sqlite" => {
+                let provider = LocalJacsProvider::from_config_path(Some(path), Some(backend.as_str()))
+                    .map_err(|e| {
+                        HaiBindingError::new(
+                            ErrorKind::ConfigFailed,
+                            format!(
+                                "failed to build conflict provider from {}: {e}",
+                                path.display()
+                            ),
+                        )
+                    })?;
+                Ok(Box::new(provider))
+            }
+            "remote" => Err(HaiBindingError::new(
+                ErrorKind::ProviderError,
+                "conflict methods require a local JACS conflict provider; remote conflict storage is not implemented",
+            )),
+            other => Err(HaiBindingError::new(
+                ErrorKind::ConfigFailed,
+                format!(
+                    "Unsupported storage backend '{}'. Valid routed labels: fs, rusqlite, sqlite, remote",
+                    other
+                ),
+            )),
+        }
     }
 
     // ---- 13 trait CRUD/query methods ----
@@ -1892,6 +2116,91 @@ impl HaiClientWrapper {
     ) -> HaiBindingResult<Vec<u8>> {
         store.get_record_bytes(&key).map_err(HaiBindingError::from)
     }
+
+    /// Create and sign a conflict document. Returns `SignedDocument` JSON.
+    pub async fn conflict_create(&self, body_json: String) -> HaiBindingResult<String> {
+        let provider = self.build_conflict_provider()?;
+        Self::conflict_create_with(provider.as_ref(), body_json)
+    }
+
+    pub(crate) fn conflict_create_with(
+        provider: &dyn JacsConflictProvider,
+        body_json: String,
+    ) -> HaiBindingResult<String> {
+        let body: Value = serde_json::from_str(&body_json)?;
+        let signed = provider
+            .create_conflict(body)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&signed)?)
+    }
+
+    /// Apply a conflict mutation by key or document id. Returns `SignedDocument` JSON.
+    pub async fn conflict_update(
+        &self,
+        key_or_id: String,
+        mutation_json: String,
+    ) -> HaiBindingResult<String> {
+        let provider = self.build_conflict_provider()?;
+        Self::conflict_update_with(provider.as_ref(), key_or_id, mutation_json)
+    }
+
+    pub(crate) fn conflict_update_with(
+        provider: &dyn JacsConflictProvider,
+        key_or_id: String,
+        mutation_json: String,
+    ) -> HaiBindingResult<String> {
+        let mutation: Value = serde_json::from_str(&mutation_json)?;
+        let signed = provider
+            .update_conflict(&key_or_id, mutation)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&signed)?)
+    }
+
+    /// Fetch a specific signed conflict document by key.
+    pub async fn conflict_get(&self, key: String) -> HaiBindingResult<String> {
+        let provider = self.build_conflict_provider()?;
+        Self::conflict_get_with(provider.as_ref(), key)
+    }
+
+    pub(crate) fn conflict_get_with(
+        provider: &dyn JacsConflictProvider,
+        key: String,
+    ) -> HaiBindingResult<String> {
+        provider.get_conflict(&key).map_err(HaiBindingError::from)
+    }
+
+    /// List signed conflict document keys. Returns a JSON array string.
+    pub async fn conflict_list(&self, limit: usize, offset: usize) -> HaiBindingResult<String> {
+        let provider = self.build_conflict_provider()?;
+        Self::conflict_list_with(provider.as_ref(), limit, offset)
+    }
+
+    pub(crate) fn conflict_list_with(
+        provider: &dyn JacsConflictProvider,
+        limit: usize,
+        offset: usize,
+    ) -> HaiBindingResult<String> {
+        let keys = provider
+            .list_conflicts(limit, offset)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&keys)?)
+    }
+
+    /// Check whether a conflict key or id is ready. Returns report JSON.
+    pub async fn conflict_check_readiness(&self, key_or_id: String) -> HaiBindingResult<String> {
+        let provider = self.build_conflict_provider()?;
+        Self::conflict_check_readiness_with(provider.as_ref(), key_or_id)
+    }
+
+    pub(crate) fn conflict_check_readiness_with(
+        provider: &dyn JacsConflictProvider,
+        key_or_id: String,
+    ) -> HaiBindingResult<String> {
+        let report = provider
+            .check_conflict_readiness(&key_or_id)
+            .map_err(HaiBindingError::from)?;
+        Ok(serde_json::to_string(&report)?)
+    }
 }
 
 // =============================================================================
@@ -2041,7 +2350,11 @@ pub async fn sse_next_event(handle_id: u64) -> HaiBindingResult<Option<String>> 
         })?
     };
 
-    let event = tracked.conn.next_event().await;
+    let event = tracked
+        .conn
+        .next_event()
+        .await
+        .map_err(HaiBindingError::from)?;
 
     match event {
         Some(evt) => {
@@ -2083,7 +2396,11 @@ pub async fn ws_next_event(handle_id: u64) -> HaiBindingResult<Option<String>> {
         })?
     };
 
-    let event = tracked.conn.next_event().await;
+    let event = tracked
+        .conn
+        .next_event()
+        .await
+        .map_err(HaiBindingError::from)?;
 
     match event {
         Some(evt) => {
@@ -2199,6 +2516,16 @@ mod tests {
         let hai_err = HaiError::Provider("signing failed".to_string());
         let binding_err: HaiBindingError = hai_err.into();
         assert_eq!(binding_err.kind, ErrorKind::ProviderError);
+    }
+
+    #[test]
+    fn signed_event_verification_maps_to_provider_error_without_payload() {
+        let hai_err = HaiError::SignedEventVerification {
+            message: "unknown signer".to_string(),
+        };
+        let binding_err: HaiBindingError = hai_err.into();
+        assert_eq!(binding_err.kind, ErrorKind::ProviderError);
+        assert!(!binding_err.message.contains("benchmark payload"));
     }
 
     #[test]
@@ -3088,81 +3415,63 @@ mod tests {
     // TASK_003: Media-signing wrapper methods
     // =========================================================================
 
-    /// Materialize the fixture JACS agent into a tempdir with adjusted paths.
+    /// Generate a fresh, signed JACS agent whose config already contains the
+    /// final absolute temp paths. Rewriting paths in a copied signed config
+    /// invalidates its signature and must never be used as a test shortcut.
     /// Returns (TempDir, config_path).
     fn write_temp_media_fixture_config() -> (tempfile::TempDir, std::path::PathBuf) {
-        std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "secretpassord");
-
-        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/jacs-agent/jacs.config.json")
-            .canonicalize()
-            .expect("fixtures/jacs-agent/jacs.config.json must exist");
-        let source_dir = source.parent().expect("fixture config dir");
-        let mut value: Value =
-            serde_json::from_str(&std::fs::read_to_string(&source).expect("read fixture"))
-                .expect("parse fixture");
-
+        const PASSWORD: &str = "BindingMediaTest!2026";
+        std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", PASSWORD);
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let temp_root = temp_dir.path().canonicalize().expect("canonical tempdir");
-
-        // Copy keys
-        let source_key_dir = value
-            .get("jacs_key_directory")
-            .and_then(Value::as_str)
-            .map(|p| {
-                if std::path::PathBuf::from(p).is_absolute() {
-                    std::path::PathBuf::from(p)
-                } else {
-                    source_dir.join(p)
-                }
-            })
-            .expect("key dir");
         let temp_key_dir = temp_root.join("keys");
-        std::fs::create_dir_all(&temp_key_dir).expect("temp key dir");
-        for entry in std::fs::read_dir(&source_key_dir).expect("read keys") {
-            let entry = entry.expect("key entry");
-            std::fs::copy(entry.path(), temp_key_dir.join(entry.file_name())).expect("copy key");
-        }
-
-        // Copy data (with underscore→colon filename normalization)
-        let source_data_dir = value
-            .get("jacs_data_directory")
-            .and_then(Value::as_str)
-            .map(|p| {
-                if std::path::PathBuf::from(p).is_absolute() {
-                    std::path::PathBuf::from(p)
-                } else {
-                    source_dir.join(p)
-                }
-            })
-            .expect("data dir");
         let temp_data_dir = temp_root.join("data");
-        fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
-            std::fs::create_dir_all(dst).expect("create dst");
-            for entry in std::fs::read_dir(src).expect("read src") {
-                let entry = entry.expect("entry");
-                let src_path = entry.path();
-                let name = entry.file_name().to_string_lossy().replace('_', ":");
-                let dst_path = dst.join(&name);
-                if src_path.is_dir() {
-                    copy_dir_recursive(&src_path, &dst_path);
-                } else {
-                    std::fs::copy(&src_path, &dst_path).expect("copy file");
-                }
-            }
-        }
-        copy_dir_recursive(&source_data_dir, &temp_data_dir);
-
-        value["jacs_data_directory"] = Value::String(temp_data_dir.to_string_lossy().into_owned());
-        value["jacs_key_directory"] = Value::String(temp_key_dir.to_string_lossy().into_owned());
-
         let config_path = temp_root.join("media-binding.config.json");
-        std::fs::write(
-            &config_path,
-            serde_json::to_vec_pretty(&value).expect("serialize config"),
-        )
-        .expect("write config");
+        LocalJacsProvider::create_agent_with_options(&haiai::types::CreateAgentOptions {
+            name: "media-binding-test".to_string(),
+            password: PASSWORD.to_string(),
+            algorithm: Some("ed25519".to_string()),
+            data_directory: Some(temp_data_dir.display().to_string()),
+            key_directory: Some(temp_key_dir.display().to_string()),
+            config_path: Some(config_path.display().to_string()),
+            agent_type: Some("ai".to_string()),
+            description: Some("Binding media test agent".to_string()),
+            domain: None,
+            default_storage: Some("fs".to_string()),
+        })
+        .expect("create signed temporary JACS agent");
+
         (temp_dir, config_path)
+    }
+
+    #[test]
+    fn generated_media_fixture_config_is_signed_with_final_paths_and_loadable() {
+        let (temp_dir, config_path) = write_temp_media_fixture_config();
+        let config: Value = serde_json::from_slice(
+            &std::fs::read(&config_path).expect("read generated fixture config"),
+        )
+        .expect("parse generated fixture config");
+        let expected_data = temp_dir
+            .path()
+            .join("data")
+            .canonicalize()
+            .expect("data path");
+        let expected_keys = temp_dir
+            .path()
+            .join("keys")
+            .canonicalize()
+            .expect("key path");
+
+        assert!(config.get("jacsSignature").is_some());
+        assert_eq!(
+            config.get("jacs_data_directory").and_then(Value::as_str),
+            Some(expected_data.to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            config.get("jacs_key_directory").and_then(Value::as_str),
+            Some(expected_keys.to_string_lossy().as_ref())
+        );
+        build_media_wrapper(&config_path);
     }
 
     fn make_media_test_png(width: u32, height: u32) -> Vec<u8> {
@@ -3261,10 +3570,10 @@ mod tests {
             );
         }
         let summary = val.get("summary").unwrap();
-        // 55 base + 21 jacs_document_store methods = 76 async methods.
-        assert_eq!(summary["async_methods"].as_u64(), Some(76));
-        // 82 base + 21 doc-store methods = 103 total public methods.
-        assert_eq!(summary["total_public_methods"].as_u64(), Some(103));
+        // 55 base + 11 agreement + 26 jacs_document_store methods = 92 async methods.
+        assert_eq!(summary["async_methods"].as_u64(), Some(92));
+        // 82 base + 11 agreement + 26 doc-store methods = 119 total public methods.
+        assert_eq!(summary["total_public_methods"].as_u64(), Some(119));
     }
 
     #[tokio::test]
@@ -3313,7 +3622,7 @@ mod tests {
         let (temp_dir, config_path) = write_temp_media_fixture_config();
         let wrapper = build_media_wrapper(&config_path);
         let in_path = temp_dir.path().join("in.png");
-        std::fs::write(&in_path, &make_media_test_png(32, 32)).expect("write");
+        std::fs::write(&in_path, make_media_test_png(32, 32)).expect("write");
         let out_path = temp_dir.path().join("out.png");
 
         let signed_json = wrapper
@@ -3338,7 +3647,7 @@ mod tests {
         let (temp_dir, config_path) = write_temp_media_fixture_config();
         let wrapper = build_media_wrapper(&config_path);
         let in_path = temp_dir.path().join("in.png");
-        std::fs::write(&in_path, &make_media_test_png(32, 32)).expect("write");
+        std::fs::write(&in_path, make_media_test_png(32, 32)).expect("write");
         let out_path = temp_dir.path().join("out.png");
         wrapper
             .sign_image(in_path.to_str().unwrap(), out_path.to_str().unwrap(), "{}")
@@ -3375,7 +3684,7 @@ mod tests {
         let (temp_dir, config_path) = write_temp_media_fixture_config();
         let wrapper = build_media_wrapper(&config_path);
         let in_path = temp_dir.path().join("in.png");
-        std::fs::write(&in_path, &make_media_test_png(32, 32)).expect("write");
+        std::fs::write(&in_path, make_media_test_png(32, 32)).expect("write");
         let out_path = temp_dir.path().join("out.png");
         wrapper
             .sign_image(in_path.to_str().unwrap(), out_path.to_str().unwrap(), "{}")
@@ -3412,7 +3721,7 @@ mod tests {
             HaiClientWrapper::from_config_json_auto(r#"{"jacs_id":"static-only"}"#).expect("ok");
         let dir = tempfile::tempdir().unwrap();
         let in_path = dir.path().join("a.png");
-        std::fs::write(&in_path, &make_media_test_png(32, 32)).unwrap();
+        std::fs::write(&in_path, make_media_test_png(32, 32)).unwrap();
         let result = wrapper
             .sign_image(
                 in_path.to_str().unwrap(),
@@ -3780,6 +4089,50 @@ mod tests {
             "expected jacs_config_path message, got: {}",
             err.message
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn binding_core_conflict_create_returns_signed_key() {
+        let (_temp_dir, config_path) = write_temp_media_fixture_config();
+        let wrapper = HaiClientWrapper::from_config_json_auto(&format!(
+            r#"{{"base_url":"http://127.0.0.1:9","jacs_config_path":"{}","jacs_storage_backend":"fs"}}"#,
+            config_path.display()
+        ))
+        .expect("wrapper");
+
+        let raw = wrapper
+            .conflict_create(
+                serde_json::json!({
+                    "title": "GPU scheduling disagreement",
+                    "description": "Two parties disagree about who gets a shared GPU window.",
+                    "participants": [
+                        {
+                            "agentId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100010",
+                            "agentType": "human",
+                            "displayName": "Alice",
+                            "role": "party"
+                        },
+                        {
+                            "agentId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100011",
+                            "agentType": "human",
+                            "displayName": "Bob",
+                            "role": "party"
+                        }
+                    ],
+                    "positions": [],
+                    "divergences": [],
+                    "phase": "surfacing"
+                })
+                .to_string(),
+            )
+            .await
+            .expect("conflict_create");
+        let signed: Value = serde_json::from_str(&raw).expect("signed document JSON");
+        let key = signed["key"].as_str().expect("key");
+        assert!(key.contains(':'), "key should be id:version: {signed}");
+        let document: Value =
+            serde_json::from_str(signed["json"].as_str().expect("json field")).expect("document");
+        assert_eq!(document["jacsType"].as_str(), Some("conflict"));
     }
 
     // =========================================================================

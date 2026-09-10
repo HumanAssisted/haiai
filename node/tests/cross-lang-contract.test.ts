@@ -14,6 +14,7 @@ interface CrossLangFixture {
     example: {
       jacs_id: string;
       timestamp: number;
+      nonce: string;
       stub_signature_base64: string;
       expected_header: string;
     };
@@ -54,15 +55,29 @@ describe('cross-language wrapper contract (node)', () => {
     };
 
     vi.useFakeTimers();
-    vi.setSystemTime(fixture.auth_header.example.timestamp * 1000);
+    try {
+      vi.setSystemTime(fixture.auth_header.example.timestamp * 1000);
 
-    expect(client.buildAuthHeader()).toBe(fixture.auth_header.example.expected_header);
-    expect(signStringSync).toHaveBeenCalledWith(
-      fixture.auth_header.signed_message_template
-        .replace('{jacs_id}', fixture.auth_header.example.jacs_id)
-        .replace('{timestamp}', String(fixture.auth_header.example.timestamp)),
-    );
+      const header = client.buildAuthHeader();
+      const token = header.replace(/^JACS /, '');
+      const parts = token.split(':');
+      const [jacsId, timestamp, nonce, signature] = parts;
 
-    vi.useRealTimers();
+      expect(fixture.auth_header.scheme).toBe('JACS');
+      expect(fixture.auth_header.parts).toEqual(['jacs_id', 'timestamp', 'nonce', 'signature_base64']);
+      expect(parts).toHaveLength(4);
+      expect(jacsId).toBe(fixture.auth_header.example.jacs_id);
+      expect(timestamp).toBe(String(fixture.auth_header.example.timestamp));
+      expect(nonce).toMatch(/^[0-9a-f]{32}$/);
+      expect(signature).toBe(fixture.auth_header.example.stub_signature_base64);
+      expect(signStringSync).toHaveBeenCalledWith(
+        fixture.auth_header.signed_message_template
+          .replace('{jacs_id}', fixture.auth_header.example.jacs_id)
+          .replace('{timestamp}', String(fixture.auth_header.example.timestamp))
+          .replace('{nonce}', nonce),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

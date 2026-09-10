@@ -13,7 +13,12 @@ import hashlib
 import json
 from pathlib import Path
 
-from haiai.models import EmailMessage, EmailStatus, KeyRegistryResponse, EmailVerificationResult
+from haiai.models import (
+    EmailMessage,
+    EmailStatus,
+    KeyRegistryResponse,
+    EmailVerificationResult,
+)
 
 # ---------------------------------------------------------------------------
 # Fixture directory -- two levels up from tests/, then into contract/
@@ -106,6 +111,18 @@ class TestDeserializeEmailMessage:
         assert msg.delivery_status == "delivered"
         assert msg.created_at == "2026-02-24T12:00:00Z"
         assert msg.jacs_verified is True
+        assert msg.jacs_signer_id == "owner-agent-jacs-id"
+        assert msg.jacs_key_is_owner is True
+        assert msg.owner_mail_auth_passed is True
+        assert msg.owner_mail_auth_method == "dkim_spf"
+        assert msg.owner_mail_auth_details == {"dkim": "pass", "spf": "pass"}
+        assert msg.sender_mail_auth_passed is True
+        assert msg.sender_mail_auth_method == "dkim_spf"
+        assert msg.sender_mail_auth_details == {
+            "from_domain": "hai.ai",
+            "dkim": "pass",
+            "spf": "pass",
+        }
         assert msg.trust_score == 92.4
 
 
@@ -134,12 +151,20 @@ class TestDeserializeListMessagesResponse:
         assert msg.delivery_status == "delivered"
         assert msg.created_at == "2026-02-24T12:00:00Z"
         assert msg.jacs_verified is True
+        assert msg.jacs_signer_id == "owner-agent-jacs-id"
+        assert msg.jacs_key_is_owner is True
+        assert msg.owner_mail_auth_passed is True
+        assert msg.sender_mail_auth_passed is True
+        assert msg.sender_mail_auth_method == "dkim_spf"
         assert msg.trust_score == 92.4
 
         # Outbound message omits trust_score
         outbound = messages[1]
         assert outbound.id == "660e8400-e29b-41d4-a716-446655440001"
         assert outbound.direction == "outbound"
+        assert outbound.sender_mail_auth_passed is False
+        assert outbound.sender_mail_auth_method is None
+        assert outbound.sender_mail_auth_details is None
         assert outbound.trust_score is None
 
 
@@ -171,9 +196,10 @@ class TestContentHashComputation:
         expected_hash = data["expected_hash"]
 
         # Same code path as HaiClient.send_email
-        content_hash = "sha256:" + hashlib.sha256(
-            (subject + "\n" + body).encode("utf-8")
-        ).hexdigest()
+        content_hash = (
+            "sha256:"
+            + hashlib.sha256((subject + "\n" + body).encode("utf-8")).hexdigest()
+        )
 
         assert content_hash == expected_hash
 
@@ -190,9 +216,10 @@ class TestSignInputFormat:
         timestamp = data["timestamp"]
         expected_sign_input = data["sign_input_example"]
 
-        content_hash = "sha256:" + hashlib.sha256(
-            (subject + "\n" + body).encode("utf-8")
-        ).hexdigest()
+        content_hash = (
+            "sha256:"
+            + hashlib.sha256((subject + "\n" + body).encode("utf-8")).hexdigest()
+        )
 
         # Same v2 format as HaiClient.send_email
         sign_input = f"{content_hash}:{from_email}:{timestamp}"
@@ -209,7 +236,10 @@ class TestDeserializeKeyRegistryResponse:
 
         assert resp.email == "testbot@hai.ai"
         assert resp.jacs_id == "test-agent-jacs-id"
-        assert resp.public_key == "MCowBQYDK2VwAyEAExampleBase64PublicKeyData1234567890ABCDEF"
+        assert (
+            resp.public_key
+            == "MCowBQYDK2VwAyEAExampleBase64PublicKeyData1234567890ABCDEF"
+        )
         assert resp.algorithm == "ed25519"
         assert resp.reputation_tier == "new"
         assert resp.registered_at == "2026-01-15T00:00:00Z"

@@ -1,3 +1,10 @@
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 //go:build cgo
 
 // Package ffi provides a Go wrapper around the haiigo Rust cdylib (libhaiigo).
@@ -84,6 +91,19 @@ extern char* hai_fetch_server_keys(HaiClientHandle handle);
 extern char* hai_sign_email_raw(HaiClientHandle handle, const char* raw_email_b64);
 extern char* hai_verify_email_raw(HaiClientHandle handle, const char* raw_email_b64);
 
+// Agreements
+extern char* hai_save_agreement(HaiClientHandle handle, const char* request_json);
+extern char* hai_search_agreements(HaiClientHandle handle, const char* request_json);
+extern char* hai_get_agreement(HaiClientHandle handle, const char* agreement_id);
+extern char* hai_countersign_agreement(HaiClientHandle handle, const char* agreement_id, const char* request_json);
+extern char* hai_create_agreement_v2(HaiClientHandle handle, const char* input_json);
+extern char* hai_apply_agreement_v2(HaiClientHandle handle, const char* document, const char* mutation_json);
+extern char* hai_sign_agreement_v2(HaiClientHandle handle, const char* document, const char* role);
+extern char* hai_verify_agreement_v2(HaiClientHandle handle, const char* document);
+extern char* hai_detect_agreement_branch_conflict(HaiClientHandle handle, const char* base_document, const char* left_document, const char* right_document);
+extern char* hai_merge_agreement_transcript_branches(HaiClientHandle handle, const char* base_document, const char* left_document, const char* right_document);
+extern char* hai_resolve_agreement_branch_conflict(HaiClientHandle handle, const char* base_document, const char* previous_document, const char* side_branch_document, const char* resolution_json);
+
 // Layer 8: Local Media (TASK_009)
 extern char* hai_sign_text(HaiClientHandle handle, const char* path, const char* opts_json);
 extern char* hai_verify_text(HaiClientHandle handle, const char* path, const char* opts_json);
@@ -153,7 +173,7 @@ extern void hai_ws_close(unsigned long long handle_id);
 // Error retrieval for hai_client_new
 extern char* hai_last_error();
 
-// JACS Document Store (21 methods + 2 helpers for the bytes-return convention)
+// JACS Document Store (26 methods + 2 helpers for the bytes-return convention)
 extern char* hai_store_document(HaiClientHandle handle, const char* signed_json);
 extern char* hai_sign_and_store(HaiClientHandle handle, const char* data_json);
 extern char* hai_get_document(HaiClientHandle handle, const char* key);
@@ -175,6 +195,11 @@ extern char* hai_get_memory(HaiClientHandle handle);
 extern char* hai_get_soul(HaiClientHandle handle);
 extern char* hai_store_text_file(HaiClientHandle handle, const char* path);
 extern char* hai_store_image_file(HaiClientHandle handle, const char* path);
+extern char* hai_conflict_create(HaiClientHandle handle, const char* body_json);
+extern char* hai_conflict_update(HaiClientHandle handle, const char* key_or_id, const char* mutation_json);
+extern char* hai_conflict_get(HaiClientHandle handle, const char* key);
+extern char* hai_conflict_list(HaiClientHandle handle, size_t limit, size_t offset);
+extern char* hai_conflict_check_readiness(HaiClientHandle handle, const char* key_or_id);
 // Bytes-return convention — caller frees with hai_free_bytes(ptr, len).
 // On error, returns NULL and sets *out_len = 0; call hai_last_error() to retrieve
 // the JSON error envelope (matching hai_client_new).
@@ -633,6 +658,149 @@ func (c *Client) VerifyEmailRaw(rawEmailB64 string) (json.RawMessage, error) {
 	cs := cString(rawEmailB64)
 	defer C.free(unsafe.Pointer(cs))
 	return parseEnvelope(goString(C.hai_verify_email_raw(c.handle, cs)))
+}
+
+// --- Agreements ---
+
+func (c *Client) SaveAgreement(requestJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(requestJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_save_agreement(c.handle, cs)))
+}
+
+func (c *Client) SearchAgreements(requestJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(requestJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_search_agreements(c.handle, cs)))
+}
+
+func (c *Client) GetAgreement(agreementID string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(agreementID)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_get_agreement(c.handle, cs)))
+}
+
+func (c *Client) CountersignAgreement(agreementID, requestJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	ca := cString(agreementID)
+	defer C.free(unsafe.Pointer(ca))
+	cr := cString(requestJSON)
+	defer C.free(unsafe.Pointer(cr))
+	return parseEnvelope(goString(C.hai_countersign_agreement(c.handle, ca, cr)))
+}
+
+func (c *Client) CreateAgreementV2(inputJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(inputJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_create_agreement_v2(c.handle, cs)))
+}
+
+func (c *Client) ApplyAgreementV2(document, mutationJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cd := cString(document)
+	defer C.free(unsafe.Pointer(cd))
+	cm := cString(mutationJSON)
+	defer C.free(unsafe.Pointer(cm))
+	return parseEnvelope(goString(C.hai_apply_agreement_v2(c.handle, cd, cm)))
+}
+
+func (c *Client) SignAgreementV2(document, role string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cd := cString(document)
+	defer C.free(unsafe.Pointer(cd))
+	cr := cString(role)
+	defer C.free(unsafe.Pointer(cr))
+	return parseEnvelope(goString(C.hai_sign_agreement_v2(c.handle, cd, cr)))
+}
+
+func (c *Client) VerifyAgreementV2(document string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(document)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_verify_agreement_v2(c.handle, cs)))
+}
+
+func (c *Client) DetectAgreementBranchConflict(baseDocument, leftDocument, rightDocument string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cb := cString(baseDocument)
+	defer C.free(unsafe.Pointer(cb))
+	cl := cString(leftDocument)
+	defer C.free(unsafe.Pointer(cl))
+	cr := cString(rightDocument)
+	defer C.free(unsafe.Pointer(cr))
+	return parseEnvelope(goString(C.hai_detect_agreement_branch_conflict(c.handle, cb, cl, cr)))
+}
+
+func (c *Client) MergeAgreementTranscriptBranches(baseDocument, leftDocument, rightDocument string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cb := cString(baseDocument)
+	defer C.free(unsafe.Pointer(cb))
+	cl := cString(leftDocument)
+	defer C.free(unsafe.Pointer(cl))
+	cr := cString(rightDocument)
+	defer C.free(unsafe.Pointer(cr))
+	return parseEnvelope(goString(C.hai_merge_agreement_transcript_branches(c.handle, cb, cl, cr)))
+}
+
+func (c *Client) ResolveAgreementBranchConflict(baseDocument, previousDocument, sideBranchDocument, resolutionJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cb := cString(baseDocument)
+	defer C.free(unsafe.Pointer(cb))
+	cp := cString(previousDocument)
+	defer C.free(unsafe.Pointer(cp))
+	cs := cString(sideBranchDocument)
+	defer C.free(unsafe.Pointer(cs))
+	cr := cString(resolutionJSON)
+	defer C.free(unsafe.Pointer(cr))
+	return parseEnvelope(goString(C.hai_resolve_agreement_branch_conflict(c.handle, cb, cp, cs, cr)))
 }
 
 // --- Local Media (Layer 8 / TASK_009) ---
@@ -1210,13 +1378,13 @@ func (c *Client) WSClose(handleID uint64) {
 }
 
 // =============================================================================
-// JACS Document Store (21 methods)
+// JACS Document Store (26 methods)
 //
-// All 21 methods now route through libhaiigo. Five of the trait methods
+// All 26 methods now route through libhaiigo. Six of the trait methods
 // (`ListDocuments`, `GetDocumentVersions`, `QueryByType`, `QueryByField`,
-// `QueryByAgent`) return `[]string` because `RemoteJacsProvider` produces
-// `Vec<String>`; binding-core JSON-serialises that to `["k1","k2"]` which
-// the Go side decodes into `[]string`.
+// `QueryByAgent`, `ConflictList`) return `[]string`; binding-core
+// JSON-serialises that to `["k1","k2"]` which the Go side decodes into
+// `[]string`.
 //
 // `GetMemory` / `GetSoul` use the `result_option_to_json` envelope —
 // `{"ok":null}` for `None` maps to `("", nil)`, `{"ok":"<envelope>"}` maps
@@ -1516,6 +1684,67 @@ func (c *Client) StoreImageFile(path string) (string, error) {
 	cs := cString(path)
 	defer C.free(unsafe.Pointer(cs))
 	return parseStringResponse(goString(C.hai_store_image_file(c.handle, cs)))
+}
+
+// ---- 5 conflict document methods ----
+
+func (c *Client) ConflictCreate(bodyJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(bodyJSON)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_conflict_create(c.handle, cs)))
+}
+
+func (c *Client) ConflictUpdate(keyOrID, mutationJSON string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	ck := cString(keyOrID)
+	defer C.free(unsafe.Pointer(ck))
+	cm := cString(mutationJSON)
+	defer C.free(unsafe.Pointer(cm))
+	return parseEnvelope(goString(C.hai_conflict_update(c.handle, ck, cm)))
+}
+
+func (c *Client) ConflictGet(key string) (string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return "", err
+	}
+	cs := cString(key)
+	defer C.free(unsafe.Pointer(cs))
+	raw, err := parseEnvelope(goString(C.hai_conflict_get(c.handle, cs)))
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func (c *Client) ConflictList(limit, offset int) ([]string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	return parseStringSliceResponse(goString(C.hai_conflict_list(c.handle, C.size_t(limit), C.size_t(offset))))
+}
+
+func (c *Client) ConflictCheckReadiness(keyOrID string) (json.RawMessage, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if err := c.checkClosed(); err != nil {
+		return nil, err
+	}
+	cs := cString(keyOrID)
+	defer C.free(unsafe.Pointer(cs))
+	return parseEnvelope(goString(C.hai_conflict_check_readiness(c.handle, cs)))
 }
 
 // GetRecordBytes uses the bytes-return convention (PRD §3.6: native bytes,

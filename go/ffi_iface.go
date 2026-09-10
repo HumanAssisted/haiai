@@ -85,6 +85,19 @@ type FFIClient interface {
 	SignEmailRaw(rawEmailB64 string) (json.RawMessage, error)
 	VerifyEmailRaw(rawEmailB64 string) (json.RawMessage, error)
 
+	// Agreements
+	SaveAgreement(requestJSON string) (json.RawMessage, error)
+	SearchAgreements(requestJSON string) (json.RawMessage, error)
+	GetAgreement(agreementID string) (json.RawMessage, error)
+	CountersignAgreement(agreementID, requestJSON string) (json.RawMessage, error)
+	CreateAgreementV2(inputJSON string) (json.RawMessage, error)
+	ApplyAgreementV2(document, mutationJSON string) (json.RawMessage, error)
+	SignAgreementV2(document, role string) (json.RawMessage, error)
+	VerifyAgreementV2(document string) (json.RawMessage, error)
+	DetectAgreementBranchConflict(baseDocument, leftDocument, rightDocument string) (json.RawMessage, error)
+	MergeAgreementTranscriptBranches(baseDocument, leftDocument, rightDocument string) (json.RawMessage, error)
+	ResolveAgreementBranchConflict(baseDocument, previousDocument, sideBranchDocument, resolutionJSON string) (json.RawMessage, error)
+
 	// Local Media (Layer 8 / TASK_009)
 	SignText(path, optsJSON string) (json.RawMessage, error)
 	VerifyText(path, optsJSON string) (json.RawMessage, error)
@@ -115,7 +128,7 @@ type FFIClient interface {
 	WSNextEvent(handleID uint64) (json.RawMessage, error)
 	WSClose(handleID uint64)
 
-	// JACS Document Store — 14 generic + 4 D5 + 3 D9 = 21 methods.
+	// JACS Document Store — 14 generic + 4 D5 + 3 D9 + 5 conflict = 26 methods.
 	//
 	// The five array-returning trait methods (`ListDocuments`,
 	// `GetDocumentVersions`, `QueryByType`, `QueryByField`, `QueryByAgent`)
@@ -148,4 +161,11 @@ type FFIClient interface {
 	StoreTextFile(path string) (string, error)
 	StoreImageFile(path string) (string, error)
 	GetRecordBytes(key string) ([]byte, error)
+
+	// Conflict documents
+	ConflictCreate(bodyJSON string) (json.RawMessage, error)
+	ConflictUpdate(keyOrID, mutationJSON string) (json.RawMessage, error)
+	ConflictGet(key string) (string, error)
+	ConflictList(limit, offset int) ([]string, error)
+	ConflictCheckReadiness(keyOrID string) (json.RawMessage, error)
 }

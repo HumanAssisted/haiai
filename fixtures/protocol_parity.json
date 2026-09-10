@@ -1,10 +1,14 @@
 {
   "description": "Cross-language protocol parity test vectors. Each SDK must produce identical output for these inputs.",
   "sign_response": {
-    "description": "signResponse must produce a JACS document with this structure, given the input payload.",
+    "description": "signResponse must produce a version-2 HAI job-response payload that binds the job ID inside the JACS-signed data field.",
+    "native_signer_required": true,
+    "missing_native_error_code": "JACS_TOO_OLD",
+    "invalid_native_contract_error_code": "JACS_CONTRACT_INVALID",
     "cases": [
       {
         "name": "simple_payload",
+        "job_id": "550e8400-e29b-41d4-a716-446655440000",
         "input": {
           "response": {
             "message": "test",
@@ -12,35 +16,83 @@
             "processing_time_ms": 0
           }
         },
+        "expected_data": {
+          "contract": "hai.job-response",
+          "version": 2,
+          "job_id": "550e8400-e29b-41d4-a716-446655440000",
+          "response": {
+            "message": "test",
+            "metadata": null,
+            "processing_time_ms": 0
+          }
+        },
         "expected_structure": {
-          "version": "1.0.0",
+          "version": "2.0.0",
           "document_type": "job_response",
           "has_data": true,
           "has_metadata": true,
           "has_jacsSignature": true,
           "metadata_fields": ["issuer", "document_id", "created_at", "hash"],
-          "signature_fields": ["agentID", "signature", "signedAt"]
+          "signature_fields": ["agentID", "date", "signingAlgorithm", "publicKeyHash", "signatureContentVersion", "signature"],
+          "signature_content_version": "jacs-response-v2",
+          "signed_scope": "complete_envelope_except_jacsSignature.signature"
         }
       }
     ]
   },
   "unwrap_signed_event": {
-    "description": "unwrapSignedEvent must return the inner payload from a signed document, or pass through non-JACS events.",
+    "description": "unwrapSignedEvent is fail-closed: it accepts only a fully bound v2 JACS envelope, delegates signature/freshness/replay checks to JACS, and releases data only when the native result contains literal verified=true.",
+    "strict_by_default": true,
+    "accepted_envelope": {
+      "version": "2.0.0",
+      "required_top_level_fields": ["version", "document_type", "data", "metadata", "jacsSignature"],
+      "native_result_requirements": ["verified_literal_true", "data_present"],
+      "enforced_by_jacs": ["complete_envelope_signature", "trusted_signer_key", "freshness", "atomic_replay_consumption"]
+    },
     "cases": [
       {
-        "name": "non_jacs_passthrough",
+        "name": "fully_bound_verified",
+        "input": {
+          "version": "2.0.0",
+          "document_type": "job_response",
+          "data": {
+            "type": "benchmark_job",
+            "job_id": "job-1"
+          },
+          "metadata": {
+            "issuer": "server:v1",
+            "document_id": "doc-1",
+            "created_at": "2026-01-01T00:00:00Z",
+            "hash": "fixture-hash"
+          },
+          "jacsSignature": {
+            "agentID": "server:v1",
+            "date": "2026-01-01T00:00:00Z",
+            "signingAlgorithm": "ring-Ed25519",
+            "publicKeyHash": "fixture-key-hash",
+            "signatureContentVersion": "jacs-response-v2",
+            "signature": "fixture-signature"
+          }
+        },
+        "expected": {
+          "type": "benchmark_job",
+          "job_id": "job-1"
+        },
+        "expected_outcome": "verified",
+        "note": "Data is released only after JACS returns literal verified=true. Placeholder signature material is replaced by the binding test verifier."
+      },
+      {
+        "name": "plain_event_rejected",
         "input": {
           "type": "heartbeat",
           "timestamp": 123
         },
-        "expected": {
-          "type": "heartbeat",
-          "timestamp": 123
-        },
-        "note": "Events without JACS document structure pass through unchanged"
+        "expected_outcome": "reject",
+        "expected_error_code": "VERIFICATION_FAILED",
+        "note": "Unsigned events are never treated as verified transport data."
       },
       {
-        "name": "jacs_document_unwrap",
+        "name": "legacy_payload_only_rejected",
         "input": {
           "payload": {
             "message": "inner-data"
@@ -58,10 +110,44 @@
             "signed_at": "2024-01-01T00:00:00Z"
           }
         },
-        "expected": {
-          "message": "inner-data"
+        "expected_outcome": "reject",
+        "expected_error_code": "VERIFICATION_FAILED",
+        "note": "Legacy payload-only envelopes do not bind all metadata and are rejected in strict mode."
+      },
+      {
+        "name": "native_false_provenance_rejected",
+        "input": {
+          "version": "2.0.0",
+          "document_type": "job_response",
+          "data": {
+            "type": "benchmark_job",
+            "job_id": "job-2"
+          },
+          "metadata": {
+            "issuer": "server:v1",
+            "document_id": "doc-2",
+            "created_at": "2026-01-01T00:00:00Z",
+            "hash": "fixture-hash"
+          },
+          "jacsSignature": {
+            "agentID": "server:v1",
+            "date": "2026-01-01T00:00:00Z",
+            "signingAlgorithm": "ring-Ed25519",
+            "publicKeyHash": "fixture-key-hash",
+            "signatureContentVersion": "jacs-response-v2",
+            "signature": "fixture-signature"
+          }
         },
-        "note": "Without a known server key, unwraps payload without verification"
+        "native_result": {
+          "data": {
+            "type": "benchmark_job",
+            "job_id": "job-2"
+          },
+          "verified": false
+        },
+        "expected_outcome": "reject",
+        "expected_error_code": "JACS_CONTRACT_INVALID",
+        "note": "Parsed data is not authenticated data unless JACS reports literal verified=true."
       }
     ]
   },
@@ -110,12 +196,12 @@
     ]
   },
   "build_auth_header": {
-    "description": "buildAuthHeader must produce 'JACS {jacsId}:{timestamp}:{signature_base64}'. Vectors in cross_lang_test.json cover format; these cover edge cases.",
+    "description": "buildAuthHeader must produce 'JACS {jacsId}:{timestamp}:{nonce}:{signature_base64}'. Vectors in cross_lang_test.json cover format; these cover edge cases.",
     "cases": [
       {
         "name": "special_chars_in_id",
         "jacs_id": "agent/with:special",
-        "note": "The jacsId is used as-is in the header (no URL encoding). Colon in jacsId is disambiguated by SplitN(3)."
+        "note": "The jacsId is used as-is in the header (no URL encoding). Colon remains invalid for HTTP auth because ':' is the field delimiter."
       }
     ]
   }

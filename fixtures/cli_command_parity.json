@@ -1,7 +1,7 @@
 {
   "description": "CLI command parity contract. The haiai binary must expose exactly these subcommands. Tests verify bidirectional parity between this fixture and the Commands enum.",
-  "version": "1.1.0",
-  "total_command_count": 36,
+  "version": "1.2.0",
+  "total_command_count": 37,
   "commands": [
     {
       "name": "init",
@@ -21,7 +21,7 @@
     },
     {
       "name": "send-email",
-      "args": ["to:string", "subject:string", "body:string", "cc:string[]", "bcc:string[]", "labels:string[]", "json:bool"]
+      "args": ["to:string", "subject:string", "body:string", "cc:string[]", "bcc:string[]", "labels:string[]", "generation_type:string?", "json:bool"]
     },
     {
       "name": "list-messages",
@@ -152,6 +152,11 @@
       "name": "records",
       "args": [],
       "subcommands": ["store-text", "store-image", "get-bytes"]
+    },
+    {
+      "name": "conflict",
+      "args": [],
+      "subcommands": ["create", "update", "get", "list", "check-readiness"]
     }
   ]
 }

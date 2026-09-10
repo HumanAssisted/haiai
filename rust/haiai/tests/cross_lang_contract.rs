@@ -2,15 +2,15 @@
 
 use base64::Engine;
 use haiai::{
-    HaiClient, HaiClientOptions, JacsMediaProvider, LocalJacsProvider, MediaVerifyStatus,
-    StaticJacsProvider, TextSignatureStatus, VerifyImageOptions, VerifyTextOptions,
-    VerifyTextResult,
+    CreateAgentOptions, HaiClient, HaiClientOptions, JacsMediaProvider, LocalJacsProvider,
+    MediaVerifyStatus, StaticJacsProvider, TextSignatureStatus, VerifyImageOptions,
+    VerifyTextOptions, VerifyTextResult,
 };
 use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +31,7 @@ struct AuthHeaderFixture {
 struct AuthHeaderExample {
     jacs_id: String,
     timestamp: i64,
+    nonce: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,38 +74,47 @@ fn auth_header_matches_shared_shape() {
 
     let header = client.build_auth_header().expect("auth header");
     let token = header.strip_prefix("JACS ").expect("auth header prefix");
-    let parts: Vec<&str> = token.splitn(3, ':').collect();
+    let parts: Vec<&str> = token.splitn(4, ':').collect();
 
     assert_eq!(fixture.auth_header.scheme, "JACS");
     assert_eq!(
         fixture.auth_header.parts,
-        vec!["jacs_id", "timestamp", "signature_base64"]
+        vec!["jacs_id", "timestamp", "nonce", "signature_base64"]
     );
-    assert_eq!(parts.len(), 3);
+    assert_eq!(parts.len(), 4);
     assert_eq!(parts[0], fixture.auth_header.example.jacs_id);
     assert_eq!(
         fixture.auth_header.signed_message_template,
-        "{jacs_id}:{timestamp}"
+        "{jacs_id}:{timestamp}:{nonce}"
     );
 
     let decoded = base64::engine::general_purpose::STANDARD
-        .decode(parts[2])
+        .decode(parts[3])
         .expect("decode static provider signature");
     let signed_message = String::from_utf8(decoded).expect("utf8 signature payload");
-    assert_eq!(signed_message, format!("sig:{}:{}", parts[0], parts[1]));
+    assert_eq!(
+        signed_message,
+        format!("sig:{}:{}:{}", parts[0], parts[1], parts[2])
+    );
 
     let parsed_timestamp = parts[1].parse::<i64>().expect("timestamp");
     assert!(
         parsed_timestamp >= fixture.auth_header.example.timestamp,
         "timestamp should be unix seconds"
     );
+    assert!(
+        !fixture.auth_header.example.nonce.is_empty(),
+        "fixture should include an example nonce"
+    );
+    assert!(!parts[2].is_empty(), "nonce should be present");
 }
 
 // ===========================================================================
 // TASK_011: cross-language verify-parity over `fixtures/media/signed.*`.
 //
-// Each test stages the shared `fixtures/jacs-agent/` agent in a tempdir,
-// reads the committed signed fixture from disk, and asserts that
+// Each test creates a fresh signed verifier agent, stages only the shared
+// fixture signer's public key in an explicit key directory, reads the
+// committed signed fixture from disk, and asserts that
 // `LocalJacsProvider::{verify_image, verify_text_file}` returns Valid for
 // the unmodified bytes and HashMismatch when one content byte is flipped.
 //
@@ -115,14 +125,16 @@ fn auth_header_matches_shared_shape() {
 // suite (PRD §5.5).
 // ===========================================================================
 
-/// Serialise fixture-agent loads. JACS reads `JACS_PRIVATE_KEY_PASSWORD`
-/// at load time and the test runner is multi-threaded by default.
+/// Serialise verifier creation and loads. JACS reads
+/// `JACS_PRIVATE_KEY_PASSWORD` at load time and the test runner is
+/// multi-threaded by default.
 static MEDIA_PARITY_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Deserialize)]
 struct SignerFixture {
     signer_id: String,
     algorithm: String,
+    public_key_file: String,
 }
 
 fn repo_root() -> PathBuf {
@@ -140,61 +152,51 @@ fn load_signer_fixture() -> SignerFixture {
     serde_json::from_str(&raw).expect("decode SIGNER.json")
 }
 
-fn copy_fixture_dir(src: &Path, dst: &Path) {
-    fs::create_dir_all(dst).expect("create dst dir");
-    for entry in fs::read_dir(src).expect("read src dir") {
-        let entry = entry.expect("dir entry");
-        let src_path = entry.path();
-        let name = entry.file_name().to_string_lossy().replace('_', ":");
-        let dst_path = dst.join(&name);
-        if src_path.is_dir() {
-            copy_fixture_dir(&src_path, &dst_path);
-        } else {
-            fs::copy(&src_path, &dst_path).expect("copy file");
-        }
-    }
-}
-
-/// Stage `fixtures/jacs-agent/` in a tempdir with `_` → `:` filename mapping.
-/// Returns (TempDir, staged_config_path). Sets `JACS_PRIVATE_KEY_PASSWORD`.
-fn stage_fixture_agent() -> (tempfile::TempDir, PathBuf) {
-    std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "secretpassord");
-
-    let source = repo_root().join("fixtures/jacs-agent/jacs.config.json");
-    assert!(
-        source.exists(),
-        "fixtures/jacs-agent/jacs.config.json must exist"
-    );
-    let source_dir = source.parent().expect("fixture dir");
-    let mut value: Value =
-        serde_json::from_str(&fs::read_to_string(&source).expect("read fixture config"))
-            .expect("parse fixture config");
+/// Create a fresh signed verifier and give it only the committed fixture
+/// signer's public key through JACS' explicit `key_dir` resolution contract.
+/// The legacy fixture agent config remains unsigned and is never loaded.
+fn stage_media_verifier(signer: &SignerFixture) -> (tempfile::TempDir, LocalJacsProvider, PathBuf) {
+    const PASSWORD: &str = "MediaParityTestPass!123";
+    std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", PASSWORD);
 
     let temp = tempfile::tempdir().expect("tempdir");
+    let temp_root = temp.path().canonicalize().expect("canonical tempdir");
+    let config = temp_root.join("jacs.config.json");
+    let data_dir = temp_root.join("data");
+    let agent_key_dir = temp_root.join("agent-keys");
+    LocalJacsProvider::create_agent_with_options(&CreateAgentOptions {
+        name: "cross-language-media-verifier".to_string(),
+        password: PASSWORD.to_string(),
+        algorithm: Some("ed25519".to_string()),
+        data_directory: Some(data_dir.to_string_lossy().into_owned()),
+        key_directory: Some(agent_key_dir.to_string_lossy().into_owned()),
+        config_path: Some(config.to_string_lossy().into_owned()),
+        agent_type: Some("ai".to_string()),
+        description: Some("Cross-language media fixture verifier".to_string()),
+        domain: None,
+        default_storage: Some("fs".to_string()),
+    })
+    .expect("create signed verifier agent");
 
-    let src_keys = source_dir.join(value["jacs_key_directory"].as_str().unwrap_or("keys"));
-    let tmp_keys = temp.path().join("keys");
-    fs::create_dir_all(&tmp_keys).expect("mkdir keys");
-    for entry in fs::read_dir(&src_keys).expect("read keys") {
-        let entry = entry.expect("key entry");
-        fs::copy(entry.path(), tmp_keys.join(entry.file_name())).expect("copy key");
-    }
-
-    let src_data = source_dir.join(value["jacs_data_directory"].as_str().unwrap_or("."));
-    let tmp_data = temp.path().join("data");
-    copy_fixture_dir(&src_data, &tmp_data);
-
-    value["jacs_data_directory"] = Value::String(tmp_data.to_string_lossy().into_owned());
-    value["jacs_key_directory"] = Value::String(tmp_keys.to_string_lossy().into_owned());
-
-    let config = temp.path().join("jacs.config.json");
-    fs::write(
-        &config,
-        serde_json::to_vec_pretty(&value).expect("encode config"),
+    let verification_key_dir = temp_root.join("verification-keys");
+    fs::create_dir_all(&verification_key_dir).expect("create verification key dir");
+    let source_public_key = repo_root().join(&signer.public_key_file);
+    assert!(
+        source_public_key.is_file(),
+        "fixture public key must exist at {}",
+        source_public_key.display()
+    );
+    let encoded_signer_id =
+        jacs::simple::advanced::encode_signer_id_for_filename(&signer.signer_id);
+    fs::copy(
+        source_public_key,
+        verification_key_dir.join(format!("{encoded_signer_id}.public.pem")),
     )
-    .expect("write config");
+    .expect("stage fixture signer public key");
 
-    (temp, config)
+    let provider = LocalJacsProvider::from_config_path(Some(&config), None)
+        .expect("load signed verifier agent");
+    (temp, provider, verification_key_dir)
 }
 
 fn checksum_hex(bytes: &[u8]) -> String {
@@ -239,7 +241,7 @@ fn tamper_after(bytes: &mut [u8], marker: &[u8], offset: usize) {
 /// For a signed markdown file, mutate one body byte BEFORE the
 /// `-----BEGIN JACS SIGNATURE-----` block so verify reports HashMismatch
 /// rather than Malformed.
-fn tamper_text_body(bytes: &mut Vec<u8>) {
+fn tamper_text_body(bytes: &mut [u8]) {
     const MARKER: &[u8] = b"-----BEGIN JACS SIGNATURE-----";
     let body_end = bytes
         .windows(MARKER.len())
@@ -252,18 +254,26 @@ fn tamper_text_body(bytes: &mut Vec<u8>) {
     bytes[i] ^= 0b0010_0000;
 }
 
-fn assert_image_valid(name: &str, expected_signer: &str) {
+fn assert_image_valid(name: &str, signer: &SignerFixture) {
     let _lock = MEDIA_PARITY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let (_temp, config) = stage_fixture_agent();
-    let provider =
-        LocalJacsProvider::from_config_path(Some(&config), None).expect("load fixture agent");
+    let (_temp, provider, key_dir) = stage_media_verifier(signer);
 
     let work = tempfile::tempdir().expect("tempdir");
-    let staged = work.path().join(name);
+    let work_root = work.path().canonicalize().expect("canonical workdir");
+    let staged = work_root.join(name);
     fs::write(&staged, read_fixture_with_checksum(name)).expect("stage signed image");
 
     let result = provider
-        .verify_image(staged.to_str().unwrap(), VerifyImageOptions::default())
+        .verify_image(
+            staged.to_str().unwrap(),
+            VerifyImageOptions {
+                base: VerifyTextOptions {
+                    strict: false,
+                    key_dir: Some(key_dir),
+                },
+                ..VerifyImageOptions::default()
+            },
+        )
         .expect("verify_image");
     assert_eq!(
         result.status,
@@ -273,25 +283,34 @@ fn assert_image_valid(name: &str, expected_signer: &str) {
     );
     assert_eq!(
         result.signer_id.as_deref(),
-        Some(expected_signer),
+        Some(signer.signer_id.as_str()),
         "signer mismatch for {name}",
     );
 }
 
 fn assert_image_tampered(name: &str, marker: &[u8], offset: usize) {
     let _lock = MEDIA_PARITY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let (_temp, config) = stage_fixture_agent();
-    let provider =
-        LocalJacsProvider::from_config_path(Some(&config), None).expect("load fixture agent");
+    let signer = load_signer_fixture();
+    let (_temp, provider, key_dir) = stage_media_verifier(&signer);
 
     let work = tempfile::tempdir().expect("tempdir");
-    let staged = work.path().join(name);
+    let work_root = work.path().canonicalize().expect("canonical workdir");
+    let staged = work_root.join(name);
     let mut bytes = read_fixture_with_checksum(name);
     tamper_after(&mut bytes, marker, offset);
     fs::write(&staged, &bytes).expect("write tampered");
 
     let result = provider
-        .verify_image(staged.to_str().unwrap(), VerifyImageOptions::default())
+        .verify_image(
+            staged.to_str().unwrap(),
+            VerifyImageOptions {
+                base: VerifyTextOptions {
+                    strict: false,
+                    key_dir: Some(key_dir),
+                },
+                ..VerifyImageOptions::default()
+            },
+        )
         .expect("verify_image");
     assert_eq!(
         result.status,
@@ -305,7 +324,7 @@ fn assert_image_tampered(name: &str, marker: &[u8], offset: usize) {
 fn cross_lang_signed_image_png_verifies() {
     let signer = load_signer_fixture();
     assert_eq!(signer.algorithm, "pq2025", "fixture algorithm baseline");
-    assert_image_valid("signed.png", &signer.signer_id);
+    assert_image_valid("signed.png", &signer);
 }
 
 #[test]
@@ -319,7 +338,7 @@ fn cross_lang_signed_image_png_tampered_returns_hash_mismatch() {
 #[test]
 fn cross_lang_signed_image_jpeg_verifies() {
     let signer = load_signer_fixture();
-    assert_image_valid("signed.jpg", &signer.signer_id);
+    assert_image_valid("signed.jpg", &signer);
 }
 
 #[test]
@@ -333,7 +352,7 @@ fn cross_lang_signed_image_jpeg_tampered_returns_hash_mismatch() {
 #[test]
 fn cross_lang_signed_image_webp_verifies() {
     let signer = load_signer_fixture();
-    assert_image_valid("signed.webp", &signer.signer_id);
+    assert_image_valid("signed.webp", &signer);
 }
 
 #[test]
@@ -348,16 +367,21 @@ fn cross_lang_signed_image_webp_tampered_returns_hash_mismatch() {
 fn cross_lang_signed_text_md_verifies() {
     let signer = load_signer_fixture();
     let _lock = MEDIA_PARITY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let (_temp, config) = stage_fixture_agent();
-    let provider =
-        LocalJacsProvider::from_config_path(Some(&config), None).expect("load fixture agent");
+    let (_temp, provider, key_dir) = stage_media_verifier(&signer);
 
     let work = tempfile::tempdir().expect("tempdir");
-    let staged = work.path().join("signed.md");
+    let work_root = work.path().canonicalize().expect("canonical workdir");
+    let staged = work_root.join("signed.md");
     fs::write(&staged, read_fixture_with_checksum("signed.md")).expect("stage signed.md");
 
     let result = provider
-        .verify_text_file(staged.to_str().unwrap(), VerifyTextOptions::default())
+        .verify_text_file(
+            staged.to_str().unwrap(),
+            VerifyTextOptions {
+                strict: false,
+                key_dir: Some(key_dir),
+            },
+        )
         .expect("verify_text_file");
     match result {
         VerifyTextResult::Signed { signatures } => {
@@ -379,18 +403,24 @@ fn cross_lang_signed_text_md_verifies() {
 #[test]
 fn cross_lang_signed_text_md_tampered_returns_hash_mismatch() {
     let _lock = MEDIA_PARITY_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    let (_temp, config) = stage_fixture_agent();
-    let provider =
-        LocalJacsProvider::from_config_path(Some(&config), None).expect("load fixture agent");
+    let signer = load_signer_fixture();
+    let (_temp, provider, key_dir) = stage_media_verifier(&signer);
 
     let work = tempfile::tempdir().expect("tempdir");
-    let staged = work.path().join("signed.md");
+    let work_root = work.path().canonicalize().expect("canonical workdir");
+    let staged = work_root.join("signed.md");
     let mut bytes = read_fixture_with_checksum("signed.md");
     tamper_text_body(&mut bytes);
     fs::write(&staged, &bytes).expect("write tampered");
 
     let result = provider
-        .verify_text_file(staged.to_str().unwrap(), VerifyTextOptions::default())
+        .verify_text_file(
+            staged.to_str().unwrap(),
+            VerifyTextOptions {
+                strict: false,
+                key_dir: Some(key_dir),
+            },
+        )
         .expect("verify_text_file");
     match result {
         VerifyTextResult::Signed { signatures } => {

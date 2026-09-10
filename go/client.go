@@ -1,4 +1,11 @@
-// Package haiai provides the Go SDK for the HAI.AI agent benchmarking platform.
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
+// Package haiai provides the Go SDK for HAI.AI platform integration.
 //
 // All authentication uses JACS agent identity (Ed25519 signatures).
 // There is no API key authentication path.
@@ -125,9 +132,16 @@ func NewClient(opts ...Option) (*Client, error) {
 		opt(cl)
 	}
 
-	// Override endpoint from environment if not set by option
-	if envURL := os.Getenv("HAI_URL"); envURL != "" && cl.endpoint == DefaultEndpoint {
-		cl.endpoint = strings.TrimRight(envURL, "/")
+	// Override endpoint from environment if not set by option. Precedence
+	// matches every other HAIAI SDK: option > HAI_URL > HAI_API_URL >
+	// DefaultEndpoint, with a set-but-blank variable counting as unset.
+	if cl.endpoint == DefaultEndpoint {
+		for _, name := range []string{"HAI_URL", "HAI_API_URL"} {
+			if envURL := strings.TrimSpace(os.Getenv(name)); envURL != "" {
+				cl.endpoint = strings.TrimRight(envURL, "/")
+				break
+			}
+		}
 	}
 
 	// Auto-discover config if jacsID is missing
@@ -752,6 +766,9 @@ func (c *Client) SendSignedEmail(ctx context.Context, opts SendEmailOptions) (*S
 			opts.Attachments[i].DataBase64 = base64.StdEncoding.EncodeToString(opts.Attachments[i].Data)
 		}
 	}
+	if opts.GenerationType == "" {
+		opts.GenerationType = EmailGenerationTypeHtmlInlineJacs
+	}
 
 	optsJSON, err := json.Marshal(opts)
 	if err != nil {
@@ -781,6 +798,98 @@ func (c *Client) VerifyEmail(ctx context.Context, rawEmail []byte) (*EmailVerifi
 		return nil, wrapError(ErrInvalidResponse, err, "failed to decode verify email response")
 	}
 	return &result, nil
+}
+
+// =============================================================================
+// Agreements
+// =============================================================================
+
+// SaveAgreement saves a signed agreement through the HAI agreement workflow API.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SaveAgreement(_ctx context.Context, requestJSON string) (json.RawMessage, error) {
+	return c.ffi.SaveAgreement(requestJSON)
+}
+
+// SearchAgreements searches agreements visible to this agent.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SearchAgreements(_ctx context.Context, requestJSON string) (json.RawMessage, error) {
+	return c.ffi.SearchAgreements(requestJSON)
+}
+
+// GetAgreement retrieves one agreement by HAI agreement id or JACS document id.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) GetAgreement(_ctx context.Context, agreementID string) (json.RawMessage, error) {
+	return c.ffi.GetAgreement(agreementID)
+}
+
+// CountersignAgreement requests HAI notary/countersignature workflow for an agreement.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) CountersignAgreement(_ctx context.Context, agreementID, requestJSON string) (json.RawMessage, error) {
+	return c.ffi.CountersignAgreement(agreementID, requestJSON)
+}
+
+// CreateAgreementV2 creates a standalone JACS agreement v2 document locally.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) CreateAgreementV2(_ctx context.Context, inputJSON string) (json.RawMessage, error) {
+	return c.ffi.CreateAgreementV2(inputJSON)
+}
+
+// ApplyAgreementV2 applies a JACS agreement v2 mutation locally.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ApplyAgreementV2(_ctx context.Context, document, mutationJSON string) (json.RawMessage, error) {
+	return c.ffi.ApplyAgreementV2(document, mutationJSON)
+}
+
+// SignAgreementV2 adds a signer, witness, or notary signature locally.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SignAgreementV2(_ctx context.Context, document, role string) (json.RawMessage, error) {
+	return c.ffi.SignAgreementV2(document, role)
+}
+
+// VerifyAgreementV2 verifies a JACS agreement v2 document locally.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) VerifyAgreementV2(_ctx context.Context, document string) (json.RawMessage, error) {
+	return c.ffi.VerifyAgreementV2(document)
+}
+
+// DetectAgreementBranchConflict compares two agreement branches against a shared base.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) DetectAgreementBranchConflict(_ctx context.Context, baseDocument, leftDocument, rightDocument string) (json.RawMessage, error) {
+	return c.ffi.DetectAgreementBranchConflict(baseDocument, leftDocument, rightDocument)
+}
+
+// MergeAgreementTranscriptBranches auto-merges two transcript-only agreement branches.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) MergeAgreementTranscriptBranches(_ctx context.Context, baseDocument, leftDocument, rightDocument string) (json.RawMessage, error) {
+	return c.ffi.MergeAgreementTranscriptBranches(baseDocument, leftDocument, rightDocument)
+}
+
+// ResolveAgreementBranchConflict resolves a branch conflict with an explicit mutation.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ResolveAgreementBranchConflict(_ctx context.Context, baseDocument, previousDocument, sideBranchDocument, resolutionJSON string) (json.RawMessage, error) {
+	return c.ffi.ResolveAgreementBranchConflict(baseDocument, previousDocument, sideBranchDocument, resolutionJSON)
 }
 
 // =============================================================================
@@ -1603,7 +1712,7 @@ func parseRawEmailJSON(raw json.RawMessage) (*RawEmailResult, error) {
 }
 
 // =============================================================================
-// JACS Document Store (21 methods)
+// JACS Document Store (26 methods)
 //
 // Thin delegations to the FFI client.
 //
@@ -1794,4 +1903,44 @@ func (c *Client) StoreImageFile(_ctx context.Context, path string) (string, erro
 // cgo FFI boundary. See Issue 015.
 func (c *Client) GetRecordBytes(_ctx context.Context, key string) ([]byte, error) {
 	return c.ffi.GetRecordBytes(key)
+}
+
+// ConflictCreate creates and signs a conflict document from body JSON.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ConflictCreate(_ctx context.Context, bodyJSON string) (json.RawMessage, error) {
+	return c.ffi.ConflictCreate(bodyJSON)
+}
+
+// ConflictUpdate applies a conflict mutation by key or document id.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ConflictUpdate(_ctx context.Context, keyOrID, mutationJSON string) (json.RawMessage, error) {
+	return c.ffi.ConflictUpdate(keyOrID, mutationJSON)
+}
+
+// ConflictGet fetches a signed conflict document by key.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ConflictGet(_ctx context.Context, key string) (string, error) {
+	return c.ffi.ConflictGet(key)
+}
+
+// ConflictList returns signed conflict document keys.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ConflictList(_ctx context.Context, limit, offset int) ([]string, error) {
+	return c.ffi.ConflictList(limit, offset)
+}
+
+// ConflictCheckReadiness checks whether a conflict key or id is ready.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ConflictCheckReadiness(_ctx context.Context, keyOrID string) (json.RawMessage, error) {
+	return c.ffi.ConflictCheckReadiness(keyOrID)
 }

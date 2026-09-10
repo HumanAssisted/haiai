@@ -6,7 +6,9 @@ Use MCP when the boundary is model-to-tool inside an application or local workst
 
 There are three supported ways to use JACS with MCP today:
 
-1. **Run `jacs mcp`** when you want a ready-made MCP server with the broadest tool surface.
+1. **Run `jacs mcp`** when you want a ready-made MCP server. The default
+   `core` profile is the safer everyday surface; select `--profile full` when
+   you need the advanced tool families.
 2. **Wrap an existing MCP transport** when you already have an MCP server or client and want signed JSON-RPC.
 3. **Register JACS as MCP tools** when you want the model to call signing, verification, agreement, A2A, or trust operations directly.
 
@@ -14,7 +16,7 @@ There are three supported ways to use JACS with MCP today:
 
 | Runtime | Best starting point | What it gives you |
 |---|---|---|
-| Rust | `jacs-mcp` | Full MCP server with document, agreement, trust, A2A, and audit tools |
+| Rust CLI | `jacs mcp` | Core document, text/media, trust, search, key/agent, A2A discovery, and W3C tools; `--profile full` adds Agreement v2, A2A artifact, and attestation tools |
 | Python | `jacs.mcp` or `jacs.adapters.mcp` | Local SSE transport security or FastMCP tool registration |
 | Node.js | `@hai.ai/jacs/mcp` | Transport proxy or MCP tool registration for existing SDK-based servers |
 
@@ -23,6 +25,8 @@ There are three supported ways to use JACS with MCP today:
 - **Python MCP wrappers are local-only.** `JACSMCPClient`, `JACSMCPServer`, and `jacs_call()` enforce loopback URLs.
 - **Unsigned fallback is off by default.** Both Python and Node fail closed unless you explicitly allow unsigned fallback.
 - **Node has two factories.** `createJACSTransportProxy()` takes a loaded `JacsClient` or `JacsAgent`; `createJACSTransportProxyAsync()` is the config-path variant.
+- **The Rust server requires explicit agent configuration.** Set `JACS_CONFIG`
+  and exactly one usable private-key password source before startup.
 
 ## 1. Ready-Made Server: `jacs mcp`
 
@@ -30,10 +34,30 @@ Install the unified binary and start the MCP server:
 
 ```bash
 cargo install jacs-cli
+export JACS_PRIVATE_KEY_PASSWORD='use-a-strong-password'
+jacs quickstart --name mcp-agent --domain mcp.local
+export JACS_CONFIG="$PWD/jacs.config.json"
 jacs mcp
 ```
 
-The MCP server is built into the `jacs` binary (stdio transport only, no HTTP). It includes document signing, agreements, trust store operations, A2A tools, and security audit tools. See `jacs-mcp/README.md` in the repo for the full tool list and client configuration examples.
+The MCP server is built into the `jacs` binary (stdio transport only, no
+HTTP). Its default `core` profile exposes 25 tools. The `full` profile exposes
+all 42 source-head tools by adding Agreement v2, A2A artifact, and attestation
+families:
+
+```bash
+jacs mcp --profile full
+# Equivalent only when --profile is absent:
+JACS_MCP_PROFILE=full jacs mcp
+```
+
+An explicit `--profile` overrides `JACS_MCP_PROFILE`; unknown values fail
+startup. For production, prefer an owner-readable `JACS_PASSWORD_FILE` or the
+OS keychain over embedding `JACS_PRIVATE_KEY_PASSWORD` in client JSON. File
+tools are confined beneath `JACS_MCP_BASE_DIR` (the launch directory by
+default), reject traversal and symlinks, and refuse overwrite unless the
+operator sets `JACS_MCP_OVERWRITE_OK=1`. The crate-level MCP README in the repo
+has the complete contract.
 
 ## 2. Transport Security Around Your Existing MCP Code
 
@@ -45,7 +69,11 @@ Use `jacs.mcp` when you already have a FastMCP server or client and want transpa
 from fastmcp import FastMCP
 from jacs.mcp import JACSMCPServer
 
-mcp = JACSMCPServer(FastMCP("Secure Server"), "./jacs.config.json")
+mcp = JACSMCPServer(
+    FastMCP("Secure Server"),
+    "./jacs.config.json",
+    allowed_peer_agent_ids=["CLIENT_AGENT_ID"],
+)
 ```
 
 For clients:
@@ -53,7 +81,11 @@ For clients:
 ```python
 from jacs.mcp import JACSMCPClient
 
-client = JACSMCPClient("http://localhost:8000/sse", "./jacs.config.json")
+client = JACSMCPClient(
+    "http://localhost:8000/sse",
+    "./jacs.config.json",
+    expected_peer_agent_id="SERVER_AGENT_ID",
+)
 ```
 
 Helpful utilities in the same module:
@@ -65,6 +97,8 @@ Helpful utilities in the same module:
 See [Python MCP Integration](../python/mcp.md) for the detailed patterns.
 
 ### Node.js
+
+{{#include ../_snippets/node-registry-status.md}}
 
 Use the transport proxy when you already have an MCP transport:
 
@@ -140,9 +174,9 @@ registerJacsTools(server, client);
 
 The Node tool set is intentionally smaller than the Rust MCP server. Use `jacs mcp` when you need the largest supported MCP surface.
 
-### Provenance MCP tools (v0.10.0)
+### Provenance MCP tools
 
-The MCP server exposes 5 new tools for inline text and image provenance — covering the same surface as the [`sign-text`](../guides/inline-text-signing.md) and [`sign-image`](../guides/media-signing.md) CLI verbs.
+The MCP server exposes tools for inline text and image provenance, covering the same surface as the [`sign-text`](../guides/inline-text-signing.md) and [`sign-image`](../guides/media-signing.md) CLI verbs.
 
 - `jacs_sign_text` — append a YAML-bodied signature block to a markdown / text file.
 - `jacs_verify_text` — verify all signature blocks in a file (permissive default; `strict` opt-in).
@@ -152,7 +186,6 @@ The MCP server exposes 5 new tools for inline text and image provenance — cove
 
 ## Example Paths In This Repo
 
-- `jacs-mcp/README.md`
 - `jacspy/examples/mcp/server.py`
 - `jacspy/examples/mcp/client.py`
 - `jacsnpm/examples/mcp.stdio.server.js`

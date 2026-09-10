@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from typing import Any
 from urllib.parse import quote
 
@@ -64,9 +65,10 @@ def build_jacs_auth_header() -> str:
         )
 
     timestamp = int(time.time())
-    message = f"{cfg.jacs_id}:{timestamp}"
+    nonce = uuid.uuid4().hex
+    message = f"{cfg.jacs_id}:{timestamp}:{nonce}"
     signature = agent.sign_string(message)
-    return f"JACS {cfg.jacs_id}:{timestamp}:{signature}"
+    return f"JACS {cfg.jacs_id}:{timestamp}:{nonce}:{signature}"
 
 
 def build_auth_headers() -> dict[str, str]:
@@ -82,11 +84,12 @@ def build_auth_headers() -> dict[str, str]:
 
 
 def build_jacs_auth_header_with_key(jacs_id: str, version: str, agent: Any) -> str:
-    """Build a 4-part JACS auth header signed by an explicit agent."""
+    """Build a versioned nonce-bearing JACS auth header signed by an explicit agent."""
     timestamp = int(time.time())
-    message = f"{jacs_id}:{version}:{timestamp}"
+    nonce = uuid.uuid4().hex
+    message = f"{jacs_id}:{version}:{timestamp}:{nonce}"
     signature = agent.sign_string(message)
-    return f"JACS {jacs_id}:{version}:{timestamp}:{signature}"
+    return f"JACS {jacs_id}:{version}:{timestamp}:{nonce}:{signature}"
 
 
 def parse_transcript(raw_messages: list[dict[str, Any]]) -> list[TranscriptMessage]:
@@ -102,9 +105,7 @@ def parse_transcript(raw_messages: list[dict[str, Any]]) -> list[TranscriptMessa
     ]
 
 
-def parse_public_key_info(
-    data: dict[str, Any], **defaults: Any
-) -> PublicKeyInfo:
+def parse_public_key_info(data: dict[str, Any], **defaults: Any) -> PublicKeyInfo:
     """Parse a PublicKeyInfo from an FFI response dict."""
     return PublicKeyInfo(
         jacs_id=data.get("jacs_id", defaults.get("jacs_id", "")),

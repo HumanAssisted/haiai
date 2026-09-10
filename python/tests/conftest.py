@@ -7,10 +7,8 @@ Test fixtures create ephemeral JACS agents for signing/verification.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any, Generator
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -60,9 +58,11 @@ def _try_get_real_agent() -> Any | None:
     """Try to create a real ephemeral JACS agent. Returns None if bindings unavailable."""
     try:
         from jacs import SimpleAgent
+
         agent, info = SimpleAgent.ephemeral("ring-Ed25519")
         # Wrap in EphemeralAgentAdapter for JacsAgent-compatible API
         from jacs.simple import _EphemeralAgentAdapter
+
         return _EphemeralAgentAdapter(agent)
     except Exception:
         return None
@@ -99,6 +99,7 @@ def password_env(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]
     monkeypatch.delenv("JACS_PASSWORD_FILE", raising=False)
     monkeypatch.delenv("JACS_DISABLE_PASSWORD_ENV", raising=False)
     monkeypatch.delenv("JACS_DISABLE_PASSWORD_FILE", raising=False)
+    monkeypatch.delenv("JACS_ALLOW_UNSIGNED_AGENT_CONFIG", raising=False)
     yield
 
 
@@ -151,6 +152,7 @@ def loaded_config(
 
     # Load config metadata (name, version, key_dir, jacs_id)
     import json
+
     raw = json.loads(jacs_config_path.read_text())
     config_mod._config = config_mod.AgentConfig(
         name=raw["jacsAgentName"],
@@ -348,6 +350,66 @@ class MockFFIAdapter:
     def verify_email_raw(self, raw_email_b64: str) -> dict:
         return self._record("verify_email_raw", raw_email_b64)
 
+    # Agreements
+    def save_agreement(self, request: dict) -> dict:
+        return self._record("save_agreement", request)
+
+    def search_agreements(self, request: dict) -> dict:
+        return self._record("search_agreements", request)
+
+    def get_agreement(self, agreement_id: str) -> dict:
+        return self._record("get_agreement", agreement_id)
+
+    def countersign_agreement(self, agreement_id: str, request: dict) -> dict:
+        return self._record("countersign_agreement", agreement_id, request)
+
+    def create_agreement_v2(self, input_data: dict) -> dict:
+        return self._record("create_agreement_v2", input_data)
+
+    def apply_agreement_v2(self, document: str, mutation: dict) -> dict:
+        return self._record("apply_agreement_v2", document, mutation)
+
+    def sign_agreement_v2(self, document: str, role: str) -> dict:
+        return self._record("sign_agreement_v2", document, role)
+
+    def verify_agreement_v2(self, document: str) -> dict:
+        return self._record("verify_agreement_v2", document)
+
+    def detect_agreement_branch_conflict(
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict:
+        return self._record(
+            "detect_agreement_branch_conflict",
+            base_document,
+            left_document,
+            right_document,
+        )
+
+    def merge_agreement_transcript_branches(
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict:
+        return self._record(
+            "merge_agreement_transcript_branches",
+            base_document,
+            left_document,
+            right_document,
+        )
+
+    def resolve_agreement_branch_conflict(
+        self,
+        base_document: str,
+        previous_document: str,
+        side_branch_document: str,
+        resolution: dict,
+    ) -> dict:
+        return self._record(
+            "resolve_agreement_branch_conflict",
+            base_document,
+            previous_document,
+            side_branch_document,
+            resolution,
+        )
+
     # Local Media (Layer 8 / TASK_007)
     def sign_text(self, path: str, opts: dict) -> dict:
         return self._record("sign_text", path, opts)
@@ -517,6 +579,23 @@ class MockFFIAdapter:
         result = self._record("get_record_bytes", key)
         return result if isinstance(result, bytes) else b""
 
+    def conflict_create(self, body_json: str) -> dict:
+        return self._record("conflict_create", body_json)
+
+    def conflict_update(self, key_or_id: str, mutation_json: str) -> dict:
+        return self._record("conflict_update", key_or_id, mutation_json)
+
+    def conflict_get(self, key: str) -> str:
+        result = self._record("conflict_get", key)
+        return result if isinstance(result, str) else ""
+
+    def conflict_list(self, limit: int, offset: int) -> list[str]:
+        result = self._record("conflict_list", limit, offset)
+        return list(result) if isinstance(result, list) else []
+
+    def conflict_check_readiness(self, key_or_id: str) -> dict:
+        return self._record("conflict_check_readiness", key_or_id)
+
 
 class MockAsyncFFIAdapter(MockFFIAdapter):
     """Async version of MockFFIAdapter for AsyncHaiClient tests."""
@@ -636,6 +715,74 @@ class MockAsyncFFIAdapter(MockFFIAdapter):
     async def verify_email_raw(self, raw_email_b64: str) -> dict:  # type: ignore[override]
         return self._record("verify_email_raw", raw_email_b64)
 
+    # Agreements
+    async def save_agreement(self, request: dict) -> dict:  # type: ignore[override]
+        return self._record("save_agreement", request)
+
+    async def search_agreements(self, request: dict) -> dict:  # type: ignore[override]
+        return self._record("search_agreements", request)
+
+    async def get_agreement(self, agreement_id: str) -> dict:  # type: ignore[override]
+        return self._record("get_agreement", agreement_id)
+
+    async def countersign_agreement(  # type: ignore[override]
+        self, agreement_id: str, request: dict
+    ) -> dict:
+        return self._record("countersign_agreement", agreement_id, request)
+
+    async def create_agreement_v2(  # type: ignore[override]
+        self, input_data: dict
+    ) -> dict:
+        return self._record("create_agreement_v2", input_data)
+
+    async def apply_agreement_v2(  # type: ignore[override]
+        self, document: str, mutation: dict
+    ) -> dict:
+        return self._record("apply_agreement_v2", document, mutation)
+
+    async def sign_agreement_v2(  # type: ignore[override]
+        self, document: str, role: str
+    ) -> dict:
+        return self._record("sign_agreement_v2", document, role)
+
+    async def verify_agreement_v2(self, document: str) -> dict:  # type: ignore[override]
+        return self._record("verify_agreement_v2", document)
+
+    async def detect_agreement_branch_conflict(  # type: ignore[override]
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict:
+        return self._record(
+            "detect_agreement_branch_conflict",
+            base_document,
+            left_document,
+            right_document,
+        )
+
+    async def merge_agreement_transcript_branches(  # type: ignore[override]
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict:
+        return self._record(
+            "merge_agreement_transcript_branches",
+            base_document,
+            left_document,
+            right_document,
+        )
+
+    async def resolve_agreement_branch_conflict(  # type: ignore[override]
+        self,
+        base_document: str,
+        previous_document: str,
+        side_branch_document: str,
+        resolution: dict,
+    ) -> dict:
+        return self._record(
+            "resolve_agreement_branch_conflict",
+            base_document,
+            previous_document,
+            side_branch_document,
+            resolution,
+        )
+
     # Local Media (Layer 8 / TASK_007)
     async def sign_text(self, path: str, opts: dict) -> dict:  # type: ignore[override]
         return self._record("sign_text", path, opts)
@@ -702,6 +849,23 @@ class MockAsyncFFIAdapter(MockFFIAdapter):
     async def ws_close(self, handle: int) -> None:  # type: ignore[override]
         self._record("ws_close", handle)
 
+    async def conflict_create(self, body_json: str) -> dict:  # type: ignore[override]
+        return self._record("conflict_create", body_json)
+
+    async def conflict_update(self, key_or_id: str, mutation_json: str) -> dict:  # type: ignore[override]
+        return self._record("conflict_update", key_or_id, mutation_json)
+
+    async def conflict_get(self, key: str) -> str:  # type: ignore[override]
+        result = self._record("conflict_get", key)
+        return result if isinstance(result, str) else ""
+
+    async def conflict_list(self, limit: int, offset: int) -> list[str]:  # type: ignore[override]
+        result = self._record("conflict_list", limit, offset)
+        return list(result) if isinstance(result, list) else []
+
+    async def conflict_check_readiness(self, key_or_id: str) -> dict:  # type: ignore[override]
+        return self._record("conflict_check_readiness", key_or_id)
+
     async def base_url(self) -> str:  # type: ignore[override]
         result = self._record("base_url")
         return result if isinstance(result, str) else ""
@@ -727,24 +891,30 @@ def mock_async_ffi() -> MockAsyncFFIAdapter:
 
 
 @pytest.fixture()
-def ffi_client(loaded_config: None, mock_ffi: MockFFIAdapter) -> tuple[Any, MockFFIAdapter]:
+def ffi_client(
+    loaded_config: None, mock_ffi: MockFFIAdapter
+) -> tuple[Any, MockFFIAdapter]:
     """Provide a HaiClient with a mock FFI adapter pre-injected.
 
     Returns (client, mock_ffi) so tests can set up responses and verify calls.
     """
     from haiai.client import HaiClient
+
     client = HaiClient()
     client._ffi = mock_ffi  # type: ignore[assignment]
     return client, mock_ffi
 
 
 @pytest.fixture()
-def async_ffi_client(loaded_config: None, mock_async_ffi: MockAsyncFFIAdapter) -> tuple[Any, MockAsyncFFIAdapter]:
+def async_ffi_client(
+    loaded_config: None, mock_async_ffi: MockAsyncFFIAdapter
+) -> tuple[Any, MockAsyncFFIAdapter]:
     """Provide an AsyncHaiClient with a mock FFI adapter pre-injected.
 
     Returns (client, mock_ffi) so tests can set up responses and verify calls.
     """
     from haiai.async_client import AsyncHaiClient
+
     client = AsyncHaiClient()
     client._ffi = mock_async_ffi  # type: ignore[assignment]
     return client, mock_async_ffi
@@ -764,9 +934,6 @@ def _auto_mock_ffi(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, Non
     """
     from haiai.client import HaiClient
     from haiai.async_client import AsyncHaiClient
-
-    original_sync = HaiClient._get_ffi
-    original_async = AsyncHaiClient._get_ffi
 
     def _patched_sync_get_ffi(self: Any) -> Any:
         if self._ffi is None:

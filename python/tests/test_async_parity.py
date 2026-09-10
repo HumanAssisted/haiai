@@ -5,11 +5,11 @@ rotate_keys) must exist on AsyncHaiClient with matching parameter signatures.
 
 Also includes behavioral tests that mock FFI to verify correct endpoint calls.
 """
+
 from __future__ import annotations
 
-import asyncio
 import inspect
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -49,11 +49,7 @@ class TestAsyncSignaturesMatchSync:
     def _param_names(method: object) -> list[str]:
         """Extract non-self parameter names from a method."""
         sig = inspect.signature(method)  # type: ignore[arg-type]
-        return [
-            name
-            for name, p in sig.parameters.items()
-            if name != "self"
-        ]
+        return [name for name, p in sig.parameters.items() if name != "self"]
 
     def test_free_run_signature_matches(self) -> None:
         from haiai.async_client import AsyncHaiClient
@@ -121,7 +117,11 @@ class TestAsyncFreeRunBehavior:
         response_data = {
             "run_id": "run-abc-123",
             "transcript": [
-                {"role": "system", "content": "Hello", "timestamp": "2026-01-01T00:00:00Z"}
+                {
+                    "role": "system",
+                    "content": "Hello",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                }
             ],
             "upsell_message": "Upgrade for scoring!",
         }
@@ -202,9 +202,14 @@ class TestAsyncRotateKeysBehavior:
 
         client = AsyncHaiClient(timeout=30.0)
 
-        with patch("haiai.async_client.AsyncHaiClient._get_jacs_id", return_value="test-agent-id:v1"):
+        with patch(
+            "haiai.async_client.AsyncHaiClient._get_jacs_id",
+            return_value="test-agent-id:v1",
+        ):
             # Patch HaiClient.rotate_keys to return our expected result
-            with patch("haiai.client.HaiClient.rotate_keys", return_value=expected_result) as mock_rotate:
+            with patch(
+                "haiai.client.HaiClient.rotate_keys", return_value=expected_result
+            ) as mock_rotate:
                 result = await client.rotate_keys(
                     hai_url="https://hai.ai",
                     register_with_hai=True,
@@ -338,7 +343,12 @@ class TestAsyncTransportParity:
 
         events = iter(
             [
-                {"event_type": "connected", "data": {"ok": True}, "id": "evt-ok", "raw": "raw"},
+                {
+                    "event_type": "connected",
+                    "data": {"ok": True},
+                    "id": "evt-ok",
+                    "raw": "raw",
+                },
                 None,
             ]
         )
@@ -392,7 +402,9 @@ class TestAsyncTransportParity:
             sleep_delays.append(delay)
 
         monkeypatch.setattr("haiai.async_client.RETRY_MAX_ATTEMPTS", 1)
-        monkeypatch.setattr("haiai.async_client.backoff", lambda attempt: float(attempt))
+        monkeypatch.setattr(
+            "haiai.async_client.backoff", lambda attempt: float(attempt)
+        )
         monkeypatch.setattr("haiai.async_client.asyncio.sleep", fake_sleep)
 
         mock_ffi.responses[connect_method] = always_fail

@@ -1,6 +1,7 @@
 """Tests for the binary wrapper module."""
 
 import platform
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,7 +10,6 @@ import pytest
 
 def test_binary_module_imports():
     """_binary module should import without errors."""
-    from haiai._binary import find_binary, run_binary, main
 
 
 def test_find_binary_env_override(tmp_path):
@@ -52,6 +52,7 @@ def test_find_binary_bundled(tmp_path):
     with patch.dict("os.environ", {}, clear=False):
         # Remove env override if set
         import os
+
         os.environ.pop("HAIAI_BINARY_PATH", None)
 
         with patch.object(_binary, "__file__", str(tmp_path / "_binary.py")):
@@ -74,6 +75,7 @@ def test_find_binary_returns_none_when_nothing_available():
 
     with patch.dict("os.environ", {}, clear=False):
         import os
+
         os.environ.pop("HAIAI_BINARY_PATH", None)
 
         with patch("shutil.which", return_value=None):
@@ -110,8 +112,6 @@ def test_main_raises_when_no_binary():
 # ---------------------------------------------------------------------------
 # Resolution logic tests
 # ---------------------------------------------------------------------------
-
-import sys
 
 
 def _make_stub(p: Path, version: str = "0.2.0") -> Path:
@@ -190,12 +190,17 @@ class TestFindBinaryResolution:
     def _no_env(self):
         """Context manager: clear HAIAI_BINARY_PATH."""
         import os
-        return patch.dict("os.environ", {k: v for k, v in os.environ.items()
-                                          if k != "HAIAI_BINARY_PATH"}, clear=True)
+
+        return patch.dict(
+            "os.environ",
+            {k: v for k, v in os.environ.items() if k != "HAIAI_BINARY_PATH"},
+            clear=True,
+        )
 
     def _no_bundled(self):
         """Context manager: make bundled-binary check fail."""
         from haiai import _binary
+
         return patch.object(_binary, "__file__", "/nonexistent/_binary.py")
 
     # -- Priority --
@@ -213,9 +218,7 @@ class TestFindBinaryResolution:
     def test_cargo_local_beats_path(self, tmp_path):
         from haiai import _binary
 
-        cargo_bin = _make_stub(
-            tmp_path / "project" / ".cargo-local" / "bin" / "haiai"
-        )
+        cargo_bin = _make_stub(tmp_path / "project" / ".cargo-local" / "bin" / "haiai")
         path_bin = _make_stub(tmp_path / "sys" / "haiai")
 
         with self._no_env(), self._no_bundled():

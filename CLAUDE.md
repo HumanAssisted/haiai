@@ -2,7 +2,7 @@
 
 ## What This Is
 
-HAIAI SDK — multi-language SDK (Python, Node, Go, Rust) for the HAI.AI agent benchmarking platform. Thin wrapper around `jacs` for cryptographic identity + HAI platform integration.
+HAIAI SDK — multi-language SDK (Python, Node, Go, Rust) for HAI.AI platform integration (agents, agreements, signed email, JACS identity). Thin wrapper around `jacs`.
 
 The HTTP client is implemented once in Rust and exposed to Python, Node, and Go via FFI bindings (PyO3, napi-rs, CGo). Each SDK is a thin type-safe wrapper that parses JSON responses from the FFI layer into language-native types.
 

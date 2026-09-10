@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use crate::client::DEFAULT_BASE_URL;
 use crate::config::resolve_storage_backend;
 use crate::error::{HaiError, Result};
 use crate::jacs::JacsDocumentProvider;
@@ -59,9 +58,9 @@ pub fn build_document_provider_for_backend(
                             "failed to load local JACS signer for remote document provider: {e}"
                         ))
                     })?;
-            let base_url = base_url
-                .or_else(|| std::env::var("HAI_URL").ok())
-                .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
+            // `HAI_URL` > `HAI_API_URL` > `DEFAULT_BASE_URL`, one contract for
+            // the whole crate.
+            let base_url = base_url.unwrap_or_else(crate::client::base_url_from_env);
             let remote = RemoteJacsProvider::new(
                 local,
                 RemoteJacsProviderOptions {
@@ -82,29 +81,10 @@ pub fn build_document_provider_for_backend(
 
 #[cfg(test)]
 mod tests {
-    use jacs::simple::CreateAgentParams;
-
     use super::*;
 
     fn create_test_agent() -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let base = dir.path().canonicalize().expect("canonical tempdir");
-        let config_path = base.join("jacs.config.json");
-        let data_dir = base.join("jacs_data");
-        let key_dir = base.join("jacs_keys");
-        std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123");
-        LocalJacsProvider::create_agent(CreateAgentParams {
-            name: "doc-store-test".to_string(),
-            password: "TestPass!123".to_string(),
-            config_path: config_path.to_string_lossy().into_owned(),
-            data_directory: data_dir.to_string_lossy().into_owned(),
-            key_directory: key_dir.to_string_lossy().into_owned(),
-            algorithm: "ed25519".to_string(),
-            default_storage: "fs".to_string(),
-            ..CreateAgentParams::default()
-        })
-        .expect("create agent");
-        (dir, config_path)
+        crate::test_support::create_test_agent("doc-store-test")
     }
 
     #[test]

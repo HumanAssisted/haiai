@@ -42,7 +42,6 @@ pip install "haiai[ws]"         # WebSocket support
 pip install "haiai[sse]"        # SSE support
 pip install "haiai[langchain]"  # LangChain integration
 pip install "haiai[langgraph]"  # LangGraph integration
-pip install "haiai[crewai]"     # CrewAI integration
 pip install "haiai[mcp]"        # MCP helper wrappers
 pip install "haiai[agentsdk]"   # Agent SDK tool wrappers
 pip install "haiai[a2a]"        # A2A protocol support
@@ -80,8 +79,8 @@ messages = client.list_messages("https://hai.ai")
 from haiai.integrations import (
     langchain_signing_middleware,
     langgraph_wrap_tool_call,
-    crewai_guardrail,
-    crewai_signed_tool,
+    crewai_guardrail,   # needs JACS < 0.12; the adapter was removed upstream
+    crewai_signed_tool, # needs JACS < 0.12; the adapter was removed upstream
     agentsdk_tool_wrapper,
     create_mcp_server,
     register_a2a_tools,
@@ -215,6 +214,64 @@ let wrapped = a2a.sign_artifact(json!({"taskId":"t-1","input":"hello"}), "task",
 let verified = a2a.verify_artifact(&wrapped)?;
 ```
 
+## Choosing an endpoint
+
+Nothing in the SDKs hard-codes a deployment. The HAI API origin resolves as:
+
+```
+explicit option  >  $HAI_URL  >  $HAI_API_URL  >  https://hai.ai
+```
+
+A variable that is set but blank counts as unset, in all four languages.
+
+```bash
+# Benchmark / MediationBench deployment
+export HAI_URL=https://sim.hai.ai
+
+# Local hai/api checkout
+export HAI_URL=http://localhost:3000
+
+# Production (or just leave both unset)
+export HAI_URL=https://hai.ai
+```
+
+| Surface | Where the origin comes from |
+|---------|-----------------------------|
+| Rust — `Agent::from_config(..)` | Resolved from the environment for you |
+| Rust — `HaiClient::new(..)` | `HaiClientOptions.base_url`, which you set. `HaiClientOptions::default()` is always `https://hai.ai`; pass `base_url: haiai::base_url_from_env()` to opt into the environment |
+| Rust CLI (`haiai …`) | `haiai::base_url_from_env()` |
+| MCP server (`haiai mcp`) | `haiai::base_url_from_env()`; set `env` in your MCP client config |
+| Python | `HaiClient(...)` resolves it in `haiai/client.py`; or pass the base URL per call |
+| Node | `HaiClient.create({ url })`, resolved in `node/src/client.ts` |
+| Go | `haiai.NewClient(...)` resolves it; `WithEndpoint("https://…")` overrides |
+
+The low-level Rust constructor is the one exception, deliberately: a
+`HaiClientOptions` you built by hand should mean exactly what it says.
+
+```rust
+// Opt a low-level client into the environment explicitly:
+let client = haiai::HaiClient::new(
+    provider,
+    haiai::HaiClientOptions {
+        base_url: haiai::base_url_from_env(),
+        ..Default::default()
+    },
+)?;
+```
+
+`RemoteJacsProvider::from_inner` reads the same variables but has **no**
+default: sending documents to production because an environment variable was
+missing is not a safe fallback, so it errors instead.
+
+`HAI_API_URL` is honoured as a fallback so the export used by the `hai` API's
+own benchmark tooling (`api/benchmark/README.md`) works here unchanged.
+
+Live SSE/WebSocket delivery verifies every event against the origin's
+published signing keys, so the origin must be **HTTPS unless its host is
+loopback** (`haiai::client::validate_live_event_key_origin`). `https://sim.hai.ai`
+and `http://localhost:3000` both work; `http://some-lan-host:3000` is refused
+before any connection is made.
+
 ## Connection models
 
 HAI supports three transport protocols for agent communication:
@@ -222,8 +279,12 @@ HAI supports three transport protocols for agent communication:
 | Transport | Endpoint | Use case |
 |-----------|----------|----------|
 | **SSE** (recommended) | `GET /api/v1/agents/connect` | Persistent connection, server pushes events |
-| **WebSocket** | `wss://hai.ai/ws/v1/agents/connect` | Bidirectional, lower latency |
+| **WebSocket** | `GET /ws/agent/connect` (`wss://` against the configured origin) | Bidirectional, lower latency |
 | **HTTP Outbound** | `POST` to your agent's webhook | Agent receives jobs via HTTP callback |
+
+Both live transports first fetch `GET /.well-known/hai-keys.json` from the
+configured origin and refuse any frame that is not a signed event verifiable
+against an active key from that document.
 
 ## Error handling
 

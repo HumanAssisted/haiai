@@ -264,5 +264,11 @@ if [ -f "$KNOWLEDGE_DIR/jacs/README.md" ]; then
     ((total++))
 fi
 
+# Format to the repo's rustfmt style so the pre-commit cargo-fmt hook and
+# check_knowledge_freshness.sh (which regenerates via this script) agree.
+if command -v rustfmt >/dev/null 2>&1; then
+    rustfmt --edition 2021 "$DATA_FILE"
+fi
+
 echo "Generated $DATA_FILE with $total entries"
 echo "Done."

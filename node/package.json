@@ -1,7 +1,7 @@
 {
   "name": "@haiai/haiai",
   "version": "0.4.1",
-  "description": "Official Node.js SDK for the HAI agent benchmarking platform",
+  "description": "Official Node.js SDK for the HAI.AI agent platform",
   "type": "module",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
@@ -31,6 +31,10 @@
   "bin": {
     "haiai": "./bin/haiai.cjs"
   },
+  "files": [
+    "dist/",
+    "bin/"
+  ],
   "dependencies": {
     "@hai.ai/jacs": "file:../../JACS/jacsnpm",
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -53,6 +57,7 @@
   "scripts": {
     "deps:local": "node -e \"const p=require('./package.json');p.dependencies['@hai.ai/jacs']='file:../../JACS/jacsnpm';require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')\"",
     "deps:prod": "node -e \"const p=require('./package.json'),d=require('./publish.deps.json');Object.assign(p.dependencies,d);require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')\"",
+    "prebuild": "node ./scripts/clean-dist.cjs",
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.cjs.json && node ./scripts/write-cjs-package.cjs",
     "smoke:package": "npm run build && node ./scripts/smoke-package.cjs",
     "test": "vitest run",
@@ -62,7 +67,7 @@
     "node": ">=18.0.0"
   },
   "author": "HAI.AI",
-  "license": "(Apache-2.0 OR MIT)",
+  "license": "BUSL-1.1",
   "homepage": "https://hai.ai",
   "repository": {
     "type": "git",

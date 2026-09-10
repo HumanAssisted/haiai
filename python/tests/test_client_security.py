@@ -5,7 +5,6 @@ All crypto operations delegate to JACS binding-core.
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import stat
@@ -17,8 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from haiai.async_client import AsyncHaiClient
-from haiai.client import HaiClient, register_new_agent
+from haiai.client import register_new_agent
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +32,9 @@ def _fake_register_result(options: dict[str, Any]) -> dict[str, Any]:
     # Create dummy key files with correct permissions (simulates JACS keygen)
     priv_key = key_dir / "agent_private_key.pem"
     pub_key = key_dir / "agent_public_key.pem"
-    priv_key.write_text("-----BEGIN ENCRYPTED PRIVATE KEY-----\nfake\n-----END ENCRYPTED PRIVATE KEY-----\n")
+    priv_key.write_text(
+        "-----BEGIN ENCRYPTED PRIVATE KEY-----\nfake\n-----END ENCRYPTED PRIVATE KEY-----\n"
+    )
     pub_key.write_text("-----BEGIN PUBLIC KEY-----\nfake\n-----END PUBLIC KEY-----\n")
     if os.name != "nt":
         priv_key.chmod(0o600)
@@ -74,8 +74,6 @@ def _make_mock_ffi_adapter(captured: dict[str, Any]) -> Any:
     """Create a mock FFIAdapter that captures register_new_agent options."""
     from haiai._ffi_adapter import FFIAdapter
 
-    original_init = FFIAdapter.__init__
-
     class MockAdapter(FFIAdapter):
         def __init__(self, config_json: str):
             # Skip real FFI init
@@ -114,6 +112,7 @@ def test_register_new_agent_writes_private_key_with_0600(
         )
     finally:
         from haiai.config import reset
+
         reset()
 
     private_key_path = key_dir / "agent_private_key.pem"
@@ -145,6 +144,7 @@ def test_register_new_agent_defaults_to_secure_key_dir(
         )
     finally:
         from haiai.config import reset
+
         reset()
 
     expected_key_dir = (tmp_path / ".jacs" / "keys").resolve()
@@ -162,7 +162,9 @@ def test_register_new_agent_defaults_to_secure_key_dir(
     assert opts["description"] == "Agent description"
 
 
-def test_public_key_hash_delegates_to_jacs_base64_api(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_public_key_hash_delegates_to_jacs_base64_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from haiai.client import _compute_public_key_hash
 
     calls: list[str] = []
@@ -210,6 +212,7 @@ def test_register_new_agent_prints_ffi_dns_record(
         )
     finally:
         from haiai.config import reset
+
         reset()
 
     out = capsys.readouterr().out
@@ -223,7 +226,9 @@ def test_register_new_agent_fallback_dns_record_matches_fixture(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     fixture = json.loads(
-        (Path(__file__).resolve().parents[2] / "fixtures" / "dns_txt_record.json").read_text()
+        (
+            Path(__file__).resolve().parents[2] / "fixtures" / "dns_txt_record.json"
+        ).read_text()
     )
     captured: dict[str, Any] = {}
 
@@ -253,6 +258,7 @@ def test_register_new_agent_fallback_dns_record_matches_fixture(
         )
     finally:
         from haiai.config import reset
+
         reset()
 
     out = capsys.readouterr().out
@@ -272,7 +278,12 @@ class TestSecurityRegressionContract:
     def _load_fixture() -> dict:
         import json
         from pathlib import Path
-        path = Path(__file__).resolve().parent.parent.parent / "fixtures" / "security_regression_contract.json"
+
+        path = (
+            Path(__file__).resolve().parent.parent.parent
+            / "fixtures"
+            / "security_regression_contract.json"
+        )
         return json.loads(path.read_text())
 
     def test_fixture_loads(self) -> None:
@@ -294,6 +305,7 @@ class TestSecurityRegressionContract:
     def test_malformed_agent_id_escaped(self, loaded_config: None) -> None:
         """Agent ID with special chars is URL-escaped in API paths."""
         from urllib.parse import quote
+
         malicious_id = "agent/../../../etc/passwd"
         escaped = quote(malicious_id, safe="")
         assert "/" not in escaped
@@ -303,7 +315,11 @@ class TestSecurityRegressionContract:
     ) -> None:
         """FFI options dict must not contain private key material."""
         fixture = self._load_fixture()
-        tc = next(t for t in fixture["test_cases"] if t["name"] == "register_omits_private_key")
+        tc = next(
+            t
+            for t in fixture["test_cases"]
+            if t["name"] == "register_omits_private_key"
+        )
         assert tc is not None
 
         captured: dict[str, Any] = {}
@@ -321,6 +337,7 @@ class TestSecurityRegressionContract:
             )
         finally:
             from haiai.config import reset
+
             reset()
 
         # Verify the options passed to FFI do not contain private key material
@@ -333,7 +350,11 @@ class TestSecurityRegressionContract:
     ) -> None:
         """register_new_agent options must not contain auth credentials."""
         fixture = self._load_fixture()
-        tc = next(t for t in fixture["test_cases"] if t["name"] == "register_is_unauthenticated")
+        tc = next(
+            t
+            for t in fixture["test_cases"]
+            if t["name"] == "register_is_unauthenticated"
+        )
         assert tc is not None
 
         captured: dict[str, Any] = {}
@@ -351,6 +372,7 @@ class TestSecurityRegressionContract:
             )
         finally:
             from haiai.config import reset
+
             reset()
 
         # Verify no auth tokens in the options sent to FFI

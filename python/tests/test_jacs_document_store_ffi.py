@@ -40,11 +40,17 @@ class TestD5MemorySoulWrappers:
     """Each D5 method round-trips through MockFFIAdapter and records the
     expected call signature."""
 
-    def test_save_memory_records_call_with_content(self, mock_ffi: MockFFIAdapter) -> None:
+    def test_save_memory_records_call_with_content(
+        self, mock_ffi: MockFFIAdapter
+    ) -> None:
         mock_ffi.responses["save_memory"] = "mem-id:v1"
         key = mock_ffi.save_memory("# MEMORY.md\n\nproject: foo")
         assert key == "mem-id:v1"
-        assert mock_ffi.calls[-1] == ("save_memory", ("# MEMORY.md\n\nproject: foo",), {})
+        assert mock_ffi.calls[-1] == (
+            "save_memory",
+            ("# MEMORY.md\n\nproject: foo",),
+            {},
+        )
 
     def test_save_memory_records_call_with_none_content(
         self, mock_ffi: MockFFIAdapter
@@ -56,7 +62,9 @@ class TestD5MemorySoulWrappers:
         assert key == "mem-id:v2"
         assert mock_ffi.calls[-1] == ("save_memory", (None,), {})
 
-    def test_save_soul_records_call_with_content(self, mock_ffi: MockFFIAdapter) -> None:
+    def test_save_soul_records_call_with_content(
+        self, mock_ffi: MockFFIAdapter
+    ) -> None:
         mock_ffi.responses["save_soul"] = "soul-id:v1"
         key = mock_ffi.save_soul("# SOUL.md\n\nvoice: terse")
         assert key == "soul-id:v1"
@@ -112,9 +120,7 @@ class TestD9TypedContentHelpers:
         assert mock_ffi.calls[-1] == ("store_image_file", ("/tmp/signed.png",), {})
 
     def test_get_record_bytes_returns_bytes(self, mock_ffi: MockFFIAdapter) -> None:
-        png_magic = bytes(
-            [0x89, ord("P"), ord("N"), ord("G"), 0x0D, 0x0A, 0x1A, 0x0A]
-        )
+        png_magic = bytes([0x89, ord("P"), ord("N"), ord("G"), 0x0D, 0x0A, 0x1A, 0x0A])
         mock_ffi.responses["get_record_bytes"] = png_magic
         out = mock_ffi.get_record_bytes("png-id:v1")
         assert out == png_magic
@@ -128,6 +134,60 @@ class TestD9TypedContentHelpers:
         out = mock_ffi.get_record_bytes("missing")
         assert out == b""
         assert mock_ffi.calls[-1] == ("get_record_bytes", ("missing",), {})
+
+
+# ---------------------------------------------------------------------------
+# Conflict document wrappers
+# ---------------------------------------------------------------------------
+
+
+class TestConflictDocumentWrappers:
+    def test_conflict_create_records_body_json(self, mock_ffi: MockFFIAdapter) -> None:
+        body = json.dumps({"title": "t"})
+        mock_ffi.responses["conflict_create"] = {"key": "conflict-id:v1", "json": "{}"}
+        out = mock_ffi.conflict_create(body)
+        assert out == {"key": "conflict-id:v1", "json": "{}"}
+        assert mock_ffi.calls[-1] == ("conflict_create", (body,), {})
+
+    def test_conflict_update_records_key_and_mutation_json(
+        self, mock_ffi: MockFFIAdapter
+    ) -> None:
+        mutation = json.dumps({"type": "addPosition", "value": {}})
+        mock_ffi.responses["conflict_update"] = {"key": "conflict-id:v2", "json": "{}"}
+        out = mock_ffi.conflict_update("conflict-id:v1", mutation)
+        assert out["key"] == "conflict-id:v2"
+        assert mock_ffi.calls[-1] == (
+            "conflict_update",
+            ("conflict-id:v1", mutation),
+            {},
+        )
+
+    def test_conflict_get_returns_signed_json(self, mock_ffi: MockFFIAdapter) -> None:
+        signed = json.dumps({"jacsType": "conflict"})
+        mock_ffi.responses["conflict_get"] = signed
+        assert mock_ffi.conflict_get("conflict-id:v1") == signed
+        assert mock_ffi.calls[-1] == ("conflict_get", ("conflict-id:v1",), {})
+
+    def test_conflict_list_returns_keys(self, mock_ffi: MockFFIAdapter) -> None:
+        mock_ffi.responses["conflict_list"] = ["conflict-id:v1"]
+        out = mock_ffi.conflict_list(10, 0)
+        assert out == ["conflict-id:v1"]
+        assert mock_ffi.calls[-1] == ("conflict_list", (10, 0), {})
+
+    def test_conflict_check_readiness_returns_report(
+        self, mock_ffi: MockFFIAdapter
+    ) -> None:
+        mock_ffi.responses["conflict_check_readiness"] = {
+            "ready": False,
+            "blockers": [{"reason": "missing"}],
+        }
+        out = mock_ffi.conflict_check_readiness("conflict-id:v1")
+        assert out["ready"] is False
+        assert mock_ffi.calls[-1] == (
+            "conflict_check_readiness",
+            ("conflict-id:v1",),
+            {},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +271,13 @@ class TestD5D9MethodsAreInParityFixture:
 
     EXPECTED_D5_METHODS = ("save_memory", "save_soul", "get_memory", "get_soul")
     EXPECTED_D9_METHODS = ("store_text_file", "store_image_file", "get_record_bytes")
+    EXPECTED_CONFLICT_METHODS = (
+        "conflict_create",
+        "conflict_update",
+        "conflict_get",
+        "conflict_list",
+        "conflict_check_readiness",
+    )
 
     def _load_parity_methods(self) -> set[str]:
         from pathlib import Path
@@ -228,13 +295,20 @@ class TestD5D9MethodsAreInParityFixture:
     def test_all_d5_methods_appear_in_parity(self) -> None:
         parity = self._load_parity_methods()
         for name in self.EXPECTED_D5_METHODS:
-            assert (
-                name in parity
-            ), f"D5 method {name!r} missing from ffi_method_parity.json"
+            assert name in parity, (
+                f"D5 method {name!r} missing from ffi_method_parity.json"
+            )
 
     def test_all_d9_methods_appear_in_parity(self) -> None:
         parity = self._load_parity_methods()
         for name in self.EXPECTED_D9_METHODS:
-            assert (
-                name in parity
-            ), f"D9 method {name!r} missing from ffi_method_parity.json"
+            assert name in parity, (
+                f"D9 method {name!r} missing from ffi_method_parity.json"
+            )
+
+    def test_all_conflict_methods_appear_in_parity(self) -> None:
+        parity = self._load_parity_methods()
+        for name in self.EXPECTED_CONFLICT_METHODS:
+            assert name in parity, (
+                f"conflict method {name!r} missing from ffi_method_parity.json"
+            )

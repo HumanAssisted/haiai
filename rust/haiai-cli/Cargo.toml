@@ -16,12 +16,12 @@ name = "haiai"
 path = "src/main.rs"
 
 [dependencies]
-hai-mcp = { version = "=0.4.1", path = "../hai-mcp" }
-haiai = { version = "=0.4.1", path = "../haiai" }
-jacs = { version = "=0.10.1", features = ["keychain"] }
-jacs-mcp = { version = "=0.10.1", features = ["mcp"] }
+hai-mcp = { version = "=0.4.1", path = "../hai-mcp", features = ["conflict"] }
+haiai = { version = "=0.4.1", path = "../haiai", features = ["conflict"] }
+jacs = { version = "0.13.0", features = ["keychain"] }
+jacs-mcp = { version = "0.13.0", features = ["mcp"] }
 anyhow = "1"
-rmcp = { version = "0.12", features = ["server", "transport-io", "macros"] }
+rmcp = { version = "3.0", features = ["server", "transport-io", "macros"] }
 clap = { version = "4", features = ["derive", "env"] }
 tokio.workspace = true
 tracing = "0.1"
@@ -35,6 +35,9 @@ atty = "0.2"
 percent-encoding.workspace = true
 base64 = "0.22"
 tempfile = "3"
+
+[features]
+conflict = ["hai-mcp/conflict", "haiai/conflict"]
 
 [dev-dependencies]
 # Used to build PNG/JPEG bytes for media-signing CLI integration tests.

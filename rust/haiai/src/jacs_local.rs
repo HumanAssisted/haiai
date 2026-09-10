@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use jacs::agent::boilerplate::BoilerPlate;
 use jacs::agent::document::DocumentTraits;
@@ -16,6 +16,8 @@ use crate::error::{HaiError, Result};
 use crate::jacs::JacsAgreementProvider;
 #[cfg(feature = "attestation")]
 use crate::jacs::JacsAttestationProvider;
+#[cfg(feature = "conflict")]
+use crate::jacs::JacsConflictProvider;
 use crate::jacs::{
     DocSummary, JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider,
     JacsMediaProvider, JacsProvider, JacsVerificationProvider, MediaVerificationResult,
@@ -39,11 +41,144 @@ pub struct LocalJacsProvider {
     jacs_id: String,
     algorithm: String,
     config_path: PathBuf,
+    load_config_path: PathBuf,
+    jacs_config_env: JacsConfigEnvSnapshot,
     document_service: Option<Arc<dyn DocumentService>>,
     /// The resolved storage backend label (e.g., "fs", "rusqlite").
     /// Used to report accurate capabilities per backend.
     storage_label: Option<String>,
     document_dir: PathBuf,
+}
+
+static JACS_CONFIG_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Clone, Debug)]
+#[doc(hidden)]
+pub struct JacsConfigEnvSnapshot {
+    entries: Vec<(&'static str, String)>,
+}
+
+impl JacsConfigEnvSnapshot {
+    #[doc(hidden)]
+    pub fn empty() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn from_config(config: &jacs::config::Config) -> Self {
+        let use_security = env_string(config.jacs_use_security());
+        Self {
+            entries: vec![
+                ("JACS_ENABLE_FILESYSTEM_QUARANTINE", use_security.clone()),
+                ("JACS_USE_SECURITY", use_security),
+                (
+                    "JACS_DATA_DIRECTORY",
+                    env_string(config.jacs_data_directory()),
+                ),
+                (
+                    "JACS_KEY_DIRECTORY",
+                    env_string(config.jacs_key_directory()),
+                ),
+                (
+                    "JACS_AGENT_PRIVATE_KEY_FILENAME",
+                    env_string(config.jacs_agent_private_key_filename()),
+                ),
+                (
+                    "JACS_AGENT_PUBLIC_KEY_FILENAME",
+                    env_string(config.jacs_agent_public_key_filename()),
+                ),
+                (
+                    "JACS_AGENT_KEY_ALGORITHM",
+                    env_string(config.jacs_agent_key_algorithm()),
+                ),
+                (
+                    "JACS_AGENT_ID_AND_VERSION",
+                    env_string(config.jacs_agent_id_and_version()),
+                ),
+                (
+                    "JACS_DEFAULT_STORAGE",
+                    env_string(config.jacs_default_storage()),
+                ),
+                ("JACS_AGENT_DOMAIN", env_string(config.jacs_agent_domain())),
+                ("JACS_DNS_VALIDATE", env_bool(config.jacs_dns_validate())),
+                ("JACS_DNS_STRICT", env_bool(config.jacs_dns_strict())),
+                ("JACS_DNS_REQUIRED", env_bool(config.jacs_dns_required())),
+                ("JACS_DATABASE_URL", env_string(config.jacs_database_url())),
+            ],
+        }
+    }
+}
+
+#[doc(hidden)]
+pub struct JacsConfigEnvLockGuard {
+    _guard: MutexGuard<'static, ()>,
+}
+
+#[doc(hidden)]
+pub struct JacsConfigEnvOverrideGuard {
+    _lock: JacsConfigEnvLockGuard,
+    saved: Vec<(&'static str, bool, Option<String>)>,
+}
+
+impl JacsConfigEnvOverrideGuard {
+    #[doc(hidden)]
+    pub fn apply(snapshot: &JacsConfigEnvSnapshot) -> Result<Self> {
+        let lock = lock_jacs_config_env();
+        let mut saved = Vec::with_capacity(snapshot.entries.len());
+        for (key, value) in &snapshot.entries {
+            let had_override = jacs::storage::jenv::has_jenv_override(key);
+            let previous = if had_override {
+                jacs::storage::jenv::get_env_var(key, false)
+                    .map_err(|e| HaiError::Provider(format!("read JACS env override {key}: {e}")))?
+            } else {
+                None
+            };
+            saved.push((*key, had_override, previous));
+            jacs::storage::jenv::set_env_var(key, value)
+                .map_err(|e| HaiError::Provider(format!("set JACS env override {key}: {e}")))?;
+        }
+        Ok(Self { _lock: lock, saved })
+    }
+}
+
+impl Drop for JacsConfigEnvOverrideGuard {
+    fn drop(&mut self) {
+        for (key, had_override, previous) in self.saved.drain(..).rev() {
+            if had_override {
+                if let Some(value) = previous {
+                    let _ = jacs::storage::jenv::set_env_var(key, &value);
+                } else {
+                    let _ = jacs::storage::jenv::clear_env_var(key);
+                }
+            } else {
+                let _ = jacs::storage::jenv::clear_env_var(key);
+            }
+        }
+    }
+}
+
+fn env_string(value: &Option<String>) -> String {
+    value.clone().unwrap_or_default()
+}
+
+fn env_bool(value: &Option<bool>) -> String {
+    match value {
+        Some(true) => "true".to_string(),
+        Some(false) => "false".to_string(),
+        None => String::new(),
+    }
+}
+
+#[doc(hidden)]
+pub fn lock_jacs_config_env() -> JacsConfigEnvLockGuard {
+    JacsConfigEnvLockGuard {
+        _guard: match JACS_CONFIG_ENV_LOCK.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        },
+    }
 }
 
 impl LocalJacsProvider {
@@ -59,6 +194,7 @@ impl LocalJacsProvider {
         config_path: Option<&Path>,
         storage_label: Option<&str>,
     ) -> Result<Self> {
+        let _config_env_lock = lock_jacs_config_env();
         let config_path = resolve_jacs_config_path(config_path);
         let mut config = jacs::config::Config::from_file(&config_path.display().to_string())
             .map_err(|e| {
@@ -74,6 +210,8 @@ impl LocalJacsProvider {
         let saved_config_dir = config.config_dir().map(std::path::PathBuf::from);
         config.apply_env_overrides();
         config.set_config_dir(saved_config_dir);
+        canonicalize_config_dirs(&mut config, &config_path)?;
+        let load_config_path = materialize_resolved_config(&config_path, &config)?;
         let document_dir = resolve_config_relative_path(
             &config_path,
             config
@@ -104,6 +242,7 @@ impl LocalJacsProvider {
             }
             None
         };
+        let jacs_config_env = JacsConfigEnvSnapshot::from_config(&config);
 
         let agent = jacs::agent::Agent::from_config(config, None).map_err(|e| {
             HaiError::Provider(format!(
@@ -140,7 +279,7 @@ impl LocalJacsProvider {
             })?;
             // Reload a fresh agent for the provider's own signing operations.
             let mut reload_config = jacs::config::Config::from_file(
-                &config_path.display().to_string(),
+                &load_config_path.display().to_string(),
             )
             .map_err(|e| {
                 HaiError::Provider(format!("failed to reload config for provider agent: {e}"))
@@ -148,6 +287,7 @@ impl LocalJacsProvider {
             let saved_dir = reload_config.config_dir().map(std::path::PathBuf::from);
             reload_config.apply_env_overrides();
             reload_config.set_config_dir(saved_dir);
+            canonicalize_config_dirs(&mut reload_config, &config_path)?;
             if let Some(label) = &validated_label {
                 reload_config.merge(default_storage_override(label));
             }
@@ -175,6 +315,8 @@ impl LocalJacsProvider {
             jacs_id,
             algorithm,
             config_path,
+            load_config_path,
+            jacs_config_env,
             document_service,
             storage_label: validated_label,
             document_dir,
@@ -202,6 +344,7 @@ impl LocalJacsProvider {
     }
 
     pub fn create_agent(params: CreateAgentParams) -> Result<simple::AgentInfo> {
+        let _config_env_lock = lock_jacs_config_env();
         SimpleAgent::create_with_params(params)
             .map(|(_, info)| info)
             .map_err(|e| HaiError::Provider(format!("failed to create JACS agent: {e}")))
@@ -327,11 +470,12 @@ impl LocalJacsProvider {
     }
 
     fn load_simple_agent(&self) -> Result<SimpleAgent> {
-        let config_path_str = self.config_path.display().to_string();
+        let config_path_str = self.load_config_path.display().to_string();
+        let _env_guard = JacsConfigEnvOverrideGuard::apply(&self.jacs_config_env)?;
         SimpleAgent::load(Some(&config_path_str), Some(false)).map_err(|e| {
             HaiError::Provider(format!(
                 "failed to load SimpleAgent from {}: {e}",
-                self.config_path.display()
+                self.load_config_path.display()
             ))
         })
     }
@@ -463,6 +607,33 @@ impl LocalJacsProvider {
         })
     }
 
+    fn filesystem_version_keys_for_id(&self, doc_id: &str) -> Result<Vec<String>> {
+        let keys = self.list_filesystem_document_keys()?;
+        let mut matches = Vec::new();
+        for key in keys {
+            let Some((id, _version)) = key.split_once(':') else {
+                continue;
+            };
+            if id != doc_id {
+                continue;
+            }
+            let created_at = self
+                .get_document(&key)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                .and_then(|value| {
+                    value
+                        .get("jacsVersionDate")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .unwrap_or_default();
+            matches.push((created_at, key));
+        }
+        matches.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        Ok(matches.into_iter().map(|(_, key)| key).collect())
+    }
+
     fn latest_filesystem_key_for_id(&self, doc_id: &str) -> Result<Option<String>> {
         let keys = self.list_filesystem_document_keys()?;
         let mut matches = Vec::new();
@@ -477,6 +648,22 @@ impl LocalJacsProvider {
             if let Ok(text) = std::fs::read_to_string(&path) {
                 if let Some(summary) = extract_summary_from_signed_text(&text, &key) {
                     matches.push((summary.created_at, summary.version, key));
+                    continue;
+                }
+            }
+            if let Ok(raw) = self.get_document(&key) {
+                if let Ok(value) = serde_json::from_str::<Value>(&raw) {
+                    let created_at = value
+                        .get("jacsVersionDate")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let version = value
+                        .get("jacsVersion")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    matches.push((created_at, version, key));
                 }
             }
         }
@@ -561,6 +748,58 @@ fn resolve_config_relative_path(config_path: &Path, candidate: &str) -> PathBuf 
             .unwrap_or_else(|| Path::new("."))
             .join(path)
     }
+}
+
+fn canonicalize_config_dirs(config: &mut jacs::config::Config, config_path: &Path) -> Result<()> {
+    let data_dir = config
+        .jacs_data_directory()
+        .as_deref()
+        .map(|dir| canonicalize_config_dir(config_path, dir));
+    let key_dir = config
+        .jacs_key_directory()
+        .as_deref()
+        .map(|dir| canonicalize_config_dir(config_path, dir));
+
+    if let (Some(data_dir), Some(key_dir)) = (data_dir, key_dir) {
+        config
+            .set_runtime_filesystem_directories(&data_dir, &key_dir)
+            .map_err(|error| {
+                HaiError::Provider(format!(
+                    "failed to resolve signed JACS runtime directories: {error}"
+                ))
+            })?;
+    }
+    Ok(())
+}
+
+fn canonicalize_config_dir(config_path: &Path, candidate: &str) -> String {
+    let path = resolve_config_relative_path(config_path, candidate);
+    std::fs::canonicalize(&path)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+}
+
+fn materialize_resolved_config(
+    config_path: &Path,
+    config: &jacs::config::Config,
+) -> Result<PathBuf> {
+    let Some(raw_json) = config.raw_json.as_ref() else {
+        return Ok(config_path.to_path_buf());
+    };
+    let Some(parent) = config_path.parent() else {
+        return Ok(config_path.to_path_buf());
+    };
+    let resolved_path = parent.join(".haiai_resolved_jacs.config.json");
+    let bytes = serde_json::to_vec_pretty(raw_json)
+        .map_err(|e| HaiError::Provider(format!("serialize resolved JACS config: {e}")))?;
+    std::fs::write(&resolved_path, bytes).map_err(|e| {
+        HaiError::Provider(format!(
+            "write resolved JACS config {}: {e}",
+            resolved_path.display()
+        ))
+    })?;
+    Ok(resolved_path)
 }
 
 // =============================================================================
@@ -1065,6 +1304,9 @@ impl JacsDocumentProvider for LocalJacsProvider {
     }
 
     fn get_document_versions(&self, doc_id: &str) -> Result<Vec<String>> {
+        if self.storage_label.as_deref() == Some("fs") {
+            return self.filesystem_version_keys_for_id(doc_id);
+        }
         let service = self.require_document_service()?;
         let versions = service
             .versions(doc_id)
@@ -1485,18 +1727,7 @@ impl JacsVerificationProvider for LocalJacsProvider {
         let result = simple
             .verify(document)
             .map_err(|e| HaiError::Provider(format!("verify_document failed: {e}")))?;
-        Ok(DocVerificationResult {
-            key: result.signer_id.clone(),
-            valid: result.valid,
-            error: if result.errors.is_empty() {
-                None
-            } else {
-                Some(result.errors.join("; "))
-            },
-            signer_id: Some(result.signer_id),
-            timestamp: Some(result.timestamp),
-            signer_name: result.signer_name,
-        })
+        Ok(crate::jacs::map_verification_result(result))
     }
 
     fn verify_with_key(&self, document: &str, key: Vec<u8>) -> Result<DocVerificationResult> {
@@ -1630,6 +1861,17 @@ impl JacsEmailProvider for LocalJacsProvider {
             .map_err(|e| HaiError::Provider(format!("serialize verify result: {e}")))
     }
 
+    fn verify_signed_email_transport(
+        &self,
+        raw: &[u8],
+        key: Vec<u8>,
+        mode: jacs::email::VerificationMode,
+    ) -> Result<jacs::email::SignedEmailVerificationResult> {
+        let simple = self.load_simple_agent()?;
+        jacs::email::verify_signed_email(raw, &simple, &key, mode)
+            .map_err(|e| HaiError::Provider(format!("verify_signed_email failed: {e}")))
+    }
+
     fn add_jacs_attachment(&self, email: &[u8], doc: &[u8]) -> Result<Vec<u8>> {
         jacs::email::add_jacs_attachment(email, doc)
             .map_err(|e| HaiError::Provider(format!("add_jacs_attachment failed: {e}")))
@@ -1666,11 +1908,259 @@ impl JacsEmailProvider for LocalJacsProvider {
 }
 
 // =============================================================================
+// JacsConflictProvider implementation (feature-gated)
+// =============================================================================
+
+#[cfg(feature = "conflict")]
+fn map_conflict_signed(sd: jacs::simple::SignedDocument) -> Result<SignedDocument> {
+    let value: Value = serde_json::from_str(&sd.raw)?;
+    ensure_conflict_value(&value)?;
+    let id = value
+        .get("jacsId")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .unwrap_or(sd.document_id.as_str());
+    let version = value
+        .get("jacsVersion")
+        .and_then(Value::as_str)
+        .filter(|version| !version.is_empty())
+        .ok_or_else(|| {
+            HaiError::Provider("conflict signed document missing jacsVersion".to_string())
+        })?;
+    Ok(SignedDocument {
+        key: format!("{id}:{version}"),
+        json: sd.raw,
+    })
+}
+
+#[cfg(feature = "conflict")]
+fn parse_conflict_json(raw: &str) -> Result<Value> {
+    let value: Value = serde_json::from_str(raw)?;
+    ensure_conflict_value(&value)?;
+    Ok(value)
+}
+
+#[cfg(feature = "conflict")]
+fn ensure_conflict_value(value: &Value) -> Result<()> {
+    if value.get("jacsType").and_then(Value::as_str) == Some("conflict") {
+        Ok(())
+    } else {
+        Err(HaiError::Provider(
+            "expected conflict document (jacsType=conflict)".to_string(),
+        ))
+    }
+}
+
+#[cfg(feature = "conflict")]
+fn conflict_document_id(value: &Value) -> Result<&str> {
+    value
+        .get("jacsId")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| HaiError::Provider("conflict document missing jacsId".to_string()))
+}
+
+#[cfg(feature = "conflict")]
+fn conflict_document_for_ref(provider: &LocalJacsProvider, key_or_id: &str) -> Result<String> {
+    let raw = if key_or_id.contains(':') {
+        provider.get_document(key_or_id)?
+    } else {
+        provider.get_latest_document(key_or_id)?
+    };
+    parse_conflict_json(&raw)?;
+    Ok(raw)
+}
+
+#[cfg(feature = "conflict")]
+impl JacsConflictProvider for LocalJacsProvider {
+    fn create_conflict(&self, body: Value) -> Result<SignedDocument> {
+        let simple = self.load_simple_agent()?;
+        let sd = jacs::conflict::create(&simple, body)
+            .map_err(|e| HaiError::Provider(format!("create_conflict failed: {e}")))?;
+        map_conflict_signed(sd)
+    }
+
+    fn update_conflict(&self, key_or_id: &str, mutation: Value) -> Result<SignedDocument> {
+        let simple = self.load_simple_agent()?;
+        let document = conflict_document_for_ref(self, key_or_id)?;
+        let mutation: jacs::conflict::Mutation = serde_json::from_value(mutation)
+            .map_err(|e| HaiError::Provider(format!("invalid conflict mutation: {e}")))?;
+        let sd = jacs::conflict::update(&simple, &document, mutation)
+            .map_err(|e| HaiError::Provider(format!("update_conflict failed: {e}")))?;
+        map_conflict_signed(sd)
+    }
+
+    fn get_conflict(&self, key: &str) -> Result<String> {
+        let raw = self.get_document(key)?;
+        parse_conflict_json(&raw)?;
+        Ok(raw)
+    }
+
+    fn get_latest_conflict(&self, id: &str) -> Result<String> {
+        let raw = self.get_latest_document(id)?;
+        parse_conflict_json(&raw)?;
+        Ok(raw)
+    }
+
+    fn list_conflicts(&self, limit: usize, offset: usize) -> Result<Vec<String>> {
+        self.query_by_type("conflict", limit, offset)
+    }
+
+    fn check_conflict_readiness(&self, key_or_id: &str) -> Result<Value> {
+        let current_raw = conflict_document_for_ref(self, key_or_id)?;
+        let current = parse_conflict_json(&current_raw)?;
+        let doc_id = conflict_document_id(&current)?.to_string();
+        let version_values = self
+            .get_document_versions(&doc_id)?
+            .into_iter()
+            .map(|key| {
+                self.get_document(&key)
+                    .and_then(|raw| parse_conflict_json(&raw))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut report = jacs::conflict::check_readiness(&current);
+        let consistency = jacs::conflict::check_consistency(&version_values);
+        if !consistency.stable {
+            report.ready = false;
+            report
+                .blockers
+                .extend(
+                    consistency
+                        .issues
+                        .into_iter()
+                        .map(|issue| jacs::conflict::Blocker {
+                            divergence_id: "__document__".to_string(),
+                            reason: format!("inconsistent:{issue}"),
+                        }),
+                );
+        }
+
+        serde_json::to_value(&report)
+            .map_err(|e| HaiError::Provider(format!("serialize conflict readiness: {e}")))
+    }
+}
+
+// =============================================================================
 // JacsAgreementProvider implementation (feature-gated)
 // =============================================================================
 
+/// Map a JACS v2 `SignedDocument` (raw + document_id) to haiai's shape.
+#[cfg(feature = "agreements")]
+fn map_v2_signed(sd: jacs::simple::SignedDocument) -> SignedDocument {
+    SignedDocument {
+        key: sd.document_id.clone(),
+        json: sd.raw,
+    }
+}
+
+/// Parse an agreement v2 signature role. Mirrors JACS binding-core's
+/// `parse_role` so every surface rejects unknown roles with the same message.
+#[cfg(feature = "agreements")]
+fn parse_agreement_v2_role(role: &str) -> Result<jacs::agreements::v2::AgreementV2Role> {
+    match role {
+        "signer" => Ok(jacs::agreements::v2::AgreementV2Role::Signer),
+        "witness" => Ok(jacs::agreements::v2::AgreementV2Role::Witness),
+        "notary" => Ok(jacs::agreements::v2::AgreementV2Role::Notary),
+        other => Err(HaiError::Provider(format!(
+            "invalid agreement v2 signature role '{other}'; expected signer, witness, or notary"
+        ))),
+    }
+}
+
 #[cfg(feature = "agreements")]
 impl JacsAgreementProvider for LocalJacsProvider {
+    fn create_agreement_v2(&self, input: Value) -> Result<SignedDocument> {
+        let simple = self.load_simple_agent()?;
+        let input: jacs::agreements::v2::CreateAgreementV2 = serde_json::from_value(input)
+            .map_err(|e| HaiError::Provider(format!("invalid agreement v2 create input: {e}")))?;
+        jacs::agreements::v2::create(&simple, input)
+            .map(map_v2_signed)
+            .map_err(|e| HaiError::Provider(format!("create_agreement_v2 failed: {e}")))
+    }
+
+    fn apply_agreement_v2(&self, document: &str, mutation: Value) -> Result<SignedDocument> {
+        let simple = self.load_simple_agent()?;
+        let mutation: jacs::agreements::v2::AgreementV2Mutation = serde_json::from_value(mutation)
+            .map_err(|e| HaiError::Provider(format!("invalid agreement v2 mutation: {e}")))?;
+        jacs::agreements::v2::apply(&simple, document, mutation)
+            .map(map_v2_signed)
+            .map_err(|e| HaiError::Provider(format!("apply_agreement_v2 failed: {e}")))
+    }
+
+    fn sign_agreement_v2(&self, document: &str, role: &str) -> Result<SignedDocument> {
+        let simple = self.load_simple_agent()?;
+        let role = parse_agreement_v2_role(role)?;
+        jacs::agreements::v2::sign(&simple, document, role)
+            .map(map_v2_signed)
+            .map_err(|e| HaiError::Provider(format!("sign_agreement_v2 failed: {e}")))
+    }
+
+    fn verify_agreement_v2(&self, document: &str) -> Result<Value> {
+        let simple = self.load_simple_agent()?;
+        let report = jacs::agreements::v2::verify(&simple, document)
+            .map_err(|e| HaiError::Provider(format!("verify_agreement_v2 failed: {e}")))?;
+        serde_json::to_value(&report)
+            .map_err(|e| HaiError::Provider(format!("serialize agreement v2 report: {e}")))
+    }
+
+    fn detect_agreement_branch_conflict(
+        &self,
+        base_document: &str,
+        left_document: &str,
+        right_document: &str,
+    ) -> Result<Value> {
+        // Pure analysis over the three documents — no agent state involved.
+        let analysis = jacs::agreements::v2::detect_branch_conflict(
+            base_document,
+            left_document,
+            right_document,
+        )
+        .map_err(|e| HaiError::Provider(format!("detect_agreement_branch_conflict failed: {e}")))?;
+        serde_json::to_value(&analysis)
+            .map_err(|e| HaiError::Provider(format!("serialize merge analysis: {e}")))
+    }
+
+    fn merge_agreement_transcript_branches(
+        &self,
+        base_document: &str,
+        left_document: &str,
+        right_document: &str,
+    ) -> Result<SignedDocument> {
+        let simple = self.load_simple_agent()?;
+        jacs::agreements::v2::merge_transcript_branches(
+            &simple,
+            base_document,
+            left_document,
+            right_document,
+        )
+        .map(map_v2_signed)
+        .map_err(|e| HaiError::Provider(format!("merge_agreement_transcript_branches failed: {e}")))
+    }
+
+    fn resolve_agreement_branch_conflict(
+        &self,
+        base_document: &str,
+        previous_document: &str,
+        side_branch_document: &str,
+        resolution: Value,
+    ) -> Result<SignedDocument> {
+        let simple = self.load_simple_agent()?;
+        let resolution: jacs::agreements::v2::AgreementV2Mutation =
+            serde_json::from_value(resolution).map_err(|e| {
+                HaiError::Provider(format!("invalid agreement v2 resolution mutation: {e}"))
+            })?;
+        jacs::agreements::v2::resolve_branch_conflict(
+            &simple,
+            base_document,
+            previous_document,
+            side_branch_document,
+            resolution,
+        )
+        .map(map_v2_signed)
+        .map_err(|e| HaiError::Provider(format!("resolve_agreement_branch_conflict failed: {e}")))
+    }
+
     fn create_agreement(
         &self,
         doc: &str,
@@ -1724,6 +2214,436 @@ impl JacsAgreementProvider for LocalJacsProvider {
             .map_err(|e| HaiError::Provider(format!("check_agreement failed: {e}")))?;
         serde_json::to_value(&status)
             .map_err(|e| HaiError::Provider(format!("serialize agreement status: {e}")))
+    }
+}
+
+#[cfg(all(test, feature = "agreements"))]
+mod agreement_v2_tests {
+    use serde_json::{json, Value};
+
+    use super::*;
+    use crate::jacs::JacsAgreementProvider;
+
+    /// These tests are synchronous, so the env guard is held for the WHOLE
+    /// test: JACS agent creation/loading reads process-global jenv state
+    /// (key/data directories), and every provider call re-loads the agent.
+    fn agreement_provider(
+        name: &str,
+    ) -> (
+        std::sync::MutexGuard<'static, ()>,
+        tempfile::TempDir,
+        LocalJacsProvider,
+    ) {
+        let guard = crate::test_support::env_lock();
+        let (dir, config_path) = crate::test_support::create_test_agent(name);
+        let provider = LocalJacsProvider::from_config_path(Some(config_path.as_path()), Some("fs"))
+            .expect("local provider");
+        (guard, dir, provider)
+    }
+
+    /// Mirrors JACS `binding-core/tests/fixtures/agreement_v2_scenarios.json`
+    /// `base_input` so haiai exercises the same workflow data as the JACS
+    /// binding/CLI/MCP parity suites.
+    fn base_input(agent_id: &str) -> Value {
+        json!({
+            "title": "Agreement v2 parity",
+            "description": "Portable agreement v2 workflow test.",
+            "terms": "The public surface must delegate agreement v2 behavior to Rust core.",
+            "termsFormat": "text/plain",
+            "status": "proposed",
+            "parties": [{"agentId": agent_id, "agentType": "ai", "role": "signer"}],
+            "signaturePolicy": {
+                "partyQuorum": "all",
+                "witnessRequired": 0,
+                "notaryRequired": 0,
+                "requiredAlgorithms": ["ring-Ed25519"],
+                "minimumStrength": "classical"
+            }
+        })
+    }
+
+    fn transcript_ref(suffix: u8) -> Value {
+        json!({
+            "jacsId": format!("00000000-0000-4000-8000-00000000000{suffix}"),
+            "jacsVersion": format!("10000000-0000-4000-8000-00000000000{suffix}"),
+            "jacsSha256": format!("agreement-v2-transcript-ref-{suffix}")
+        })
+    }
+
+    fn doc_value(doc: &SignedDocument) -> Value {
+        serde_json::from_str(&doc.json).expect("agreement document is JSON")
+    }
+
+    #[test]
+    fn create_apply_sign_verify_round_trip() {
+        let (_guard, _dir, provider) = agreement_provider("agr-v2-round-trip");
+        let agent_id = provider.jacs_id().to_string();
+
+        let created = provider
+            .create_agreement_v2(base_input(&agent_id))
+            .expect("create agreement v2");
+        let created_value = doc_value(&created);
+        assert_eq!(created_value["status"], "proposed");
+        assert_eq!(created_value["parties"][0]["agentId"], agent_id.as_str());
+
+        let appended = provider
+            .apply_agreement_v2(
+                &created.json,
+                json!({"type": "appendTranscript", "entry": transcript_ref(1)}),
+            )
+            .expect("append transcript");
+        let appended_value = doc_value(&appended);
+        assert_eq!(
+            appended_value["transcript"].as_array().map(Vec::len),
+            Some(1)
+        );
+
+        let signed = provider
+            .sign_agreement_v2(&appended.json, "signer")
+            .expect("sign agreement v2");
+        let report = provider
+            .verify_agreement_v2(&signed.json)
+            .expect("verify agreement v2");
+        // JACS >= 0.11.4: `valid` is a fail-closed wire-migration field that is
+        // always false, and `policyAccepted` is always false, because portable
+        // agreement v2 inspection cannot authenticate role/quorum/lineage.
+        // `mathematicalChecksValid` is the truthful cryptographic/structural
+        // result, so that is what a round-trip may assert on.
+        assert_eq!(report["mathematicalChecksValid"], true, "report: {report}");
+        assert_eq!(report["valid"], false, "report: {report}");
+        assert_eq!(report["policyAccepted"], false, "report: {report}");
+        assert_eq!(report["signerCount"], 1, "report: {report}");
+    }
+
+    #[test]
+    fn transcript_branches_detect_and_auto_merge() {
+        let (_guard, _dir, provider) = agreement_provider("agr-v2-merge");
+        let agent_id = provider.jacs_id().to_string();
+        let base = provider
+            .create_agreement_v2(base_input(&agent_id))
+            .expect("create");
+
+        let left = provider
+            .apply_agreement_v2(
+                &base.json,
+                json!({"type": "appendTranscript", "entry": transcript_ref(1)}),
+            )
+            .expect("left branch");
+        let right = provider
+            .apply_agreement_v2(
+                &base.json,
+                json!({"type": "appendTranscript", "entry": transcript_ref(2)}),
+            )
+            .expect("right branch");
+
+        let analysis = provider
+            .detect_agreement_branch_conflict(&base.json, &left.json, &right.json)
+            .expect("detect");
+        assert_eq!(
+            analysis["autoMergeable"], true,
+            "transcript-only branches must auto-merge: {analysis}"
+        );
+
+        let merged = provider
+            .merge_agreement_transcript_branches(&base.json, &left.json, &right.json)
+            .expect("merge");
+        let merged_value = doc_value(&merged);
+        assert_eq!(
+            merged_value["transcript"].as_array().map(Vec::len),
+            Some(2),
+            "merged transcript carries both branch entries"
+        );
+    }
+
+    #[test]
+    fn conflicting_terms_detect_then_resolve() {
+        let (_guard, _dir, provider) = agreement_provider("agr-v2-resolve");
+        let agent_id = provider.jacs_id().to_string();
+        let base = provider
+            .create_agreement_v2(base_input(&agent_id))
+            .expect("create");
+
+        let left = provider
+            .apply_agreement_v2(
+                &base.json,
+                json!({"type": "updateTerms", "terms": "Left branch terms."}),
+            )
+            .expect("left terms");
+        let right = provider
+            .apply_agreement_v2(
+                &base.json,
+                json!({"type": "updateTerms", "terms": "Right branch terms."}),
+            )
+            .expect("right terms");
+
+        let analysis = provider
+            .detect_agreement_branch_conflict(&base.json, &left.json, &right.json)
+            .expect("detect");
+        assert_eq!(analysis["autoMergeable"], false, "{analysis}");
+        let conflicts = analysis["conflictFields"]
+            .as_array()
+            .expect("conflictFields array");
+        assert!(
+            conflicts.iter().any(|f| f == "terms"),
+            "terms must be a conflict field: {analysis}"
+        );
+
+        let resolved = provider
+            .resolve_agreement_branch_conflict(
+                &base.json,
+                &left.json,
+                &right.json,
+                json!({"type": "updateTerms", "terms": "Resolved terms."}),
+            )
+            .expect("resolve");
+        assert_eq!(doc_value(&resolved)["terms"], "Resolved terms.");
+    }
+
+    #[test]
+    fn sign_rejects_unknown_role() {
+        let (_guard, _dir, provider) = agreement_provider("agr-v2-role");
+        let agent_id = provider.jacs_id().to_string();
+        let base = provider
+            .create_agreement_v2(base_input(&agent_id))
+            .expect("create");
+        let err = provider
+            .sign_agreement_v2(&base.json, "owner")
+            .expect_err("unknown role must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("signer") && msg.contains("witness") && msg.contains("notary"),
+            "error should list valid roles: {msg}"
+        );
+    }
+}
+
+#[cfg(all(test, feature = "conflict"))]
+mod conflict_tests {
+    use serde_json::{json, Value};
+
+    use super::*;
+    use crate::jacs::{JacsConflictProvider, JacsDocumentProvider};
+
+    fn conflict_provider(
+        name: &str,
+    ) -> (
+        std::sync::MutexGuard<'static, ()>,
+        tempfile::TempDir,
+        LocalJacsProvider,
+    ) {
+        let guard = crate::test_support::env_lock();
+        let (dir, config_path) = crate::test_support::create_test_agent(name);
+        let provider = LocalJacsProvider::from_config_path(Some(config_path.as_path()), Some("fs"))
+            .expect("local provider");
+        (guard, dir, provider)
+    }
+
+    fn sparse_body() -> Value {
+        json!({
+            "title": "GPU scheduling disagreement",
+            "description": "Two parties disagree about who gets a shared GPU window.",
+            "participants": [
+                {
+                    "agentId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100010",
+                    "agentType": "human",
+                    "displayName": "Alice",
+                    "role": "party"
+                },
+                {
+                    "agentId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100011",
+                    "agentType": "human",
+                    "displayName": "Bob",
+                    "role": "party"
+                }
+            ],
+            "positions": [],
+            "divergences": [],
+            "phase": "surfacing"
+        })
+    }
+
+    fn confirmation_ref() -> Value {
+        json!({
+            "jacsId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100101",
+            "jacsVersion": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100102",
+            "jacsSha256": "confirmed-answer-hash"
+        })
+    }
+
+    fn ready_body() -> Value {
+        json!({
+            "title": "GPU scheduling agreement",
+            "description": "The parties converged on a shared GPU window.",
+            "participants": [
+                {
+                    "agentId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100010",
+                    "agentType": "human",
+                    "displayName": "Alice",
+                    "role": "party"
+                },
+                {
+                    "agentId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100011",
+                    "agentType": "human",
+                    "displayName": "Bob",
+                    "role": "party"
+                },
+                {
+                    "agentId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100012",
+                    "agentType": "ai",
+                    "displayName": "Mediator",
+                    "role": "mediator"
+                }
+            ],
+            "positions": [
+                {
+                    "id": "pos-alice",
+                    "participantId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100010",
+                    "statement": "Alice can use the GPU Monday morning.",
+                    "kind": "resource",
+                    "statedAt": "2026-06-11T12:01:00Z",
+                    "confirmed": true,
+                    "confirmationRef": confirmation_ref()
+                },
+                {
+                    "id": "pos-bob",
+                    "participantId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100011",
+                    "statement": "Bob can use the GPU Monday afternoon.",
+                    "kind": "resource",
+                    "statedAt": "2026-06-11T12:02:00Z",
+                    "confirmed": true,
+                    "confirmationRef": confirmation_ref()
+                }
+            ],
+            "divergences": [
+                {
+                    "id": "div-1",
+                    "type": "resource",
+                    "summary": "The parties found a non-overlapping GPU schedule.",
+                    "participantPositions": ["pos-alice", "pos-bob"],
+                    "zeroSum": false,
+                    "phase": "converging"
+                }
+            ],
+            "phase": "converging",
+            "linkedAgreements": [],
+            "allPreviousVersions": []
+        })
+    }
+
+    fn doc_value(doc: &SignedDocument) -> Value {
+        serde_json::from_str(&doc.json).expect("conflict document is JSON")
+    }
+
+    fn raw_value(raw: &str) -> Value {
+        serde_json::from_str(raw).expect("conflict document is JSON")
+    }
+
+    #[test]
+    fn create_conflict_round_trips_by_key() {
+        let (_guard, _dir, provider) = conflict_provider("conflict-create-get");
+
+        let created = provider
+            .create_conflict(sparse_body())
+            .expect("create conflict");
+        assert!(created.key.contains(':'), "key should be id:version");
+
+        let fetched = provider
+            .get_conflict(&created.key)
+            .expect("get conflict by key");
+        let fetched_value = raw_value(&fetched);
+
+        assert_eq!(fetched_value["jacsType"], "conflict");
+        assert_eq!(fetched_value["title"], "GPU scheduling disagreement");
+        assert_eq!(fetched_value["jacsId"], doc_value(&created)["jacsId"]);
+    }
+
+    #[test]
+    fn update_conflict_creates_version_chain() {
+        let (_guard, _dir, provider) = conflict_provider("conflict-update-chain");
+        let created = provider
+            .create_conflict(sparse_body())
+            .expect("create conflict");
+        let before = doc_value(&created);
+        let doc_id = before["jacsId"].as_str().expect("jacsId").to_string();
+        let previous_version = before["jacsVersion"].as_str().expect("version").to_string();
+
+        let updated = provider
+            .update_conflict(
+                &created.key,
+                json!({
+                    "type": "addPosition",
+                    "value": {
+                        "id": "pos-alice",
+                        "participantId": "018ff6c4-9a42-7dc0-8bf4-bb7f3e100010",
+                        "statement": "Alice needs the shared GPU on Monday.",
+                        "kind": "resource",
+                        "statedAt": "2026-06-11T12:01:00Z",
+                        "confirmed": false
+                    }
+                }),
+            )
+            .expect("update conflict");
+        let after = doc_value(&updated);
+
+        assert_eq!(after["jacsId"], before["jacsId"]);
+        assert_eq!(
+            after["jacsPreviousVersion"].as_str(),
+            Some(previous_version.as_str())
+        );
+        assert_ne!(updated.key, created.key);
+
+        let versions = provider
+            .get_document_versions(&doc_id)
+            .expect("get conflict versions");
+        assert!(
+            versions.len() >= 2,
+            "expected at least two versions, got {versions:?}"
+        );
+        assert!(versions.iter().any(|key| key == &created.key));
+        assert!(versions.iter().any(|key| key == &updated.key));
+    }
+
+    #[test]
+    fn list_conflicts_returns_created_key() {
+        let (_guard, _dir, provider) = conflict_provider("conflict-list");
+        let created = provider
+            .create_conflict(sparse_body())
+            .expect("create conflict");
+
+        let keys = provider.list_conflicts(10, 0).expect("list conflicts");
+
+        assert!(
+            keys.iter().any(|key| key == &created.key),
+            "created conflict key should be listed, got {keys:?}"
+        );
+    }
+
+    #[test]
+    fn readiness_delegates_to_jacs_checker() {
+        let (_guard, _dir, provider) = conflict_provider("conflict-readiness");
+        let sparse = provider
+            .create_conflict(sparse_body())
+            .expect("create sparse conflict");
+        let sparse_report = provider
+            .check_conflict_readiness(&sparse.key)
+            .expect("check sparse readiness");
+        assert_eq!(sparse_report["ready"], false, "{sparse_report}");
+        assert!(
+            sparse_report["blockers"]
+                .as_array()
+                .map(|blockers| !blockers.is_empty())
+                .unwrap_or(false),
+            "sparse conflict should report blockers: {sparse_report}"
+        );
+
+        let ready = provider
+            .create_conflict(ready_body())
+            .expect("create ready conflict");
+        let ready_report = provider
+            .check_conflict_readiness(&ready.key)
+            .expect("check ready readiness");
+        assert_eq!(ready_report["ready"], true, "{ready_report}");
+        assert_eq!(ready_report["blockers"].as_array().map(Vec::len), Some(0));
     }
 }
 
@@ -1832,18 +2752,20 @@ impl JacsMediaProvider for LocalJacsProvider {
 
 fn resolve_jacs_config_path(config_path: Option<&Path>) -> PathBuf {
     if let Some(path) = config_path {
-        return path.to_path_buf();
+        return std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     }
 
     if let Ok(path) = env::var("JACS_CONFIG") {
         if !path.is_empty() {
-            return PathBuf::from(path);
+            let path = PathBuf::from(path);
+            return std::fs::canonicalize(&path).unwrap_or(path);
         }
     }
 
     if let Ok(path) = env::var("JACS_CONFIG_PATH") {
         if !path.is_empty() {
-            return PathBuf::from(path);
+            let path = PathBuf::from(path);
+            return std::fs::canonicalize(&path).unwrap_or(path);
         }
     }
 
@@ -1853,6 +2775,76 @@ fn resolve_jacs_config_path(config_path: Option<&Path>) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::jacs::JacsMediaProvider;
+
+    struct TestJacsEnvOverrideGuard(Vec<(&'static str, bool, Option<String>)>);
+
+    impl TestJacsEnvOverrideGuard {
+        fn set(entries: &[(&'static str, String)]) -> Self {
+            let mut saved = Vec::with_capacity(entries.len());
+            for (key, value) in entries {
+                let had_override = jacs::storage::jenv::has_jenv_override(key);
+                let previous = if had_override {
+                    jacs::storage::jenv::get_env_var(key, false).ok().flatten()
+                } else {
+                    None
+                };
+                saved.push((*key, had_override, previous));
+                jacs::storage::jenv::set_env_var(key, value).expect("set stale jenv override");
+            }
+            Self(saved)
+        }
+    }
+
+    impl Drop for TestJacsEnvOverrideGuard {
+        fn drop(&mut self) {
+            for (key, had_override, previous) in self.0.drain(..).rev() {
+                if had_override {
+                    if let Some(value) = previous {
+                        let _ = jacs::storage::jenv::set_env_var(key, &value);
+                    } else {
+                        let _ = jacs::storage::jenv::clear_env_var(key);
+                    }
+                } else {
+                    let _ = jacs::storage::jenv::clear_env_var(key);
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "jacs-crate")]
+    #[test]
+    fn simple_agent_reload_uses_provider_resolved_config_over_stale_jacs_env() {
+        let _guard = crate::test_support::env_lock();
+        let (_dir, config_path) = crate::test_support::create_test_agent("reload-isolated");
+        let provider = LocalJacsProvider::from_config_path(Some(config_path.as_path()), Some("fs"))
+            .expect("local provider");
+
+        let stale = tempfile::tempdir().expect("stale tempdir");
+        let _stale_env = TestJacsEnvOverrideGuard::set(&[
+            (
+                "JACS_DATA_DIRECTORY",
+                stale.path().join("missing_data").display().to_string(),
+            ),
+            (
+                "JACS_KEY_DIRECTORY",
+                stale.path().join("missing_keys").display().to_string(),
+            ),
+        ]);
+        let work = tempfile::tempdir().expect("work tempdir");
+        let md = work.path().join("memo.md");
+        std::fs::write(&md, "The contract deadline is Friday.\n").expect("write memo");
+
+        provider
+            .sign_text_file(
+                md.to_str().expect("utf8 path"),
+                SignTextOptions {
+                    backup: false,
+                    ..Default::default()
+                },
+            )
+            .expect("sign_text_file should ignore stale JACS config env");
+    }
 
     #[test]
     fn extract_summary_from_signed_text_parses_footer() {

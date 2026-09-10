@@ -68,6 +68,23 @@ fn contract_deserialize_email_message() {
     assert_eq!(msg.created_at, "2026-02-24T12:00:00Z");
     assert!(msg.read_at.is_none());
     assert_eq!(msg.jacs_verified, Some(true));
+    assert_eq!(msg.jacs_signer_id.as_deref(), Some("owner-agent-jacs-id"));
+    assert!(
+        msg.jacs_key_is_owner,
+        "owner-key attestation must deserialize for hosted owner instructions"
+    );
+    assert!(msg.owner_mail_auth_passed);
+    assert_eq!(msg.owner_mail_auth_method.as_deref(), Some("dkim_spf"));
+    assert_eq!(
+        msg.owner_mail_auth_details.as_ref().unwrap()["dkim"],
+        "pass"
+    );
+    assert!(msg.sender_mail_auth_passed);
+    assert_eq!(msg.sender_mail_auth_method.as_deref(), Some("dkim_spf"));
+    assert_eq!(
+        msg.sender_mail_auth_details.as_ref().unwrap()["from_domain"],
+        "hai.ai"
+    );
     assert!(
         (msg.trust_score.unwrap() - 92.4).abs() < 0.01,
         "trust_score should be ~92.4, got {:?}",
@@ -89,6 +106,11 @@ fn contract_deserialize_list_messages_response() {
     assert_eq!(msg.id, "550e8400-e29b-41d4-a716-446655440000");
     assert_eq!(msg.subject, "Test Subject");
     assert_eq!(msg.body_text, "Hello, this is a test email body.");
+    assert_eq!(msg.jacs_signer_id.as_deref(), Some("owner-agent-jacs-id"));
+    assert!(msg.jacs_key_is_owner);
+    assert!(msg.owner_mail_auth_passed);
+    assert!(msg.sender_mail_auth_passed);
+    assert_eq!(msg.sender_mail_auth_method.as_deref(), Some("dkim_spf"));
     assert!(
         (msg.trust_score.unwrap() - 92.4).abs() < 0.01,
         "inbound trust_score should be ~92.4"
@@ -98,6 +120,9 @@ fn contract_deserialize_list_messages_response() {
     let outbound = &resp.messages[1];
     assert_eq!(outbound.id, "660e8400-e29b-41d4-a716-446655440001");
     assert_eq!(outbound.direction, "outbound");
+    assert!(!outbound.sender_mail_auth_passed);
+    assert!(outbound.sender_mail_auth_method.is_none());
+    assert!(outbound.sender_mail_auth_details.is_none());
     assert!(
         outbound.trust_score.is_none(),
         "outbound trust_score should be None"
@@ -118,7 +143,7 @@ fn contract_deserialize_email_status() {
     assert_eq!(status.daily_used, 5);
     assert_eq!(status.resets_at, "2026-02-25T00:00:00Z");
     assert_eq!(status.messages_sent_total, 42);
-    assert_eq!(status.external_enabled, false);
+    assert!(!status.external_enabled);
     assert_eq!(status.external_sends_today, 0);
     assert!(status.last_tier_change.is_none());
 }
@@ -327,7 +352,7 @@ fn ffi_method_parity_includes_media_local_section() {
 }
 
 #[test]
-fn ffi_method_parity_total_count_is_94() {
+fn ffi_method_parity_total_count_is_110() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/ffi_method_parity.json");
     let raw =
@@ -337,11 +362,11 @@ fn ffi_method_parity_total_count_is_94() {
     let total = val["total_method_count"]
         .as_u64()
         .expect("total_method_count must be a number");
-    // Bumped to 94: adds generic `save_document` alongside the document-store
-    // trait methods, MEMORY/SOUL wrappers (D5), and D9 helpers.
+    // Conflict memory MVP bumps 105 -> 110 by adding five conflict methods
+    // to the jacs_document_store section.
     assert_eq!(
-        total, 94,
-        "total_method_count must include generic save_document"
+        total, 110,
+        "total_method_count must include the conflict methods"
     );
 
     let methods = val["methods"]
@@ -352,7 +377,7 @@ fn ffi_method_parity_total_count_is_94() {
         sum += arr.as_array().expect("section must be an array").len() as u64;
     }
     assert_eq!(
-        sum, 94,
+        sum, 110,
         "Sum of method counts across all sections must equal total_method_count"
     );
 
@@ -362,8 +387,8 @@ fn ffi_method_parity_total_count_is_94() {
         .expect("jacs_document_store section must exist");
     assert_eq!(
         store_section.len(),
-        21,
-        "jacs_document_store must have 21 methods"
+        26,
+        "jacs_document_store must have 26 methods"
     );
     let names: std::collections::HashSet<String> = store_section
         .iter()
@@ -391,10 +416,47 @@ fn ffi_method_parity_total_count_is_94() {
         "store_text_file",
         "store_image_file",
         "get_record_bytes",
+        "conflict_create",
+        "conflict_update",
+        "conflict_get",
+        "conflict_list",
+        "conflict_check_readiness",
     ] {
         assert!(
             names.contains(*required),
             "jacs_document_store missing entry: {required}"
+        );
+    }
+
+    // Pin the agreements section's exact membership too.
+    let agreements_section = val["methods"]["agreements"]
+        .as_array()
+        .expect("agreements section must exist");
+    assert_eq!(
+        agreements_section.len(),
+        11,
+        "agreements must have 11 methods"
+    );
+    let agreement_names: std::collections::HashSet<String> = agreements_section
+        .iter()
+        .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
+        .collect();
+    for required in &[
+        "save_agreement",
+        "search_agreements",
+        "get_agreement",
+        "countersign_agreement",
+        "create_agreement_v2",
+        "apply_agreement_v2",
+        "sign_agreement_v2",
+        "verify_agreement_v2",
+        "detect_agreement_branch_conflict",
+        "merge_agreement_transcript_branches",
+        "resolve_agreement_branch_conflict",
+    ] {
+        assert!(
+            agreement_names.contains(*required),
+            "agreements missing entry: {required}"
         );
     }
 }

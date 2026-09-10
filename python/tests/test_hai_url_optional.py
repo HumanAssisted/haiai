@@ -7,13 +7,11 @@ Module-level wrapper functions should mirror the same optional behavior.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
 
 from haiai.client import DEFAULT_BASE_URL, HaiClient
-from haiai.models import SendEmailResult
 
 
 JACS_ID = "test-jacs-id-1234"
@@ -58,7 +56,9 @@ class TestEmailMethodsHaiUrlOptional:
         ffi = client._get_ffi()
         ffi.responses["send_email"] = {"message_id": "msg-2", "status": "sent"}
 
-        result = client.send_email(hai_url="https://custom.url", to="bob@hai.ai", subject="Hi", body="Hello")
+        result = client.send_email(
+            hai_url="https://custom.url", to="bob@hai.ai", subject="Hi", body="Hello"
+        )
         assert result.message_id == "msg-2"
 
     def test_sign_email_without_hai_url(self, loaded_config: None) -> None:
@@ -91,7 +91,7 @@ class TestEmailMethodsHaiUrlOptional:
     def test_mark_read_without_hai_url(self, loaded_config: None) -> None:
         """mark_read() without hai_url should not raise TypeError."""
         client = HaiClient()
-        ffi = client._get_ffi()
+        client._get_ffi()
 
         result = client.mark_read(message_id="msg-1")
         assert result is True
@@ -120,7 +120,7 @@ class TestEmailMethodsHaiUrlOptional:
     def test_delete_message_without_hai_url(self, loaded_config: None) -> None:
         """delete_message() without hai_url should not raise TypeError."""
         client = HaiClient()
-        ffi = client._get_ffi()
+        client._get_ffi()
 
         result = client.delete_message(message_id="msg-1")
         assert result is True
@@ -128,7 +128,7 @@ class TestEmailMethodsHaiUrlOptional:
     def test_mark_unread_without_hai_url(self, loaded_config: None) -> None:
         """mark_unread() without hai_url should not raise TypeError."""
         client = HaiClient()
-        ffi = client._get_ffi()
+        client._get_ffi()
 
         result = client.mark_unread(message_id="msg-1")
         assert result is True
@@ -205,7 +205,6 @@ class TestRegistrationMethodsHaiUrlOptional:
         }
 
         captured_urls: list = []
-        original_verify = client.verify_hai_message
 
         def spy_verify(**kwargs: Any) -> bool:
             captured_urls.append(kwargs.get("hai_url"))
@@ -286,7 +285,7 @@ class TestModuleLevelWrappersHaiUrlOptional:
         from haiai.client import mark_read, _get_client
 
         client = _get_client()
-        ffi = client._get_ffi()
+        client._get_ffi()
 
         result = mark_read(message_id="msg-1")
         assert result is True

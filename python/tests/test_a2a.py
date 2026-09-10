@@ -14,7 +14,9 @@ from haiai import a2a as a2a_module
 from haiai import _optional as optional_module
 
 
-def _install_module(monkeypatch: pytest.MonkeyPatch, module_name: str, **attrs: Any) -> types.ModuleType:
+def _install_module(
+    monkeypatch: pytest.MonkeyPatch, module_name: str, **attrs: Any
+) -> types.ModuleType:
     module = types.ModuleType(module_name)
     for key, value in attrs.items():
         setattr(module, key, value)
@@ -22,14 +24,18 @@ def _install_module(monkeypatch: pytest.MonkeyPatch, module_name: str, **attrs: 
     return module
 
 
-def _install_package(monkeypatch: pytest.MonkeyPatch, package_name: str) -> types.ModuleType:
+def _install_package(
+    monkeypatch: pytest.MonkeyPatch, package_name: str
+) -> types.ModuleType:
     module = types.ModuleType(package_name)
     module.__path__ = []  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, package_name, module)
     return module
 
 
-def test_missing_dependency_error_has_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_dependency_error_has_install_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delitem(sys.modules, "jacs.a2a", raising=False)
     monkeypatch.delitem(sys.modules, "jacs", raising=False)
     real_import_module = importlib.import_module
@@ -45,7 +51,9 @@ def test_missing_dependency_error_has_install_hint(monkeypatch: pytest.MonkeyPat
         a2a_module.get_a2a_integration(client=object())
 
 
-def test_get_a2a_integration_and_wrappers_delegate(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_a2a_integration_and_wrappers_delegate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _install_package(monkeypatch, "jacs")
 
     calls: dict[str, Any] = {}
@@ -104,7 +112,9 @@ def test_get_a2a_integration_and_wrappers_delegate(monkeypatch: pytest.MonkeyPat
             }
             return {"op": "verify_wrapped_artifact"}
 
-        def create_chain_of_custody(self, artifacts: list[dict[str, Any]]) -> dict[str, Any]:
+        def create_chain_of_custody(
+            self, artifacts: list[dict[str, Any]]
+        ) -> dict[str, Any]:
             calls["create_chain_of_custody"] = artifacts
             return {"op": "create_chain_of_custody"}
 
@@ -138,7 +148,9 @@ def test_get_a2a_integration_and_wrappers_delegate(monkeypatch: pytest.MonkeyPat
             calls["trust_a2a_agent"] = agent_card_json
             return "trusted-a2a-agent"
 
-    _install_module(monkeypatch, "jacs.a2a", JACSA2AIntegration=FakeIntegration, MAGIC="ok")
+    _install_module(
+        monkeypatch, "jacs.a2a", JACSA2AIntegration=FakeIntegration, MAGIC="ok"
+    )
 
     fake_client = object()
     integration = a2a_module.get_a2a_integration(fake_client, trust_policy="strict")
@@ -146,17 +158,14 @@ def test_get_a2a_integration_and_wrappers_delegate(monkeypatch: pytest.MonkeyPat
     assert calls["ctor"]["client"] is fake_client
     assert calls["ctor"]["trust_policy"] == "strict"
 
-    assert (
-        a2a_module.quickstart_a2a(
-            name="hai-agent",
-            domain="agent.example.com",
-            description="HAIAI agent",
-            algorithm="pq2025",
-            config_path="cfg.json",
-            url="https://a2a.example",
-        )
-        == {"quickstart": True}
-    )
+    assert a2a_module.quickstart_a2a(
+        name="hai-agent",
+        domain="agent.example.com",
+        description="HAIAI agent",
+        algorithm="pq2025",
+        config_path="cfg.json",
+        url="https://a2a.example",
+    ) == {"quickstart": True}
     assert calls["quickstart"] == {
         "name": "hai-agent",
         "domain": "agent.example.com",
@@ -171,7 +180,9 @@ def test_get_a2a_integration_and_wrappers_delegate(monkeypatch: pytest.MonkeyPat
     }
     assert calls["export_agent_card"] == {"jacsId": "agent-1"}
 
-    assert a2a_module.sign_artifact(fake_client, {"taskId": "t-1"}, "task", [{"p": 1}]) == {
+    assert a2a_module.sign_artifact(
+        fake_client, {"taskId": "t-1"}, "task", [{"p": 1}]
+    ) == {
         "op": "sign_artifact",
     }
     assert calls["sign_artifact"] == {
@@ -192,7 +203,9 @@ def test_get_a2a_integration_and_wrappers_delegate(monkeypatch: pytest.MonkeyPat
         "trust_policy": "strict",
     }
 
-    assert a2a_module.create_chain_of_custody(fake_client, [{"step": 1}, {"step": 2}]) == {
+    assert a2a_module.create_chain_of_custody(
+        fake_client, [{"step": 1}, {"step": 2}]
+    ) == {
         "op": "create_chain_of_custody",
     }
     assert calls["create_chain_of_custody"] == [{"step": 1}, {"step": 2}]
@@ -211,7 +224,9 @@ def test_get_a2a_integration_and_wrappers_delegate(monkeypatch: pytest.MonkeyPat
         "agent_data": {"jacsId": "agent-1"},
     }
 
-    assert a2a_module.assess_remote_agent(fake_client, '{"card":true}', policy="verified") == {
+    assert a2a_module.assess_remote_agent(
+        fake_client, '{"card":true}', policy="verified"
+    ) == {
         "op": "assess_remote_agent",
     }
     assert calls["assess_remote_agent"] == {
@@ -219,13 +234,17 @@ def test_get_a2a_integration_and_wrappers_delegate(monkeypatch: pytest.MonkeyPat
         "policy": "verified",
     }
 
-    assert a2a_module.trust_a2a_agent(fake_client, '{"card":true}') == "trusted-a2a-agent"
+    assert (
+        a2a_module.trust_a2a_agent(fake_client, '{"card":true}') == "trusted-a2a-agent"
+    )
     assert calls["trust_a2a_agent"] == '{"card":true}'
 
 
 def test_module_getattr_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_package(monkeypatch, "jacs")
-    _install_module(monkeypatch, "jacs.a2a", JACSA2AIntegration=object, EXPORTED_SYMBOL=123)
+    _install_module(
+        monkeypatch, "jacs.a2a", JACSA2AIntegration=object, EXPORTED_SYMBOL=123
+    )
 
     assert a2a_module.EXPORTED_SYMBOL == 123
 

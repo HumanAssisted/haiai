@@ -1,11 +1,19 @@
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 use anyhow::Context as _;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use hai_mcp::{HaiMcpServer, HaiServerContext, LoadedSharedAgent};
 use haiai::{
-    build_document_provider, CreateAgentOptions, CreateEmailTemplateOptions, HaiClient,
-    HaiClientOptions, JacsAgentLifecycle, JacsDocumentProvider, JacsProvider,
-    ListEmailTemplatesOptions, ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions,
-    SaveDocumentRequest, SaveIntent, SearchOptions, SendEmailOptions, UpdateEmailTemplateOptions,
+    build_document_provider, CreateAgentOptions, CreateEmailTemplateOptions, EmailGenerationType,
+    HaiClient, HaiClientOptions, JacsAgentLifecycle, JacsConflictProvider, JacsDocumentProvider,
+    JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions, LocalJacsProvider,
+    RegisterAgentOptions, SaveDocumentRequest, SaveIntent, SearchOptions, SendEmailOptions,
+    UpdateEmailTemplateOptions,
 };
 use jacs_mcp::JacsMcpServer;
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
@@ -42,6 +50,23 @@ const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b']');
 
 const JACS_MARKDOWN_CONTENT_TYPE: &str = "text/markdown; profile=jacs-text-v1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliEmailGenerationType {
+    #[value(name = "html_inline_jacs")]
+    HtmlInlineJacs,
+    #[value(name = "attachment_jacs")]
+    AttachmentJacs,
+}
+
+impl From<CliEmailGenerationType> for EmailGenerationType {
+    fn from(value: CliEmailGenerationType) -> Self {
+        match value {
+            CliEmailGenerationType::HtmlInlineJacs => EmailGenerationType::HtmlInlineJacs,
+            CliEmailGenerationType::AttachmentJacs => EmailGenerationType::AttachmentJacs,
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "haiai", version, about = "HAIAI CLI")]
@@ -144,6 +169,10 @@ enum Commands {
         /// Labels/tags to apply (repeatable)
         #[arg(long)]
         labels: Vec<String>,
+
+        /// Signed email generation type. Default: html_inline_jacs; use attachment_jacs for compatibility.
+        #[arg(long, value_enum, default_value = "html_inline_jacs")]
+        generation_type: CliEmailGenerationType,
 
         /// Emit machine-readable JSON instead of the default two-line summary
         #[arg(long, default_value_t = false)]
@@ -504,6 +533,12 @@ enum Commands {
         #[command(subcommand)]
         command: RecordsCommands,
     },
+
+    /// Manage signed conflict documents
+    Conflict {
+        #[command(subcommand)]
+        command: ConflictCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -531,6 +566,65 @@ enum MemoryCommands {
         /// Push local MEMORY.md to the remote store
         #[arg(long, group = "direction")]
         push: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConflictCommands {
+    /// Create and sign a conflict document from a JSON file.
+    Create {
+        /// Path to conflict body JSON.
+        #[arg(long)]
+        body: String,
+
+        /// Emit machine-readable JSON instead of the conflict key.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Apply a typed mutation to a conflict key or id.
+    Update {
+        /// Conflict key (id:version) or document id.
+        key: String,
+
+        /// Mutation JSON string.
+        #[arg(long)]
+        mutation: String,
+
+        /// Emit machine-readable JSON instead of the new conflict key.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Fetch a signed conflict document by key.
+    Get {
+        /// Conflict key in id:version format.
+        key: String,
+    },
+
+    /// List signed conflict document keys.
+    List {
+        /// Maximum number of keys to return.
+        #[arg(long, default_value = "20")]
+        limit: usize,
+
+        /// Offset for pagination.
+        #[arg(long, default_value = "0")]
+        offset: usize,
+
+        /// Emit machine-readable JSON instead of one key per line.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Run the JACS readiness checker for a conflict key or id.
+    CheckReadiness {
+        /// Conflict key (id:version) or document id.
+        key: String,
+
+        /// Emit machine-readable JSON instead of a human summary.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1098,7 +1192,7 @@ fn read_deploy_state() -> anyhow::Result<DeployState> {
 }
 
 fn hai_url() -> String {
-    std::env::var("HAI_URL").unwrap_or_else(|_| haiai::DEFAULT_BASE_URL.to_string())
+    haiai::base_url_from_env()
 }
 
 /// Read and trim a password from a file path.
@@ -1249,6 +1343,30 @@ fn load_document_provider(
         .context("failed to load routed JACS document provider")
 }
 
+fn load_conflict_provider(
+    storage_flag: Option<&str>,
+) -> anyhow::Result<Box<dyn JacsConflictProvider>> {
+    let backend = haiai::config::resolve_storage_backend(storage_flag, None)
+        .context("failed to resolve routed JACS conflict storage")?;
+
+    match backend.as_str() {
+        "fs" | "rusqlite" | "sqlite" => {
+            let provider = LocalJacsProvider::from_config_path(None, Some(backend.as_str()))
+                .with_context(|| {
+                    format!("failed to load routed JACS conflict provider '{}'", backend)
+                })?;
+            Ok(Box::new(provider))
+        }
+        "remote" => anyhow::bail!(
+            "conflict commands require a local JACS conflict provider; remote conflict storage is not implemented"
+        ),
+        other => anyhow::bail!(
+            "Unsupported storage backend '{}'. Valid routed labels: fs, rusqlite, sqlite, remote",
+            other
+        ),
+    }
+}
+
 fn load_local_sync_provider(storage_flag: Option<&str>) -> anyhow::Result<LocalJacsProvider> {
     let backend = haiai::config::resolve_storage_backend(storage_flag, None)
         .context("failed to resolve local JACS storage backend")?;
@@ -1333,7 +1451,10 @@ async fn main() -> anyhow::Result<()> {
     // Commands that load an existing agent need the private key password. Prompt once if not set and not -q.
     if !matches!(
         cli.command,
-        Commands::Init { .. } | Commands::SelfKnowledge { .. } | Commands::Deploy { .. }
+        Commands::Init { .. }
+            | Commands::SelfKnowledge { .. }
+            | Commands::Deploy { .. }
+            | Commands::ExtractMediaSignature { .. }
     ) {
         ensure_agent_password(cli.quiet, cli.password_file.as_deref())
             .context("failed to resolve private key password")?;
@@ -1547,8 +1668,35 @@ async fn main() -> anyhow::Result<()> {
             if let Some(email) = shared_agent.agent_email() {
                 context.remember_agent_email(&fallback_jacs_id, email);
             }
-            let server =
-                HaiMcpServer::new(JacsMcpServer::new(shared_agent.agent_wrapper()), context);
+            // JACS 0.11.4 fail-closed profiles: an embedded `JacsMcpServer`
+            // built from an agent handle alone runs `verify-only` and refuses
+            // every other JACS tool at dispatch. `haiai mcp` has already loaded
+            // and unlocked an existing signed config, which is exactly the
+            // `local-sign` precondition, so authorize that scope from the same
+            // config to keep JACS document/agreement signing available. If JACS
+            // refuses (unsigned config, non-fs storage, or an ambient network
+            // capability enabled) fall back to verify-only rather than failing
+            // startup — the HAI platform tools must still serve.
+            let jacs_server =
+                match JacsMcpServer::local_signing_from_config(shared_agent.config_path()) {
+                    Ok(server) => {
+                        tracing::info!(
+                            profile = "local-sign",
+                            "JACS MCP local signing authorized from the loaded config"
+                        );
+                        server
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            event = "mcp_local_signing_denied",
+                            reason = %error,
+                            profile = "verify-only",
+                            "JACS MCP local signing unavailable; serving verification tools only"
+                        );
+                        JacsMcpServer::new(shared_agent.agent_wrapper())
+                    }
+                };
+            let server = HaiMcpServer::new(jacs_server, context);
 
             tracing::info!("haiai mcp ready, waiting for MCP client on stdio");
 
@@ -1585,6 +1733,7 @@ async fn main() -> anyhow::Result<()> {
             cc,
             bcc,
             labels,
+            generation_type,
             json,
         } => {
             let client = load_client_with_email().await?;
@@ -1598,9 +1747,10 @@ async fn main() -> anyhow::Result<()> {
                 attachments: vec![],
                 labels,
                 append_footer: None,
+                idempotency_key: None,
             };
             let result = client
-                .send_signed_email(&options)
+                .send_signed_email_with_generation_type(&options, generation_type.into())
                 .await
                 .context("send email failed")?;
             if json {
@@ -2803,6 +2953,86 @@ async fn main() -> anyhow::Result<()> {
                 println!("Wrote {} bytes to {}", bytes.len(), out);
             }
         },
+        Commands::Conflict { command } => match command {
+            ConflictCommands::Create { body, json } => {
+                let body = read_json_file(&body)?;
+                let provider = load_conflict_provider(effective_storage.as_deref())?;
+                let signed = provider
+                    .create_conflict(body)
+                    .context("create_conflict failed")?;
+                print_conflict_signed("created", &signed, json)?;
+            }
+            ConflictCommands::Update {
+                key,
+                mutation,
+                json,
+            } => {
+                let mutation: Value =
+                    serde_json::from_str(&mutation).context("--mutation must be valid JSON")?;
+                let provider = load_conflict_provider(effective_storage.as_deref())?;
+                let signed = provider
+                    .update_conflict(&key, mutation)
+                    .context("update_conflict failed")?;
+                print_conflict_signed("updated", &signed, json)?;
+            }
+            ConflictCommands::Get { key } => {
+                let provider = load_conflict_provider(effective_storage.as_deref())?;
+                let document = provider.get_conflict(&key).context("get_conflict failed")?;
+                println!("{}", document);
+            }
+            ConflictCommands::List {
+                limit,
+                offset,
+                json,
+            } => {
+                let provider = load_conflict_provider(effective_storage.as_deref())?;
+                let keys = provider
+                    .list_conflicts(limit, offset)
+                    .context("list_conflicts failed")?;
+                if json {
+                    let count = keys.len();
+                    println!(
+                        "{}",
+                        serde_json::to_string(&serde_json::json!({
+                            "keys": keys,
+                            "count": count,
+                            "limit": limit,
+                            "offset": offset
+                        }))
+                        .context("serialize conflict list")?
+                    );
+                } else {
+                    for key in keys {
+                        println!("{}", key);
+                    }
+                }
+            }
+            ConflictCommands::CheckReadiness { key, json } => {
+                let provider = load_conflict_provider(effective_storage.as_deref())?;
+                let readiness = provider
+                    .check_conflict_readiness(&key)
+                    .context("check_conflict_readiness failed")?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&readiness)
+                            .context("serialize conflict readiness")?
+                    );
+                } else {
+                    let ready = readiness
+                        .get("ready")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let blockers = readiness
+                        .get("blockers")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or(0);
+                    println!("ready: {}", ready);
+                    println!("blockers: {}", blockers);
+                }
+            }
+        },
     }
 
     Ok(())
@@ -2922,6 +3152,34 @@ fn resolve_typed_body(
     }
     let path = from.unwrap_or_else(|| default_filename.to_string());
     std::fs::read_to_string(&path).with_context(|| format!("failed to read {}", path))
+}
+
+fn read_json_file(path: &str) -> anyhow::Result<Value> {
+    let raw = std::fs::read_to_string(path).with_context(|| format!("failed to read {}", path))?;
+    serde_json::from_str(&raw).with_context(|| format!("{} must contain valid JSON", path))
+}
+
+fn print_conflict_signed(
+    action: &str,
+    signed: &haiai::SignedDocument,
+    json_output: bool,
+) -> anyhow::Result<()> {
+    if json_output {
+        let document: Value =
+            serde_json::from_str(&signed.json).context("signed conflict document is not JSON")?;
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "key": signed.key,
+                "document": document
+            }))
+            .context("serialize conflict signed document")?
+        );
+    } else {
+        tracing::info!(action, key = %signed.key, "conflict_document");
+        println!("{}", signed.key);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -3254,6 +3512,7 @@ mod tests {
                 cc,
                 bcc,
                 labels,
+                generation_type,
                 json,
             } => {
                 assert_eq!(to, "friend@hai.ai");
@@ -3262,6 +3521,7 @@ mod tests {
                 assert!(cc.is_empty());
                 assert!(bcc.is_empty());
                 assert!(labels.is_empty());
+                assert_eq!(generation_type, CliEmailGenerationType::HtmlInlineJacs);
                 assert!(!json);
             }
             _ => panic!("expected SendEmail command"),
@@ -3309,6 +3569,28 @@ mod tests {
             result.is_err(),
             "send-email without --subject and --body should fail"
         );
+    }
+
+    #[test]
+    fn parse_send_email_generation_type() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "send-email",
+            "--to",
+            "friend@hai.ai",
+            "--subject",
+            "Hello",
+            "--body",
+            "Hi",
+            "--generation-type",
+            "attachment_jacs",
+        ]);
+        match cli.command {
+            Commands::SendEmail {
+                generation_type, ..
+            } => assert_eq!(generation_type, CliEmailGenerationType::AttachmentJacs),
+            _ => panic!("expected SendEmail command"),
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -3420,9 +3702,10 @@ mod tests {
     }
 
     #[test]
-    fn cli_command_parity_total_count_is_36() {
+    fn cli_command_parity_total_count_is_37() {
         // Issue 005: bumped from 33 to 36 with the three D5/D9 record-store
         // command groups (memory, soul, records).
+        // Conflict memory MVP then bumps 36 to 37 with the conflict group.
         let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/cli_command_parity.json");
         let raw = std::fs::read_to_string(&fixture_path).expect("read parity fixture");
@@ -3431,8 +3714,67 @@ mod tests {
             .as_u64()
             .expect("total_command_count");
         let count = fixture["commands"].as_array().expect("commands").len() as u64;
-        assert_eq!(total, 36, "total_command_count must be 36 after Issue 005");
-        assert_eq!(count, 36, "commands array length must be 36");
+        assert_eq!(
+            total, 37,
+            "total_command_count must be 37 after conflict group"
+        );
+        assert_eq!(count, 37, "commands array length must be 37");
+    }
+
+    #[test]
+    fn parse_conflict_commands() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "conflict",
+            "create",
+            "--body",
+            "conflict.json",
+            "--json",
+        ]);
+        match cli.command {
+            Commands::Conflict {
+                command: ConflictCommands::Create { body, json },
+            } => {
+                assert_eq!(body, "conflict.json");
+                assert!(json);
+            }
+            _ => panic!("expected conflict create"),
+        }
+
+        let cli = Cli::parse_from([
+            "haiai",
+            "conflict",
+            "update",
+            "abc:1",
+            "--mutation",
+            r#"{"type":"noop"}"#,
+        ]);
+        match cli.command {
+            Commands::Conflict {
+                command:
+                    ConflictCommands::Update {
+                        key,
+                        mutation,
+                        json,
+                    },
+            } => {
+                assert_eq!(key, "abc:1");
+                assert_eq!(mutation, r#"{"type":"noop"}"#);
+                assert!(!json);
+            }
+            _ => panic!("expected conflict update"),
+        }
+
+        let cli = Cli::parse_from(["haiai", "conflict", "check-readiness", "abc:1", "--json"]);
+        match cli.command {
+            Commands::Conflict {
+                command: ConflictCommands::CheckReadiness { key, json },
+            } => {
+                assert_eq!(key, "abc:1");
+                assert!(json);
+            }
+            _ => panic!("expected conflict check-readiness"),
+        }
     }
 
     #[test]
