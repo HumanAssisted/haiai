@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
-import time
-import uuid
+import base64
+import json
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 from haiai.errors import HaiAuthError, HaiError
-from haiai.models import HaiEvent, PublicKeyInfo, TranscriptMessage
+from haiai.models import (
+    AgentConfig,
+    HaiEvent,
+    PublicKeyInfo,
+    RotationResult,
+    TranscriptMessage,
+)
 
 
 def make_url(base_url: str, path: str, *, validate_scheme: bool = True) -> str:
@@ -45,30 +52,27 @@ def get_hai_agent_id(hai_agent_id: str | None) -> str:
 
 
 def build_jacs_auth_header() -> str:
-    """Build a JACS authorization header using the loaded agent."""
-    from haiai.config import get_agent, get_config
+    """Reject authentication without the final HTTP request context."""
+    raise HaiError(
+        "Request authentication requires the final method, URL and exact body bytes",
+        code="INVALID_ARGUMENT",
+        action="Use client.build_request_auth_header(method, url, body)",
+    )
 
-    cfg = get_config()
-    agent = get_agent()
 
-    if cfg.jacs_id is None:
-        raise HaiAuthError("jacsId is required for JACS authentication")
-
-    if hasattr(agent, "build_auth_header"):
-        return agent.build_auth_header()
-
-    if not hasattr(agent, "sign_string"):
-        raise HaiError(
-            "build_auth_header requires a JACS agent with sign_string support",
-            code="JACS_NOT_LOADED",
-            action="Run 'haiai init' or set JACS_CONFIG_PATH environment variable",
+def request_auth_input(method: str, url: str, body: bytes) -> str:
+    """Encode exact bytes for the shared Rust request-auth facade, without signing."""
+    if not isinstance(body, bytes):
+        raise TypeError(
+            "body must be bytes containing the exact transmitted request body"
         )
-
-    timestamp = int(time.time())
-    nonce = uuid.uuid4().hex
-    message = f"{cfg.jacs_id}:{timestamp}:{nonce}"
-    signature = agent.sign_string(message)
-    return f"JACS {cfg.jacs_id}:{timestamp}:{nonce}:{signature}"
+    return json.dumps(
+        {
+            "method": method,
+            "url": url,
+            "body_base64": base64.b64encode(body).decode("ascii"),
+        }
+    )
 
 
 def build_auth_headers() -> dict[str, str]:
@@ -84,12 +88,90 @@ def build_auth_headers() -> dict[str, str]:
 
 
 def build_jacs_auth_header_with_key(jacs_id: str, version: str, agent: Any) -> str:
-    """Build a versioned nonce-bearing JACS auth header signed by an explicit agent."""
-    timestamp = int(time.time())
-    nonce = uuid.uuid4().hex
-    message = f"{jacs_id}:{version}:{timestamp}:{nonce}"
-    signature = agent.sign_string(message)
-    return f"JACS {jacs_id}:{version}:{timestamp}:{nonce}:{signature}"
+    """Retired no-context helper; key rotation is owned by the Rust client."""
+    return build_jacs_auth_header()
+
+
+def rotation_config(config_path: str | None) -> tuple[AgentConfig, Path]:
+    """Pin rotation to the config authenticated by the loaded Python signer."""
+    from haiai import config as config_mod
+
+    cfg = config_mod.get_config()
+    if cfg.jacs_id is None:
+        raise HaiAuthError(
+            "Cannot rotate keys: no jacsId in config. Register an agent first."
+        )
+    loaded_path = config_mod._get_loaded_config_path()
+    if config_path is not None and Path(config_path).resolve() != loaded_path:
+        raise HaiAuthError(
+            "Cannot rotate a different config path than the authenticated "
+            "identity currently loaded by haiai.config.load()."
+        )
+    return cfg, loaded_path
+
+
+def validate_rotation_client(
+    cfg: AgentConfig, ffi_jacs_id: str, hai_url: str | None, base_url: str
+) -> None:
+    """Refuse a stale client identity or a different registration destination."""
+    if ffi_jacs_id != cfg.jacs_id:
+        raise HaiAuthError(
+            "Cannot rotate keys: the client identity differs from the loaded config. "
+            "Create a new client after loading a different agent."
+        )
+    if hai_url is not None and hai_url.rstrip("/") != base_url.rstrip("/"):
+        raise HaiAuthError(
+            "Cannot rotate keys: hai_url must match the client's configured HAI URL. "
+            "Set HAI_URL before creating the client."
+        )
+
+
+def complete_key_rotation(
+    rotation: Any, previous: AgentConfig, config_path: Path
+) -> RotationResult:
+    """Map Rust's result and reload Python's signer from the same canonical file."""
+    from haiai import config as config_mod
+
+    if not isinstance(rotation, dict):
+        raise HaiAuthError("Key rotation failed: JACS returned an invalid result")
+    if rotation.get("jacs_id") != previous.jacs_id:
+        raise HaiAuthError("Key rotation failed: JACS changed the agent identity")
+    if rotation.get("old_version") != previous.version:
+        raise HaiAuthError("Key rotation failed: JACS returned the wrong old version")
+    if not all(
+        isinstance(rotation.get(field), str) and rotation[field]
+        for field in ("new_version", "new_public_key_hash", "signed_agent_json")
+    ) or not isinstance(rotation.get("registered_with_hai"), bool):
+        raise HaiAuthError("Key rotation failed: JACS returned incomplete metadata")
+
+    # Rust already updated its in-memory signer. Refresh the separate Python
+    # JACS handle too, including when HAI registration was not confirmed.
+    try:
+        config_mod.load(str(config_path))
+    except Exception as exc:
+        config_mod.reset()
+        raise HaiAuthError(
+            "Keys rotated, but Python could not reload the canonical config. "
+            "Reload haiai.config before signing again."
+        ) from exc
+    current = config_mod.get_config()
+    if (
+        current.jacs_id != previous.jacs_id
+        or current.version != rotation["new_version"]
+    ):
+        config_mod.reset()
+        raise HaiAuthError(
+            "Key rotation failed: reloaded config does not match the new identity"
+        )
+
+    return RotationResult(
+        jacs_id=rotation["jacs_id"],
+        old_version=rotation["old_version"],
+        new_version=rotation["new_version"],
+        new_public_key_hash=rotation["new_public_key_hash"],
+        registered_with_hai=rotation["registered_with_hai"],
+        signed_agent_json=rotation["signed_agent_json"],
+    )
 
 
 def parse_transcript(raw_messages: list[dict[str, Any]]) -> list[TranscriptMessage]:

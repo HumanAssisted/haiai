@@ -58,6 +58,19 @@ func main() {
 
 Expected output: `valid`. The file-level `signed` status only means a signature was found; each signature must be `valid`. This proves agent provenance, not a person's approval of an Agreement.
 
+## Caller-built request authentication
+
+SDK API methods authenticate requests automatically. For your own HTTP call,
+use `client.BuildRequestAuthHeader("POST", finalURL, bodyBytes)`. Send those exact
+bytes to that URL without redirects, and build a fresh header for each retry.
+The URL must match the configured HAI origin. The old no-context FFI helper now
+returns an actionable error.
+
+The service audience defaults to `hai.ai`; use `WithRequestAuthAudience` only
+when your API deployment uses another pinned audience. It cannot be changed
+per request. Go only encodes bytes for FFI; Rust/JACS owns the authentication
+policy and cryptography.
+
 ## Email
 
 For admitted existing-identity registration, `Client.Register` accepts optional

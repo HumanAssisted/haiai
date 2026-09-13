@@ -1,6 +1,6 @@
 # haiai -- Python SDK
 
-Python SDK for the [HAI.AI](https://hai.ai) agreement factory -- JACS-signed agent identity, agreements, and `@hai.ai` mail. Email is a channel into agreements, not the product.
+Python SDK for local JACS identity, signing and verification, plus admitted [HAI.AI](https://hai.ai) platform integrations. See the shared [capability boundaries](../README.md#capability-boundaries) for registration, active email and current Agreement/advocate/mediator limits, and [platform compatibility](../README.md#platform-compatibility) before making API calls.
 
 ## Install
 
@@ -24,53 +24,55 @@ The `haiai` CLI binary and built-in MCP server are implemented in Rust. `pip ins
 
 ```bash
 # After pip install haiai:
-haiai init --name my-agent --domain example.com
+haiai init --name my-agent --register=false
 haiai mcp    # Start MCP server (stdio transport)
-haiai hello  # Authenticated handshake with HAI platform
 ```
 
 See the [CLI README](../rust/haiai-cli/README.md) for full command and MCP tool documentation.
 
-## Quickstart
+## Local quickstart
+
+Follow the shared [local identity setup](../README.md#local-quickstart), then run this from the directory containing `jacs.config.json` with `JACS_PRIVATE_KEY_PASSWORD` set to its key password. It writes a disposable note, signs it in place (keeping a `.bak` copy), and checks the signature locally. No platform registration is needed.
 
 ```python
+from pathlib import Path
 from haiai import Agent
 
-# Load identity from jacs.config.json
 agent = Agent.from_config()
-
-# Send a signed email from your @hai.ai address
-agent.email.send(to="other-agent@hai.ai", subject="Hello", body="From my agent")
-
-# Read inbox
-messages = agent.email.inbox()
-results = agent.email.search(q="hello")
-
-# Reply with threading
-agent.email.reply(message_id=messages[0].message_id, body="Got it!")
+client = agent.client
+Path("sdk-note.md").write_text("Hello from my agent.\n", encoding="utf-8")
+client.sign_text("sdk-note.md")
+result = client.verify_text("sdk-note.md", strict=True)
+if not result.signatures or any(s.status != "valid" for s in result.signatures):
+    raise RuntimeError(f"Signature verification failed: {result}")
+print("valid")
 ```
 
-Or using the lower-level client:
+Expected output: `valid`. The file-level `signed` status only means a signature was found; each signature must be `valid`. This proves agent provenance, not a person's approval of an Agreement.
 
-```python
-from haiai import HaiClient
+## Caller-built request authentication
 
-client = HaiClient()
-client.register("https://hai.ai", owner_email="you@example.com")
+SDK API methods authenticate requests automatically. For your own HTTP call,
+use `client.build_request_auth_header("POST", final_url, body_bytes)` (or `await`
+the same method on `AsyncHaiClient`). Send those exact bytes to that URL without
+redirects, and build a fresh header for each retry. The URL must match the
+configured HAI origin. The old no-argument helper now returns a clear error.
 
-hello = client.hello_world("https://hai.ai")
-print(hello.message)
-
-# Send email
-client.send_email("https://hai.ai", to="peer@hai.ai", subject="Hi", body="Hello")
-
-# List messages
-messages = client.list_messages("https://hai.ai")
-```
+The service audience defaults to `hai.ai`; set `request_auth_audience` on the
+client only when your API deployment uses a different pinned audience. It is
+never chosen from the outgoing request. Python only encodes the bytes for FFI;
+Rust/JACS owns the authentication policy and cryptography.
 
 ## Email
 
-Every registered agent gets a `username@hai.ai` address. All email is JACS-signed. Email capacity grows with your agent's trust level.
+For admitted existing-identity registration, `HaiClient.register`,
+`AsyncHaiClient.register`, and module-level `register` accept optional
+`registration_key`. Pass raw PEM to the public `public_key` argument. Previews
+show FFI options (raw `public_key_pem`, masked registration key), before Rust
+encodes the HTTP body. See the shared
+[registration guidance](../README.md#admitted-registration-and-email).
+
+Platform email requires admitted registration and server-returned email status `active`; an allocated or pending address cannot send. Inspect `agent.email.status()` for the actual address, status and limits. Quota, external-recipient and content gates still apply; see [capability boundaries](../README.md#capability-boundaries).
 
 Signed email defaults to `html_inline_jacs`: the SDK renders safe HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Use `generation_type="attachment_jacs"` with `send_signed_email` only for compatibility with the older attachment transport. For now, signed email body input must be plain text; caller-supplied HTML and reserved HAI/JACS inline markers are rejected before signing.
 
@@ -83,7 +85,9 @@ Signed email defaults to `html_inline_jacs`: the SDK renders safe HTML, embeds t
 | `agent.email.forward()` | Forward a message |
 | `agent.email.status()` | Account limits and capacity |
 
-### Local JACS verification (raw MIME round-trip)
+### Raw MIME retrieval and verification
+
+These helpers require platform access. For an entirely local check, use the quickstart above.
 
 ```python
 raw = client.get_raw_email(message_id="m.uuid")
@@ -126,18 +130,10 @@ verified = verify_artifact(jacs_client, signed)
 
 Working example: `examples/a2a_quickstart.py`.
 
-## Trust Levels
-
-| Level | Name | Requirements | What You Get |
-|-------|------|-------------|--------------|
-| 1 | **Registered** | JACS keypair | Cryptographic identity, @hai.ai email |
-| 2 | **Verified** | DNS TXT record | Verified identity badge |
-| 3 | **HAI Certified** | HAI.AI co-signing | Highest trust level |
-
 ## Requirements
 
 - Python 3.10+
-- A JACS keypair (generated via `haiai init` or programmatically)
+- A JACS keypair (generated locally via `haiai init --name my-agent --register=false` or programmatically)
 
 ## Environment Variables
 

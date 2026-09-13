@@ -195,7 +195,13 @@ the server logs `event=mcp_local_signing_denied` and falls back to `verify-only`
 | `JACS_KEY_DIRECTORY` | Override key directory |
 | `JACS_CONFIG_FILE` | Override config file path |
 | `HAI_URL` | HAI.AI API base URL (default: `https://hai.ai`) |
+| `HAI_REQUEST_AUTH_AUDIENCE` | API ingress audience for ordinary requests and remote records (default when absent: `hai.ai`) |
 | `RUST_LOG` | Logging level (default: `info,rmcp=warn`) |
+
+Set `HAI_REQUEST_AUTH_AUDIENCE` to the API's configured ingress audience; it is
+independent of `HAI_URL`. Blank, invalid UTF-8, or values over 256 UTF-8 bytes
+refuse startup. `haiai mcp` pins the value at startup, including for remote
+document storage; tool arguments cannot override it.
 
 ## Global Flags
 

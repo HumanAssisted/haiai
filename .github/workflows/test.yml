@@ -11,11 +11,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # JACS `make release-everything` creates package-scoped tags, not bare v* tags.
-  # Use crate/v* as the canonical source/API release ref; the JACS release
-  # workflow verifies it against jacs-core, jacs-media, jacs, binding-core,
-  # jacs-mcp, and jacs-cli.
-  JACS_REF: crate/v0.13.0
+  # Source ref and expected package version are separate; checkouts validate both.
+  JACS_REF: 992953ea77d4c9a16953aee28e4a1e5d26e62200
+  JACS_VERSION: 0.13.0
 
 jobs:
   crypto-policy:
@@ -77,8 +75,18 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust (for haiipy build via maturin)
         uses: dtolnay/rust-toolchain@stable
-      - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+      - name: Check out JACS (for workspace patch)
+        run: |
+          jacs_checkout="${{ github.workspace }}/../JACS"
+          git init "$jacs_checkout"
+          git -C "$jacs_checkout" remote add origin https://github.com/HumanAssisted/JACS.git
+          if [[ "$JACS_REF" == crate/v* || "$JACS_REF" == v* ]]; then
+            git -C "$jacs_checkout" fetch --depth 1 origin "refs/tags/$JACS_REF:refs/tags/$JACS_REF"
+          else
+            git -C "$jacs_checkout" fetch --depth 1 origin "$JACS_REF"
+          fi
+          git -C "$jacs_checkout" checkout --detach FETCH_HEAD
+          make check-jacs-versions JACS_SOURCE_DIR="$jacs_checkout"
       - name: Create virtualenv and install maturin
         run: |
           python -m venv .venv
@@ -156,8 +164,18 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust (for haiinpm build via napi-rs)
         uses: dtolnay/rust-toolchain@stable
-      - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+      - name: Check out JACS (for workspace patch)
+        run: |
+          jacs_checkout="${{ github.workspace }}/../JACS"
+          git init "$jacs_checkout"
+          git -C "$jacs_checkout" remote add origin https://github.com/HumanAssisted/JACS.git
+          if [[ "$JACS_REF" == crate/v* || "$JACS_REF" == v* ]]; then
+            git -C "$jacs_checkout" fetch --depth 1 origin "refs/tags/$JACS_REF:refs/tags/$JACS_REF"
+          else
+            git -C "$jacs_checkout" fetch --depth 1 origin "$JACS_REF"
+          fi
+          git -C "$jacs_checkout" checkout --detach FETCH_HEAD
+          make check-jacs-versions JACS_SOURCE_DIR="$jacs_checkout"
       - name: Build haiinpm native addon
         run: |
           cd rust/haiinpm
@@ -243,8 +261,18 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust (for jacsgo build)
         uses: dtolnay/rust-toolchain@stable
-      - name: Clone JACS (for workspace patch + jacsgo build)
-        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+      - name: Check out JACS (for workspace patch + jacsgo build)
+        run: |
+          jacs_checkout="${{ github.workspace }}/../JACS"
+          git init "$jacs_checkout"
+          git -C "$jacs_checkout" remote add origin https://github.com/HumanAssisted/JACS.git
+          if [[ "$JACS_REF" == crate/v* || "$JACS_REF" == v* ]]; then
+            git -C "$jacs_checkout" fetch --depth 1 origin "refs/tags/$JACS_REF:refs/tags/$JACS_REF"
+          else
+            git -C "$jacs_checkout" fetch --depth 1 origin "$JACS_REF"
+          fi
+          git -C "$jacs_checkout" checkout --detach FETCH_HEAD
+          make check-jacs-versions JACS_SOURCE_DIR="$jacs_checkout"
       - name: Cache jacsgo shared library
         id: cache-jacsgo
         uses: actions/cache@v4
@@ -298,8 +326,18 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust-version }}
-      - name: Clone JACS (for workspace patch)
-        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+      - name: Check out JACS (for workspace patch)
+        run: |
+          jacs_checkout="${{ github.workspace }}/../JACS"
+          git init "$jacs_checkout"
+          git -C "$jacs_checkout" remote add origin https://github.com/HumanAssisted/JACS.git
+          if [[ "$JACS_REF" == crate/v* || "$JACS_REF" == v* ]]; then
+            git -C "$jacs_checkout" fetch --depth 1 origin "refs/tags/$JACS_REF:refs/tags/$JACS_REF"
+          else
+            git -C "$jacs_checkout" fetch --depth 1 origin "$JACS_REF"
+          fi
+          git -C "$jacs_checkout" checkout --detach FETCH_HEAD
+          make check-jacs-versions JACS_SOURCE_DIR="$jacs_checkout"
       - name: Run tests (all workspace crates including hai-binding-core, haiinpm, haiipy, haiigo)
         run: |
           cd rust
@@ -338,8 +376,18 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-      - name: Clone JACS (for workspace patch + jacsgo build)
-        run: git clone --depth 1 --branch "$JACS_REF" https://github.com/HumanAssisted/JACS.git "${{ github.workspace }}/../JACS"
+      - name: Check out JACS (for workspace patch + jacsgo build)
+        run: |
+          jacs_checkout="${{ github.workspace }}/../JACS"
+          git init "$jacs_checkout"
+          git -C "$jacs_checkout" remote add origin https://github.com/HumanAssisted/JACS.git
+          if [[ "$JACS_REF" == crate/v* || "$JACS_REF" == v* ]]; then
+            git -C "$jacs_checkout" fetch --depth 1 origin "refs/tags/$JACS_REF:refs/tags/$JACS_REF"
+          else
+            git -C "$jacs_checkout" fetch --depth 1 origin "$JACS_REF"
+          fi
+          git -C "$jacs_checkout" checkout --detach FETCH_HEAD
+          make check-jacs-versions JACS_SOURCE_DIR="$jacs_checkout"
 
       # Build all native FFI artifacts up front.
       - name: Build haiigo cdylib (libhaiigo)

@@ -9,11 +9,10 @@ use anyhow::Context as _;
 use clap::{Parser, Subcommand, ValueEnum};
 use hai_mcp::{HaiMcpServer, HaiServerContext, LoadedSharedAgent};
 use haiai::{
-    build_document_provider, CreateAgentOptions, CreateEmailTemplateOptions, EmailGenerationType,
-    HaiClient, HaiClientOptions, JacsAgentLifecycle, JacsConflictProvider, JacsDocumentProvider,
-    JacsProvider, ListEmailTemplatesOptions, ListMessagesOptions, LocalJacsProvider,
-    RegisterAgentOptions, SaveDocumentRequest, SaveIntent, SearchOptions, SendEmailOptions,
-    UpdateEmailTemplateOptions,
+    CreateAgentOptions, CreateEmailTemplateOptions, EmailGenerationType, HaiClient,
+    HaiClientOptions, JacsAgentLifecycle, JacsConflictProvider, JacsDocumentProvider, JacsProvider,
+    ListEmailTemplatesOptions, ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions,
+    SaveDocumentRequest, SaveIntent, SearchOptions, SendEmailOptions, UpdateEmailTemplateOptions,
 };
 use jacs_mcp::JacsMcpServer;
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
@@ -1296,6 +1295,7 @@ fn load_client() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
     let cached_email = provider.agent_email_from_config();
     let options = HaiClientOptions {
         base_url: hai_url(),
+        request_auth_audience: haiai::client::request_auth_audience_from_env()?,
         client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
         ..Default::default()
     };
@@ -1315,6 +1315,7 @@ async fn load_client_with_email() -> anyhow::Result<HaiClient<LocalJacsProvider>
     let config_path = provider.config_path().to_path_buf();
     let options = HaiClientOptions {
         base_url: hai_url(),
+        request_auth_audience: haiai::client::request_auth_audience_from_env()?,
         client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
         ..Default::default()
     };
@@ -1339,8 +1340,13 @@ async fn load_client_with_email() -> anyhow::Result<HaiClient<LocalJacsProvider>
 fn load_document_provider(
     storage_flag: Option<&str>,
 ) -> anyhow::Result<Box<dyn JacsDocumentProvider>> {
-    build_document_provider(None, storage_flag, Some(hai_url()))
-        .context("failed to load routed JACS document provider")
+    haiai::document_store::build_document_provider_with_request_auth_audience(
+        None,
+        storage_flag,
+        Some(hai_url()),
+        &haiai::client::request_auth_audience_from_env()?,
+    )
+    .context("failed to load routed JACS document provider")
 }
 
 fn load_conflict_provider(
@@ -1442,6 +1448,8 @@ fn print_message_table(messages: &[haiai::EmailMessage]) {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    // Refuse malformed operator configuration before loading keys or starting MCP.
+    haiai::client::request_auth_audience_from_env()?;
 
     // Resolve effective storage label from --storage or --storage-env.
     let effective_storage =
@@ -1559,6 +1567,7 @@ async fn main() -> anyhow::Result<()> {
 
                 let hai_options = HaiClientOptions {
                     base_url: hai_url(),
+                    request_auth_audience: haiai::client::request_auth_audience_from_env()?,
                     client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
                     ..Default::default()
                 };

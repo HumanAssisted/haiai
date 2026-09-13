@@ -47,17 +47,35 @@ const (
 // All cryptographic operations (signing, verification, key management) are
 // delegated to the Rust FFI layer via the FFIClient interface.
 type Client struct {
-	endpoint   string
-	jacsID     string
-	mu         sync.RWMutex // protects haiAgentID and agentEmail
-	haiAgentID string       // HAI-assigned agent UUID for email URL paths (set after registration)
-	agentEmail string       // Agent's @hai.ai email address (set after registration)
-	agentKeys  *keyCache    // Agent key cache with 5-minute TTL
-	ffi        FFIClient    // Rust FFI client for all API calls and crypto operations
+	expectedEventTenant string
+	responseAudience    string
+	requestAuthAudience string
+	endpoint            string
+	jacsID              string
+	mu                  sync.RWMutex // protects haiAgentID and agentEmail
+	haiAgentID          string       // HAI-assigned agent UUID for email URL paths (set after registration)
+	agentEmail          string       // Agent's @hai.ai email address (set after registration)
+	agentKeys           *keyCache    // Agent key cache with 5-minute TTL
+	ffi                 FFIClient    // Rust FFI client for all API calls and crypto operations
 }
 
 // Option configures a Client.
 type Option func(*Client)
+
+// WithRequestAuthAudience pins the service audience for request authentication.
+// It defaults to hai.ai and must match the API's configured audience.
+func WithRequestAuthAudience(audience string) Option {
+	return func(c *Client) { c.requestAuthAudience = audience }
+}
+
+// WithExpectedEventContext pins tenant and server recipient for live signed
+// events and job responses. Neither value comes from the received envelope.
+func WithExpectedEventContext(tenant, responseAudience string) Option {
+	return func(c *Client) {
+		c.expectedEventTenant = tenant
+		c.responseAudience = responseAudience
+	}
+}
 
 // WithEndpoint sets the HAI API base URL.
 func WithEndpoint(endpoint string) Option {
@@ -123,8 +141,9 @@ func WithFFIClient(ffiClient FFIClient) Option {
 // Use options to override specific settings.
 func NewClient(opts ...Option) (*Client, error) {
 	cl := &Client{
-		endpoint:  DefaultEndpoint,
-		agentKeys: newKeyCache(),
+		endpoint:            DefaultEndpoint,
+		agentKeys:           newKeyCache(),
+		requestAuthAudience: "hai.ai",
 	}
 
 	// Apply options first -- user-provided values take priority
@@ -167,11 +186,16 @@ func NewClient(opts ...Option) (*Client, error) {
 	// Use newFFIClient() (build-tagged) or WithFFIClient() for test injection.
 	if cl.ffi == nil {
 		ffiConfig := map[string]interface{}{
-			"base_url": cl.endpoint,
-			"jacs_id":  cl.jacsID,
+			"base_url":              cl.endpoint,
+			"jacs_id":               cl.jacsID,
+			"request_auth_audience": cl.requestAuthAudience,
 		}
 		if configPath != "" {
 			ffiConfig["jacs_config_path"] = configPath
+		}
+		if cl.expectedEventTenant != "" || cl.responseAudience != "" {
+			ffiConfig["expected_event_tenant"] = cl.expectedEventTenant
+			ffiConfig["response_audience"] = cl.responseAudience
 		}
 		configJSON, err := json.Marshal(ffiConfig)
 		if err != nil {
@@ -237,7 +261,7 @@ func mapFFIErr(err error) error {
 	}
 }
 
-// buildAuthHeader constructs the JACS authentication header via the FFI layer.
+// buildAuthHeader is retired; request authentication needs final request context.
 func (c *Client) buildAuthHeader() (string, error) {
 	if c.ffi == nil {
 		return "", newError(ErrSigningFailed, "FFI client is not initialized")
@@ -245,6 +269,28 @@ func (c *Client) buildAuthHeader() (string, error) {
 	header, err := c.ffi.BuildAuthHeader()
 	if err != nil {
 		return "", wrapError(ErrSigningFailed, err, "failed to build JACS auth header via FFI")
+	}
+	return header, nil
+}
+
+// BuildRequestAuthHeader authenticates the final method, URL (including query)
+// and exact transmitted body via Rust/JACS. Build a fresh header per attempt.
+// Ordinary SDK API calls do this automatically; audience is client-pinned.
+func (c *Client) BuildRequestAuthHeader(method, url string, body []byte) (string, error) {
+	if c.ffi == nil {
+		return "", newError(ErrSigningFailed, "FFI client is not initialized")
+	}
+	request, err := json.Marshal(struct {
+		Method     string `json:"method"`
+		URL        string `json:"url"`
+		BodyBase64 string `json:"body_base64"`
+	}{method, url, base64.StdEncoding.EncodeToString(body)})
+	if err != nil {
+		return "", wrapError(ErrSigningFailed, err, "failed to encode request context")
+	}
+	header, err := c.ffi.BuildRequestAuthHeader(string(request))
+	if err != nil {
+		return "", wrapError(ErrSigningFailed, err, "failed to build JACS request auth header via FFI")
 	}
 	return header, nil
 }

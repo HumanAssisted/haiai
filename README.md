@@ -162,13 +162,14 @@ text; caller HTML and reserved HAI/JACS markers are rejected. Use
 
 ## Platform compatibility
 
-As of 2026-09-13, this v0.4.1 checkout builds legacy
-`JACS id:timestamp:nonce:signature` credentials. Current HAI API source accepts
-only v2 request-bound credentials. A fix exists on
-`codex/jacs-security-response-context` at `4c0bf63`, but is not integrated here;
-authenticated calls to a v2-only deployment require coordinated SDK integration
-and release. Branch evidence does not establish what is deployed. Local signing
-is independent of this API mismatch. See the existing
+This source integrates request-bound JACS v2 authentication through the shared
+Rust transport and JACS 0.13.0. Authenticated requests bind the final method,
+URL, exact body bytes and configured audience; context-free helpers fail with
+an actionable error. Current HAI API source requires this v2 contract. Configure
+matching SDK/API ingress origins and audiences, and deploy compatible builds
+together. The previously installed/published v0.4.1 binaries do not establish
+that this integration is deployed. Local signing remains independent of API
+admission. See [the request-auth contract](docs/HAIAI_LANGUAGE_SYNC_GUIDE.md#authentication-header-format), the existing
 [JACS security policy](https://github.com/HumanAssisted/JACS/blob/main/SECURITY.md)
 and [local security guide](rust/haiai/docs/knowledge/jacsbook/advanced/security.md).
 
@@ -180,7 +181,14 @@ Every HAIAI SDK, the CLI, and the MCP server resolve the HAI API origin the same
 explicit option  >  $HAI_URL  >  $HAI_API_URL  >  https://hai.ai
 ```
 
-A variable that is set but blank counts as unset. No code change is needed to move between deployments — export the variable and every route follows it: registration, email, agreements, `/.well-known/hai-keys.json`, the SSE/WebSocket job stream, and job responses.
+An origin variable that is set but blank counts as unset. No code change is needed to move between deployments — export the variable and every route follows it: registration, email, agreements, `/.well-known/hai-keys.json`, the SSE/WebSocket job stream, and job responses.
+
+For CLI and MCP, set `HAI_REQUEST_AUTH_AUDIENCE` to the API's configured ingress
+audience when it differs from `hai.ai`. This value is independent of the URL and
+applies to ordinary requests and remote document storage. Only an absent variable
+defaults to `hai.ai`; blank, invalid UTF-8, or values over 256 UTF-8 bytes refuse
+startup. MCP captures it at startup; later environment changes and tool arguments
+cannot replace it. Language SDKs use their existing client audience options.
 
 Selecting an origin supplies neither admission nor protocol compatibility; the
 [platform requirements above](#capability-boundaries) still apply.
@@ -251,6 +259,27 @@ go get github.com/HumanAssisted/haiai-go  # Go
 ```
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for SDK usage, Rust library integration, and architecture details.
+
+## Actionable signed events
+
+Live SSE/WebSocket events and job responses use the closed response-v2 context
+contract. Configure the expected deployment tenant and the API's pinned
+request-auth audience before connecting or submitting responses; neither is
+inferred from received signatures or key discovery:
+
+- Rust: `client.with_expected_event_context(tenant, audience)?`
+- Python (sync/async): `HaiClient(expected_event_tenant=tenant, response_audience=audience)`
+- Node: `HaiClient.create({ expectedEventTenant: tenant, responseAudience: audience })`
+- Go: `WithExpectedEventContext(tenant, audience)`
+- Existing FFI initialization JSON: `expected_event_tenant` and `response_audience`.
+
+Recipients are bound to their authenticated connection nonce and JACS principal;
+job responses also bind the job channel and causation. Legacy signatures remain
+mathematically inspectable, but missing/mismatched action context never releases
+a live payload. Deploy matching HAI/HAIAI producers and consumers together. This
+context check does not itself establish lifecycle authority or authorize jobs.
+Custom providers must implement the named `sign_response_with_context` operation;
+unsupported providers fail closed rather than falling back to generic signing.
 
 ## Links
 

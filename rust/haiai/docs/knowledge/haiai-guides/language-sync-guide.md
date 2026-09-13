@@ -33,25 +33,31 @@ Use this guide whenever HAIAI behavior changes so each language implementation c
 5. username, email, key-discovery, and HAI verification endpoints
 6. verify-link generation rules for `hai.ai` verifier URLs
 
-## JACS Protocol Delegation
+## Protocol ownership and current adapters
 
-HAIAI SDKs delegate protocol functions to JACS bindings via `jacs::protocol` (Rust)
-or the equivalent binding API in each language. Each SDK follows this pattern:
+JACS owns cryptographic signing, verification, key handling, and canonicalization.
+HAIAI owns HAI request contracts and transport. Python, Node, and Go call the
+shared Rust HTTP client through FFI; that client asks its `JacsProvider` to sign.
+This is implementation reuse. Agent signatures establish provenance under the
+verifier's checks, without establishing human approval or principal-to-agent
+delegation of authority. Principal delegation is unsupported and unscheduled.
+JACS's implemented native-root authorization of an ES256 export key remains a
+separate key-binding mechanism.
 
-1. **Try JACS binding** — call the JACS method directly (e.g., `agent.sign_response()`,
-   `agent.build_auth_header()`, `agent.canonicalize_json()`).
-2. **Fallback to local** — if the JACS binding doesn't expose the method (test mocks,
-   older JACS versions), use a local implementation.
+Missing cryptographic binding support must fail with an actionable dependency
+error. Do not substitute local crypto or treat a test mock as runtime support.
+See [ADR 0001](adr/0001-crypto-delegation-to-jacs.md).
 
-Delegated protocol functions:
+This ownership rule does not establish discovery parity. Rust/Go A2A bundle
+builders and Go DNS generation still construct legacy material; the Rust DNS
+verifier also uses a legacy field/digest contract. Those paths must not be
+described as producing the current JACS-bound discovery bundle until they pass
+the canonical JACS verification contract. Discovery parity belongs to I3.
 
-| Function | Rust | Python | Node | Go |
-|---|---|---|---|---|
-| `canonicalize_json` | `jacs::protocol::canonicalize_json` | `agent.canonicalize_json()` | `agent.canonicalizeJsonSync()` | `backend.CanonicalizeJSON()` |
-| `build_auth_header` | `jacs::protocol::build_auth_header` | `agent.build_auth_header()` | `agent.buildAuthHeaderSync()` | `backend.BuildAuthHeader()` |
-| `sign_response` | `provider.sign_response()` | `agent.sign_response()` | `agent.signResponseSync()` | `backend.SignResponse()` |
-| `unwrap_signed_event` | `jacs::protocol::unwrap_signed_event` | `agent.unwrap_signed_event()` | `agent.unwrapSignedEventSync()` | `backend.UnwrapSignedEvent()` |
-| `generate_verify_link` | `jacs::protocol::generate_verify_link` | `agent.generate_verify_link()` | `agent.generateVerifyLinkSync()` | `backend.GenerateVerifyLink()` |
+Agreement v2 inspection is also bounded: `mathematicalChecksValid` reports the
+mathematical checks; `valid` and `policyAccepted` remain `false`, with
+`overallScope: "consent_signatures_only"`. It does not accept application policy
+or establish a person's assent.
 
 ## Cross-Language Invariants
 
@@ -64,21 +70,56 @@ When updating Rust integrations, use these canonical upstream repos as reference
 1. `~/personal/JACS/jacs`
 2. `~/personal/JACS/jacs-mcp`
 
-Target canonical version pin for both integrations: `0.9.4`.
+The checked-in JACS dependencies target `0.13.0`. Check language manifests and
+run `make check-jacs-versions` and `make check-versions` before release. Local path
+overrides are development inputs, not evidence of published-package parity.
+
+[CI's JACS source checkout](../.github/workflows/test.yml) separately pins
+`992953ea77d4c9a16953aee28e4a1e5d26e62200`, the native source validated for this
+integration. Each job shallow-fetches that exact commit, checks it out with
+detached HEAD, and runs `make check-jacs-versions JACS_SOURCE_DIR=...` against
+the fetched source. The check compares its native manifests with the separate
+CI `JACS_VERSION: 0.13.0` expectation and all SDK package pins. Version bumps
+update that expectation and select the corresponding `crate/v...` release tag.
+The JACS package version remains `0.13.0` and HAIAI remains `0.4.1`.
 
 ### Authentication header format
 
-Header format is:
+Authenticated operations use `Authorization: JACS v2.<claims>.<signature>`.
+The shared Rust transport delegates to JACS with the final method, absolute URL
+(including path/query), exact serialized body bytes, and deployment-pinned
+audience. JACS binds these to the signing identity/key, time, and fresh nonce.
+Bodies must be bounded bytes, at most 10 MiB; authenticated redirects and
+streaming request bodies are refused. Each retry builds a fresh proof.
 
-`JACS {jacsId}:{timestamp}:{signature_base64}`
+Caller-built requests use `build_request_auth_header` (Rust/Python),
+`buildRequestAuthHeader` (Node), or `BuildRequestAuthHeader` (Go). Send the exact
+bytes once to the supplied final URL without redirects. The URL must match the
+client's configured origin. The audience defaults to `hai.ai` and is configured
+on the client, never taken from per-request inputs or discovery.
 
-Signed message is:
+CLI and MCP expose this as `HAI_REQUEST_AUTH_AUDIENCE`, which must match the
+API's configured ingress audience. Only an absent variable uses `hai.ai`;
+blank, invalid UTF-8, and values over 256 UTF-8 bytes fail closed at startup.
+Valid values are passed unchanged, independently of `HAI_URL`. MCP captures the
+value (or configuration error) once; subsequent process-environment changes and
+tool arguments cannot replace it. Both ordinary clients and remote document
+providers receive that audience, the latter through the existing
+`build_document_provider_with_request_auth_audience` helper. Python, Node, Go,
+and Rust retain their explicit client audience options.
 
-`{jacsId}:{timestamp}`
+Context-free header helpers now return an actionable error; there is no legacy
+fallback. Public discovery and bootstrap registration remain unsigned. Updating
+or rotating a registered identity authenticates the exact new registration
+document with the pre-change identity. A successful local change with
+`registered_with_hai: false` is not hosted readiness.
 
-`fixtures/cross_lang_test.json` is the shared wrapper-level fixture for this
-shape plus canonical JSON selection cases. It should not carry raw private keys
-or JACS-owned signature vectors.
+`fixtures/cross_lang_test.json` governs the shared wrapper input and exact-byte
+FFI encoding contract, plus canonical JSON selection cases. Its historical auth
+example is explicitly retired. It should not carry raw private keys or
+JACS-owned signature vectors. Native transport tests verify proofs through JACS.
+The same fixture declares CLI/MCP audience environment cases; loopback tests
+verify actual ordinary and remote-record request proofs against that audience.
 
 ### Shared endpoint contract fixture
 
@@ -197,5 +238,5 @@ For each language SDK:
 1. Keep `rust/haiai/src/jacs.rs` `JacsProvider` trait aligned with canonical `jacs` updates.
 2. Keep `rust/hai-mcp` embedded `jacs_*` behavior aligned with canonical `jacs-mcp` tool changes.
 3. Expand shared fixtures for additional HAI endpoints as contracts stabilize.
-4. `serde_json_canonicalizer` is optional in `rust/haiai` — only needed when `jacs-crate` feature is disabled.
+4. Missing JACS capabilities must fail clearly; do not implement local crypto to fill binding gaps.
 5. Verify `jacs` JACS-side: `unwrap_signed_event` key type (`Vec<u8>` vs PEM `String`) and `get_lookup_id()` vs `get_id()` return format parity.

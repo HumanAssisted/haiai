@@ -76,6 +76,8 @@ pub struct CreateAgentResult {
 pub struct RotateKeysOptions {
     /// Whether to re-register with HAI after local rotation. Default: true.
     pub register_with_hai: Option<bool>,
+    /// New signing algorithm. Omit to preserve the current algorithm.
+    pub algorithm: Option<String>,
 }
 
 /// Result of a key rotation operation.

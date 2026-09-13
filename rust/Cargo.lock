@@ -1419,6 +1419,7 @@ dependencies = [
 name = "hai-binding-core"
 version = "0.4.1"
 dependencies = [
+ "base64 0.22.1",
  "haiai",
  "httpmock",
  "image",

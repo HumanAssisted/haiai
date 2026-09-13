@@ -1,7 +1,6 @@
 #[cfg(feature = "jacs-crate")]
 use std::collections::HashMap;
 use std::future::Future;
-#[cfg(feature = "jacs-crate")]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,7 +10,6 @@ use futures_util::{SinkExt, StreamExt};
 use reqwest::{Response, StatusCode};
 use serde_json::{json, Value};
 #[cfg(feature = "jacs-crate")]
-use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -24,6 +22,7 @@ use tungstenite::client::IntoClientRequest;
 
 use crate::error::{HaiError, Result};
 use crate::jacs::JacsProvider;
+use crate::request_auth::RequestClient;
 #[cfg(feature = "jacs-crate")]
 use crate::types::SignedEventVerification;
 use crate::types::{
@@ -39,6 +38,40 @@ use crate::types::{
 };
 
 pub const DEFAULT_BASE_URL: &str = "https://hai.ai";
+/// Pinned HAI request recipient; distinct from the URL's network origin.
+pub const DEFAULT_REQUEST_AUTH_AUDIENCE: &str = "hai.ai";
+/// Explicit CLI/MCP operator configuration, independent of the API URL.
+pub const REQUEST_AUTH_AUDIENCE_ENV: &str = "HAI_REQUEST_AUTH_AUDIENCE";
+
+/// Resolve the operator's request audience. Only an absent variable defaults;
+/// malformed configuration must never silently target another audience.
+pub fn request_auth_audience_from_env() -> Result<String> {
+    let audience = match std::env::var(REQUEST_AUTH_AUDIENCE_ENV) {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => DEFAULT_REQUEST_AUTH_AUDIENCE.to_string(),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(HaiError::ConfigInvalid {
+                message: format!("{REQUEST_AUTH_AUDIENCE_ENV} must be valid UTF-8"),
+            });
+        }
+    };
+    validate_request_auth_audience(&audience).map_err(|error| HaiError::ConfigInvalid {
+        message: format!("invalid {REQUEST_AUTH_AUDIENCE_ENV}: {error}"),
+    })?;
+    Ok(audience)
+}
+
+pub(crate) fn validate_request_auth_audience(audience: &str) -> Result<()> {
+    if audience.trim().is_empty() || audience.len() > 256 {
+        return Err(HaiError::Validation {
+            field: "request_auth_audience".into(),
+            message:
+                "a nonempty deployment-pinned request audience of at most 256 bytes is required"
+                    .into(),
+        });
+    }
+    Ok(())
+}
 
 /// Resolve the HAI API origin this process should target.
 ///
@@ -217,6 +250,8 @@ pub struct HaiClientOptions {
     /// Format: `haiai-{transport}/{version}`.
     /// Defaults to `haiai-rust/{CARGO_PKG_VERSION}` when `None`.
     pub client_identifier: Option<String>,
+    /// Deployment-configured recipient, never inferred from remote discovery.
+    pub request_auth_audience: String,
 }
 
 impl Default for HaiClientOptions {
@@ -226,23 +261,25 @@ impl Default for HaiClientOptions {
             timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
             max_retries: DEFAULT_MAX_RETRIES,
             client_identifier: None,
+            request_auth_audience: DEFAULT_REQUEST_AUTH_AUDIENCE.to_string(),
         }
     }
 }
 
 pub struct HaiClient<P: JacsProvider> {
     base_url: String,
-    http: reqwest::Client,
+    expected_event_context: Option<(String, String)>,
+    http: RequestClient<P>,
     /// Streaming HTTP client with connect/read timeouts but no total request
     /// deadline. A total deadline would terminate every healthy SSE stream.
     #[cfg(feature = "jacs-crate")]
-    live_http: reqwest::Client,
+    live_http: RequestClient<P>,
     #[cfg(feature = "jacs-crate")]
     request_timeout: Duration,
     #[cfg(feature = "jacs-crate")]
     server_key_refresh_interval: Duration,
     max_retries: usize,
-    jacs: P,
+    jacs: Arc<P>,
     /// HAI-assigned agent UUID for email URL paths (set after registration).
     hai_agent_id: Option<String>,
     /// Agent's @hai.ai email address (set after registration).
@@ -263,6 +300,7 @@ const DEFAULT_MAX_RECONNECT_ATTEMPTS: usize = 10;
 
 impl<P: JacsProvider> HaiClient<P> {
     pub fn new(jacs: P, options: HaiClientOptions) -> Result<Self> {
+        validate_request_auth_audience(&options.request_auth_audience)?;
         // ── Issue #13: validate base URL ────────────────────────────────
         let trimmed = options.base_url.trim_end_matches('/');
         let parsed_base = url::Url::parse(trimmed).map_err(|error| HaiError::Validation {
@@ -307,16 +345,36 @@ impl<P: JacsProvider> HaiClient<P> {
             .redirect(same_origin_redirect_policy())
             .default_headers(default_headers.clone())
             .build()?;
+        let authenticated_http = reqwest::Client::builder()
+            .timeout(options.timeout)
+            .redirect(reqwest::redirect::Policy::none())
+            .default_headers(default_headers.clone())
+            .build()?;
         #[cfg(feature = "jacs-crate")]
         let live_http = reqwest::Client::builder()
             .connect_timeout(options.timeout)
             .read_timeout(options.timeout)
-            .redirect(same_origin_redirect_policy())
+            .redirect(reqwest::redirect::Policy::none())
             .default_headers(default_headers)
             .build()?;
+        let jacs = Arc::new(jacs);
+        let http = RequestClient::new(
+            http,
+            authenticated_http,
+            jacs.clone(),
+            options.request_auth_audience.clone(),
+        );
+        #[cfg(feature = "jacs-crate")]
+        let live_http = RequestClient::new(
+            live_http.clone(),
+            live_http,
+            jacs.clone(),
+            options.request_auth_audience,
+        );
 
         Ok(Self {
             base_url: trimmed.to_string(),
+            expected_event_context: None,
             http,
             #[cfg(feature = "jacs-crate")]
             live_http,
@@ -330,6 +388,37 @@ impl<P: JacsProvider> HaiClient<P> {
             agent_email: None,
             #[cfg(feature = "jacs-crate")]
             shared_event_replay_store: None,
+        })
+    }
+
+    /// Pin deployment tenancy and the recipient of outbound job responses.
+    /// Neither value is inferred from a signed event or discovery response.
+    pub fn with_expected_event_context(
+        mut self,
+        tenant: String,
+        response_audience: String,
+    ) -> Result<Self> {
+        if tenant.is_empty()
+            || tenant.len() > 256
+            || response_audience.is_empty()
+            || response_audience == "public"
+            || response_audience.len() > 256
+        {
+            return Err(HaiError::Validation {
+                field: "expected_event_context".into(),
+                message: "explicit nonempty tenant and private response audience are required"
+                    .into(),
+            });
+        }
+        self.expected_event_context = Some((tenant, response_audience));
+        Ok(self)
+    }
+
+    #[cfg(feature = "jacs-crate")]
+    fn expected_event_context(&self) -> Result<&(String, String)> {
+        self.expected_event_context.as_ref().ok_or_else(|| HaiError::Validation {
+            field: "expected_event_context".into(),
+            message: "configure expected_event_tenant and response_audience before live events or job responses".into(),
         })
     }
 
@@ -404,15 +493,30 @@ impl<P: JacsProvider> HaiClient<P> {
         self.agent_email = Some(email);
     }
 
+    /// A reusable context-free credential is not supported. Use
+    /// [`Self::build_request_auth_header`] for caller-built requests.
     pub fn build_auth_header(&self) -> Result<String> {
-        let ts = OffsetDateTime::now_utc().unix_timestamp();
-        let nonce = uuid::Uuid::new_v4().simple().to_string();
-        let message = format!("{}:{ts}:{nonce}", self.jacs.jacs_id());
-        let signature = self.jacs.sign_string(&message)?;
-        Ok(format!(
-            "JACS {}:{ts}:{nonce}:{signature}",
-            self.jacs.jacs_id()
-        ))
+        Err(crate::request_auth::missing_request_context())
+    }
+
+    /// Sign one caller-built HTTP request. Send these exact bytes once without
+    /// redirects; build a new header for each retry. Ordinary client methods
+    /// handle this automatically. The audience is pinned in client options.
+    pub fn build_request_auth_header(
+        &self,
+        method: &str,
+        url: &str,
+        body: &[u8],
+    ) -> Result<String> {
+        let parsed = url::Url::parse(url).map_err(|error| HaiError::Validation {
+            field: "url".into(),
+            message: error.to_string(),
+        })?;
+        let base = url::Url::parse(&self.base_url).expect("validated base URL");
+        if !urls_have_same_origin(&base, &parsed) || parsed.fragment().is_some() {
+            return Err(HaiError::Validation { field: "url".into(), message: "request URL must match the configured HAI origin and must not contain a fragment".into() });
+        }
+        self.http.auth_header(method, parsed.as_str(), body)
     }
 
     pub fn sign_message(&self, message: &str) -> Result<String> {
@@ -444,14 +548,12 @@ impl<P: JacsProvider> HaiClient<P> {
                 let url = &url;
                 let payload = &payload;
                 async move {
-                    let auth = self.build_auth_header()?;
                     http.post(url.as_str())
-                        .header("Authorization", auth.as_str())
+                        .authenticated()
                         .header("Content-Type", "application/json")
                         .json(payload)
                         .send()
                         .await
-                        .map_err(HaiError::from)
                 }
             })
             .await?;
@@ -518,7 +620,6 @@ impl<P: JacsProvider> HaiClient<P> {
                         .json(body)
                         .send()
                         .await
-                        .map_err(HaiError::from)
                 }
             })
             .await?;
@@ -561,49 +662,44 @@ impl<P: JacsProvider> HaiClient<P> {
     /// is preserved.
     pub async fn rotate_keys(&self, options: Option<&RotateKeysOptions>) -> Result<RotationResult> {
         let register_with_hai = options.and_then(|o| o.register_with_hai).unwrap_or(true);
-
-        // Build 4-part auth header with the OLD key BEFORE rotation
-        // (chain of trust: old key vouches for new key)
-        let old_auth_header = if register_with_hai {
-            Some(self.build_auth_header()?)
-        } else {
-            None
-        };
-
-        // Perform local rotation via the JACS provider
-        let mut result = self.jacs.rotate()?;
-
-        // Optionally re-register with HAI using the OLD key for auth
-        if register_with_hai {
-            if let Some(auth_header) = old_auth_header {
-                let url = self.url("/api/v1/agents/register");
-
-                let mut payload = serde_json::Map::new();
-                payload.insert(
-                    "agent_json".to_string(),
-                    Value::String(result.signed_agent_json.clone()),
-                );
-
-                match self
-                    .http
-                    .post(url)
-                    .header("Authorization", &auth_header)
-                    .header("Content-Type", "application/json")
-                    .json(&Value::Object(payload))
-                    .send()
-                    .await
-                {
-                    Ok(response) if response.status().is_success() => {
-                        result.registered_with_hai = true;
-                    }
-                    _ => {
-                        // HAI registration failure is non-fatal
-                    }
-                }
-            }
+        let algorithm = options.and_then(|options| options.algorithm.as_deref());
+        if !register_with_hai {
+            return self.jacs.rotate_with_algorithm(algorithm);
         }
-
+        let url = self.url("/api/v1/agents/register");
+        let prepared = self
+            .jacs
+            .rotate_for_registration(&url, self.http.audience(), algorithm)?;
+        let mut result = prepared.result;
+        result.registered_with_hai = self
+            .send_prepared_registration(url, prepared.auth_header, prepared.body)
+            .await?;
+        if !result.registered_with_hai {
+            tracing::warn!(
+                event = "jacs_rotation_registration_failed",
+                "Local keys rotated; HAI registration was not confirmed"
+            );
+        }
         Ok(result)
+    }
+
+    async fn send_prepared_registration(
+        &self,
+        url: String,
+        auth_header: String,
+        body: Vec<u8>,
+    ) -> Result<bool> {
+        let request = self
+            .http
+            .post(url)
+            .header("Authorization", auth_header)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .build()?;
+        Ok(matches!(
+            self.http.execute_authenticated(request).await,
+            Ok(response) if response.status().is_success()
+        ))
     }
 
     /// Export the current agent document as JSON.
@@ -617,31 +713,19 @@ impl<P: JacsProvider> HaiClient<P> {
     /// re-registers the updated agent document with HAI so the platform has
     /// the latest version. HAI registration failure is non-fatal.
     pub async fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
-        let mut result = self.jacs.update_agent(new_agent_data)?;
-
-        // Re-register with HAI using current key (same key, just new doc version)
         let url = self.url("/api/v1/agents/register");
-        let mut payload = serde_json::Map::new();
-        payload.insert(
-            "agent_json".to_string(),
-            Value::String(result.signed_agent_json.clone()),
-        );
-
-        match self
-            .http
-            .post(url)
-            .header("Authorization", self.build_auth_header()?)
-            .header("Content-Type", "application/json")
-            .json(&Value::Object(payload))
-            .send()
-            .await
-        {
-            Ok(response) if response.status().is_success() => {
-                result.registered_with_hai = true;
-            }
-            _ => {
-                // HAI registration failure is non-fatal
-            }
+        let prepared =
+            self.jacs
+                .update_for_registration(new_agent_data, &url, self.http.audience())?;
+        let mut result = prepared.result;
+        result.registered_with_hai = self
+            .send_prepared_registration(url, prepared.auth_header, prepared.body)
+            .await?;
+        if !result.registered_with_hai {
+            tracing::warn!(
+                event = "jacs_metadata_registration_failed",
+                "Local metadata updated; HAI registration was not confirmed"
+            );
         }
 
         Ok(result)
@@ -660,14 +744,14 @@ impl<P: JacsProvider> HaiClient<P> {
             "processing_time_ms": processing_time_ms,
         });
         let payload = serde_json::to_value(SignedJobResponsePayloadV2::new(job_id, response))?;
-        let signed = self.jacs.sign_response(&payload)?;
+        let signed = self.sign_job_response_context(job_id, payload)?;
 
         let safe_job_id = encode_path_segment(job_id);
         let url = self.url(&format!("/api/v1/agents/jobs/{safe_job_id}/response"));
         let response = self
             .http
             .post(url)
-            .header("Authorization", self.build_auth_header()?)
+            .authenticated()
             .header("Content-Type", "application/json")
             .json(&signed)
             .send()
@@ -681,17 +765,48 @@ impl<P: JacsProvider> HaiClient<P> {
         })
     }
 
+    fn sign_job_response_context(
+        &self,
+        job_id: &str,
+        payload: Value,
+    ) -> Result<crate::types::SignedPayload> {
+        #[cfg(feature = "jacs-crate")]
+        {
+            use jacs::response_context::{
+                EventCausation, EventTransport, ResponseData, ResponseOperation,
+            };
+            let (tenant, audience) = self.expected_event_context()?;
+            let data = ResponseData::PrivateEvent {
+                event_type: "job_response".into(),
+                contract: "hai.job-response".into(),
+                contract_version: "2".into(),
+                transport: EventTransport::Channel(format!("job:{job_id}")),
+                issuer: String::new(),
+                tenant: tenant.clone(),
+                audience: audience.clone(),
+                event_id: String::new(),
+                emitted_at: String::new(),
+                causation: EventCausation::Job { id: job_id.into() },
+                payload,
+            };
+            self.jacs
+                .sign_response_with_context(&data, ResponseOperation::SignAsyncEvent)
+        }
+        #[cfg(not(feature = "jacs-crate"))]
+        {
+            let _ = (job_id, payload);
+            Err(HaiError::Provider(
+                "context-bound job responses require the jacs-crate feature".into(),
+            ))
+        }
+    }
+
     pub async fn verify_status(&self, agent_id: Option<&str>) -> Result<VerifyAgentResult> {
         let target = agent_id.unwrap_or_else(|| self.jacs.jacs_id());
         let safe_agent_id = encode_path_segment(target);
         let url = self.url(&format!("/api/v1/agents/{safe_agent_id}/verify"));
 
-        let response = self
-            .http
-            .get(url)
-            .header("Authorization", self.build_auth_header()?)
-            .send()
-            .await?;
+        let response = self.http.get(url).authenticated().send().await?;
 
         let data = response_json(response).await?;
         let mut parsed: VerifyAgentResult = serde_json::from_value(data.clone())?;
@@ -712,7 +827,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let response = self
             .http
             .put(url)
-            .header("Authorization", self.build_auth_header()?)
+            .authenticated()
             .header("Content-Type", "application/json")
             .json(&json!({ "username": username }))
             .send()
@@ -726,12 +841,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let safe_agent_id = encode_path_segment(agent_id);
         let url = self.url(&format!("/api/v1/agents/{safe_agent_id}/username"));
 
-        let response = self
-            .http
-            .delete(url)
-            .header("Authorization", self.build_auth_header()?)
-            .send()
-            .await?;
+        let response = self.http.delete(url).authenticated().send().await?;
 
         let data = response_json(response).await?;
         Ok(serde_json::from_value(data)?)
@@ -784,15 +894,13 @@ impl<P: JacsProvider> HaiClient<P> {
                 let raw_email = &raw_email;
                 let idempotency_key = &idempotency_key;
                 async move {
-                    let auth = self.build_auth_header()?;
                     http.post(url.as_str())
-                        .header("Authorization", auth.as_str())
+                        .authenticated()
                         .header(IDEMPOTENCY_KEY_HEADER, idempotency_key.as_str())
                         .header("Content-Type", "message/rfc822")
                         .body(raw_email.clone())
                         .send()
                         .await
-                        .map_err(HaiError::from)
                 }
             })
             .await?;
@@ -910,10 +1018,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/messages"));
 
-        let mut request = self
-            .http
-            .get(url)
-            .header("Authorization", self.build_auth_header()?);
+        let mut request = self.http.get(url).authenticated();
 
         if let Some(limit) = options.limit {
             request = request.query(&[("limit", limit)]);
@@ -972,7 +1077,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let response = self
             .http
             .post(url)
-            .header("Authorization", self.build_auth_header()?)
+            .authenticated()
             .json(&body)
             .send()
             .await?;
@@ -997,12 +1102,7 @@ impl<P: JacsProvider> HaiClient<P> {
             "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/read"
         ));
 
-        let response = self
-            .http
-            .post(url)
-            .header("Authorization", self.build_auth_header()?)
-            .send()
-            .await?;
+        let response = self.http.post(url).authenticated().send().await?;
 
         match response.status() {
             StatusCode::OK | StatusCode::CREATED | StatusCode::NO_CONTENT => Ok(()),
@@ -1014,12 +1114,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/status"));
 
-        let response = self
-            .http
-            .get(url)
-            .header("Authorization", self.build_auth_header()?)
-            .send()
-            .await?;
+        let response = self.http.get(url).authenticated().send().await?;
 
         let data = response_json(response).await?;
         Ok(serde_json::from_value(data)?)
@@ -1032,12 +1127,7 @@ impl<P: JacsProvider> HaiClient<P> {
             "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}"
         ));
 
-        let response = self
-            .http
-            .get(url)
-            .header("Authorization", self.build_auth_header()?)
-            .send()
-            .await?;
+        let response = self.http.get(url).authenticated().send().await?;
 
         let data = response_json(response).await?;
         Ok(serde_json::from_value(data)?)
@@ -1063,12 +1153,7 @@ impl<P: JacsProvider> HaiClient<P> {
             "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/raw"
         ));
 
-        let response = self
-            .http
-            .get(url)
-            .header("Authorization", self.build_auth_header()?)
-            .send()
-            .await?;
+        let response = self.http.get(url).authenticated().send().await?;
 
         let data = response_json(response).await?;
         RawEmailResponse::from_wire_json(data)
@@ -1081,12 +1166,7 @@ impl<P: JacsProvider> HaiClient<P> {
             "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}"
         ));
 
-        let response = self
-            .http
-            .delete(url)
-            .header("Authorization", self.build_auth_header()?)
-            .send()
-            .await?;
+        let response = self.http.delete(url).authenticated().send().await?;
 
         match response.status() {
             StatusCode::OK | StatusCode::NO_CONTENT => Ok(()),
@@ -1101,12 +1181,7 @@ impl<P: JacsProvider> HaiClient<P> {
             "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/unread"
         ));
 
-        let response = self
-            .http
-            .post(url)
-            .header("Authorization", self.build_auth_header()?)
-            .send()
-            .await?;
+        let response = self.http.post(url).authenticated().send().await?;
 
         match response.status() {
             StatusCode::OK | StatusCode::CREATED | StatusCode::NO_CONTENT => Ok(()),
@@ -1121,12 +1196,7 @@ impl<P: JacsProvider> HaiClient<P> {
             "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/archive"
         ));
 
-        let response = self
-            .http
-            .post(url)
-            .header("Authorization", self.build_auth_header()?)
-            .send()
-            .await?;
+        let response = self.http.post(url).authenticated().send().await?;
 
         match response.status() {
             StatusCode::OK | StatusCode::CREATED | StatusCode::NO_CONTENT => Ok(()),
@@ -1141,12 +1211,7 @@ impl<P: JacsProvider> HaiClient<P> {
             "/api/agents/{safe_jacs_id}/email/messages/{safe_message_id}/unarchive"
         ));
 
-        let response = self
-            .http
-            .post(url)
-            .header("Authorization", self.build_auth_header()?)
-            .send()
-            .await?;
+        let response = self.http.post(url).authenticated().send().await?;
 
         match response.status() {
             StatusCode::OK | StatusCode::CREATED | StatusCode::NO_CONTENT => Ok(()),
@@ -1158,10 +1223,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/search"));
 
-        let mut request = self
-            .http
-            .get(url)
-            .header("Authorization", self.build_auth_header()?);
+        let mut request = self.http.get(url).authenticated();
 
         if let Some(ref q) = options.q {
             request = request.query(&[("q", q.as_str())]);
@@ -1217,12 +1279,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/unread-count"));
 
-        let response = self
-            .http
-            .get(url)
-            .header("Authorization", self.build_auth_header()?)
-            .send()
-            .await?;
+        let response = self.http.get(url).authenticated().send().await?;
 
         let data = response_json(response).await?;
         let count = data
@@ -1345,12 +1402,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let safe_agent_id = encode_path_segment(agent_id);
         let url = self.url(&format!("/api/agents/{safe_agent_id}/email/contacts"));
 
-        let response = self
-            .http
-            .get(url)
-            .header("Authorization", self.build_auth_header()?)
-            .send()
-            .await?;
+        let response = self.http.get(url).authenticated().send().await?;
 
         let data = response_json(response).await?;
         let contacts_val = data.get("contacts").cloned().unwrap_or(data.clone());
@@ -1372,7 +1424,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let response = self
             .http
             .post(url)
-            .header("Authorization", self.build_auth_header()?)
+            .authenticated()
             .json(options)
             .send()
             .await?;
@@ -1389,10 +1441,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let safe_jacs_id = encode_path_segment(self.hai_agent_id());
         let url = self.url(&format!("/api/agents/{safe_jacs_id}/email/templates"));
 
-        let mut request = self
-            .http
-            .get(url)
-            .header("Authorization", self.build_auth_header()?);
+        let mut request = self.http.get(url).authenticated();
 
         if let Some(limit) = options.limit {
             request = request.query(&[("limit", &limit.to_string())]);
@@ -1417,12 +1466,7 @@ impl<P: JacsProvider> HaiClient<P> {
             "/api/agents/{safe_jacs_id}/email/templates/{safe_template_id}"
         ));
 
-        let response = self
-            .http
-            .get(url)
-            .header("Authorization", self.build_auth_header()?)
-            .send()
-            .await?;
+        let response = self.http.get(url).authenticated().send().await?;
 
         let data = response_json(response).await?;
         Ok(serde_json::from_value(data)?)
@@ -1443,7 +1487,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let response = self
             .http
             .put(url)
-            .header("Authorization", self.build_auth_header()?)
+            .authenticated()
             .json(options)
             .send()
             .await?;
@@ -1460,12 +1504,7 @@ impl<P: JacsProvider> HaiClient<P> {
             "/api/agents/{safe_jacs_id}/email/templates/{safe_template_id}"
         ));
 
-        let response = self
-            .http
-            .delete(url)
-            .header("Authorization", self.build_auth_header()?)
-            .send()
-            .await?;
+        let response = self.http.delete(url).authenticated().send().await?;
 
         match response.status() {
             StatusCode::OK | StatusCode::NO_CONTENT => Ok(()),
@@ -1482,7 +1521,7 @@ impl<P: JacsProvider> HaiClient<P> {
     /// This is an unauthenticated GET to `/.well-known/hai-keys.json`.
     pub async fn fetch_server_keys(&self) -> Result<Value> {
         let url = self.url("/.well-known/hai-keys.json");
-        fetch_server_keys_with_client(&self.http, &url).await
+        fetch_server_keys_with_client(self.http.raw_client(), &url).await
     }
 
     // =========================================================================
@@ -1502,11 +1541,10 @@ impl<P: JacsProvider> HaiClient<P> {
                 message: e.to_string(),
             })?;
         let url = self.url("/api/v1/email/sign");
-        let auth = self.build_auth_header()?;
         let response = self
             .http
             .post(url)
-            .header("Authorization", &auth)
+            .authenticated()
             .header("Content-Type", "message/rfc822")
             .body(raw_bytes)
             .send()
@@ -1534,11 +1572,10 @@ impl<P: JacsProvider> HaiClient<P> {
                 message: e.to_string(),
             })?;
         let url = self.url("/api/v1/email/verify");
-        let auth = self.build_auth_header()?;
         let response = self
             .http
             .post(url)
-            .header("Authorization", &auth)
+            .authenticated()
             .header("Content-Type", "message/rfc822")
             .body(raw_bytes)
             .send()
@@ -1564,12 +1601,11 @@ impl<P: JacsProvider> HaiClient<P> {
                 let url = &url;
                 async move {
                     http.post(url.as_str())
-                        .header("Authorization", self.build_auth_header()?)
+                        .authenticated()
                         .header("Content-Type", "application/json")
                         .json(request)
                         .send()
                         .await
-                        .map_err(HaiError::from)
                 }
             })
             .await?;
@@ -1590,12 +1626,11 @@ impl<P: JacsProvider> HaiClient<P> {
                 let url = &url;
                 async move {
                     http.post(url.as_str())
-                        .header("Authorization", self.build_auth_header()?)
+                        .authenticated()
                         .header("Content-Type", "application/json")
                         .json(request)
                         .send()
                         .await
-                        .map_err(HaiError::from)
                 }
             })
             .await?;
@@ -1611,13 +1646,7 @@ impl<P: JacsProvider> HaiClient<P> {
             .request_with_retry(|| {
                 let http = &self.http;
                 let url = &url;
-                async move {
-                    http.get(url.as_str())
-                        .header("Authorization", self.build_auth_header()?)
-                        .send()
-                        .await
-                        .map_err(HaiError::from)
-                }
+                async move { http.get(url.as_str()).authenticated().send().await }
             })
             .await?;
 
@@ -1640,12 +1669,11 @@ impl<P: JacsProvider> HaiClient<P> {
                 let url = &url;
                 async move {
                     http.post(url.as_str())
-                        .header("Authorization", self.build_auth_header()?)
+                        .authenticated()
                         .header("Content-Type", "application/json")
                         .json(request)
                         .send()
                         .await
-                        .map_err(HaiError::from)
                 }
             })
             .await?;
@@ -1661,13 +1689,7 @@ impl<P: JacsProvider> HaiClient<P> {
             .request_with_retry(|| {
                 let http = &self.http;
                 let url = &url;
-                async move {
-                    http.get(url.as_str())
-                        .header("Authorization", self.build_auth_header()?)
-                        .send()
-                        .await
-                        .map_err(HaiError::from)
-                }
+                async move { http.get(url.as_str()).authenticated().send().await }
             })
             .await?;
 
@@ -1684,13 +1706,7 @@ impl<P: JacsProvider> HaiClient<P> {
             .request_with_retry(|| {
                 let http = &self.http;
                 let url = &url;
-                async move {
-                    http.get(url.as_str())
-                        .header("Authorization", self.build_auth_header()?)
-                        .send()
-                        .await
-                        .map_err(HaiError::from)
-                }
+                async move { http.get(url.as_str()).authenticated().send().await }
             })
             .await?;
 
@@ -1713,12 +1729,11 @@ impl<P: JacsProvider> HaiClient<P> {
                 let url = &url;
                 async move {
                     http.post(url.as_str())
-                        .header("Authorization", self.build_auth_header()?)
+                        .authenticated()
                         .header("Content-Type", "application/json")
                         .json(request)
                         .send()
                         .await
-                        .map_err(HaiError::from)
                 }
             })
             .await?;
@@ -1752,7 +1767,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let response = self
             .http
             .post(url)
-            .header("Authorization", self.build_auth_header()?)
+            .authenticated()
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()
@@ -1774,7 +1789,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let response = self
             .http
             .get(url)
-            .header("Authorization", self.build_auth_header()?)
+            .authenticated()
             .query(&[
                 ("limit", &limit.to_string()),
                 ("offset", &offset.to_string()),
@@ -1793,12 +1808,7 @@ impl<P: JacsProvider> HaiClient<P> {
             "/api/v1/agents/{safe_agent_id}/attestations/{safe_doc_id}"
         ));
 
-        let response = self
-            .http
-            .get(url)
-            .header("Authorization", self.build_auth_header()?)
-            .send()
-            .await?;
+        let response = self.http.get(url).authenticated().send().await?;
 
         response_json(response).await
     }
@@ -1809,7 +1819,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let response = self
             .http
             .post(url)
-            .header("Authorization", self.build_auth_header()?)
+            .authenticated()
             .header("Content-Type", "application/json")
             .json(&json!({ "document": document }))
             .send()
@@ -1930,14 +1940,12 @@ impl<P: JacsProvider> HaiClient<P> {
                 let url = &url;
                 let payload = &payload;
                 async move {
-                    let auth = self.build_auth_header()?;
                     http.post(url.as_str())
-                        .header("Authorization", auth.as_str())
+                        .authenticated()
                         .header("Content-Type", "application/json")
                         .json(payload)
                         .send()
                         .await
-                        .map_err(HaiError::from)
                 }
             })
             .await?;
@@ -1958,7 +1966,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let response = self
             .http
             .post(url)
-            .header("Authorization", self.build_auth_header()?)
+            .authenticated()
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()
@@ -1979,7 +1987,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let purchase_response = self
             .http
             .post(purchase_url)
-            .header("Authorization", self.build_auth_header()?)
+            .authenticated()
             .header("Content-Type", "application/json")
             .json(&json!({
                 "tier": "pro",
@@ -2020,7 +2028,7 @@ impl<P: JacsProvider> HaiClient<P> {
             let status_response = self
                 .http
                 .get(status_url.clone())
-                .header("Authorization", self.build_auth_header()?)
+                .authenticated()
                 .send()
                 .await?;
             if status_response.status().is_success() {
@@ -2043,7 +2051,7 @@ impl<P: JacsProvider> HaiClient<P> {
         let run_response = self
             .http
             .post(run_url)
-            .header("Authorization", self.build_auth_header()?)
+            .authenticated()
             .header("Content-Type", "application/json")
             .json(&json!({
                 "name": format!("Pro Run - {short_id}"),
@@ -2091,21 +2099,32 @@ impl<P: JacsProvider> HaiClient<P> {
 
     #[cfg(feature = "jacs-crate")]
     pub async fn connect_sse(&self) -> Result<SseConnection> {
+        let tenant = self.expected_event_context()?.0.clone();
         validate_live_event_key_origin(&self.base_url)?;
         let key_url = self.url("/.well-known/hai-keys.json");
-        let mut server_public_keys = refresh_server_public_keys(&self.http, &key_url).await?;
-        let key_http = self.http.clone();
+        let mut server_public_keys =
+            refresh_server_public_keys(self.http.raw_client(), &key_url).await?;
+        let key_http = self.http.raw_client().clone();
         let key_refresh_interval = self.server_key_refresh_interval;
         let shared_replay_store = self.shared_event_replay_store.clone();
         let url = self.url("/api/v1/agents/connect");
-        let response = self
+        let request = self
             .live_http
             .get(url)
-            .header("Authorization", self.build_auth_header()?)
+            .authenticated()
             .header("Accept", "text/event-stream")
             .header("Cache-Control", "no-cache")
-            .send()
-            .await?;
+            .build()?;
+        let auth = request
+            .headers()
+            .get(reqwest::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| {
+                HaiError::Provider("signed stream request is missing its credential".into())
+            })?;
+        let expected_context =
+            LiveEventContext::for_connection(tenant, self.jacs.jacs_id(), auth, false)?;
+        let response = self.live_http.execute_authenticated(request).await?;
         if !response.status().is_success() {
             return Err(response_error(response).await);
         }
@@ -2193,6 +2212,7 @@ impl<P: JacsProvider> HaiClient<P> {
                                 &raw_event.raw,
                                 &server_public_keys,
                                 shared_replay_store.as_deref(),
+                                &expected_context,
                             );
                             let event = match verified {
                                 Ok(event) => event,
@@ -2242,17 +2262,35 @@ impl<P: JacsProvider> HaiClient<P> {
 
     #[cfg(feature = "jacs-crate")]
     pub async fn connect_ws(&self) -> Result<WsConnection> {
+        let tenant = self.expected_event_context()?.0.clone();
         validate_live_event_key_origin(&self.base_url)?;
         let key_url = self.url("/.well-known/hai-keys.json");
-        let mut server_public_keys = refresh_server_public_keys(&self.http, &key_url).await?;
-        let key_http = self.http.clone();
+        let mut server_public_keys =
+            refresh_server_public_keys(self.http.raw_client(), &key_url).await?;
+        let key_http = self.http.raw_client().clone();
         let key_refresh_interval = self.server_key_refresh_interval;
         let shared_replay_store = self.shared_event_replay_store.clone();
         let ws_url = build_ws_url(&self.base_url, "/ws/agent/connect");
         let mut request = ws_url.into_client_request().map_err(|err| {
             HaiError::Message(format!("failed to build websocket request: {err}"))
         })?;
-        let auth_header = tungstenite::http::HeaderValue::from_str(&self.build_auth_header()?)
+        // Authenticate the actual WebSocket HTTP upgrade, translating only its
+        // transport spelling (ws/wss) to the HTTP scheme seen by ingress.
+        let mut auth_url = url::Url::parse(&request.uri().to_string())
+            .map_err(|error| HaiError::Provider(error.to_string()))?;
+        let scheme = if auth_url.scheme() == "wss" {
+            "https"
+        } else {
+            "http"
+        };
+        auth_url
+            .set_scheme(scheme)
+            .map_err(|_| HaiError::Provider("invalid WebSocket scheme".into()))?;
+        let auth =
+            self.build_request_auth_header(request.method().as_str(), auth_url.as_str(), &[])?;
+        let expected_context =
+            LiveEventContext::for_connection(tenant, self.jacs.jacs_id(), &auth, true)?;
+        let auth_header = tungstenite::http::HeaderValue::from_str(&auth)
             .map_err(|err| HaiError::Message(format!("invalid auth header: {err}")))?;
         request.headers_mut().insert("Authorization", auth_header);
 
@@ -2355,6 +2393,7 @@ impl<P: JacsProvider> HaiClient<P> {
                             &text,
                             &server_public_keys,
                             shared_replay_store.as_deref(),
+                            &expected_context,
                         );
                         let event = match verified {
                             Ok(event) => event,
@@ -2812,29 +2851,108 @@ fn parse_server_public_keys(document: &Value) -> Result<HashMap<String, Vec<u8>>
 }
 
 #[cfg(feature = "jacs-crate")]
+#[derive(Clone)]
+struct LiveEventContext {
+    tenant: String,
+    audience: String,
+    transport: jacs::response_context::EventTransport,
+}
+
+#[cfg(feature = "jacs-crate")]
+impl LiveEventContext {
+    fn for_connection(tenant: String, audience: &str, auth: &str, websocket: bool) -> Result<Self> {
+        // This is the final outgoing credential, not remote asserted identity.
+        let nonce = jacs::protocol::inspect_unverified_request_auth_header(auth)
+            .map_err(|error| HaiError::Provider(error.to_string()))?
+            .nonce;
+        let channel = format!("jacs-auth-nonce:{nonce}");
+        Ok(Self {
+            tenant,
+            audience: jacs::validation::normalize_agent_id(audience).to_string(),
+            transport: if websocket {
+                jacs::response_context::EventTransport::Channel(channel)
+            } else {
+                jacs::response_context::EventTransport::Stream(channel)
+            },
+        })
+    }
+}
+
+#[cfg(feature = "jacs-crate")]
 fn verify_live_transport_event(
     raw: &str,
     server_public_keys: &HashMap<String, Vec<u8>>,
     shared_replay_store: Option<&dyn jacs::replay::ReplayStore>,
+    expected: &LiveEventContext,
 ) -> Result<HaiEvent> {
-    let (verified, event_sha256) = if let Some(store) = shared_replay_store {
+    use jacs::response_context::{EventCausation, ResponseData, ResponseExpectation};
+    let failure = |message: String| HaiError::SignedEventVerification { message };
+    jacs::schema::utils::check_document_size(raw).map_err(|error| failure(error.to_string()))?;
+    let envelope = jacs::strict_json::parse_strict_json(raw)
+        .map_err(|error| failure(format!("signed event is not strict JSON: {error}")))?;
+    let issuer = envelope
+        .pointer("/jacsSignature/agentID")
+        .and_then(Value::as_str)
+        .filter(|issuer| server_public_keys.contains_key(*issuer))
+        .ok_or_else(|| {
+            failure("event signer is not in the trusted active server key set".into())
+        })?;
+    let expectation = ResponseExpectation::PrivateEvent {
+        issuer: issuer.into(),
+        tenant: expected.tenant.clone(),
+        audience: expected.audience.clone(),
+        transport: expected.transport.clone(),
+        contract: "hai.agent-event".into(),
+        contract_version: "2".into(),
+        allowed_event_types: ["benchmark_job", "heartbeat", "disconnect", "connected"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        causation: None,
+    };
+    let context = jacs::response_context::require_response_context(&envelope, &expectation)
+        .map_err(|error| failure(error.to_string()))?;
+    let ResponseData::PrivateEvent {
+        event_type,
+        causation,
+        payload,
+        ..
+    } = context
+    else {
+        return Err(failure("private agent event context required".into()));
+    };
+    if payload.get("type").and_then(Value::as_str) != Some(event_type.as_str()) {
+        return Err(failure(
+            "signed event type differs from its payload type".into(),
+        ));
+    }
+    let expected_causation = if event_type == "benchmark_job" {
+        EventCausation::Job {
+            id: payload
+                .get("job_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| failure("benchmark event job_id is missing".into()))?
+                .into(),
+        }
+    } else {
+        EventCausation::None { id: () }
+    };
+    if causation != expected_causation {
+        return Err(failure(
+            "signed event causation differs from its payload job".into(),
+        ));
+    }
+    // No payload release or replay consumption precedes expected-context checks.
+    let verified = if let Some(store) = shared_replay_store {
         if store.scope() != jacs::replay::ReplayStoreScope::Shared {
             return Err(HaiError::SignedEventVerification {
                 message: "live event replay backend must have shared scope".to_string(),
             });
         }
-        jacs::schema::utils::check_document_size(raw).map_err(|error| {
-            HaiError::SignedEventVerification {
-                message: error.to_string(),
-            }
-        })?;
-        let envelope = jacs::strict_json::parse_strict_json(raw).map_err(|error| {
-            HaiError::SignedEventVerification {
-                message: format!("signed event is not strict JSON: {error}"),
-            }
-        })?;
         let max_age_seconds = jacs::replay::payload_replay_window_seconds();
-        let verified = jacs::protocol::verify_signed_event_with_replay_store(
+
+        jacs::protocol::verify_signed_event_with_replay_store(
             &envelope,
             server_public_keys,
             store,
@@ -2842,36 +2960,20 @@ fn verify_live_transport_event(
         )
         .map_err(|error| HaiError::SignedEventVerification {
             message: error.to_string(),
-        })?;
-        let exact_sha256 = format!("{:x}", Sha256::digest(raw.as_bytes()));
-        (verified, exact_sha256)
-    } else {
-        let verified =
-            jacs::protocol::verify_signed_event_json_with_trusted_keys(raw, server_public_keys)
-                .map_err(|error| HaiError::SignedEventVerification {
-                    message: error.to_string(),
-                })?;
-        let event_sha256 = format!("{:x}", Sha256::digest(raw.as_bytes()));
-        (verified, event_sha256)
-    };
-
-    let event_type = verified
-        .data
-        .get("type")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| HaiError::SignedEventVerification {
-            message: "verified event data is missing a non-empty type".to_string(),
         })?
-        .to_string();
+    } else {
+        jacs::protocol::verify_signed_event_json_with_trusted_keys(raw, server_public_keys)
+            .map_err(|error| HaiError::SignedEventVerification {
+                message: error.to_string(),
+            })?
+    };
     // SSE's outer `event:` and `id:` fields are not signed, so the raw parser
     // discards them. Routing and the consumer-visible ID come from the
     // verified payload/provenance below.
     let document_id = verified.document_id.clone();
     Ok(HaiEvent {
         event_type,
-        data: verified.data,
+        data: payload,
         id: Some(document_id.clone()),
         raw: raw.to_string(),
         verification: SignedEventVerification {
@@ -2880,7 +2982,7 @@ fn verify_live_transport_event(
             timestamp: verified.timestamp,
             algorithm: verified.algorithm,
             document_id,
-            event_sha256,
+            event_sha256: jacs::crypt::hash::hash_string(raw),
             replay_status: "consumed".to_string(),
         },
     })
@@ -3462,6 +3564,15 @@ mod tests {
     }
 
     #[cfg(feature = "jacs-crate")]
+    fn test_live_context() -> LiveEventContext {
+        LiveEventContext {
+            tenant: "test-tenant".into(),
+            audience: "test-recipient".into(),
+            transport: jacs::response_context::EventTransport::Stream("test-stream".into()),
+        }
+    }
+
+    #[cfg(feature = "jacs-crate")]
     #[test]
     fn live_event_verifier_rejects_plain_and_legacy_payloads() {
         let keys = std::collections::HashMap::new();
@@ -3469,7 +3580,7 @@ mod tests {
             r#"{"type":"benchmark_job","job_id":"attacker"}"#,
             r#"{"payload":{"type":"benchmark_job"},"signature":{"signature":"fake"}}"#,
         ] {
-            let error = verify_live_transport_event(raw, &keys, None)
+            let error = verify_live_transport_event(raw, &keys, None, &test_live_context())
                 .expect_err("unbound event must never reach a live consumer");
             assert!(error.to_string().contains("signed event"));
         }
@@ -3482,7 +3593,7 @@ mod tests {
             "metadata":{},
             "jacsSignature":{}
         }"#;
-        let error = verify_live_transport_event(duplicate_name, &keys, None)
+        let error = verify_live_transport_event(duplicate_name, &keys, None, &test_live_context())
             .expect_err("duplicate JSON names must fail before payload release");
         assert!(error.to_string().contains("duplicate"));
     }
@@ -3589,12 +3700,29 @@ mod tests {
         }
         let signer = LocalJacsProvider::from_config_path(Some(config_path.as_path()), None)
             .expect("load signing agent");
-        let signed = signer
-            .sign_response(&json!({
+        let expected = test_live_context();
+        let data = jacs::response_context::ResponseData::PrivateEvent {
+            event_type: "benchmark_job".into(),
+            contract: "hai.agent-event".into(),
+            contract_version: "2".into(),
+            transport: expected.transport.clone(),
+            tenant: expected.tenant.clone(),
+            audience: expected.audience.clone(),
+            issuer: String::new(),
+            event_id: String::new(),
+            emitted_at: String::new(),
+            causation: jacs::response_context::EventCausation::Job { id: "job-7".into() },
+            payload: json!({
                 "type": "benchmark_job",
                 "job_id": "job-7",
                 "config": {"timeout_secs": 30}
-            }))
+            }),
+        };
+        let signed = signer
+            .sign_response_with_context(
+                &data,
+                jacs::response_context::ResponseOperation::SignAsyncEvent,
+            )
             .expect("sign event");
         let envelope: Value = serde_json::from_str(&signed.signed_document).unwrap();
         let signer_id = envelope["jacsSignature"]["agentID"]
@@ -3607,8 +3735,37 @@ mod tests {
         )]);
         let replay = SharedReplayStore::default();
 
-        let event = verify_live_transport_event(&signed.signed_document, &keys, Some(&replay))
-            .expect("first delivery should verify");
+        let mut wrong_recipient = expected.clone();
+        wrong_recipient.audience = "another-agent".into();
+        assert!(verify_live_transport_event(
+            &signed.signed_document,
+            &keys,
+            Some(&replay),
+            &wrong_recipient
+        )
+        .is_err());
+        let mut wrong_tenant = expected.clone();
+        wrong_tenant.tenant = "another-tenant".into();
+        assert!(verify_live_transport_event(
+            &signed.signed_document,
+            &keys,
+            Some(&replay),
+            &wrong_tenant
+        )
+        .is_err());
+        let mut wrong_stream = expected.clone();
+        wrong_stream.transport =
+            jacs::response_context::EventTransport::Stream("another-stream".into());
+        assert!(verify_live_transport_event(
+            &signed.signed_document,
+            &keys,
+            Some(&replay),
+            &wrong_stream
+        )
+        .is_err());
+        let event =
+            verify_live_transport_event(&signed.signed_document, &keys, Some(&replay), &expected)
+                .expect("first delivery should verify");
         assert_eq!(event.event_type, "benchmark_job");
         assert_eq!(event.data["job_id"], "job-7");
         assert_eq!(event.verification.signer_id, signer_id);
@@ -3621,8 +3778,9 @@ mod tests {
         );
         assert_eq!(event.raw, signed.signed_document);
 
-        let duplicate = verify_live_transport_event(&signed.signed_document, &keys, Some(&replay))
-            .expect_err("duplicate delivery must fail closed");
+        let duplicate =
+            verify_live_transport_event(&signed.signed_document, &keys, Some(&replay), &expected)
+                .expect_err("duplicate delivery must fail closed");
         assert!(duplicate.to_string().contains("Replay attack"));
     }
 
@@ -3674,6 +3832,7 @@ mod tests {
 
         let opts = RotateKeysOptions {
             register_with_hai: Some(true),
+            ..Default::default()
         };
         let result = client.rotate_keys(Some(&opts)).await;
         assert!(result.is_err());
@@ -3775,6 +3934,55 @@ mod tests {
             },
         );
         assert!(result.is_ok(), "https:// should be accepted");
+    }
+
+    #[test]
+    fn operator_request_auth_audience_environment_contract() {
+        let _guard = crate::test_support::env_lock();
+        struct RestoreAudience(Option<std::ffi::OsString>);
+        impl Drop for RestoreAudience {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => std::env::set_var(REQUEST_AUTH_AUDIENCE_ENV, value),
+                    None => std::env::remove_var(REQUEST_AUTH_AUDIENCE_ENV),
+                }
+            }
+        }
+        let _restore = RestoreAudience(std::env::var_os(REQUEST_AUTH_AUDIENCE_ENV));
+        let fixture: Value =
+            serde_json::from_str(include_str!("../../../fixtures/cross_lang_test.json")).unwrap();
+        let contract = &fixture["request_auth"]["cli_mcp_audience"];
+        assert_eq!(contract["env"], REQUEST_AUTH_AUDIENCE_ENV);
+        for case in contract["valid_cases"].as_array().unwrap() {
+            match case["value"].as_str() {
+                Some(value) => std::env::set_var(REQUEST_AUTH_AUDIENCE_ENV, value),
+                None => std::env::remove_var(REQUEST_AUTH_AUDIENCE_ENV),
+            }
+            assert_eq!(
+                request_auth_audience_from_env().unwrap(),
+                case["expected"].as_str().unwrap()
+            );
+        }
+        for case in contract["invalid_cases"].as_array().unwrap() {
+            std::env::set_var(REQUEST_AUTH_AUDIENCE_ENV, case["value"].as_str().unwrap());
+            let error = request_auth_audience_from_env().unwrap_err();
+            assert!(
+                error.to_string().contains(REQUEST_AUTH_AUDIENCE_ENV),
+                "{case}: {error}"
+            );
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            std::env::set_var(
+                REQUEST_AUTH_AUDIENCE_ENV,
+                std::ffi::OsString::from_vec(vec![0xff]),
+            );
+            assert!(request_auth_audience_from_env()
+                .unwrap_err()
+                .to_string()
+                .contains("UTF-8"));
+        }
     }
 
     /// `HAI_URL` > `HAI_API_URL` > default, with blank treated as unset — the

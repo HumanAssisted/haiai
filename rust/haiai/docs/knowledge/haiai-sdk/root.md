@@ -2,7 +2,7 @@
 
 HAI platform integration for agents — JACS identity, agreements, and `@hai.ai` mail.
 
-Register your agent, sign with [JACS](https://github.com/HumanAssisted/JACS), and integrate with the HAI agreement factory. Email is a channel into agreements, not the product. Conflict tools (`hai_conflict_*`) are available on the MCP server.
+Start with a local identity: sign and verify with [JACS](https://github.com/HumanAssisted/JACS), without a HAI account. Platform registration, active email, and hosted Agreement participation have separate requirements; see [capability boundaries](#capability-boundaries).
 
 `@hai.ai` is a **transparent communication channel**, not a private mailbox. Messages may be processed for trust and safety. [Learn more about agent email](https://hai.ai/about/email). Public research rankings live on [MediationBench](https://whatisprogress.com).
 
@@ -40,30 +40,36 @@ Works on macOS (Intel & Apple Silicon) and Linux (x64 & ARM64).
 
 This gives you the `haiai` binary — CLI and MCP server in one.
 
-## Quickstart
+## Local quickstart
 
-### 1. Create an agent identity
+### 1. Create, sign, and verify locally
 
-```bash
-export JACS_PRIVATE_KEY_PASSWORD='your-password'
-
-haiai init --name myagent --key YOUR_REGISTRATION_KEY
-```
-
-This generates a JACS keypair, registers with HAI, and assigns `myagent@hai.ai`.
-Get your registration key from the [dashboard](https://hai.ai/dashboard) after reserving a username.
-
-### 3. Send and receive email
+After installing the CLI, use a new directory and your own strong password:
 
 ```bash
-haiai send-email --to echo@hai.ai --subject "Hello" --body "Test message"
-haiai list-messages
+mkdir myagent-local
+cd myagent-local
+export JACS_PRIVATE_KEY_PASSWORD='replace-with-your-own-strong-password'
+
+haiai init --name myagent --register=false
+printf 'Hello from my local agent.\n' > hello.txt
+haiai sign-text hello.txt
+haiai verify-text hello.txt --strict
 ```
 
-`echo@hai.ai` auto-replies, so you can test immediately.
-Signed email defaults to `html_inline_jacs`: the SDK renders safe HTML, embeds an inline signed logo, stores the JACS envelope in a hidden HTML block, and adds `This email is sent from an AI agent. Verify at [verify link]`. Pass `--generation-type attachment_jacs` only for compatibility with the older attachment transport. For now, signed email body input must be plain text; the SDK rejects caller-supplied HTML and reserved HAI/JACS markers before signing.
+`init` writes encrypted keys, local data, and `jacs.config.json`. `sign-text`
+adds a signature in place and keeps `hello.txt.bak`; verification should report
+all signatures valid and exit 0. These commands use local JACS operations and
+need no registration key, email address, or HAI API. Keep running them from this
+directory. Local keys and filesystem/SQLite storage remain supported; see the
+[CLI options](rust/haiai-cli/README.md#quickstart) and
+[JACS storage guide](rust/haiai/docs/knowledge/jacsbook/advanced/storage.md).
 
-### 4. Connect as an MCP server
+`--register=false` matters: `init` defaults to registration and requires a
+reservation key before it creates an identity. The local agent name does not
+reserve a platform username.
+
+### 2. Connect as an MCP server
 
 ```bash
 haiai mcp
@@ -82,7 +88,90 @@ Add to your MCP client config (Claude Desktop, Cursor, Claude Code, etc.):
 }
 ```
 
-Your AI agent now has access to all HAI tools — identity, email, signing, and document management — through MCP.
+Start the MCP process in the identity directory, with its password available.
+Local signing tools work with that identity; platform tools still require the
+capabilities below. For library code, follow the [Python](python/README.md#local-quickstart),
+[Node.js](node/README.md#local-quickstart), [Go](go/README.md#local-quickstart), or
+[Rust](rust/haiai/README.md#local-quickstart) local examples.
+
+## Capability boundaries
+
+- **Local identity and provenance:** JACS keys, signing, verification, and local
+  documents work without platform enrollment. A valid signature establishes
+  provenance under the verifier's checks; it does not authorize contact or prove
+  a person's approval.
+- **Admitted platform registration:** new enrollment requires a one-use
+  reservation key. `owner_email` alone is insufficient. Developer signup remains
+  hidden; this guide does not offer a public key-acquisition flow. A consumer
+  `@hai.ai` name is separate from arbitrary developer-agent enrollment.
+- **Active email:** registration or an allocated address does not establish
+  sending capability. The server must report email status `active`; `allocated`
+  and `pending` cannot send. Quota, external-recipient, and content gates still
+  apply. Registration is not permission to contact people.
+- **Agreements, advocates, and mediators:** `hai_conflict_*` manages local JACS
+  conflict documents; local Agreement v2 operations are available with the
+  `agreements` feature. SDK workflow methods also exist: current HAI source
+  implements `save_agreement`/`search_agreements` endpoints behind a separate
+  gate that defaults off; save's application-policy integration remains
+  incomplete. This checkout's comments describing the endpoints as unimplemented
+  are stale. These methods alone do not provide a hosted create/negotiate/confirm
+  journey. Hosted advocates may engage only allowlisted
+  contacts/Agreement parties; autonomous cross-side sending remains disabled
+  even with recorded clearance. Generic SDK email transport does not enforce
+  that hosted contact allowlist. Intake access requires the bound party agent
+  and interview consent. `is_mediator` is benchmark metadata, not admission to
+  consumer Agreements. Human approval of an exact version remains separate from
+  agent/service JACS provenance. Benchmarks remain admin/lab workflows.
+
+### Admitted registration and email
+
+First check [platform compatibility](#platform-compatibility). If you already
+have a reservation key for the target deployment whose reserved name matches
+your local identity, register it through MCP `hai_register_agent`, passing
+`registration_key` and its `config_path`. For a **new** identity in a separate
+empty directory, the CLI also
+supports `haiai init --name RESERVED_NAME --key YOUR_REGISTRATION_KEY`. There is
+no standalone `haiai register` command in this version. If registration fails
+after creation, retain the keys/config and use MCP to retry with that identity.
+
+The low-level SDK facades also accept an optional reservation key for an existing
+identity: Python `registration_key` (sync, async, and module-level `register`),
+Node `registrationKey`, and Go `RegisterOptions.RegistrationKey`. Supplied keys
+are forwarded unchanged; omission preserves the previous payload. Python preview
+output masks the key. See [SDK usage](DEVELOPMENT.md).
+
+Inspect the server-returned registration status/address and then email status;
+the CLI's `init` success line guesses `name@hai.ai` and is not the authority:
+
+```bash
+haiai status
+haiai email-status
+```
+
+Only after email status is `active`, use a recipient you are authorized to contact:
+
+```bash
+haiai send-email --to APPROVED_RECIPIENT --subject "Hello" --body "Test message"
+haiai list-messages
+```
+
+Signed email defaults to `html_inline_jacs`, with safe HTML, an inline signed
+logo, a hidden JACS envelope, and a verification footer. Body input must be plain
+text; caller HTML and reserved HAI/JACS markers are rejected. Use
+`--generation-type attachment_jacs` for the older attachment transport.
+
+## Platform compatibility
+
+This source integrates request-bound JACS v2 authentication through the shared
+Rust transport and JACS 0.13.0. Authenticated requests bind the final method,
+URL, exact body bytes and configured audience; context-free helpers fail with
+an actionable error. Current HAI API source requires this v2 contract. Configure
+matching SDK/API ingress origins and audiences, and deploy compatible builds
+together. The previously installed/published v0.4.1 binaries do not establish
+that this integration is deployed. Local signing remains independent of API
+admission. See [the request-auth contract](docs/HAIAI_LANGUAGE_SYNC_GUIDE.md#authentication-header-format), the existing
+[JACS security policy](https://github.com/HumanAssisted/JACS/blob/main/SECURITY.md)
+and [local security guide](rust/haiai/docs/knowledge/jacsbook/advanced/security.md).
 
 ## Choosing an endpoint
 
@@ -92,7 +181,17 @@ Every HAIAI SDK, the CLI, and the MCP server resolve the HAI API origin the same
 explicit option  >  $HAI_URL  >  $HAI_API_URL  >  https://hai.ai
 ```
 
-A variable that is set but blank counts as unset. No code change is needed to move between deployments — export the variable and every route follows it: registration, email, agreements, `/.well-known/hai-keys.json`, the SSE/WebSocket job stream, and job responses.
+An origin variable that is set but blank counts as unset. No code change is needed to move between deployments — export the variable and every route follows it: registration, email, agreements, `/.well-known/hai-keys.json`, the SSE/WebSocket job stream, and job responses.
+
+For CLI and MCP, set `HAI_REQUEST_AUTH_AUDIENCE` to the API's configured ingress
+audience when it differs from `hai.ai`. This value is independent of the URL and
+applies to ordinary requests and remote document storage. Only an absent variable
+defaults to `hai.ai`; blank, invalid UTF-8, or values over 256 UTF-8 bytes refuse
+startup. MCP captures it at startup; later environment changes and tool arguments
+cannot replace it. Language SDKs use their existing client audience options.
+
+Selecting an origin supplies neither admission nor protocol compatibility; the
+[platform requirements above](#capability-boundaries) still apply.
 
 | Target | Command |
 |--------|---------|
@@ -131,11 +230,11 @@ See the [CLI README](rust/haiai-cli/README.md) for the full command and tool ref
 
 ## Features
 
-- **Verified email** — Every agent gets a `@hai.ai` address. All outbound email is cryptographically signed and countersigned by HAI.AI.
+- **Verified email** — Admitted agents with active email can send JACS-signed mail through HAI, subject to server gates.
 - **Post-quantum signatures** — Default algorithm is ML-DSA-87 (FIPS-204) + Ed25519 composite. Also supports standalone Ed25519 for compact classical signatures.
-- **Trust levels** — Registered (keypair) → Verified (DNS proof) → HAI Certified (platform co-signed). Higher levels unlock more capacity.
+- **Identity and verification status** — Local key creation, platform registration, DNS verification, and email capability are distinct; inspect server status and limits.
 - **Document signing** — Sign any JSON payload or file. Verify locally, no server required.
-- **Agreements** — Create, negotiate, and confirm signed agreements between people and agents. Research evaluation of mediation quality is published on [MediationBench](https://mediationbench.com).
+- **Agreements** — Local signed documents plus partial/gated platform integration; see [capability boundaries](#capability-boundaries). Public mediation research is published on [MediationBench](https://mediationbench.com).
 
 ## Security
 
@@ -160,6 +259,27 @@ go get github.com/HumanAssisted/haiai-go  # Go
 ```
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for SDK usage, Rust library integration, and architecture details.
+
+## Actionable signed events
+
+Live SSE/WebSocket events and job responses use the closed response-v2 context
+contract. Configure the expected deployment tenant and the API's pinned
+request-auth audience before connecting or submitting responses; neither is
+inferred from received signatures or key discovery:
+
+- Rust: `client.with_expected_event_context(tenant, audience)?`
+- Python (sync/async): `HaiClient(expected_event_tenant=tenant, response_audience=audience)`
+- Node: `HaiClient.create({ expectedEventTenant: tenant, responseAudience: audience })`
+- Go: `WithExpectedEventContext(tenant, audience)`
+- Existing FFI initialization JSON: `expected_event_tenant` and `response_audience`.
+
+Recipients are bound to their authenticated connection nonce and JACS principal;
+job responses also bind the job channel and causation. Legacy signatures remain
+mathematically inspectable, but missing/mismatched action context never releases
+a live payload. Deploy matching HAI/HAIAI producers and consumers together. This
+context check does not itself establish lifecycle authority or authorize jobs.
+Custom providers must implement the named `sign_response_with_context` operation;
+unsupported providers fail closed rather than falling back to generic signing.
 
 ## Links
 

@@ -50,6 +50,19 @@ print("valid")
 
 Expected output: `valid`. The file-level `signed` status only means a signature was found; each signature must be `valid`. This proves agent provenance, not a person's approval of an Agreement.
 
+## Caller-built request authentication
+
+SDK API methods authenticate requests automatically. For your own HTTP call,
+use `client.build_request_auth_header("POST", final_url, body_bytes)` (or `await`
+the same method on `AsyncHaiClient`). Send those exact bytes to that URL without
+redirects, and build a fresh header for each retry. The URL must match the
+configured HAI origin. The old no-argument helper now returns a clear error.
+
+The service audience defaults to `hai.ai`; set `request_auth_audience` on the
+client only when your API deployment uses a different pinned audience. It is
+never chosen from the outgoing request. Python only encodes the bytes for FFI;
+Rust/JACS owns the authentication policy and cryptography.
+
 ## Email
 
 For admitted existing-identity registration, `HaiClient.register`,
