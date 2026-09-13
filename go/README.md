@@ -63,6 +63,7 @@ Expected output: `valid`. The file-level `signed` status only means a signature 
 For admitted existing-identity registration, `Client.Register` accepts optional
 `RegisterOptions.RegistrationKey`; an empty value omits it. See the shared
 [registration guidance](../README.md#admitted-registration-and-email).
+`RegisterOptions.PublicKey` accepts raw PEM; Rust performs the HTTP base64 encoding.
 
 Platform email requires admitted registration and server-returned email status `active`; an allocated or pending address cannot send. Inspect `agent.Email.Status(ctx)` for the actual address, status and limits. Quota, external-recipient and content gates still apply; see [capability boundaries](../README.md#capability-boundaries).
 

@@ -48,7 +48,9 @@ after the platform reports active email capability.
 `HaiClient` exposes local `sign_text`/`verify_text` and platform HTTP methods.
 For admitted existing-identity registration, `HaiClient.register`,
 `AsyncHaiClient.register`, and module-level `register` accept optional
-`registration_key`. Preview output masks it; live calls forward it unchanged.
+`registration_key`. Preview shows FFI options with that key masked and raw
+`public_key_pem` when supplied or loaded. The public `public_key` argument accepts
+PEM text; Rust alone builds the HTTP body and base64-encodes it once.
 See the shared [registration guidance](README.md#admitted-registration-and-email).
 
 ### Framework integrations
@@ -111,7 +113,8 @@ go get github.com/HumanAssisted/haiai-go
 Follow the [Go local quickstart](go/README.md#local-quickstart) for `Client.SignText`
 and `Client.VerifyText`. `AgentFromConfig` also provides the higher-level facade.
 `Client.Register` accepts optional `RegisterOptions.RegistrationKey` for admitted
-existing-identity enrollment; leaving it empty omits it. See
+existing-identity enrollment; leaving it empty omits it. `RegisterOptions.PublicKey`
+accepts raw PEM text; Rust handles its HTTP encoding. See
 [registration guidance](README.md#admitted-registration-and-email).
 `agent.Email` requires active platform email.
 

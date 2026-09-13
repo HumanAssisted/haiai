@@ -17,8 +17,17 @@ CONTRACT = json.loads(
 )["existing_identity_register"]
 
 
-@pytest.mark.parametrize("case", CONTRACT["cases"], ids=lambda case: case["name"])
-@pytest.mark.parametrize("entrypoint", ["sync", "async", "module"])
+@pytest.mark.parametrize(
+    "entrypoint,case",
+    [
+        pytest.param(entrypoint, case, id=f"{entrypoint}-{case['name']}")
+        for entrypoint in ["sync", "async", "module"]
+        for case in CONTRACT["cases"]
+        # Module-level registration always loads a PEM; omission is only valid
+        # when the caller supplies agent_json through the sync/async methods.
+        if entrypoint != "module" or "public_key_pem" in case["request"]
+    ],
+)
 @pytest.mark.parametrize("preview", [False, True], ids=["live_payload", "preview"])
 def test_existing_identity_registration(
     case, entrypoint, preview, loaded_config, monkeypatch, capsys, caplog
@@ -46,7 +55,9 @@ def test_existing_identity_registration(
 
     if entrypoint == "module":
         monkeypatch.setattr(client_mod, "_get_client", lambda: client)
-        monkeypatch.setattr(client_mod, "_read_public_key_pem", lambda cfg: None)
+        monkeypatch.setattr(
+            client_mod, "_read_public_key_pem", lambda cfg: request["public_key_pem"]
+        )
         monkeypatch.setattr(
             client_mod, "create_agent_document",
             lambda **kwargs: json.loads(request["agent_json"]),
@@ -54,6 +65,8 @@ def test_existing_identity_registration(
         result = client_mod.register("https://hai.example", **kwargs)
     else:
         kwargs["agent_json"] = request["agent_json"]
+        if "public_key_pem" in request:
+            kwargs["public_key"] = request["public_key_pem"]
         result = client.register("https://hai.example", **kwargs)
         if entrypoint == "async":
             result = asyncio.run(result)

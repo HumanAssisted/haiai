@@ -312,19 +312,15 @@ func (c *Client) TestConnection(ctx context.Context) (bool, error) {
 // RegisterOptions configures the Register call.
 type RegisterOptions struct {
 	AgentJSON       string `json:"agent_json"`
-	PublicKey       string `json:"public_key,omitempty"`
+	PublicKey       string `json:"public_key_pem,omitempty"`
 	OwnerEmail      string `json:"owner_email,omitempty"`
 	RegistrationKey string `json:"registration_key,omitempty"`
 }
 
 // Register registers the agent with HAI.
-// The public key PEM is base64-encoded on the wire to match Python/Node SDKs.
+// PublicKey is passed to FFI as raw PEM; Rust alone base64-encodes it for HTTP.
 func (c *Client) Register(ctx context.Context, opts RegisterOptions) (*RegistrationResult, error) {
-	wireOpts := opts
-	if wireOpts.PublicKey != "" {
-		wireOpts.PublicKey = base64.StdEncoding.EncodeToString([]byte(opts.PublicKey))
-	}
-	optsJSON, err := json.Marshal(wireOpts)
+	optsJSON, err := json.Marshal(opts)
 	if err != nil {
 		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal registration options")
 	}

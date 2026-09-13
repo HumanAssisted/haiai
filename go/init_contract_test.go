@@ -56,6 +56,7 @@ func TestInitContractExistingIdentityRegister(t *testing.T) {
 			client := &Client{ffi: ffi}
 			result, err := client.Register(context.Background(), RegisterOptions{
 				AgentJSON:       tc.Request["agent_json"],
+				PublicKey:       tc.Request["public_key_pem"],
 				OwnerEmail:      tc.Request["owner_email"],
 				RegistrationKey: tc.Request["registration_key"],
 			})

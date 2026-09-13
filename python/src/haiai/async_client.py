@@ -235,7 +235,10 @@ class AsyncHaiClient:
         owner_email: Optional[str] = None,
         registration_key: Optional[str] = None,
     ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
-        """Register a JACS agent with HAI."""
+        """Register an existing JACS agent; preview shows FFI options.
+
+        Public PEM is passed unchanged to Rust, which owns HTTP encoding.
+        """
         from haiai.config import get_config
 
         cfg = get_config()
@@ -257,9 +260,7 @@ class AsyncHaiClient:
 
         payload: dict[str, Any] = {"agent_json": agent_json}
         if public_key is not None:
-            payload["public_key"] = base64.b64encode(public_key.encode("utf-8")).decode(
-                "utf-8"
-            )
+            payload["public_key_pem"] = public_key
         if owner_email is not None:
             payload["owner_email"] = owner_email
         if registration_key is not None:

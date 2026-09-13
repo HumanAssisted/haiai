@@ -54,7 +54,9 @@ Expected output: `valid`. The file-level `signed` status only means a signature 
 
 For admitted existing-identity registration, `HaiClient.register`,
 `AsyncHaiClient.register`, and module-level `register` accept optional
-`registration_key`; previews mask it. See the shared
+`registration_key`. Pass raw PEM to the public `public_key` argument. Previews
+show FFI options (raw `public_key_pem`, masked registration key), before Rust
+encodes the HTTP body. See the shared
 [registration guidance](../README.md#admitted-registration-and-email).
 
 Platform email requires admitted registration and server-returned email status `active`; an allocated or pending address cannot send. Inspect `agent.email.status()` for the actual address, status and limits. Quota, external-recipient and content gates still apply; see [capability boundaries](../README.md#capability-boundaries).

@@ -85,14 +85,15 @@ class HaiRegistrationResult:
 
 @dataclass
 class HaiRegistrationPreview:
-    """Preview of what would be sent during registration.
+    """Preview of registration options before Rust builds the HTTP request.
 
     Attributes:
         agent_id: The agent's JACS ID.
         agent_name: Human-readable agent name.
-        payload_json: Pretty-printed request JSON with the registration key masked.
+        payload_json: Pretty-printed FFI options with raw public_key_pem and the
+            registration key masked. This is not the encoded HTTP body.
         endpoint: The API endpoint that would be called.
-        headers: Headers that would be sent (API key masked).
+        headers: Preview metadata, not captured HTTP request headers.
     """
 
     agent_id: str

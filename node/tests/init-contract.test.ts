@@ -23,7 +23,7 @@ interface InitContractFixture {
     response: { agent_id: string; jacs_id: string; registered_at: string };
     cases: Array<{
       name: string;
-      request: { agent_json: string; owner_email: string; registration_key?: string };
+      request: { agent_json: string; owner_email: string; registration_key?: string; public_key_pem?: string };
     }>;
   };
   private_key_candidate_order: string[];
@@ -59,6 +59,7 @@ describe('shared init contract (node)', () => {
     const result = await client.register({
       agentJson: request.agent_json,
       ownerEmail: request.owner_email,
+      ...(request.public_key_pem === undefined ? {} : { publicKeyPem: request.public_key_pem }),
       ...(request.registration_key === undefined ? {} : { registrationKey: request.registration_key }),
     });
 

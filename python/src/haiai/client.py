@@ -507,7 +507,8 @@ class HaiClient:
             hai_url: Base URL of the HAI server (defaults to DEFAULT_BASE_URL).
             agent_json: Signed JACS agent document as a JSON string.
             public_key: PEM-encoded public key (optional).
-            preview: If True, return preview without actually registering.
+            preview: If True, show FFI options without registering. Rust builds
+                the HTTP body and base64-encodes the public PEM when sending.
             owner_email: Owner's email for linking agent to a HAI user.
             registration_key: One-use reservation key for admitted enrollment.
                 Masked in preview output; forwarded unchanged to the FFI otherwise.
@@ -542,9 +543,7 @@ class HaiClient:
 
         payload: dict[str, Any] = {"agent_json": agent_json}
         if public_key is not None:
-            payload["public_key"] = base64.b64encode(public_key.encode("utf-8")).decode(
-                "utf-8"
-            )
+            payload["public_key_pem"] = public_key
         if owner_email is not None:
             payload["owner_email"] = owner_email
         if registration_key is not None:
