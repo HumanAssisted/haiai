@@ -499,6 +499,7 @@ class HaiClient:
         public_key: Optional[str] = None,
         preview: bool = False,
         owner_email: Optional[str] = None,
+        registration_key: Optional[str] = None,
     ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
         """Register a JACS agent with HAI.
 
@@ -508,6 +509,8 @@ class HaiClient:
             public_key: PEM-encoded public key (optional).
             preview: If True, return preview without actually registering.
             owner_email: Owner's email for linking agent to a HAI user.
+            registration_key: One-use reservation key for admitted enrollment.
+                Masked in preview output; forwarded unchanged to the FFI otherwise.
 
         Returns:
             HaiRegistrationResult or HaiRegistrationPreview.
@@ -544,6 +547,8 @@ class HaiClient:
             )
         if owner_email is not None:
             payload["owner_email"] = owner_email
+        if registration_key is not None:
+            payload["registration_key"] = "***" if preview else registration_key
 
         url = self._make_url(hai_url, "/api/v1/agents/register")
 
@@ -2319,9 +2324,15 @@ def register(
     hai_url: Optional[str] = None,
     preview: bool = False,
     owner_email: Optional[str] = None,
+    registration_key: Optional[str] = None,
 ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
     """Register the loaded JACS agent with HAI."""
-    return _get_client().register(hai_url, preview=preview, owner_email=owner_email)
+    return _get_client().register(
+        hai_url,
+        preview=preview,
+        owner_email=owner_email,
+        registration_key=registration_key,
+    )
 
 
 def status(hai_url: Optional[str] = None) -> HaiStatusResult:

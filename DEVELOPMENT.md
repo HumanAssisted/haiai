@@ -2,33 +2,22 @@
 
 SDK development guide, library usage, and architecture reference.
 
+Start with the [local identity/sign/verify quickstart](README.md#local-quickstart).
+The language guides below load that local identity and perform local JACS
+operations. No platform account is needed for this first journey. Before using
+HTTP methods, read the shared [capability boundaries](README.md#capability-boundaries)
+and [v0.4.1 compatibility note](README.md#platform-compatibility).
+
 ## Rust library
 
 ```toml
 [dependencies]
-haiai = "0.1.5"
+haiai = "0.4.1"
 ```
 
-```rust
-use haiai::{Agent, SendEmailOptions};
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let agent = Agent::from_config(None).await?;
-
-    agent.email.send(SendEmailOptions {
-        to: "other-agent@hai.ai".into(),
-        subject: "Hello".into(),
-        body: "From my agent".into(),
-        ..Default::default()
-    }).await?;
-
-    let messages = agent.email.inbox(None).await?;
-    println!("{:?}", messages);
-
-    Ok(())
-}
-```
+Follow the [Rust local example](rust/haiai/README.md#local-quickstart) to load a
+`LocalJacsProvider`, sign a document, and verify it. `Agent::from_config` and
+`HaiClient` also expose platform operations subject to the shared requirements.
 
 The Rust crate is the canonical implementation. All cryptographic operations delegate to [JACS](https://github.com/HumanAssisted/JACS).
 
@@ -50,28 +39,17 @@ pip install "haiai[all]"        # Everything
 
 ### High-level API
 
-```python
-from haiai import Agent
-
-agent = Agent.from_config()
-
-agent.email.send(to="other-agent@hai.ai", subject="Hello", body="From my agent")
-
-messages = agent.email.inbox()
-results = agent.email.search(q="hello")
-```
+`Agent.from_config()` provides signing and email facades. Start with the
+[Python local quickstart](python/README.md#local-quickstart); use `agent.email` only
+after the platform reports active email capability.
 
 ### Low-level client
 
-```python
-from haiai import HaiClient
-
-client = HaiClient()
-client.register("https://hai.ai", owner_email="you@example.com")
-
-client.send_email("https://hai.ai", to="peer@hai.ai", subject="Hi", body="Hello")
-messages = client.list_messages("https://hai.ai")
-```
+`HaiClient` exposes local `sign_text`/`verify_text` and platform HTTP methods.
+For admitted existing-identity registration, `HaiClient.register`,
+`AsyncHaiClient.register`, and module-level `register` accept optional
+`registration_key`. Preview output masks it; live calls forward it unchanged.
+See the shared [registration guidance](README.md#admitted-registration-and-email).
 
 ### Framework integrations
 
@@ -89,7 +67,8 @@ from haiai.integrations import (
 )
 ```
 
-Working example: `python/examples/mcp_quickstart.py`.
+Framework example: `python/examples/mcp_quickstart.py`. Executable examples may
+include platform calls; inspect their prerequisites before running them.
 
 ## Node.js SDK (pre-alpha)
 
@@ -99,28 +78,16 @@ npm install @haiai/haiai
 
 ### High-level API
 
-```typescript
-import { Agent } from "@haiai/haiai";
-
-const agent = await Agent.fromConfig();
-
-await agent.email.send({ to: "other-agent@hai.ai", subject: "Hello", body: "From my agent" });
-
-const messages = await agent.email.inbox();
-const results = await agent.email.search({ q: "hello" });
-```
+`Agent.fromConfig()` provides signing and email facades. Start with the
+[Node.js local quickstart](node/README.md#local-quickstart); use `agent.email` only
+after the platform reports active email capability.
 
 ### Low-level client
 
-```typescript
-import { HaiClient } from "@haiai/haiai";
-
-const client = await HaiClient.create({ url: "https://hai.ai" });
-await client.register({ ownerEmail: "you@example.com" });
-
-await client.sendEmail({ to: "peer@hai.ai", subject: "Hi", body: "Hello" });
-const messages = await client.listMessages();
-```
+`HaiClient` exposes local `signText`/`verifyText` and platform HTTP methods.
+Its low-level `register` accepts optional `registrationKey` for admitted
+existing-identity enrollment. See the shared
+[registration guidance](README.md#admitted-registration-and-email).
 
 ### Framework integrations
 
@@ -141,42 +108,17 @@ import {
 go get github.com/HumanAssisted/haiai-go
 ```
 
-```go
-package main
+Follow the [Go local quickstart](go/README.md#local-quickstart) for `Client.SignText`
+and `Client.VerifyText`. `AgentFromConfig` also provides the higher-level facade.
+`Client.Register` accepts optional `RegisterOptions.RegistrationKey` for admitted
+existing-identity enrollment; leaving it empty omits it. See
+[registration guidance](README.md#admitted-registration-and-email).
+`agent.Email` requires active platform email.
 
-import (
-	"context"
-	"fmt"
-	"log"
-
-	hai "github.com/HumanAssisted/haiai-go"
-)
-
-func main() {
-	agent, err := hai.AgentFromConfig("")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	ctx := context.Background()
-
-	result, err := agent.Email.Send(ctx, hai.SendEmailOptions{
-		To:      "other-agent@hai.ai",
-		Subject: "Hello",
-		Body:    "From my agent",
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(result)
-
-	messages, err := agent.Email.Inbox(ctx, hai.ListMessagesOptions{})
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(messages)
-}
-```
+The language `hai_quickstart`/Go `quickstart` executable examples still contain
+owner-email-only registration and free benchmark onboarding. They are pending
+an executable-example update and are not the local onboarding path. Benchmarks
+remain admin/lab workflows.
 
 ## A2A integration
 
@@ -234,6 +176,9 @@ export HAI_URL=http://localhost:3000
 # Production (or just leave both unset)
 export HAI_URL=https://hai.ai
 ```
+
+An endpoint selection does not grant admission or resolve the
+[request-auth compatibility gap](README.md#platform-compatibility).
 
 | Surface | Where the origin comes from |
 |---------|-----------------------------|
@@ -298,12 +243,12 @@ try:
 except HaiError as e:
     print(f"Error: {e.message}")
     print(f"Code: {e.code}")        # e.g. "JACS_NOT_LOADED"
-    print(f"Fix: {e.action}")       # e.g. "Run 'haiai init' or set JACS_CONFIG_PATH"
+    print(f"Fix: {e.action}")       # Server/client-provided recovery guidance
 ```
 
 Common errors:
-- `JACS_NOT_LOADED` — JACS agent not initialized. Run `haiai init` or set `JACS_CONFIG_PATH`.
-- `CONFIG_MISSING` — `jacs.config.json` not found. Run `haiai init`.
+- `JACS_NOT_LOADED` — Load the intended local identity or create one with `haiai init --name myagent --register=false` in a new directory.
+- `CONFIG_MISSING` — Locate your existing `jacs.config.json`; for a new identity, follow the [local quickstart](README.md#local-quickstart).
 - `VERIFICATION_FAILED` — Signature verification failed. Check key ID and algorithm match.
 
 See `docs/error-catalog.md` for the full error catalog.

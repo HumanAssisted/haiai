@@ -457,6 +457,7 @@ export class HaiClient {
    */
   async register(options?: {
     ownerEmail?: string;
+    registrationKey?: string;
     description?: string;
     domain?: string;
     agentJson?: string;
@@ -464,6 +465,7 @@ export class HaiClient {
   }): Promise<RegistrationResult> {
     const registerOptions: Record<string, unknown> = {};
     if (options?.ownerEmail) registerOptions.owner_email = options.ownerEmail;
+    if (options?.registrationKey !== undefined) registerOptions.registration_key = options.registrationKey;
     if (options?.description) registerOptions.description = options.description;
     if (options?.domain) registerOptions.domain = options.domain;
     if (options?.agentJson) registerOptions.agent_json = options.agentJson;

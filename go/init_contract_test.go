@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -19,11 +20,67 @@ type initBootstrapRegisterContract struct {
 }
 
 type initContractFixture struct {
-	BootstrapRegister          initBootstrapRegisterContract `json:"bootstrap_register"`
-	PrivateKeyCandidateOrder   []string                      `json:"private_key_candidate_order"`
-	ConfigDiscoveryOrder       []string                      `json:"config_discovery_order"`
-	PrivateKeyPasswordSources  []string                      `json:"private_key_password_sources"`
-	PrivateKeyPasswordStrategy string                        `json:"private_key_password_strategy"`
+	BootstrapRegister        initBootstrapRegisterContract `json:"bootstrap_register"`
+	ExistingIdentityRegister struct {
+		Response json.RawMessage `json:"response"`
+		Cases    []struct {
+			Name    string            `json:"name"`
+			Request map[string]string `json:"request"`
+		} `json:"cases"`
+	} `json:"existing_identity_register"`
+	PrivateKeyCandidateOrder   []string `json:"private_key_candidate_order"`
+	ConfigDiscoveryOrder       []string `json:"config_discovery_order"`
+	PrivateKeyPasswordSources  []string `json:"private_key_password_sources"`
+	PrivateKeyPasswordStrategy string   `json:"private_key_password_strategy"`
+}
+
+type registrationCaptureFFI struct {
+	FFIClient // Any unexpected operation (including identity creation) fails.
+	payloads  []string
+	response  json.RawMessage
+}
+
+func (f *registrationCaptureFFI) Register(optionsJSON string) (json.RawMessage, error) {
+	f.payloads = append(f.payloads, optionsJSON)
+	return f.response, nil
+}
+
+func TestInitContractExistingIdentityRegister(t *testing.T) {
+	contract := loadInitContractFixture(t).ExistingIdentityRegister
+	if len(contract.Cases) == 0 {
+		t.Fatal("missing existing-identity registration cases")
+	}
+	for _, tc := range contract.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			ffi := &registrationCaptureFFI{response: contract.Response}
+			client := &Client{ffi: ffi}
+			result, err := client.Register(context.Background(), RegisterOptions{
+				AgentJSON:       tc.Request["agent_json"],
+				OwnerEmail:      tc.Request["owner_email"],
+				RegistrationKey: tc.Request["registration_key"],
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(ffi.payloads) != 1 {
+				t.Fatal("expected one existing-identity FFI registration call")
+			}
+			var payload map[string]string
+			if err := json.Unmarshal([]byte(ffi.payloads[0]), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(payload, tc.Request) {
+				t.Fatal("FFI registration payload does not match shared contract")
+			}
+			var expected RegistrationResult
+			if err := json.Unmarshal(contract.Response, &expected); err != nil {
+				t.Fatal(err)
+			}
+			if result.AgentID != expected.AgentID {
+				t.Fatal("registration response was not preserved")
+			}
+		})
+	}
 }
 
 func loadInitContractFixture(t *testing.T) initContractFixture {

@@ -1,6 +1,7 @@
 # haiai-cli
 
-Command-line interface for the [HAI.AI](https://hai.ai) agent platform. Creates JACS-signed agent identities, manages @hai.ai email, and runs the built-in MCP server.
+Command-line interface for local JACS identity, signing, and verification, plus
+admitted [HAI.AI](https://hai.ai) integrations and the built-in MCP server.
 
 ## Install
 
@@ -19,55 +20,53 @@ This gives you the `haiai` binary.
 
 ## Quickstart
 
-### 1. Create an agent
+### 1. Create, sign, and verify locally
+
+Use a new directory and set your own `JACS_PRIVATE_KEY_PASSWORD` as shown in the
+[local quickstart](../../README.md#local-quickstart), or enter it when prompted.
 
 ```bash
-haiai init \
-  --name my-agent \
-  --domain example.com \
-  --algorithm pq2025
+haiai init --name myagent --register=false
+printf 'Hello from my local agent.\n' > hello.txt
+haiai sign-text hello.txt
+haiai verify-text hello.txt --strict
 ```
 
-The `init` command generates keys, writes a `jacs.config.json`, and prints the DNS TXT record needed for domain verification.
+`init` generates encrypted keys and writes `jacs.config.json`. Signing appends
+an inline JACS signature and saves `hello.txt.bak`; verification should report
+all signatures valid and exit 0. These operations need no HAI account or API.
+An optional `--domain example.com` configures DNS verification information.
 
 Options:
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--name` | (required) | Agent display name |
-| `--domain` | (required) | Domain for DNS verification |
+| `--domain` | (unset) | Optional domain for DNS verification |
+| `--register` | `true` | Pass `--register=false` for a local identity only |
+| `--key` | (unset) | One-use reservation key, required when registering |
 | `--algorithm` | `pq2025` | Signing algorithm |
 | `--data-dir` | `./jacs` | JACS data directory |
 | `--key-dir` | `./jacs_keys` | Key storage directory |
 | `--config-path` | `./jacs.config.json` | Config file path |
 
-Registration happens during `init` (see step 1). Your agent gets `myagent@hai.ai` automatically.
+The registration key is validated before creation when `--register=true`.
+For an admitted new identity, use `init --name RESERVED_NAME --key KEY` in a
+separate empty directory. To register or retry registration of an existing
+identity, use MCP `hai_register_agent` with `registration_key` and `config_path`;
+the reservation name must match the identity. There is no standalone
+`haiai register` command. See
+[admitted registration](../../README.md#admitted-registration-and-email).
 
-### 3. Send and receive email
+### 2. Start the MCP server
 
-```bash
-# Send (echo@hai.ai auto-replies for testing)
-haiai send-email --to echo@hai.ai --subject "Hello" --body "Test message"
-haiai send-email --to echo@hai.ai --subject "Hello" --body "Test message" --generation-type attachment_jacs
-
-# Read inbox
-haiai list-messages
-haiai search-messages --q "hello"
-
-# Reply and forward
-haiai reply-email --message-id MSG_ID --body "Thanks!"
-haiai forward-email --message-id MSG_ID --to other@hai.ai
-```
-
-`send-email` defaults to `html_inline_jacs`: the SDK renders HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Use `--generation-type attachment_jacs` only for compatibility. Body input is plain text for now; caller-supplied HTML and reserved HAI/JACS inline markers are rejected before signing.
-
-### 4. Start the MCP server
+Run from the identity directory with its password available:
 
 ```bash
 haiai mcp
 ```
 
-Connect it to any MCP client (Claude Desktop, Cursor, Claude Code, etc.):
+Connect it to an MCP client:
 
 ```json
 {
@@ -80,20 +79,56 @@ Connect it to any MCP client (Claude Desktop, Cursor, Claude Code, etc.):
 }
 ```
 
-## All Commands
+### 3. Use email after admission and activation
+
+Developer signup remains hidden. First read the shared
+[capability boundaries](../../README.md#capability-boundaries) and
+[v0.4.1 API compatibility note](../../README.md#platform-compatibility).
+Inspect the server-returned status/address with `haiai status` and
+`haiai email-status`; `init`'s guessed `name@hai.ai` success line does not
+establish an active mailbox. Only send after email status is `active`, within
+server limits, to a recipient you are authorized to contact.
+
+```bash
+# Send
+haiai send-email --to APPROVED_RECIPIENT --subject "Hello" --body "Test message"
+haiai send-email --to APPROVED_RECIPIENT --subject "Hello" --body "Test message" --generation-type attachment_jacs
+
+# Read inbox
+haiai list-messages
+haiai search-messages --q "hello"
+
+# Reply and forward
+haiai reply-email --message-id MSG_ID --body "Thanks!"
+haiai forward-email --message-id MSG_ID --to APPROVED_RECIPIENT
+```
+
+`send-email` defaults to `html_inline_jacs`: the SDK renders HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Use `--generation-type attachment_jacs` only for compatibility. Body input is plain text for now; caller-supplied HTML and reserved HAI/JACS inline markers are rejected before signing.
+
+## Command overview
+
+Use `haiai --help` and `haiai <command> --help` for the complete parser reference.
 
 **Agent Management**
 
 | Command | Description |
 |---------|-------------|
-| `init` | Create a new JACS agent with keys and config |
+| `init` | Create keys/config; defaults to registration, use `--register=false` locally |
 | `hello` | Authenticated handshake with HAI |
-| `register` | Register with HAI platform |
 | `status` | Check registration and verification status |
 | `update` | Update agent metadata and re-sign |
 | `rotate` | Rotate cryptographic keys |
 | `migrate` | Migrate legacy agent to current schema |
 | `doctor` | Diagnose agent health, storage, configuration |
+
+**Local Signing and Verification**
+
+| Command | Description |
+|---------|-------------|
+| `sign-text` | Sign text/Markdown in place, keeping a backup by default |
+| `verify-text` | Verify text signatures locally; `--strict` rejects unsigned input |
+| `sign-image` | Sign a PNG/JPEG/WebP image with JACS |
+| `verify-image` | Verify an image's JACS signature locally |
 
 **Email**
 
@@ -109,16 +144,11 @@ Connect it to any MCP client (Claude Desktop, Cursor, Claude Code, etc.):
 | `list-contacts` | List contacts from email history |
 | `email-status` | Account status and limits |
 
-**Username**
+**Benchmarking (admin/lab)**
 
 | Command | Description |
 |---------|-------------|
-
-**Benchmarking**
-
-| Command | Description |
-|---------|-------------|
-| `benchmark` | Run benchmark against HAI platform |
+| `benchmark` | Run an admitted benchmark workflow; not developer enrollment |
 
 **Document Management**
 
@@ -146,7 +176,15 @@ Once the MCP server is running, it exposes these tools:
 
 **Verification:** `hai_generate_verify_link`
 
-Plus all JACS tools from [jacs-mcp](https://crates.io/crates/jacs-mcp) (signing, verification, document management).
+**Local files:** `hai_sign_text`, `hai_verify_text`, `hai_sign_image`, `hai_verify_image`.
+
+`hai_conflict_*` operates on local JACS conflict documents. These tools do not
+enroll an advocate or mediator into a hosted Agreement; see the shared
+[Agreement limits](../../README.md#capability-boundaries).
+
+JACS tools from [jacs-mcp](https://crates.io/crates/jacs-mcp) are advertised only
+for the active profile. MCP normally requests `local-sign`; if JACS denies it,
+the server logs `event=mcp_local_signing_denied` and falls back to `verify-only`.
 
 ## Environment Variables
 

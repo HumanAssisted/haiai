@@ -8,6 +8,7 @@ import { HaiClient } from '../src/client.js';
 import { loadConfig, loadPrivateKey } from '../src/config.js';
 import { generateTestKeypair as generateKeypair } from './setup.js';
 import { createMockFFI } from './ffi-mock.js';
+import { FFIClientAdapter } from '../src/ffi-client.js';
 
 interface BootstrapRegisterContract {
   method: string;
@@ -18,6 +19,13 @@ interface BootstrapRegisterContract {
 
 interface InitContractFixture {
   bootstrap_register: BootstrapRegisterContract;
+  existing_identity_register: {
+    response: { agent_id: string; jacs_id: string; registered_at: string };
+    cases: Array<{
+      name: string;
+      request: { agent_json: string; owner_email: string; registration_key?: string };
+    }>;
+  };
   private_key_candidate_order: string[];
   config_discovery_order: string[];
   private_key_password_sources: string[];
@@ -33,6 +41,30 @@ function loadInitContractFixture(): InitContractFixture {
 describe('shared init contract (node)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  const registrationContract = loadInitContractFixture().existing_identity_register;
+  it.each(registrationContract.cases)('existing identity registration: $name', async ({ request }) => {
+    const keypair = generateKeypair();
+    const client = await HaiClient.fromCredentials('fixture-existing-agent', keypair.privateKeyPem);
+    const registerNative = vi.fn(async (_optionsJson: string) =>
+      JSON.stringify(registrationContract.response),
+    );
+    // Exercise the real adapter's JSON serializer; only the native call is replaced.
+    const adapter = Object.assign(Object.create(FFIClientAdapter.prototype), {
+      native: { register: registerNative },
+    }) as FFIClientAdapter;
+    client._setFFIAdapter(adapter);
+
+    const result = await client.register({
+      agentJson: request.agent_json,
+      ownerEmail: request.owner_email,
+      ...(request.registration_key === undefined ? {} : { registrationKey: request.registration_key }),
+    });
+
+    expect(registerNative).toHaveBeenCalledOnce();
+    expect(JSON.parse(registerNative.mock.calls[0][0])).toEqual(request);
+    expect(result.agentId).toBe(registrationContract.response.agent_id);
   });
 
   it('private key candidate order matches shared fixture', async () => {

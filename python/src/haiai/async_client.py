@@ -233,6 +233,7 @@ class AsyncHaiClient:
         public_key: Optional[str] = None,
         preview: bool = False,
         owner_email: Optional[str] = None,
+        registration_key: Optional[str] = None,
     ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
         """Register a JACS agent with HAI."""
         from haiai.config import get_config
@@ -261,6 +262,8 @@ class AsyncHaiClient:
             )
         if owner_email is not None:
             payload["owner_email"] = owner_email
+        if registration_key is not None:
+            payload["registration_key"] = "***" if preview else registration_key
 
         url = self._make_url(hai_url, "/api/v1/agents/register")
 

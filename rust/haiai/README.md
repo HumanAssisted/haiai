@@ -1,46 +1,43 @@
 # haiai -- Rust SDK
 
-Rust SDK for the [HAI.AI](https://hai.ai) agreement factory. Thin wrapper around [JACS](https://crates.io/crates/jacs) -- JACS-signed agent identity, agreements, and `@hai.ai` mail. Email is a channel into agreements, not the product.
+Rust SDK for local [JACS](https://crates.io/crates/jacs) identity, signing and verification, plus admitted [HAI.AI](https://hai.ai) platform integrations. See the shared [capability boundaries](../../README.md#capability-boundaries) for registration, active email and current Agreement/advocate/mediator limits, and [platform compatibility](../../README.md#platform-compatibility) before making API calls.
 
 ## Install
 
 ```toml
 [dependencies]
-haiai = "0.1.2"
+haiai = "0.4.1"
+serde_json = "1"
 ```
 
-## Quickstart
+## Local quickstart
+
+Follow the shared [local identity setup](../../README.md#local-quickstart), then run this from the directory containing `jacs.config.json` with `JACS_PRIVATE_KEY_PASSWORD` set to its key password. The provider signs and verifies a document locally through JACS; no platform registration is needed.
 
 ```rust
-use haiai::{Agent, SendEmailOptions};
+use haiai::{JacsDocumentProvider, JacsVerificationProvider, LocalJacsProvider};
+use serde_json::json;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Load identity from jacs.config.json
-    let agent = Agent::from_config(None).await?;
-
-    // Send a signed email from your @hai.ai address
-    agent.email.send(SendEmailOptions {
-        to: "other-agent@hai.ai".into(),
-        subject: "Hello".into(),
-        body: "From my agent".into(),
-        ..Default::default()
-    }).await?;
-
-    // Read inbox
-    let messages = agent.email.inbox(None).await?;
-    println!("{:?}", messages);
-
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let provider = LocalJacsProvider::from_config_path(None, None)?;
+    let signed = provider.sign_document(&json!({"message": "Hello from my agent."}))?;
+    let result = provider.verify_document(&signed)?;
+    if !result.valid {
+        return Err(format!("Signature verification failed: {:?}", result.error).into());
+    }
+    println!("valid");
     Ok(())
 }
 ```
+
+Expected output: `valid`. The signed JSON stays in memory; use the document storage traits below to persist it. This proves agent provenance, not a person's approval of an Agreement.
 
 ## What This Crate Owns
 
 This crate delegates all cryptographic operations to JACS via `JacsProvider` and owns HAI-specific concerns:
 
 - HAI API endpoint contracts and authentication
-- JACS auth header construction (`JACS {jacsId}:{timestamp}:{signature_base64}`)
+- JACS API authentication (see [platform compatibility](../../README.md#platform-compatibility))
 - URL/path escaping for agent IDs
 - Email, benchmark, and verification API workflows
 - Verify-link generation
@@ -48,13 +45,15 @@ This crate delegates all cryptographic operations to JACS via `JacsProvider` and
 
 ## Signed Email Generation
 
+Platform email requires admitted registration and server-returned email status `active`; an allocated or pending address cannot send. Inspect `HaiClient::get_email_status()` for the actual address, status and limits. Quota, external-recipient and content gates still apply; see [capability boundaries](../../README.md#capability-boundaries).
+
 `HaiClient::send_signed_email` defaults to `EmailGenerationType::HtmlInlineJacs`: the SDK renders safe HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Use `send_signed_email_with_generation_type(..., EmailGenerationType::AttachmentJacs)` only for compatibility with the older attachment transport.
 
 HTML-inline signing accepts plain-text `SendEmailOptions::body` for now. The SDK rejects caller-supplied HTML tokens and reserved HAI/JACS inline markers before signing so generated signature artifacts cannot be confused with user content.
 
-## Trait Architecture (Layers 0-7)
+## Trait Architecture (Layers 0-8)
 
-JACS 0.9.4 capabilities are exposed through 8 layered extension traits:
+JACS capabilities are exposed through layered extension traits:
 
 | Layer | Trait | Purpose | Feature |
 |-------|-------|---------|---------|
@@ -66,11 +65,12 @@ JACS 0.9.4 capabilities are exposed through 8 layered extension traits:
 | 5 | `JacsEmailProvider` | Email signing/verification, attachments | -- |
 | 6 | `JacsAgreementProvider` | Multi-party agreements | `agreements` |
 | 7 | `JacsAttestationProvider` | Verifiable attestation claims | `attestation` |
+| 8 | `JacsMediaProvider` | Local inline-text and image sign/verify | `jacs-crate` |
 
 ```rust
 use haiai::{LocalJacsProvider, JacsAgentLifecycle, JacsDocumentProvider};
 
-let provider = LocalJacsProvider::from_config_path(None)?;
+let provider = LocalJacsProvider::from_config_path(None, Some("fs"))?;
 
 // Layer 1: Agent lifecycle
 let diag = provider.diagnostics()?;
@@ -80,13 +80,15 @@ let doc = provider.sign_and_store(&serde_json::json!({"title": "My Document"}))?
 let found = provider.search_documents("title", 10, 0)?;
 ```
 
-### Local JACS verification (raw MIME round-trip)
+### Raw MIME retrieval and verification
+
+Retrieval uses the HAI API, and this verification helper uses HAI for key lookup. For an entirely local check, use the quickstart above.
 
 ```rust
 let raw = client.get_raw_email("m.uuid").await?;
 if !raw.available { anyhow::bail!("{:?}", raw.omitted_reason); }
 let bytes = raw.raw_email.expect("present when available=true");
-let result = haiai::email::verify_email(&bytes, &hai_url).await?;
+let result = haiai::email::verify_email(&bytes, &hai_url).await;
 assert!(result.valid, "tampered or revoked");
 ```
 
@@ -123,7 +125,7 @@ Available local backends: `fs` (filesystem), `rusqlite`/`sqlite` (SQLite with fu
 ## Features
 
 ```toml
-haiai = { version = "0.1.2", features = ["agreements", "attestation"] }
+haiai = { version = "0.4.1", features = ["agreements", "attestation"] }
 ```
 
 | Feature | Description |
@@ -131,7 +133,7 @@ haiai = { version = "0.1.2", features = ["agreements", "attestation"] }
 | `rustls-tls` (default) | TLS via rustls |
 | `native-tls` | TLS via system native |
 | `jacs-crate` (default) | Include JACS dependency |
-| `agreements` | Multi-party agreement support |
+| `agreements` | Local JACS multi-party agreements; hosted limits above still apply |
 | `attestation` | Verifiable attestation support |
 
 ## Links

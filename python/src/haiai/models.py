@@ -90,7 +90,7 @@ class HaiRegistrationPreview:
     Attributes:
         agent_id: The agent's JACS ID.
         agent_name: Human-readable agent name.
-        payload_json: The full JSON that would be sent (pretty-printed).
+        payload_json: Pretty-printed request JSON with the registration key masked.
         endpoint: The API endpoint that would be called.
         headers: Headers that would be sent (API key masked).
     """

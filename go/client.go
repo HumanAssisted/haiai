@@ -311,9 +311,10 @@ func (c *Client) TestConnection(ctx context.Context) (bool, error) {
 
 // RegisterOptions configures the Register call.
 type RegisterOptions struct {
-	AgentJSON  string `json:"agent_json"`
-	PublicKey  string `json:"public_key,omitempty"`
-	OwnerEmail string `json:"owner_email,omitempty"`
+	AgentJSON       string `json:"agent_json"`
+	PublicKey       string `json:"public_key,omitempty"`
+	OwnerEmail      string `json:"owner_email,omitempty"`
+	RegistrationKey string `json:"registration_key,omitempty"`
 }
 
 // Register registers the agent with HAI.

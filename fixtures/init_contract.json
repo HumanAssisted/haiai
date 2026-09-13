@@ -5,6 +5,30 @@
     "auth_required": false,
     "public_key_encoding": "base64"
   },
+  "existing_identity_register": {
+    "response": {
+      "agent_id": "registered-existing-agent",
+      "jacs_id": "fixture-existing-agent",
+      "registered_at": "2026-09-13T00:00:00Z"
+    },
+    "cases": [
+      {
+        "name": "admitted_with_key",
+        "request": {
+          "agent_json": "{\n  \"jacsId\": \"fixture-existing-agent\",\n  \"jacsName\": \"existing-agent\"\n}",
+          "owner_email": "owner@example.test",
+          "registration_key": "hk_0123456789aBcDeF0123456789aBcDeF0123456789aBcDeF0123456789aBcDeF"
+        }
+      },
+      {
+        "name": "key_omitted",
+        "request": {
+          "agent_json": "{\n  \"jacsId\": \"fixture-existing-agent\",\n  \"jacsName\": \"existing-agent\"\n}",
+          "owner_email": "owner@example.test"
+        }
+      }
+    ]
+  },
   "private_key_candidate_order": [
     "agent_private_key.pem",
     "{agentName}.private.pem",
