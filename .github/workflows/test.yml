@@ -16,6 +16,19 @@ env:
   JACS_VERSION: 0.13.0
 
 jobs:
+  native-package-layout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check native artifact assembly and packed loader offline
+        run: node --test node/scripts/native-package.test.cjs
+        env:
+          npm_config_cache: ${{ runner.temp }}/haiinpm-npm-cache
+          npm_config_offline: "true"
+
   crypto-policy:
     runs-on: ubuntu-latest
     steps:

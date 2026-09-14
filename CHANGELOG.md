@@ -11,7 +11,15 @@
   and expose Node's response job ID separately from the campaign run ID.
   The API adapter and deployment requirements are in [setup](README.md#benchmark-mediator).
 
+### Native Node releases — 2026-09-14
+
+- **2026-09-14:** Native Node releases now preserve all four qualified addon
+  filenames and validate separate build artifacts plus the packed loader/layout
+  before publishing. Missing, duplicate, unexpected, unqualified, or empty addons
+  fail packaging instead of being overwritten or producing a partial package.
+
 ### Registration outcomes — 2026-09-13
+
 
 - Registration results now retain optional server status and assigned email across
   Rust/FFI, Python, Node, and Go, including bootstrap results. CLI `init` reports

@@ -150,11 +150,12 @@ jobs:
         run: |
           cd rust/haiinpm
           npm install @napi-rs/cli
-          npx napi build --release --target ${{ matrix.target }}
+          npx napi build --release --platform --target ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
           name: haiinpm-${{ matrix.node_platform }}
-          path: rust/haiinpm/*.node
+          path: rust/haiinpm/haiinpm.${{ matrix.node_platform }}.node
+          if-no-files-found: error
 
   # ============================================================
   # Publish haiinpm package (native addon) to npm
@@ -173,10 +174,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: haiinpm-*
-          path: node/npm/haiinpm
-          merge-multiple: true
-      - name: List native addons
-        run: ls -la node/npm/haiinpm/
+          path: native-artifacts
+          merge-multiple: false
       - name: Update haiinpm version
         run: |
           node -e "
@@ -185,9 +184,10 @@ jobs:
             pkg.version = '${VERSION}';
             fs.writeFileSync('node/npm/haiinpm/package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
+      - name: Assemble and validate all native artifacts and npm archive
+        run: node node/scripts/native-package.cjs native-artifacts node/npm/haiinpm "$RUNNER_TEMP/haiinpm-package"
       - name: Publish haiinpm
-        working-directory: node/npm/haiinpm
-        run: npm publish --provenance --access public || echo "Already published (safe to ignore)"
+        run: npm publish "$RUNNER_TEMP/haiinpm-package/haiinpm-${VERSION}.tgz" --provenance --access public || echo "Already published (safe to ignore)"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
