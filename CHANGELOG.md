@@ -13,6 +13,12 @@
 
 ### Native Node releases — 2026-09-14
 
+- **2026-09-14:** Node platform/native publication failures now fail their jobs
+  and block the dependent SDK release, including authentication, registry and
+  already-published-version errors. Reruns require inspection; version existence
+  alone no longer bypasses a failed publish. Offline execution of the actual
+  workflow commands verified exit-status propagation; no package was published.
+
 - **2026-09-14:** Native Node releases now preserve all four qualified addon
   filenames and validate separate build artifacts plus the packed loader/layout
   before publishing. Missing, duplicate, unexpected, unqualified, or empty addons

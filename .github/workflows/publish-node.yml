@@ -107,7 +107,7 @@ jobs:
 
       - name: Publish platform package
         working-directory: node/npm/@haiai/${{ matrix.npm_pkg }}
-        run: npm publish --provenance --access public || echo "Already published (safe to ignore)"
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -187,7 +187,7 @@ jobs:
       - name: Assemble and validate all native artifacts and npm archive
         run: node node/scripts/native-package.cjs native-artifacts node/npm/haiinpm "$RUNNER_TEMP/haiinpm-package"
       - name: Publish haiinpm
-        run: npm publish "$RUNNER_TEMP/haiinpm-package/haiinpm-${VERSION}.tgz" --provenance --access public || echo "Already published (safe to ignore)"
+        run: npm publish "$RUNNER_TEMP/haiinpm-package/haiinpm-${VERSION}.tgz" --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
