@@ -3969,6 +3969,94 @@ mod tests {
     use haiai::jacs_remote::{RemoteJacsProvider, RemoteJacsProviderOptions};
     use httpmock::{Method as HMethod, MockServer};
 
+    #[tokio::test]
+    async fn registration_outcomes_survive_shared_ffi_serialization() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../../../fixtures/init_contract.json")).unwrap();
+        for case in fixture["registration_outcomes"]["cases"]
+            .as_array()
+            .unwrap()
+        {
+            let server = MockServer::start_async().await;
+            let mock = server
+                .mock_async(|when, then| {
+                    when.method(HMethod::POST).path("/api/v1/agents/register");
+                    then.status(case["http_status"].as_u64().unwrap() as u16)
+                        .json_body(case["response"].clone());
+                })
+                .await;
+            let wrapper = HaiClientWrapper::from_config_json_auto(
+                &serde_json::json!({
+                    "base_url": server.base_url(), "jacs_id": "fixture-existing-agent"
+                })
+                .to_string(),
+            )
+            .unwrap();
+            let result = wrapper
+                .register(&fixture["existing_identity_register"]["cases"][0]["request"].to_string())
+                .await;
+            if case["http_status"].as_u64().unwrap() >= 400 {
+                assert!(result.is_err(), "{case}");
+            } else {
+                let data: Value = serde_json::from_str(&result.expect("FFI result")).unwrap();
+                assert_eq!(
+                    data["registration_status"], case["expected_status"],
+                    "{case}"
+                );
+                assert_eq!(data["email"], case["expected_email"], "{case}");
+                assert_eq!(data["agent_id"], case["response"]["agent_id"]);
+            }
+            mock.assert_async().await;
+        }
+    }
+
+    #[test]
+    fn registration_outcomes_survive_bootstrap_merge() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let saved_password = std::env::var("JACS_PRIVATE_KEY_PASSWORD").ok();
+        let saved_keychain = std::env::var("JACS_KEYCHAIN_ENABLED").ok();
+        let saved_backend = std::env::var("JACS_KEYCHAIN_BACKEND").ok();
+        std::env::set_var(
+            "JACS_PRIVATE_KEY_PASSWORD",
+            "synthetic-registration-password",
+        );
+        std::env::set_var("JACS_KEYCHAIN_ENABLED", "false");
+        std::env::set_var("JACS_KEYCHAIN_BACKEND", "disabled");
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let fixture: Value = serde_json::from_str(include_str!("../../../fixtures/init_contract.json")).unwrap();
+            // The ordinary FFI test covers every outcome; these two exercise the
+            // real creation/registration merge with and without an assigned email.
+            for case in &fixture["registration_outcomes"]["cases"].as_array().unwrap()[..2] {
+                let dir = tempfile::tempdir().unwrap();
+                let config_path = dir.path().join("existing-config.json");
+                let server = MockServer::start_async().await;
+                let mock = server.mock_async(|when, then| {
+                    when.method(HMethod::POST).path("/api/v1/agents/register");
+                    then.status(case["http_status"].as_u64().unwrap() as u16).json_body(case["response"].clone());
+                }).await;
+                let wrapper = HaiClientWrapper::from_config_json_auto(r#"{"jacs_id":"bootstrap"}"#).unwrap();
+                let result = wrapper.register_new_agent(&serde_json::json!({
+                    "agent_name": "requested-agent", "password": "synthetic-registration-password",
+                    "algorithm": "ring-Ed25519", "base_url": server.base_url(),
+                    "key_directory": dir.path().join("keys"), "data_directory": dir.path().join("data"),
+                    "config_path": config_path,
+                    "registration_key": fixture["existing_identity_register"]["cases"][0]["request"]["registration_key"],
+                }).to_string()).await.expect("bootstrap result");
+                let data: Value = serde_json::from_str(&result).unwrap();
+                assert_eq!(data["registration_status"], case["expected_status"]);
+                assert_eq!(data["email"], case["expected_email"]);
+                assert_eq!(data["config_path"], config_path.to_string_lossy().as_ref());
+                assert!(config_path.exists());
+                assert!(std::path::Path::new(data["private_key_path"].as_str().unwrap()).exists());
+                mock.assert_async().await;
+            }
+        });
+        restore_env("JACS_PRIVATE_KEY_PASSWORD", saved_password);
+        restore_env("JACS_KEYCHAIN_ENABLED", saved_keychain);
+        restore_env("JACS_KEYCHAIN_BACKEND", saved_backend);
+    }
+
     fn make_doc_store_provider(base_url: String) -> RemoteJacsProvider<StaticJacsProvider> {
         RemoteJacsProvider::new(
             StaticJacsProvider::new("agent-test"),

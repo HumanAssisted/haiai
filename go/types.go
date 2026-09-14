@@ -22,6 +22,9 @@ type RegistrationResult struct {
 	JacsID      string         `json:"jacs_id"`
 	DNSVerified bool           `json:"dns_verified"`
 	Signatures  []HaiSignature `json:"signatures"`
+	// Missing or future status values do not establish admission.
+	RegistrationStatus *string `json:"registration_status,omitempty"`
+	Email              *string `json:"email,omitempty"`
 }
 
 // HaiSignature represents a signature from HAI.
@@ -290,12 +293,14 @@ type RegisterResult struct {
 	DNSRecord      string `json:"dns_record"`
 
 	// From RegistrationResult
-	Success       bool                `json:"success"`
-	JacsID        string              `json:"jacs_id"`
-	DNSVerified   bool                `json:"dns_verified"`
-	Registrations []RegistrationEntry `json:"registrations"`
-	RegisteredAt  string              `json:"registered_at"`
-	Message       string              `json:"message,omitempty"`
+	Success            bool                `json:"success"`
+	JacsID             string              `json:"jacs_id"`
+	DNSVerified        bool                `json:"dns_verified"`
+	Registrations      []RegistrationEntry `json:"registrations"`
+	RegisteredAt       string              `json:"registered_at"`
+	Message            string              `json:"message,omitempty"`
+	RegistrationStatus *string             `json:"registration_status,omitempty"`
+	Email              *string             `json:"email,omitempty"`
 }
 
 // RegistrationEntry is an individual registration record returned by the server.

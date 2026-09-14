@@ -644,6 +644,10 @@ impl<P: JacsProvider> HaiClient<P> {
                 .get("message")
                 .and_then(Value::as_str)
                 .map(ToString::to_string),
+            registration_status: data
+                .get("registration_status")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
             email: data
                 .get("email")
                 .and_then(Value::as_str)

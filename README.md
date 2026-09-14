@@ -176,14 +176,32 @@ capabilities below. For library code, follow the [Python](python/README.md#local
 
 ### Admitted registration and email
 
-First check [platform compatibility](#platform-compatibility). If you already
-have a reservation key for the target deployment whose reserved name matches
-your local identity, register it through MCP `hai_register_agent`, passing
-`registration_key` and its `config_path`. For a **new** identity in a separate
-empty directory, the CLI also
-supports `haiai init --name RESERVED_NAME --key YOUR_REGISTRATION_KEY`. There is
-no standalone `haiai register` command in this version. If registration fails
-after creation, retain the keys/config and use MCP to retry with that identity.
+First check [platform compatibility](#platform-compatibility). For a new identity,
+use `haiai init --name RESERVED_NAME --key YOUR_REGISTRATION_KEY` in a separate
+empty directory. For an **existing local identity** that has not been enrolled
+on HAI, manually submit an appropriate unused admission key whose reserved name
+matches that identity:
+
+```bash
+haiai register --config-path ./jacs.config.json --key YOUR_UNUSED_REGISTRATION_KEY
+```
+
+This command loads the saved identity and keys; it never creates or rotates them.
+MCP `hai_register_agent` also accepts `registration_key` and `config_path`.
+`init` and CLI `register` print the server's `registration_status` (or `unknown`)
+and only its actual assigned `email`. `pending_verification`, an absent status,
+or an address alone does not establish admission, an active mailbox, or email delivery.
+
+If `init` enrollment fails, it exits nonzero and preserves the created identity.
+After a confirmed HTTP rejection, check admission and the key before any manual
+submission. After a transport failure or server error, the request may already
+have committed: check server registration state before submitting again. CLI
+enrollment makes one attempt and never retries automatically. An unused-key
+submission only enrolls an identity that has not already committed on HAI.
+These unsigned bootstrap commands cannot repair an existing server registration
+or failed rotation: existing server identities require current-key request
+authentication, and consumed admission keys are rejected. Do not rerun `init`
+as recovery.
 
 The low-level SDK facades also accept an optional reservation key for an existing
 identity: Python `registration_key` (sync, async, and module-level `register`),
@@ -191,8 +209,7 @@ Node `registrationKey`, and Go `RegisterOptions.RegistrationKey`. Supplied keys
 are forwarded unchanged; omission preserves the previous payload. Python preview
 output masks the key. See [SDK usage](DEVELOPMENT.md).
 
-Inspect the server-returned registration status/address and then email status;
-the CLI's `init` success line guesses `name@hai.ai` and is not the authority:
+Inspect registration status and then email status before using platform email:
 
 ```bash
 haiai status

@@ -136,3 +136,43 @@ async fn register_bootstrap_matches_shared_fixture() {
     expected.assert_async().await;
     assert_eq!(auth_guard.calls_async().await, 0);
 }
+
+#[tokio::test]
+async fn registration_outcomes_preserve_server_status_and_email() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/init_contract.json")).unwrap();
+    for case in fixture["registration_outcomes"]["cases"]
+        .as_array()
+        .unwrap()
+    {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/api/v1/agents/register");
+                then.status(case["http_status"].as_u64().unwrap() as u16)
+                    .json_body(case["response"].clone());
+            })
+            .await;
+        let result = make_client(&server.base_url())
+            .register(&RegisterAgentOptions {
+                agent_json: r#"{"jacsId":"fixture-existing-agent"}"#.into(),
+                ..Default::default()
+            })
+            .await;
+        if case["http_status"].as_u64().unwrap() >= 400 {
+            assert!(
+                matches!(result, Err(haiai::HaiError::Api { status: 403, .. })),
+                "{case}"
+            );
+        } else {
+            let serialized = serde_json::to_value(result.expect("accepted response")).unwrap();
+            assert_eq!(
+                serialized["registration_status"], case["expected_status"],
+                "{case}"
+            );
+            assert_eq!(serialized["email"], case["expected_email"], "{case}");
+            assert_eq!(serialized["agent_id"], case["response"]["agent_id"]);
+        }
+        mock.assert_async().await;
+    }
+}

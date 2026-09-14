@@ -318,6 +318,8 @@ class AsyncHaiClient:
             agent_id=agent_id,
             registered_at=data.get("registered_at", ""),
             raw_response=data,
+            registration_status=data.get("registration_status"),
+            email=data.get("email"),
         )
 
     # ------------------------------------------------------------------

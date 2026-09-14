@@ -59,6 +59,14 @@ Rust/JACS owns the authentication policy and cryptography.
 For admitted existing-identity registration, `HaiClient.register` accepts optional
 `registrationKey`. See the shared [registration guidance](../README.md#admitted-registration-and-email).
 
+Ordinary and bootstrap registration results preserve `registrationStatus` and `email` (`undefined` when absent).
+Status strings are forwarded without restricting future values. Missing or
+unknown status is not confirmation of admission, and an assigned address does
+not establish mailbox readiness or email delivery. For manual enrollment of
+an existing local identity, the CLI also provides
+`haiai register --key KEY --config-path ./jacs.config.json`; follow the shared guidance above to distinguish
+a confirmed rejection from a transport failure that may have committed.
+
 Platform email requires admitted registration and server-returned email status `active`; an allocated or pending address cannot send. Inspect `agent.email.status()` for the actual address, status and limits. Quota, external-recipient and content gates still apply; see [capability boundaries](../README.md#capability-boundaries).
 
 Signed email defaults to `html_inline_jacs`: the SDK renders safe HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Use `generationType: "attachment_jacs"` with `sendSignedEmail` only for compatibility with the older attachment transport. For now, signed email body input must be plain text; caller-supplied HTML and reserved HAI/JACS inline markers are rejected before signing.

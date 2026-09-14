@@ -161,6 +161,9 @@ pub struct RegistrationResult {
     pub registered_at: String,
     #[serde(default)]
     pub message: Option<String>,
+    /// Server-reported registration outcome. Missing or future values do not establish admission.
+    #[serde(default)]
+    pub registration_status: Option<String>,
     /// Agent's @hai.ai email address, returned by the server during registration.
     #[serde(default)]
     pub email: Option<String>,

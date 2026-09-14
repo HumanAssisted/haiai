@@ -11,6 +11,16 @@
   and expose Node's response job ID separately from the campaign run ID.
   The API adapter and deployment requirements are in [setup](README.md#benchmark-mediator).
 
+### Registration outcomes — 2026-09-13
+
+- Registration results now retain optional server status and assigned email across
+  Rust/FFI, Python, Node, and Go, including bootstrap results. CLI `init` reports
+  those values instead of guessing an address and exits nonzero on enrollment
+  failure while preserving the local identity. New `haiai register --key KEY
+  [--config-path PATH]` manually enrolls an existing local identity with an unused
+  admission key. Confirmed rejection and ambiguous transport/server failure have
+  distinct guidance; CLI enrollment submits once. This unsigned path does not
+  repair already-committed enrollment or failed rotation.
 
 ### Breaking
 
