@@ -11,7 +11,19 @@
   and expose Node's response job ID separately from the campaign run ID.
   The API adapter and deployment requirements are in [setup](README.md#benchmark-mediator).
 
+### Registration retries — 2026-09-15
+
+- **2026-09-15:** Registration now submits once across Rust, CLI, MCP and language
+  bindings, including new-agent bootstrap, regardless of generic retry settings.
+  It refuses redirects and surfaces the first failure instead of resubmitting a
+  potentially consumed admission key. Other operations keep their existing retry
+  behavior. After an uncertain outcome, preserve the local identity and inspect
+  server registration state before any manual submission. Native request-count
+  regressions cover failures, redirects and bootstrap; packaged release candidates
+  still need verification.
+
 ### Native Node releases — 2026-09-14
+
 
 - **2026-09-14:** Node platform/native publication failures now fail their jobs
   and block the dependent SDK release, including authentication, registry and

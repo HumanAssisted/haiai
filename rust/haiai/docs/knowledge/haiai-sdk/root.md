@@ -144,8 +144,10 @@ or an address alone does not establish admission, an active mailbox, or email de
 If `init` enrollment fails, it exits nonzero and preserves the created identity.
 After a confirmed HTTP rejection, check admission and the key before any manual
 submission. After a transport failure or server error, the request may already
-have committed: check server registration state before submitting again. CLI
-enrollment makes one attempt and never retries automatically. An unused-key
+have committed: check server registration state before submitting again. All SDK
+registration entrypoints, including CLI and bootstrap creation, submit once
+regardless of generic retry settings and refuse redirects. Retryable HTTP statuses
+(429/500/502/503/504) are returned to the caller without resubmission. An unused-key
 submission only enrolls an identity that has not already committed on HAI.
 These unsigned bootstrap commands cannot repair an existing server registration
 or failed rotation: existing server identities require current-key request
