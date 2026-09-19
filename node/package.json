@@ -36,7 +36,7 @@
     "bin/"
   ],
   "dependencies": {
-    "@hai.ai/jacs": "file:../../JACS/jacsnpm",
+    "@hai.ai/jacs": "file:../../JACS/archive/native/jacsnpm",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "haiinpm": "0.4.1",
     "ws": "^8.16.0"
@@ -55,7 +55,7 @@
     "vitest": "^1.2.0"
   },
   "scripts": {
-    "deps:local": "node -e \"const p=require('./package.json');p.dependencies['@hai.ai/jacs']='file:../../JACS/jacsnpm';require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')\"",
+    "deps:local": "node -e \"const p=require('./package.json');p.dependencies['@hai.ai/jacs']='file:../../JACS/archive/native/jacsnpm';require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')\"",
     "deps:prod": "node -e \"const p=require('./package.json'),d=require('./publish.deps.json');Object.assign(p.dependencies,d);require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')\"",
     "prebuild": "node ./scripts/clean-dist.cjs",
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.cjs.json && node ./scripts/write-cjs-package.cjs",

@@ -12,7 +12,7 @@ concurrency:
 
 env:
   # Source ref and expected package version are separate; checkouts validate both.
-  JACS_REF: 992953ea77d4c9a16953aee28e4a1e5d26e62200
+  JACS_REF: 0e51c2798e0c2ab52dfbc1b7b2d68654ff9f7ba9
   JACS_VERSION: 0.13.0
 
 jobs:
@@ -118,10 +118,10 @@ jobs:
         # already satisfies the pin before pip resolves haiai's deps, so
         # the install step below never tries to reach PyPI for jacs.
         # Mirrors the Rust [patch.crates-io] block in rust/Cargo.toml and
-        # the Node `file:../../JACS/jacsnpm` override in node/package.json.
+        # the Node `file:../../JACS/archive/native/jacsnpm` override in node/package.json.
         run: |
           source .venv/bin/activate
-          cd "${{ github.workspace }}/../JACS/jacspy"
+          cd "${{ github.workspace }}/../JACS/archive/native/jacspy"
           maturin develop --release
         timeout-minutes: 10
       - name: Install dependencies
@@ -199,13 +199,13 @@ jobs:
         # npm publishes @hai.ai/jacs 0.10.1, which predates the strict signed
         # event verifier, and no platform-binary subpackages
         # (@hai.ai/jacs-linux-x64-gnu, etc.) were published alongside it. The
-        # committed package.json keeps the local-dev file:../../JACS/jacsnpm
+        # committed package.json keeps the local-dev file:../../JACS/archive/native/jacsnpm
         # path; building the napi addon here makes the JACS loader's
         # `existsSync(./jacs.linux-x64-gnu.node)` branch succeed without the
         # missing registry subpackages. Once JACS 0.13.0 and its platform
         # packages publish, restore `npm run deps:prod`.
         run: |
-          cd "${{ github.workspace }}/../JACS/jacsnpm"
+          cd "${{ github.workspace }}/../JACS/archive/native/jacsnpm"
           npm install @napi-rs/cli
           npx napi build --platform --release
         timeout-minutes: 10
@@ -290,11 +290,11 @@ jobs:
         id: cache-jacsgo
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/../JACS/jacsgo/build
+          path: ${{ github.workspace }}/../JACS/archive/native/jacsgo/build
           key: jacsgo-${{ runner.os }}-${{ env.JACS_REF }}-${{ hashFiles('.github/workflows/test.yml') }}
       - name: Build jacsgo shared library
         if: steps.cache-jacsgo.outputs.cache-hit != 'true'
-        run: cd ${{ github.workspace }}/../JACS/jacsgo && make build-rust
+        run: cd ${{ github.workspace }}/../JACS/archive/native/jacsgo && make build-rust
       - name: Build haiigo cdylib
         run: |
           cd rust
@@ -303,22 +303,22 @@ jobs:
         run: |
           cd go
           sed -i '/^replace github.com\/HumanAssisted\/JACS\/jacsgo/d' go.mod
-          echo 'replace github.com/HumanAssisted/JACS/jacsgo => ${{ github.workspace }}/../JACS/jacsgo' >> go.mod
+          echo 'replace github.com/HumanAssisted/JACS/jacsgo => ${{ github.workspace }}/../JACS/archive/native/jacsgo' >> go.mod
       - name: Run tests
         env:
           CGO_ENABLED: "1"
-          CGO_LDFLAGS: "-L${{ github.workspace }}/../JACS/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
-          CGO_CFLAGS: "-I${{ github.workspace }}/../JACS/jacsgo"
-          LD_LIBRARY_PATH: "${{ github.workspace }}/../JACS/jacsgo/build:${{ github.workspace }}/rust/target/release"
+          CGO_LDFLAGS: "-L${{ github.workspace }}/../JACS/archive/native/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
+          CGO_CFLAGS: "-I${{ github.workspace }}/../JACS/archive/native/jacsgo"
+          LD_LIBRARY_PATH: "${{ github.workspace }}/../JACS/archive/native/jacsgo/build:${{ github.workspace }}/rust/target/release"
         run: |
           cd go
           go test -race -v ./...
       - name: Smoke test haiigo FFI binding
         env:
           CGO_ENABLED: "1"
-          CGO_LDFLAGS: "-L${{ github.workspace }}/../JACS/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
-          CGO_CFLAGS: "-I${{ github.workspace }}/../JACS/jacsgo"
-          LD_LIBRARY_PATH: "${{ github.workspace }}/../JACS/jacsgo/build:${{ github.workspace }}/rust/target/release"
+          CGO_LDFLAGS: "-L${{ github.workspace }}/../JACS/archive/native/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
+          CGO_CFLAGS: "-I${{ github.workspace }}/../JACS/archive/native/jacsgo"
+          LD_LIBRARY_PATH: "${{ github.workspace }}/../JACS/archive/native/jacsgo/build:${{ github.workspace }}/rust/target/release"
         run: |
           cd go
           go test -run TestFFISmokeNewClient -v ./ffi/ || echo "FFI smoke test skipped (cdylib not linked)"
@@ -415,7 +415,7 @@ jobs:
         timeout-minutes: 15
       - name: Build jacsgo shared library
         run: |
-          cd "${{ github.workspace }}/../JACS/jacsgo"
+          cd "${{ github.workspace }}/../JACS/archive/native/jacsgo"
           make build-rust
 
       # Bootstrap a JACS smoke agent. `register=false` skips the HAI API
@@ -450,7 +450,7 @@ jobs:
         # pip install path against a pyproject pin that often leads PyPI.
         run: |
           source .venv/bin/activate
-          cd "${{ github.workspace }}/../JACS/jacspy"
+          cd "${{ github.workspace }}/../JACS/archive/native/jacspy"
           maturin develop --release
         timeout-minutes: 15
       - name: Install Python SDK dev deps
@@ -495,12 +495,12 @@ jobs:
         run: |
           cd go
           sed -i '/^replace github.com\/HumanAssisted\/JACS\/jacsgo/d' go.mod
-          echo 'replace github.com/HumanAssisted/JACS/jacsgo => ${{ github.workspace }}/../JACS/jacsgo' >> go.mod
+          echo 'replace github.com/HumanAssisted/JACS/jacsgo => ${{ github.workspace }}/../JACS/archive/native/jacsgo' >> go.mod
       - name: Run Go smoke test
         env:
           CGO_ENABLED: "1"
-          CGO_LDFLAGS: "-L${{ github.workspace }}/../JACS/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
-          CGO_CFLAGS: "-I${{ github.workspace }}/../JACS/jacsgo"
-          LD_LIBRARY_PATH: "${{ github.workspace }}/../JACS/jacsgo/build:${{ github.workspace }}/rust/target/release"
+          CGO_LDFLAGS: "-L${{ github.workspace }}/../JACS/archive/native/jacsgo/build -ljacsgo -L${{ github.workspace }}/rust/target/release -lhaiigo"
+          CGO_CFLAGS: "-I${{ github.workspace }}/../JACS/archive/native/jacsgo"
+          LD_LIBRARY_PATH: "${{ github.workspace }}/../JACS/archive/native/jacsgo/build:${{ github.workspace }}/rust/target/release"
           JACS_PRIVATE_KEY_PASSWORD: smoke-password
         run: make smoke-go
