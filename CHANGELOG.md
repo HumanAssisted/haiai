@@ -7,7 +7,9 @@
 - CI and `make test-rust` now use cargo-nextest 0.9.143 with all features,
   keeping documentation tests separate. This prevents media-fixture password
   changes from racing registration tests. Canonical temporary paths also keep
-  macOS fixtures compatible with JACS path checks; runtime behavior is unchanged.
+  macOS fixtures compatible with JACS path checks. The mock server explicitly
+  uses blocking accepted sockets to avoid dropping delayed request bytes on
+  macOS; runtime behavior is unchanged.
 
 ### Current JACS integration — 2026-09-19
 

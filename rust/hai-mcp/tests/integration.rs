@@ -54,6 +54,9 @@ impl MiniHaiServer {
 
             match listener.accept() {
                 Ok((mut stream, _addr)) => {
+                    // macOS inherits the listener's nonblocking mode. The
+                    // bounded request reader must wait for bytes after accept.
+                    stream.set_nonblocking(false).expect("blocking mock socket");
                     if let Some(request) = read_request(&mut stream) {
                         let response = if request.path == "/api/v1/agents/register" {
                             responses
@@ -1101,7 +1104,8 @@ fn cli_registration_outcomes_and_rejected_init_manual_enrollment_preserve_identi
         assert_eq!(
             server.request_count(),
             1,
-            "enrollment must be submitted once"
+            "enrollment must be submitted once ({}): {text}",
+            case["name"]
         );
         let config_path = dir.path().join("custom config.json");
         let config_before: Value =
