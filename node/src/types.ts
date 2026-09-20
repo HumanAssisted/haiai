@@ -149,6 +149,10 @@ export interface RegistrationResult {
   haiSignature: string;
   registrationId: string;
   registeredAt: string;
+  /** Server-reported outcome; absent or future values do not establish admission. */
+  registrationStatus?: string;
+  /** Address returned by the server; does not establish an active mailbox or delivery. */
+  email?: string;
   /** Filesystem path where the agent's keys were written (set by registerNewAgent). */
   keyDirectory?: string;
   /** Path to the agent's public key PEM (set by registerNewAgent when available). */

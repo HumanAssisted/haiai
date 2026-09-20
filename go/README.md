@@ -78,6 +78,14 @@ For admitted existing-identity registration, `Client.Register` accepts optional
 [registration guidance](../README.md#admitted-registration-and-email).
 `RegisterOptions.PublicKey` accepts raw PEM; Rust performs the HTTP base64 encoding.
 
+Ordinary and bootstrap registration results preserve `RegistrationStatus` and `Email` (`*string`, `nil` when absent).
+Status strings are forwarded without restricting future values. Missing or
+unknown status is not confirmation of admission, and an assigned address does
+not establish mailbox readiness or email delivery. For manual enrollment of
+an existing local identity, the CLI also provides
+`haiai register --key KEY --config-path ./jacs.config.json`; follow the shared guidance above to distinguish
+a confirmed rejection from a transport failure that may have committed.
+
 Platform email requires admitted registration and server-returned email status `active`; an allocated or pending address cannot send. Inspect `agent.Email.Status(ctx)` for the actual address, status and limits. Quota, external-recipient and content gates still apply; see [capability boundaries](../README.md#capability-boundaries).
 
 Signed email defaults to `html_inline_jacs`: the SDK renders safe HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Set `SendEmailOptions.GenerationType` to `EmailGenerationTypeAttachmentJacs` only for compatibility with the older attachment transport. For now, signed email body input must be plain text; caller-supplied HTML and reserved HAI/JACS inline markers are rejected before signing.

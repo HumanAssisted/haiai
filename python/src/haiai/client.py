@@ -602,6 +602,8 @@ class HaiClient:
             registered_at=data.get("registered_at", ""),
             capabilities=[],
             raw_response=data,
+            registration_status=data.get("registration_status"),
+            email=data.get("email"),
         )
 
     # ------------------------------------------------------------------
@@ -2802,8 +2804,14 @@ def register_new_agent(
     # Print next-step messaging
     if not quiet:
         print("\nAgent created and submitted for registration!")
-        print(f"  -> Check your email ({owner_email}) for a verification link")
-        print("  -> Your agent is registered with username from your reservation")
+        print(
+            f"  -> Registration status: {data.get('registration_status') or 'unknown'}"
+        )
+        if data.get("email"):
+            print(f"  -> Assigned email: {data['email']}")
+        print(
+            "  -> Email delivery and active mailbox status are not established by this response"
+        )
         print(f"  -> Config saved to {config_path}")
         print(f"  -> Keys saved to {key_directory}")
         print(
@@ -2841,7 +2849,12 @@ def register_new_agent(
         else:
             print()
 
-    return RegistrationResult(agent_id=agent_id, jacs_id=jacs_id)
+    return RegistrationResult(
+        agent_id=agent_id,
+        jacs_id=jacs_id,
+        registration_status=data.get("registration_status"),
+        email=data.get("email"),
+    )
 
 
 def _compute_public_key_hash(pem: str) -> str:

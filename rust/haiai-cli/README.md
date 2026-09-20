@@ -51,11 +51,29 @@ Options:
 | `--config-path` | `./jacs.config.json` | Config file path |
 
 The registration key is validated before creation when `--register=true`.
-For an admitted new identity, use `init --name RESERVED_NAME --key KEY` in a
-separate empty directory. To register or retry registration of an existing
-identity, use MCP `hai_register_agent` with `registration_key` and `config_path`;
-the reservation name must match the identity. There is no standalone
-`haiai register` command. See
+For a new identity, use `init --name RESERVED_NAME --key KEY` in a separate
+empty directory. To manually enroll an existing local identity, use:
+
+```bash
+haiai register --config-path ./jacs.config.json --key YOUR_UNUSED_ADMISSION_KEY
+```
+
+`register` requires a saved identity and an appropriate unused admission key;
+its reserved name must match the identity. `--config-path` selects the existing
+config, otherwise normal JACS environment/default discovery applies. Normal
+password handling applies. It never creates or rotates keys.
+
+Both commands print the server's status (or `unknown`) and only its returned
+address. Pending or missing status is not admission; a returned address does
+not establish an active mailbox or email delivery. Enrollment failure exits
+nonzero while preserving the local identity. A confirmed HTTP rejection calls
+for checking admission and the key. A transport failure or server error leaves
+the outcome uncertain because the request may have committed; check server
+registration state before another submission. Each CLI invocation submits once.
+Manual enrollment is only for identities not yet enrolled on HAI. It cannot
+repair an existing server registration or failed rotation, which require
+current-key authenticated handling; consumed keys cannot be reused. Never
+rerun `init` for recovery. See
 [admitted registration](../../README.md#admitted-registration-and-email).
 
 ### 2. Start the MCP server
@@ -114,6 +132,7 @@ Use `haiai --help` and `haiai <command> --help` for the complete parser referenc
 | Command | Description |
 |---------|-------------|
 | `init` | Create keys/config; defaults to registration, use `--register=false` locally |
+| `register` | Manually enroll an existing local identity with `--key` and optional `--config-path` |
 | `hello` | Authenticated handshake with HAI |
 | `status` | Check registration and verification status |
 | `update` | Update agent metadata and re-sign |

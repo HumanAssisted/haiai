@@ -53,5 +53,92 @@
     "JACS_PRIVATE_KEY_PASSWORD",
     "JACS_PASSWORD_FILE"
   ],
-  "private_key_password_strategy": "single_source_required"
+  "private_key_password_strategy": "single_source_required",
+  "registration_outcomes": {
+    "requested_name": "requested-agent",
+    "cases": [
+      {
+        "name": "registered_actual_email",
+        "http_status": 201,
+        "response": {
+          "success": true,
+          "agent_id": "assigned-agent-id",
+          "jacs_id": "fixture-existing-agent",
+          "registration_status": "registered",
+          "email": "assigned-different@hai.ai",
+          "registered_at": "2026-09-13T00:00:00Z"
+        },
+        "expected_status": "registered",
+        "expected_email": "assigned-different@hai.ai",
+        "cli_exit_success": true
+      },
+      {
+        "name": "pending_without_email",
+        "http_status": 202,
+        "response": {
+          "success": true,
+          "agent_id": "pending-agent-id",
+          "jacs_id": "fixture-existing-agent",
+          "registration_status": "pending_verification"
+        },
+        "expected_status": "pending_verification",
+        "expected_email": null,
+        "cli_exit_success": true
+      },
+      {
+        "name": "missing_status",
+        "http_status": 200,
+        "response": {
+          "agent_id": "legacy-agent-id",
+          "jacs_id": "fixture-existing-agent"
+        },
+        "expected_status": null,
+        "expected_email": null,
+        "cli_exit_success": true
+      },
+      {
+        "name": "unknown_status",
+        "http_status": 200,
+        "response": {
+          "agent_id": "future-agent-id",
+          "jacs_id": "fixture-existing-agent",
+          "registration_status": "awaiting_operator_review"
+        },
+        "expected_status": "awaiting_operator_review",
+        "expected_email": null,
+        "cli_exit_success": true
+      },
+      {
+        "name": "registration_refused",
+        "http_status": 403,
+        "response": {
+          "message": "Registration key was not accepted for admission"
+        },
+        "expected_status": null,
+        "expected_email": null,
+        "cli_exit_success": false
+      }
+    ]
+  },
+  "registration_submission": {
+    "maximum_requests": 1,
+    "generic_retry_limits": [
+      0,
+      3
+    ],
+    "retryable_http_statuses": [
+      429,
+      500,
+      502,
+      503,
+      504
+    ],
+    "redirect_http_statuses": [
+      301,
+      302,
+      303,
+      307,
+      308
+    ]
+  }
 }

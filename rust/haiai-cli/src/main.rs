@@ -134,6 +134,21 @@ enum Commands {
         config_path: String,
     },
 
+    /// Manually enroll an existing local identity with an unused admission key
+    ///
+    /// Preserves identity and keys. After an HTTP rejection, check admission before
+    /// submitting again. After a transport failure, first check whether HAI committed
+    /// enrollment. This unsigned command cannot repair a server registration or rotation.
+    Register {
+        /// Appropriate unused admission key (hk_ followed by 64 hex characters)
+        #[arg(long)]
+        key: String,
+
+        /// Existing config file; otherwise use normal JACS env/default discovery
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+
     /// Start the built-in HAIAI MCP server (stdio transport)
     Mcp,
 
@@ -1306,6 +1321,113 @@ fn load_client() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
     Ok(client)
 }
 
+fn validate_registration_key(key: Option<&str>) -> anyhow::Result<&str> {
+    let key = key.context(
+        "An unused registration key is required for HAI enrollment; use an issued admission key.",
+    )?;
+    if !key.starts_with("hk_")
+        || key.len() != 67
+        || !key[3..].chars().all(|c| c.is_ascii_hexdigit())
+    {
+        anyhow::bail!(
+            "Invalid registration key format. Keys start with 'hk_' followed by 64 hex characters."
+        );
+    }
+    Ok(key)
+}
+
+fn manual_enrollment_command(config_path: &std::path::Path) -> String {
+    let quoted = config_path.to_string_lossy().replace('\'', "'\\''");
+    format!("haiai register --config-path '{quoted}' --key <unused-admission-key>")
+}
+
+fn enrollment_error(
+    error: &haiai::HaiError,
+    key: &str,
+    config_path: &std::path::Path,
+) -> anyhow::Error {
+    let guidance = match error {
+        haiai::HaiError::Api { status: 400..=499, .. } => format!(
+            "HAI rejected this enrollment request. Check admission and the registration key.\nFor a local identity whose enrollment has not committed on HAI, manually submit an appropriate unused key with: {}\nThis unsigned command cannot repair an existing server registration or a failed key update.",
+            manual_enrollment_command(config_path)
+        ),
+        _ => "Enrollment outcome is unknown. Check the HAI URL, connectivity, and server registration state before another submission; the request may already have committed. Do not blindly retry with another key.".to_string(),
+    };
+    // Render the complete message before redaction; anyhow's Display only shows
+    // the outer context, which would hide the preservation and recovery guidance.
+    let message = format!(
+        "HAI enrollment failed: {error}\n{guidance}\nLocal identity preserved at {}.",
+        config_path.display()
+    );
+    anyhow::Error::msg(message.replace(key, "[redacted]"))
+}
+
+fn registration_summary(response: &haiai::RegistrationResult) -> String {
+    let status = response
+        .registration_status
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown");
+    let mut summary = format!(
+        "Registration status: {status}\n  Registration ID: {}\n",
+        response.agent_id
+    );
+    if let Some(email) = response.email.as_deref().filter(|s| !s.is_empty()) {
+        summary.push_str(&format!("  Assigned email: {email}\n"));
+    }
+    summary
+        .push_str("Active mailbox status and email delivery are not established by this response.");
+    summary
+}
+
+async fn enroll_existing_identity(
+    config_path: Option<&std::path::Path>,
+    key: &str,
+    domain: Option<String>,
+    storage: Option<&str>,
+) -> anyhow::Result<()> {
+    validate_registration_key(Some(key))?;
+    let provider = LocalJacsProvider::from_config_path(config_path, storage).context(
+        "failed to load the existing local identity; no identity was created or replaced",
+    )?;
+    let saved_config = provider.config_path().to_path_buf();
+    let reg_options = RegisterAgentOptions {
+        agent_json: provider.export_agent_json()?,
+        public_key_pem: Some(provider.public_key_pem()?),
+        domain,
+        is_mediator: Some(false),
+        registration_key: Some(key.to_string()),
+        ..Default::default()
+    };
+    let client = HaiClient::new(
+        provider,
+        HaiClientOptions {
+            base_url: hai_url(),
+            request_auth_audience: haiai::client::request_auth_audience_from_env()?,
+            client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
+            // Enrollment is a manual submission: a lost response can follow a commit.
+            max_retries: 0,
+            ..Default::default()
+        },
+    )?;
+    let response = client
+        .register(&reg_options)
+        .await
+        .map_err(|error| enrollment_error(&error, key, &saved_config))?;
+    println!(
+        "{}",
+        registration_summary(&response).replace(key, "[redacted]")
+    );
+    if let Some(email) = response.email.as_deref().filter(|s| !s.is_empty()) {
+        let cache_result = LocalJacsProvider::from_config_path(Some(&saved_config), None)
+            .and_then(|provider| provider.update_config_email(email));
+        if cache_result.is_err() {
+            eprintln!("The server returned an address, but it could not be cached locally. Preserve this registration outcome; do not resubmit enrollment to fix the cache.");
+        }
+    }
+    Ok(())
+}
+
 /// Load client and resolve the agent email address.
 /// Uses cached email from config; falls back to server and persists on first fetch.
 async fn load_client_with_email() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
@@ -1494,22 +1616,9 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!("Invalid username '{}': must be 3-30 lowercase alphanumeric characters or hyphens, no leading/trailing hyphens.", name);
             }
 
-            // When register=true, --key is required
+            // Reject a missing or malformed key before creating an identity.
             if register {
-                if key.is_none() {
-                    anyhow::bail!(
-                        "Registration key is required. Log in at https://hai.ai, reserve your username, and copy the registration key from your dashboard."
-                    );
-                }
-                let k = key.as_ref().unwrap();
-                if !k.starts_with("hk_")
-                    || k.len() != 67
-                    || !k[3..].chars().all(|c| c.is_ascii_hexdigit())
-                {
-                    anyhow::bail!(
-                        "Invalid registration key format. Keys start with 'hk_' followed by 64 hex characters."
-                    );
-                }
+                validate_registration_key(key.as_deref())?;
             }
 
             let password_resolved = resolve_init_password(cli.password_file.as_deref())?;
@@ -1552,69 +1661,28 @@ async fn main() -> anyhow::Result<()> {
 
             if register {
                 println!("\nRegistering with HAI...");
-                // Load the created agent and register
-                let provider = LocalJacsProvider::from_config_path(
+                enroll_existing_identity(
                     Some(std::path::Path::new(&result.config_path)),
+                    key.as_deref()
+                        .expect("registration key validated before creation"),
+                    domain,
                     effective_storage.as_deref(),
                 )
-                .context("failed to load created agent")?;
-                let agent_json = provider
-                    .export_agent_json()
-                    .context("failed to export agent JSON")?;
-                let public_key_pem = provider
-                    .public_key_pem()
-                    .context("failed to read public key PEM")?;
-
-                let hai_options = HaiClientOptions {
-                    base_url: hai_url(),
-                    request_auth_audience: haiai::client::request_auth_audience_from_env()?,
-                    client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
-                    ..Default::default()
-                };
-                let client = HaiClient::new(provider, hai_options)
-                    .context("failed to construct HaiClient")?;
-
-                let reg_options = RegisterAgentOptions {
-                    agent_json,
-                    public_key_pem: Some(public_key_pem),
-                    domain: domain.clone(),
-                    owner_email: None,
-                    is_mediator: Some(false),
-                    registration_key: key,
-                    ..Default::default()
-                };
-
-                match client.register(&reg_options).await {
-                    Ok(response) => {
-                        println!(
-                            "Agent '{}' registered. Email: {}@hai.ai",
-                            name_lower, name_lower
-                        );
-                        println!("  Registration ID: {}", response.agent_id);
-                        // Persist the email address to config so future
-                        // invocations skip the GET /email/status round-trip.
-                        if let Some(ref email) = response.email {
-                            if let Ok(wp) = LocalJacsProvider::from_config_path(
-                                Some(std::path::Path::new(&result.config_path)),
-                                None,
-                            ) {
-                                let _ = wp.update_config_email(email);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let msg = e.to_string();
-                        if msg.contains("already registered") {
-                            println!("This agent is already registered. If you need new keys, use 'haiai rotate'.");
-                        } else {
-                            eprintln!("Registration failed: {}. Your agent was created locally. Fix connectivity and run 'haiai init --name {} --key <key>' again.", msg, name_lower);
-                        }
-                    }
-                }
+                .await?;
             } else {
                 println!("Agent '{}' created locally.", name_lower);
                 println!("\nStart the MCP server with: haiai mcp");
             }
+        }
+
+        Commands::Register { key, config_path } => {
+            enroll_existing_identity(
+                config_path.as_deref().map(std::path::Path::new),
+                &key,
+                None,
+                effective_storage.as_deref(),
+            )
+            .await?;
         }
 
         Commands::Mcp => {
@@ -1996,7 +2064,7 @@ async fn main() -> anyhow::Result<()> {
             if result.registered_with_hai {
                 println!("  Re-registered: yes");
             } else {
-                println!("  Re-registered: no (run `haiai init --name <name> --key <key>` to re-register)");
+                println!("  Server key update failed. Preserve the local identity; authenticated recovery of the server registration is required.");
             }
         }
 
@@ -2016,7 +2084,7 @@ async fn main() -> anyhow::Result<()> {
             if result.registered_with_hai {
                 println!("  Re-registered:  yes");
             } else {
-                println!("  Re-registered:  no (run `haiai init --name <name> --key <key>` to re-register)");
+                println!("  Server metadata update failed. Preserve the local identity; resolve the authenticated update before proceeding.");
             }
         }
 
@@ -3489,6 +3557,86 @@ mod tests {
     }
 
     #[test]
+    fn parse_register_existing_identity() {
+        assert!(Cli::try_parse_from(["haiai", "register"]).is_err());
+        let cli = Cli::parse_from([
+            "haiai",
+            "register",
+            "--key",
+            "key",
+            "--config-path",
+            "/tmp/custom config.json",
+        ]);
+        match cli.command {
+            Commands::Register { key, config_path } => {
+                assert_eq!(key, "key");
+                assert_eq!(config_path.as_deref(), Some("/tmp/custom config.json"));
+            }
+            _ => panic!("expected Register"),
+        }
+    }
+
+    #[test]
+    fn registration_outcomes_report_only_server_status_and_address() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../fixtures/init_contract.json")).unwrap();
+        for case in fixture["registration_outcomes"]["cases"]
+            .as_array()
+            .unwrap()
+        {
+            if !case["cli_exit_success"].as_bool().unwrap() {
+                continue;
+            }
+            let response: haiai::RegistrationResult =
+                serde_json::from_value(case["response"].clone()).unwrap();
+            let summary = registration_summary(&response);
+            assert!(summary.contains(&format!(
+                "Registration status: {}",
+                case["expected_status"].as_str().unwrap_or("unknown")
+            )));
+            assert!(!summary.contains("requested-agent@hai.ai"));
+            match case["expected_email"].as_str() {
+                Some(email) => assert!(summary.contains(&format!("Assigned email: {email}"))),
+                None => assert!(!summary.contains("Assigned email:")),
+            }
+            assert!(summary.contains("not established"));
+        }
+    }
+
+    #[test]
+    fn registration_errors_preserve_guidance_and_redact_keys() {
+        let key = format!("hk_{}", "a".repeat(64));
+        assert!(validate_registration_key(Some(&key)).is_ok());
+        for invalid in [None, Some("hk_short"), Some("invalid-secret")] {
+            let message = validate_registration_key(invalid).unwrap_err().to_string();
+            assert!(!message.contains("invalid-secret"));
+        }
+        let config = std::path::Path::new("/tmp/agent's config.json");
+        let rejection = haiai::HaiError::Api {
+            status: 403,
+            message: format!("refused {key}"),
+        };
+        let message = enrollment_error(&rejection, &key, config).to_string();
+        assert!(message.contains("HAI rejected this enrollment request"));
+        assert!(message.contains("Local identity preserved"));
+        assert!(message.contains("enrollment has not committed"));
+        assert!(message.contains("cannot repair an existing server registration"));
+        assert!(message.contains("haiai register --config-path '/tmp/agent'\\''s config.json'"));
+        assert!(!message.contains(&key));
+        // A server-side error, like a lost response, does not prove rollback.
+        let uncertain = haiai::HaiError::Api {
+            status: 503,
+            message: format!("unavailable {key}"),
+        };
+        let message = enrollment_error(&uncertain, &key, config).to_string();
+        assert!(message.contains("outcome is unknown"));
+        assert!(message.contains("may already have committed"));
+        assert!(message.contains("Local identity preserved"));
+        assert!(!message.contains("haiai register"));
+        assert!(!message.contains(&key));
+    }
+
+    #[test]
     fn parse_removed_commands_fail() {
         assert!(Cli::try_parse_from(["haiai", "register", "--owner-email", "a@b.com"]).is_err());
         assert!(Cli::try_parse_from(["haiai", "claim-username", "bob"]).is_err());
@@ -3711,10 +3859,8 @@ mod tests {
     }
 
     #[test]
-    fn cli_command_parity_total_count_is_37() {
-        // Issue 005: bumped from 33 to 36 with the three D5/D9 record-store
-        // command groups (memory, soul, records).
-        // Conflict memory MVP then bumps 36 to 37 with the conflict group.
+    fn cli_command_parity_total_count_is_38() {
+        // Manual existing-identity enrollment adds register to the 37 commands.
         let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/cli_command_parity.json");
         let raw = std::fs::read_to_string(&fixture_path).expect("read parity fixture");
@@ -3724,10 +3870,10 @@ mod tests {
             .expect("total_command_count");
         let count = fixture["commands"].as_array().expect("commands").len() as u64;
         assert_eq!(
-            total, 37,
-            "total_command_count must be 37 after conflict group"
+            total, 38,
+            "total_command_count must be 38 after manual registration"
         );
-        assert_eq!(count, 37, "commands array length must be 37");
+        assert_eq!(count, 38, "commands array length must be 38");
     }
 
     #[test]

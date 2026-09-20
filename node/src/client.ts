@@ -503,6 +503,8 @@ export class HaiClient {
       haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
       registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
       registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
+      registrationStatus: (data.registration_status as string | null) ?? undefined,
+      email: (data.email as string | null) ?? undefined,
       rawResponse: data,
     };
   }
@@ -2372,6 +2374,8 @@ function toRegistrationResult(data: Record<string, unknown>): RegistrationResult
     haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
     registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
     registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
+    registrationStatus: (data.registration_status as string | null) ?? undefined,
+    email: (data.email as string | null) ?? undefined,
     keyDirectory: (data.key_directory as string) || (data.keyDirectory as string) || '',
     publicKeyPath: (data.public_key_path as string) || (data.publicKeyPath as string) || undefined,
     dnsRecord: (data.dns_record as string) || (data.dnsRecord as string) || undefined,
@@ -2388,8 +2392,9 @@ function printRegistrationGuidance(
   const keyDir = (data.key_directory as string) || (data.keyDirectory as string) || '';
   const configPath = opts.configPath ?? './jacs.config.json';
   console.log('\nAgent created and submitted for registration!');
-  console.log(`  -> Check your email (${opts.ownerEmail}) for a verification link`);
-  console.log('  -> Your agent is registered with username from your reservation');
+  console.log(`  -> Registration status: ${data.registration_status || 'unknown'}`);
+  if (data.email) console.log(`  -> Assigned email: ${data.email}`);
+  console.log('  -> Email delivery and active mailbox status are not established by this response');
   console.log(`  -> Config saved to ${configPath}`);
   if (keyDir) console.log(`  -> Keys saved to ${keyDir}`);
   console.log('  -> Private key encrypted using JACS_PASSWORD_FILE/JACS_PRIVATE_KEY_PASSWORD');

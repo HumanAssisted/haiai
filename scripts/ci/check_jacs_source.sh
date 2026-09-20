@@ -30,7 +30,9 @@ fi
 [[ "$actual_commit" == "$expected_commit" ]] || fail "JACS source HEAD $actual_commit does not match $source_ref"
 
 # Native manifests used by the SDK's Rust, Python, Node and Go source builds.
-for crate in jacs-core jacs-media jacs binding-core jacs-mcp jacs-cli jacspy jacsnpm jacsgo/lib; do
+# Portable core stays at the root; the SDK consumes the retained native
+# adapters, including the archived MCP rather than the new root MCP crate.
+for crate in jacs-core archive/native/{jacs-media,jacs,binding-core,jacs-mcp,jacs-cli,jacspy,jacsnpm,jacsgo/lib}; do
   manifest="$source_dir/$crate/Cargo.toml"
   [[ -f "$manifest" ]] || fail "missing JACS source manifest: $manifest"
   actual_version="$(awk -F '"' '

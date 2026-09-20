@@ -58,6 +58,8 @@ class RegistrationResult:
 
     agent_id: str
     jacs_id: str
+    registration_status: Optional[str] = None
+    email: Optional[str] = None
 
 
 @dataclass
@@ -81,6 +83,9 @@ class HaiRegistrationResult:
     registered_at: str = ""
     capabilities: list[str] = field(default_factory=list)
     raw_response: dict[str, Any] = field(default_factory=dict)
+    # HTTP acceptance alone does not establish admission or an active mailbox.
+    registration_status: Optional[str] = None
+    email: Optional[str] = None
 
 
 @dataclass

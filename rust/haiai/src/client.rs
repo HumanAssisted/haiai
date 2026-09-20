@@ -609,19 +609,16 @@ impl<P: JacsProvider> HaiClient<P> {
         }
 
         let body = Value::Object(payload);
+        // Admission is not idempotent: a server/proxy error can follow a commit
+        // that consumes the key. Surface the first response without retrying or
+        // following redirects, including for bootstrap/FFI callers. Registration
+        // stays unsigned; existing-key updates use their separate authenticated path.
         let response = self
-            .request_with_retry(|| {
-                let http = &self.http;
-                let url = &url;
-                let body = &body;
-                async move {
-                    http.post(url.as_str())
-                        .header("Content-Type", "application/json")
-                        .json(body)
-                        .send()
-                        .await
-                }
-            })
+            .http
+            .post(url.as_str())
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send_without_redirects()
             .await?;
 
         let data = response_json(response).await?;
@@ -642,6 +639,10 @@ impl<P: JacsProvider> HaiClient<P> {
             registered_at: value_string(&data, &["registered_at", "registeredAt"]),
             message: data
                 .get("message")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            registration_status: data
+                .get("registration_status")
                 .and_then(Value::as_str)
                 .map(ToString::to_string),
             email: data
