@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### JACS maintenance update — 2026-09-19
+
+- Pin the SDK build to JACS `2866d09abc37111c9c8aa1eaccfe2616a52ddd45`,
+  including its native dependency and signing compatibility updates. Refresh
+  the SDK lockfile and embedded JACS documentation; 0.4.1 remains unpublished.
+- Native checks build Node addons with platform names, verify the installed
+  loader, use pinned JACS source, and retain configured Go library paths.
+
+### Isolate Rust test environments — 2026-09-19
+
+- CI and `make test-rust` now use cargo-nextest 0.9.143 with all features,
+  keeping documentation tests separate. This prevents media-fixture password
+  changes from racing registration tests. Canonical temporary paths also keep
+  macOS fixtures compatible with JACS path checks. The mock server explicitly
+  uses blocking accepted sockets to avoid dropping delayed request bytes on
+  macOS. Stream fixtures sign events before their timed key-refresh check so
+  slow CI signing does not consume its deadline. Runtime behavior is unchanged.
+
 ### Current JACS integration — 2026-09-19
 
 - Rebase the registration and packaging fixes together and pin JACS

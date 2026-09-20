@@ -60,7 +60,8 @@ test-go: build-haiigo
 	    go test -race ./...
 
 test-rust:
-	cd rust && cargo test --workspace
+	cd rust && cargo nextest run --workspace --all-features --no-fail-fast
+	cd rust && cargo test --workspace --doc --all-features
 
 # ============================================================================
 # SMOKE — real-FFI smoke tests (skip cleanly when native artifacts missing)
@@ -86,9 +87,9 @@ smoke-node:
 
 smoke-go:
 	cd go && CGO_ENABLED=1 \
-	    CGO_LDFLAGS="-L$(CURDIR)/rust/target/release" \
-	    DYLD_LIBRARY_PATH="$(CURDIR)/rust/target/release" \
-	    LD_LIBRARY_PATH="$(CURDIR)/rust/target/release" \
+	    CGO_LDFLAGS="-L$(CURDIR)/rust/target/release $${CGO_LDFLAGS:-}" \
+	    DYLD_LIBRARY_PATH="$(CURDIR)/rust/target/release$${DYLD_LIBRARY_PATH:+:$$DYLD_LIBRARY_PATH}" \
+	    LD_LIBRARY_PATH="$(CURDIR)/rust/target/release$${LD_LIBRARY_PATH:+:$$LD_LIBRARY_PATH}" \
 	    go test -tags cgo_smoke -run NativeSmoke -v ./...
 
 # ============================================================================
