@@ -351,10 +351,16 @@ jobs:
           fi
           git -C "$jacs_checkout" checkout --detach FETCH_HEAD
           make check-jacs-versions JACS_SOURCE_DIR="$jacs_checkout"
-      - name: Run tests (all workspace crates including hai-binding-core, haiinpm, haiipy, haiigo)
+      - name: Install process-isolated Rust test runner
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.143
+      - name: Run tests (all workspace crates, isolated process per test)
         run: |
           cd rust
-          cargo test --workspace
+          cargo nextest run --workspace --all-features --no-fail-fast
+      - name: Run Rust documentation tests
+        run: cargo test --manifest-path rust/Cargo.toml --workspace --doc --all-features
 
   # ----------------------------------------------------------------------------
   # smoke-tests — real-FFI smoke tests across Python / Node / Go.

@@ -1024,6 +1024,8 @@ fn enrollment_command(dir: &Path, server: &MiniHaiServer) -> Command {
 }
 
 fn init_enrollment_command(dir: &Path, server: &MiniHaiServer) -> Command {
+    let canonical_dir = dir.canonicalize().expect("canonical test directory");
+    let dir = canonical_dir.as_path();
     let mut command = enrollment_command(dir, server);
     command
         .args([

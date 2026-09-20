@@ -174,6 +174,8 @@ Each SDK pins a published JACS version for CI/release, but supports local path o
 
 ## Gotchas
 
+- **Rust tests:** use `make test-rust` (cargo-nextest 0.9.143 plus documentation tests). Native fixtures mutate process-wide environment variables and need a separate process per test.
+
 - **JACS filenames use `:`** (`{id}:{version}.json`) -- illegal on Windows. Rust CI uses sparse checkout for Windows builds.
 - **CLI and MCP server are Rust-only.** `cli.ts`, `mcp-server.ts`, `cli.py`, `mcp_server.py`, `go/cmd/haiai/`, and `go/cmd/hai-mcp/` have been deleted. The `haiai` CLI binary and `haiai mcp` subcommand are the canonical implementations.
 - **Python test deps.** Use `pip install -e ".[dev,mcp]"` not just `.[dev]`.

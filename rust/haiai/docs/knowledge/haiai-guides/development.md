@@ -312,6 +312,11 @@ make check-versions    # fail if versions don't match
 make release-all       # tag + push all releases (triggers CI publish)
 ```
 
+Rust tests change process-wide environment settings. `make test-rust` uses
+[cargo-nextest](https://nexte.st/docs/installation/) to isolate each test,
+then runs documentation tests separately. Install the CI-tested version with
+`cargo install cargo-nextest --locked --version 0.9.143`.
+
 The current 0.4.1 candidate is source-tested, not published. Its JACS pin uses
 archived native adapters, which disable publication. Resolve the portable SDK
 migration and distributable dependencies before running release targets;

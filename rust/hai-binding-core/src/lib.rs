@@ -4029,7 +4029,8 @@ mod tests {
             // real creation/registration merge with and without an assigned email.
             for case in &fixture["registration_outcomes"]["cases"].as_array().unwrap()[..2] {
                 let dir = tempfile::tempdir().unwrap();
-                let config_path = dir.path().join("existing-config.json");
+                let directory = dir.path().canonicalize().unwrap();
+                let config_path = directory.join("existing-config.json");
                 let server = MockServer::start_async().await;
                 let mock = server.mock_async(|when, then| {
                     when.method(HMethod::POST).path("/api/v1/agents/register");
@@ -4039,7 +4040,7 @@ mod tests {
                 let result = wrapper.register_new_agent(&serde_json::json!({
                     "agent_name": "requested-agent", "password": "synthetic-registration-password",
                     "algorithm": "ring-Ed25519", "base_url": server.base_url(),
-                    "key_directory": dir.path().join("keys"), "data_directory": dir.path().join("data"),
+                    "key_directory": directory.join("keys"), "data_directory": directory.join("data"),
                     "config_path": config_path,
                     "registration_key": fixture["existing_identity_register"]["cases"][0]["request"]["registration_key"],
                 }).to_string()).await.expect("bootstrap result");
@@ -4096,7 +4097,7 @@ mod tests {
                 "registration_key": fixture["existing_identity_register"]["cases"][0]["request"]["registration_key"],
             }).to_string()).await;
             let error = result.expect_err("bootstrap must surface the first failure");
-            assert!(error.message.contains("synthetic outcome is unknown"));
+            assert!(error.message.contains("synthetic outcome is unknown"), "unexpected bootstrap failure: {error:?}");
             assert!(config_path.is_file(), "created identity config must survive failure");
             assert!(key_directory.read_dir().unwrap().next().is_some(), "created keys must survive failure");
             response.assert_calls_async(fixture["registration_submission"]["maximum_requests"].as_u64().unwrap() as usize).await;
