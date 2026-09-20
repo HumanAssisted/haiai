@@ -4,6 +4,12 @@
 
 /** Options for HaiClient constructor. */
 export interface HaiClientOptions {
+  /** Explicit tenant expected on actionable signed events. Never inferred from discovery. */
+  expectedEventTenant?: string;
+  /** Pinned server recipient for job responses (the API's configured request audience). */
+  responseAudience?: string;
+  /** Pinned request-auth service audience. Defaults to hai.ai; not inferred from a request. */
+  requestAuthAudience?: string;
   /** Path to jacs.config.json. Defaults to JACS_CONFIG_PATH env or ./jacs.config.json. */
   configPath?: string;
   /** HAI server URL. Default: https://hai.ai */
@@ -70,6 +76,8 @@ export type BenchmarkTier = 'free' | 'pro' | 'enterprise';
 
 /** A benchmark job received from HAI via SSE or WebSocket. */
 export interface BenchmarkJob {
+  /** Response target; distinct from the enclosing run. */
+  jobId: string;
   /** Unique run/job ID. */
   runId: string;
   /** Scenario description or prompt for the mediator. */
@@ -141,6 +149,10 @@ export interface RegistrationResult {
   haiSignature: string;
   registrationId: string;
   registeredAt: string;
+  /** Server-reported outcome; absent or future values do not establish admission. */
+  registrationStatus?: string;
+  /** Address returned by the server; does not establish an active mailbox or delivery. */
+  email?: string;
   /** Filesystem path where the agent's keys were written (set by registerNewAgent). */
   keyDirectory?: string;
   /** Path to the agent's public key PEM (set by registerNewAgent when available). */

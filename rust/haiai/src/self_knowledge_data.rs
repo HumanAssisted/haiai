@@ -284,6 +284,11 @@ pub static CHAPTERS: &[(&str, &str, &str)] = &[
         include_str!("../docs/knowledge/jacsbook/integrations/a2a.md"),
     ),
     (
+        "jacsbook/integrations/did.md",
+        "DID Integration",
+        include_str!("../docs/knowledge/jacsbook/integrations/did.md"),
+    ),
+    (
         "jacsbook/integrations/ap2.md",
         "AP2 Mandate Export",
         include_str!("../docs/knowledge/jacsbook/integrations/ap2.md"),

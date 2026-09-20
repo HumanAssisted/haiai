@@ -76,6 +76,8 @@ pub struct CreateAgentResult {
 pub struct RotateKeysOptions {
     /// Whether to re-register with HAI after local rotation. Default: true.
     pub register_with_hai: Option<bool>,
+    /// New signing algorithm. Omit to preserve the current algorithm.
+    pub algorithm: Option<String>,
 }
 
 /// Result of a key rotation operation.
@@ -159,6 +161,9 @@ pub struct RegistrationResult {
     pub registered_at: String,
     #[serde(default)]
     pub message: Option<String>,
+    /// Server-reported registration outcome. Missing or future values do not establish admission.
+    #[serde(default)]
+    pub registration_status: Option<String>,
     /// Agent's @hai.ai email address, returned by the server during registration.
     #[serde(default)]
     pub email: Option<String>,

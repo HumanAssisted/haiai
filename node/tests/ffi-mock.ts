@@ -101,6 +101,7 @@ export function createMockFFI(overrides?: Partial<MockFFI>): FFIClientAdapter {
     wsClose: defaultReject,
     // JACS Delegation
     buildAuthHeader: defaultReject,
+    buildRequestAuthHeader: defaultReject,
     signMessage: defaultReject,
     signResponse: defaultReject,
     canonicalJson: defaultReject,

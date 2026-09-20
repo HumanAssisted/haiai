@@ -5,18 +5,17 @@ import { fileURLToPath } from 'node:url';
 import { HaiClient } from '../src/client.js';
 import { canonicalJson } from '../src/signing.js';
 import { TEST_AGENT } from './setup.js';
+import { createMockFFI } from './ffi-mock.js';
 
 interface CrossLangFixture {
-  auth_header: {
-    scheme: string;
-    parts: string[];
-    signed_message_template: string;
+  request_auth: {
+    scheme_prefix: string;
+    input_fields: string[];
     example: {
-      jacs_id: string;
-      timestamp: number;
-      nonce: string;
-      stub_signature_base64: string;
-      expected_header: string;
+      method: string;
+      url: string;
+      body_base64: string;
+      stub_header: string;
     };
   };
   canonical_json_cases: Array<{
@@ -40,44 +39,35 @@ describe('cross-language wrapper contract (node)', () => {
     }
   });
 
-  it('matches the shared auth header example', () => {
-    const fixture = loadFixture();
-    const client = Object.create(HaiClient.prototype) as HaiClient & {
-      agent: { signStringSync: (message: string) => string };
-      config: { jacsId: string; jacsAgentName: string };
-    };
-    const signStringSync = vi.fn(() => fixture.auth_header.example.stub_signature_base64);
+  it('rejects the retired no-context helper actionably', () => {
+    const client = Object.create(HaiClient.prototype) as HaiClient;
+    expect(() => client.buildAuthHeader()).toThrow('buildRequestAuthHeader');
+  });
 
-    client.agent = { signStringSync };
-    client.config = {
-      jacsId: fixture.auth_header.example.jacs_id,
-      jacsAgentName: fixture.auth_header.example.jacs_id,
-    };
+  it('delegates the exact request bytes using the shared encoding contract', async () => {
+    const { request_auth: fixture } = loadFixture();
+    const { method, url, body_base64, stub_header } = fixture.example;
+    const client = Object.create(HaiClient.prototype) as HaiClient;
+    const buildRequestAuthHeader = vi.fn(async (_requestJson: string) => stub_header);
+    client._setFFIAdapter(createMockFFI({ buildRequestAuthHeader }));
+    const body = Buffer.from(body_base64, 'base64');
+    expect(await client.buildRequestAuthHeader(method, url, body)).toBe(stub_header);
+    const input = JSON.parse(buildRequestAuthHeader.mock.calls[0][0]);
+    expect(input).toEqual({ method, url, body_base64 });
+    expect(Object.keys(input)).toEqual(fixture.input_fields);
+  });
 
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(fixture.auth_header.example.timestamp * 1000);
+  it('explicitly encodes an empty request body', async () => {
+    const client = Object.create(HaiClient.prototype) as HaiClient;
+    const buildRequestAuthHeader = vi.fn(async (_requestJson: string) => 'JACS v2.fixture');
+    client._setFFIAdapter(createMockFFI({ buildRequestAuthHeader }));
+    await client.buildRequestAuthHeader('GET', 'https://hai.ai/');
+    expect(JSON.parse(buildRequestAuthHeader.mock.calls[0][0]).body_base64).toBe('');
+  });
 
-      const header = client.buildAuthHeader();
-      const token = header.replace(/^JACS /, '');
-      const parts = token.split(':');
-      const [jacsId, timestamp, nonce, signature] = parts;
-
-      expect(fixture.auth_header.scheme).toBe('JACS');
-      expect(fixture.auth_header.parts).toEqual(['jacs_id', 'timestamp', 'nonce', 'signature_base64']);
-      expect(parts).toHaveLength(4);
-      expect(jacsId).toBe(fixture.auth_header.example.jacs_id);
-      expect(timestamp).toBe(String(fixture.auth_header.example.timestamp));
-      expect(nonce).toMatch(/^[0-9a-f]{32}$/);
-      expect(signature).toBe(fixture.auth_header.example.stub_signature_base64);
-      expect(signStringSync).toHaveBeenCalledWith(
-        fixture.auth_header.signed_message_template
-          .replace('{jacs_id}', fixture.auth_header.example.jacs_id)
-          .replace('{timestamp}', String(fixture.auth_header.example.timestamp))
-          .replace('{nonce}', nonce),
-      );
-    } finally {
-      vi.useRealTimers();
-    }
+  it('rejects implicit body encoding before asking the signer', async () => {
+    const client = Object.create(HaiClient.prototype) as HaiClient;
+    await expect(client.buildRequestAuthHeader('POST', 'https://hai.ai/', 'body' as unknown as Uint8Array))
+      .rejects.toThrow('exact transmitted request body');
   });
 });

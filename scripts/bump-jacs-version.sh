@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Usage: ./scripts/bump-jacs-version.sh <version>
 # Bumps the JACS dependency version across all SDK packages.
-# Affects: rust/haiai, rust/haiai-cli, rust/hai-mcp, python, node, CI JACS ref
+# Affects: rust/haiai, rust/haiai-cli, rust/hai-mcp, python, node, CI JACS ref/version
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -73,11 +73,11 @@ esac
 node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('node/publish.deps.json','utf8'));p['@hai.ai/jacs']='$NEW_VERSION';fs.writeFileSync('node/publish.deps.json',JSON.stringify(p,null,2)+'\\n')"
 echo "  node/publish.deps.json"
 
-# --- CI JACS checkout ref ---
+# --- CI JACS checkout ref and expected package version ---
 
 echo ""
 echo "CI:"
-sed -i '' -E "s|JACS_REF: ([^ ]*/)?v$CURRENT|JACS_REF: crate/v$NEW_VERSION|" .github/workflows/test.yml
+sed -i '' -E "s|^(  JACS_REF:).*|\1 crate/v$NEW_VERSION|; s|^(  JACS_VERSION:).*|\1 $NEW_VERSION|" .github/workflows/test.yml
 echo "  .github/workflows/test.yml"
 
 # --- Regenerate lockfiles ---

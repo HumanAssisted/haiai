@@ -134,6 +134,7 @@ char *hai_sign_message(HaiClientHandle handle, const char *message);
 char *hai_canonical_json(HaiClientHandle handle, const char *value_json);
 char *hai_verify_a2a_artifact(HaiClientHandle handle, const char *wrapped_json);
 char *hai_build_auth_header(HaiClientHandle handle);
+char *hai_build_request_auth_header(HaiClientHandle handle, const char *request_json);
 char *hai_export_agent_json(HaiClientHandle handle);
 
 /* --------------------------------------------------------------------------

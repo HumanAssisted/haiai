@@ -448,6 +448,10 @@ func (r *recordingFFIClient) BuildAuthHeader() (string, error) {
 	*r.calls = append(*r.calls, "BuildAuthHeader")
 	return r.inner.BuildAuthHeader()
 }
+func (r *recordingFFIClient) BuildRequestAuthHeader(requestJSON string) (string, error) {
+	*r.calls = append(*r.calls, "BuildRequestAuthHeader")
+	return r.inner.BuildRequestAuthHeader(requestJSON)
+}
 func (r *recordingFFIClient) SignMessage(message string) (string, error) {
 	*r.calls = append(*r.calls, "SignMessage")
 	return r.inner.SignMessage(message)

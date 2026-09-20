@@ -58,12 +58,33 @@ func main() {
 
 Expected output: `valid`. The file-level `signed` status only means a signature was found; each signature must be `valid`. This proves agent provenance, not a person's approval of an Agreement.
 
+## Caller-built request authentication
+
+SDK API methods authenticate requests automatically. For your own HTTP call,
+use `client.BuildRequestAuthHeader("POST", finalURL, bodyBytes)`. Send those exact
+bytes to that URL without redirects, and build a fresh header for each retry.
+The URL must match the configured HAI origin. The old no-context FFI helper now
+returns an actionable error.
+
+The service audience defaults to `hai.ai`; use `WithRequestAuthAudience` only
+when your API deployment uses another pinned audience. It cannot be changed
+per request. Go only encodes bytes for FFI; Rust/JACS owns the authentication
+policy and cryptography.
+
 ## Email
 
 For admitted existing-identity registration, `Client.Register` accepts optional
 `RegisterOptions.RegistrationKey`; an empty value omits it. See the shared
 [registration guidance](../README.md#admitted-registration-and-email).
 `RegisterOptions.PublicKey` accepts raw PEM; Rust performs the HTTP base64 encoding.
+
+Ordinary and bootstrap registration results preserve `RegistrationStatus` and `Email` (`*string`, `nil` when absent).
+Status strings are forwarded without restricting future values. Missing or
+unknown status is not confirmation of admission, and an assigned address does
+not establish mailbox readiness or email delivery. For manual enrollment of
+an existing local identity, the CLI also provides
+`haiai register --key KEY --config-path ./jacs.config.json`; follow the shared guidance above to distinguish
+a confirmed rejection from a transport failure that may have committed.
 
 Platform email requires admitted registration and server-returned email status `active`; an allocated or pending address cannot send. Inspect `agent.Email.Status(ctx)` for the actual address, status and limits. Quota, external-recipient and content gates still apply; see [capability boundaries](../README.md#capability-boundaries).
 

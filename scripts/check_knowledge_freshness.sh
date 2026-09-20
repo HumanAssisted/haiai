@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# check_knowledge_freshness.sh — Verify that self_knowledge_data.rs is up to date.
+# check_knowledge_freshness.sh — Verify embedded content and its index are current.
 #
-# Regenerates the knowledge data into a temp file and diffs against the committed
-# version. Exits non-zero if they differ, meaning someone changed a source doc
+# Regenerates knowledge and compares with the working tree, restoring it on exit.
+# Exits non-zero if either content or index differs after a source doc change
 # without re-running ./scripts/generate_knowledge.sh.
 #
 # Usage:
@@ -11,7 +11,7 @@
 #   make check-knowledge                             # via Makefile
 #
 # Requirements:
-#   - Sibling ../JACS repo (same as generate_knowledge.sh)
+#   - JACS_ROOT or sibling ../JACS repo (same as generate_knowledge.sh)
 #
 # What to do if this fails:
 #   1. Run: ./scripts/generate_knowledge.sh
@@ -29,29 +29,33 @@ if [ ! -f "$DATA_FILE" ]; then
     exit 1
 fi
 
-# Save current state
-cp "$DATA_FILE" "$DATA_FILE.bak"
-cp -r "$KNOWLEDGE_DIR" "$KNOWLEDGE_DIR.bak"
+# Save and restore current state even if generation fails.
+SNAPSHOT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/haiai-knowledge.XXXXXX")"
+cp "$DATA_FILE" "$SNAPSHOT_DIR/self_knowledge_data.rs"
+cp -R "$KNOWLEDGE_DIR" "$SNAPSHOT_DIR/knowledge"
+restore_knowledge() {
+    cp "$SNAPSHOT_DIR/self_knowledge_data.rs" "$DATA_FILE"
+    rm -rf "$KNOWLEDGE_DIR"
+    cp -R "$SNAPSHOT_DIR/knowledge" "$KNOWLEDGE_DIR"
+    rm -rf "$SNAPSHOT_DIR"
+}
+trap restore_knowledge EXIT
 
 # Regenerate
-"$REPO_ROOT/scripts/generate_knowledge.sh" > /dev/null 2>&1
+"$REPO_ROOT/scripts/generate_knowledge.sh" > /dev/null
 
 # Compare
-if diff -q "$DATA_FILE.bak" "$DATA_FILE" > /dev/null 2>&1; then
-    echo "self_knowledge_data.rs is up to date."
-    rm -f "$DATA_FILE.bak"
-    rm -rf "$KNOWLEDGE_DIR.bak"
+if diff -q "$SNAPSHOT_DIR/self_knowledge_data.rs" "$DATA_FILE" > /dev/null 2>&1 &&
+   diff -qr "$SNAPSHOT_DIR/knowledge" "$KNOWLEDGE_DIR" > /dev/null 2>&1; then
+    echo "Embedded knowledge content and index are up to date."
     exit 0
 else
-    echo "ERROR: self_knowledge_data.rs is stale." >&2
+    echo "ERROR: embedded knowledge content or index is stale." >&2
     echo "" >&2
     echo "Diff (first 40 lines):" >&2
-    diff -u "$DATA_FILE.bak" "$DATA_FILE" | head -40 >&2 || true
+    diff -u "$SNAPSHOT_DIR/self_knowledge_data.rs" "$DATA_FILE" | head -40 >&2 || true
+    diff -qr "$SNAPSHOT_DIR/knowledge" "$KNOWLEDGE_DIR" | head -40 >&2 || true
     echo "" >&2
     echo "Fix: run ./scripts/generate_knowledge.sh and commit the result." >&2
-    # Restore original so working tree stays clean
-    mv "$DATA_FILE.bak" "$DATA_FILE"
-    rm -rf "$KNOWLEDGE_DIR"
-    mv "$KNOWLEDGE_DIR.bak" "$KNOWLEDGE_DIR"
     exit 1
 fi

@@ -1,7 +1,7 @@
 """Tests for HaiClient.rotate_keys() key rotation functionality.
 
-Key rotation delegates key generation and signing to JACS binding-core.
-These tests verify the rotation workflow (archive, generate, sign, config update).
+Key rotation delegates the complete transaction to the HAI Rust FFI client.
+These tests cover facade delegation and the native archive/config workflow.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -103,6 +104,58 @@ def _load_agent(agent_dir):
         pytest.skip("JACS bindings not available for rotation test")
 
 
+def _real_rotation_client(agent_dir):
+    """Exercise the real Rust transaction despite the suite's FFI auto-mock."""
+    pytest.importorskip("haiipy")
+    _load_agent(agent_dir)
+    from haiai._ffi_adapter import FFIAdapter
+    from haiai.client import _build_ffi_config
+
+    client = HaiClient()
+    client._ffi = FFIAdapter(_build_ffi_config())
+    return client
+
+
+@pytest.fixture
+def rotation_context(loaded_config, tmp_path, monkeypatch):
+    """Mock the FFI transaction and authenticated reload, without local crypto."""
+    from haiai import config as config_mod
+
+    cfg = config_mod.get_config()
+    config_path = tmp_path / "canonical.config.json"
+    monkeypatch.setattr(config_mod, "_loaded_config_path", config_path)
+    native_agent = Mock()
+    native_agent.rotate_keys.side_effect = AssertionError(
+        "rotation belongs to the HAI FFI client"
+    )
+    monkeypatch.setattr(
+        config_mod, "_get_native_agent", Mock(return_value=native_agent)
+    )
+    data = {
+        "jacs_id": cfg.jacs_id,
+        "old_version": cfg.version,
+        "new_version": "v2-rotated",
+        "new_public_key_hash": "a" * 64,
+        "registered_with_hai": True,
+        "signed_agent_json": json.dumps(
+            {"jacsId": cfg.jacs_id, "jacsVersion": "v2-rotated"}
+        ),
+    }
+    ffi = Mock()
+    ffi.jacs_id.return_value = cfg.jacs_id
+    ffi.base_url.return_value = "https://staging.hai.example"
+    ffi.rotate_keys.return_value = data
+
+    def reload_config(path):
+        assert path == str(config_path)
+        ffi.rotate_keys.assert_called_once()
+        config_mod._config = replace(cfg, version=data["new_version"])
+
+    reload = Mock(side_effect=reload_config)
+    monkeypatch.setattr(config_mod, "load", reload)
+    return cfg, config_path, ffi, data, reload, native_agent
+
+
 class TestRotateKeysRequiresExistingAgent:
     def test_raises_without_loaded_agent(self):
         client = HaiClient()
@@ -130,8 +183,7 @@ class TestRotateKeysRequiresExistingAgent:
 
 class TestRotateKeysGeneratesNewKeypair:
     def test_new_key_files_on_disk(self, agent_dir):
-        _load_agent(agent_dir)
-        client = HaiClient()
+        client = _real_rotation_client(agent_dir)
 
         client.rotate_keys(
             register_with_hai=False,
@@ -151,8 +203,10 @@ class TestRotateKeysGeneratesNewKeypair:
         )
 
     def test_config_updated(self, agent_dir):
-        _load_agent(agent_dir)
-        client = HaiClient()
+        client = _real_rotation_client(agent_dir)
+        from haiai import config as config_mod
+
+        old_native = config_mod._get_native_agent()
 
         result = client.rotate_keys(
             register_with_hai=False,
@@ -167,10 +221,11 @@ class TestRotateKeysGeneratesNewKeypair:
         )
         assert isinstance(config.get("jacsSignature"), dict)
         assert "jacsAgentVersion" not in config
+        assert config_mod._get_native_agent() is not old_native
+        assert config_mod.get_config().version == result.new_version
 
     def test_rotated_config_reloads_in_fresh_process(self, agent_dir):
-        _load_agent(agent_dir)
-        result = HaiClient().rotate_keys(
+        result = _real_rotation_client(agent_dir).rotate_keys(
             register_with_hai=False,
             config_path=agent_dir["config_path"],
         )
@@ -224,67 +279,160 @@ assert cfg.version == expected_version, (cfg.version, expected_version)
 
 
 class TestRotateKeysRegistersWithHai:
-    def test_registers_with_hai(self, agent_dir):
-        _load_agent(agent_dir)
-        client = HaiClient()
-        # The _auto_mock_ffi fixture ensures _get_ffi() returns a MockFFIAdapter.
-        # MockFFIAdapter.register returns {} by default, so registration succeeds.
-
+    def test_registers_through_existing_ffi_with_pinned_context(self, rotation_context):
+        cfg, config_path, ffi, data, reload, native_agent = rotation_context
+        client = HaiClient(request_auth_audience="staging.hai")
+        client._ffi = ffi
         result = client.rotate_keys(
-            hai_url="https://hai.ai",
+            hai_url="https://staging.hai.example/",
             register_with_hai=True,
-            config_path=agent_dir["config_path"],
+            config_path=str(config_path),
         )
 
-        assert result.registered_with_hai is True
-        # Verify FFI register was called (after rotation resets _ffi)
-        ffi = client._get_ffi()
-        register_calls = [c for c in ffi.calls if c[0] == "register"]
-        assert len(register_calls) >= 1
+        ffi.rotate_keys.assert_called_once_with(
+            {"register_with_hai": True, "algorithm": "pq2025"}
+        )
+        ffi.register.assert_not_called()
+        native_agent.rotate_keys.assert_not_called()
+        reload.assert_called_once_with(str(config_path))
+        assert client._ffi is ffi
+        assert client._request_auth_audience == "staging.hai"
+        assert result == RotationResult(**data)
+        from haiai.config import get_config
+
+        assert get_config().jacs_id == cfg.jacs_id
+        assert get_config().version == result.new_version
+
+    def test_forwards_offline_rotation_and_explicit_algorithm(self, rotation_context):
+        _cfg, config_path, ffi, data, reload, native_agent = rotation_context
+        data["registered_with_hai"] = False
+        client = HaiClient()
+        client._ffi = ffi
+
+        result = client.rotate_keys(register_with_hai=False, algorithm="ring-Ed25519")
+
+        ffi.rotate_keys.assert_called_once_with(
+            {"register_with_hai": False, "algorithm": "ring-Ed25519"}
+        )
+        ffi.register.assert_not_called()
+        native_agent.rotate_keys.assert_not_called()
+        reload.assert_called_once_with(str(config_path))
+        assert result.registered_with_hai is False
 
 
 class TestRotateKeysHaiFailureKeepsLocal:
-    def test_hai_failure_preserves_local(self, agent_dir, monkeypatch):
-        _load_agent(agent_dir)
+    def test_unconfirmed_registration_preserves_ffi_result_and_reloads(
+        self, rotation_context
+    ):
+        cfg, config_path, ffi, data, reload, native_agent = rotation_context
+        data["registered_with_hai"] = False
         client = HaiClient()
-
-        # After rotation, client resets _ffi and calls _get_ffi() which creates
-        # a new MockFFIAdapter. We need to make register fail on the new FFI.
-        # Patch _get_ffi on the class to inject our error-raising mock.
-        from haiai.client import HaiClient as _HC
-        from haiai.errors import HaiApiError
-
-        original_get_ffi = _HC._get_ffi
-
-        def patched_get_ffi(self_client):
-            ffi = original_get_ffi(self_client)
-
-            # Make register always raise
-            def raise_on_register(options):
-                raise HaiApiError("Internal Server Error", status_code=500)
-
-            ffi.responses["register"] = raise_on_register
-            return ffi
-
-        monkeypatch.setattr(_HC, "_get_ffi", patched_get_ffi)
+        client._ffi = ffi
 
         result = client.rotate_keys(
-            hai_url="https://hai.ai",
+            hai_url="https://staging.hai.example",
             register_with_hai=True,
-            config_path=agent_dir["config_path"],
         )
 
-        # Local rotation should succeed
-        assert result.new_version != agent_dir["version"]
-        assert result.jacs_id == agent_dir["jacs_id"]
-        # But HAI registration should have failed
+        ffi.rotate_keys.assert_called_once_with(
+            {"register_with_hai": True, "algorithm": "pq2025"}
+        )
+        ffi.register.assert_not_called()
+        native_agent.rotate_keys.assert_not_called()
+        reload.assert_called_once_with(str(config_path))
+        assert result.new_version != cfg.version
+        assert result.jacs_id == cfg.jacs_id
         assert result.registered_with_hai is False
+
+    def test_ffi_failure_does_not_reload_or_try_unsigned_registration(
+        self, rotation_context
+    ):
+        _cfg, _path, ffi, _data, reload, native_agent = rotation_context
+        ffi.rotate_keys.side_effect = HaiAuthError("rotation failed")
+        client = HaiClient()
+        client._ffi = ffi
+
+        with pytest.raises(HaiAuthError, match="rotation failed"):
+            client.rotate_keys()
+
+        reload.assert_not_called()
+        ffi.register.assert_not_called()
+        native_agent.rotate_keys.assert_not_called()
+
+
+class TestRotateKeysPinnedIdentity:
+    @pytest.mark.parametrize("mismatch", ["config_path", "jacs_id", "hai_url"])
+    def test_rejects_mismatched_context_before_rotation(
+        self, rotation_context, mismatch
+    ):
+        _cfg, config_path, ffi, _data, reload, native_agent = rotation_context
+        client = HaiClient()
+        client._ffi = ffi
+        kwargs = {}
+        if mismatch == "config_path":
+            kwargs["config_path"] = str(config_path.with_name("other.config.json"))
+        elif mismatch == "jacs_id":
+            ffi.jacs_id.return_value = "another-agent"
+        else:
+            kwargs["hai_url"] = "https://another.hai.example"
+
+        with pytest.raises(HaiAuthError):
+            client.rotate_keys(**kwargs)
+
+        ffi.rotate_keys.assert_not_called()
+        reload.assert_not_called()
+        native_agent.rotate_keys.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("field", "invalid"),
+        [
+            ("jacs_id", "other-agent"),
+            ("old_version", "wrong-version"),
+            ("registered_with_hai", "false"),
+        ],
+    )
+    def test_rejects_invalid_rotation_metadata(self, rotation_context, field, invalid):
+        _cfg, _path, ffi, data, reload, _native_agent = rotation_context
+        data[field] = invalid
+        client = HaiClient()
+        client._ffi = ffi
+
+        with pytest.raises(HaiAuthError):
+            client.rotate_keys()
+
+        reload.assert_not_called()
+
+    def test_rejects_reload_of_wrong_identity(self, rotation_context, monkeypatch):
+        from haiai import config as config_mod
+
+        cfg, _path, ffi, _data, reload, _native_agent = rotation_context
+        reload.side_effect = lambda path: monkeypatch.setattr(
+            config_mod, "_config", replace(cfg, jacs_id="another-agent")
+        )
+        client = HaiClient()
+        client._ffi = ffi
+
+        with pytest.raises(HaiAuthError):
+            client.rotate_keys()
+        assert config_mod.is_loaded() is False
+
+    def test_reload_failure_clears_the_stale_python_identity(self, rotation_context):
+        from haiai import config as config_mod
+
+        _cfg, _path, ffi, _data, reload, _native_agent = rotation_context
+        reload.side_effect = RuntimeError("authenticated config reload failed")
+        client = HaiClient()
+        client._ffi = ffi
+
+        with pytest.raises(HaiAuthError):
+            client.rotate_keys()
+
+        assert config_mod.is_loaded() is False
 
 
 class TestRotateKeysResultFields:
     def test_result_has_all_fields(self, agent_dir):
-        _load_agent(agent_dir)
-        client = HaiClient()
+        client = _real_rotation_client(agent_dir)
 
         result = client.rotate_keys(
             register_with_hai=False,
@@ -312,8 +460,7 @@ class TestRotateKeysVersionIsUUID:
     def test_new_version_is_valid_uuid(self, agent_dir):
         import uuid
 
-        _load_agent(agent_dir)
-        client = HaiClient()
+        client = _real_rotation_client(agent_dir)
 
         result = client.rotate_keys(
             register_with_hai=False,

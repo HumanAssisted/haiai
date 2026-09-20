@@ -7,8 +7,8 @@
 
 """HaiClient -- full-featured client for the HAI benchmark platform.
 
-All HTTP-based API calls delegate to the FFI adapter (haiipy binding-core).
-SSE/WS streaming, key rotation, and local signing remain native Python.
+All HTTP calls, streaming, and key rotation delegate to the Rust FFI adapter.
+Local signing delegates to JACS.
 """
 
 from __future__ import annotations
@@ -157,7 +157,11 @@ def _verify_hai_message_impl(
         return False
 
 
-def _build_ffi_config() -> str:
+def _build_ffi_config(
+    expected_event_tenant: Optional[str] = None,
+    response_audience: Optional[str] = None,
+    request_auth_audience: str = "hai.ai",
+) -> str:
     """Build the JSON config string for the FFI adapter from loaded JACS config."""
     from haiai.config import get_config, is_loaded
 
@@ -180,6 +184,11 @@ def _build_ffi_config() -> str:
         or DEFAULT_BASE_URL
     )
     config["base_url"] = base_url
+    config["request_auth_audience"] = request_auth_audience
+    if expected_event_tenant is not None:
+        config["expected_event_tenant"] = expected_event_tenant
+    if response_audience is not None:
+        config["response_audience"] = response_audience
 
     # Pick up config path from env
     config_path = os.environ.get("JACS_CONFIG_PATH", "./jacs.config.json")
@@ -217,10 +226,16 @@ class HaiClient:
         timeout: float = 30.0,
         max_retries: int = 3,
         verify_server_signatures: bool = False,
+        expected_event_tenant: Optional[str] = None,
+        response_audience: Optional[str] = None,
+        request_auth_audience: str = "hai.ai",
     ) -> None:
         self._timeout = timeout
         self._max_retries = max_retries
         self._verify_server_signatures = verify_server_signatures
+        self._expected_event_tenant = expected_event_tenant
+        self._response_audience = response_audience
+        self._request_auth_audience = request_auth_audience
         self._connected = False
         self._should_disconnect = False
         self._ws: Any = None
@@ -237,7 +252,13 @@ class HaiClient:
     def _get_ffi(self) -> FFIAdapter:
         """Lazily create the FFI adapter."""
         if self._ffi is None:
-            self._ffi = FFIAdapter(_build_ffi_config())
+            self._ffi = FFIAdapter(
+                _build_ffi_config(
+                    self._expected_event_tenant,
+                    self._response_audience,
+                    self._request_auth_audience,
+                )
+            )
         return self._ffi
 
     # ------------------------------------------------------------------
@@ -298,13 +319,20 @@ class HaiClient:
         return _client_shared.get_hai_agent_id(self._hai_agent_id)
 
     def _build_jacs_auth_header(self) -> str:
-        """Build ``Authorization: JACS {jacsId}:{timestamp}:{nonce}:{signature}``.
-
-        Delegates to JACS binding-core ``build_auth_header`` when available.
-        Otherwise constructs the header locally using JACS ``sign_string``.
-        Both paths require a loaded JACS agent.
-        """
+        """Retired helper: use build_request_auth_header with request context."""
         return _client_shared.build_jacs_auth_header()
+
+    def build_request_auth_header(
+        self, method: str, url: str, body: bytes = b""
+    ) -> str:
+        """Authenticate exact request bytes through Rust/JACS, using the pinned audience.
+
+        Pass the final URL (including query) and send these same body bytes.
+        Build a new header for each attempt; ordinary SDK calls do this automatically.
+        """
+        return self._get_ffi().build_request_auth_header(
+            _client_shared.request_auth_input(method, url, body)
+        )
 
     def _build_auth_headers(self) -> dict[str, str]:
         """Return auth headers using JACS signature authentication."""
@@ -316,13 +344,7 @@ class HaiClient:
         version: str,
         agent: Any,
     ) -> str:
-        """Build a 4-part JACS auth header signed by an explicit agent.
-
-        Returns ``JACS {jacsId}:{version}:{timestamp}:{nonce}:{signature}``.
-        Used during key rotation to authenticate re-registration with
-        the OLD agent's key (chain of trust).
-        Signing delegates to JACS binding-core.
-        """
+        """Retired helper: key rotation and request authentication are Rust-owned."""
         return _client_shared.build_jacs_auth_header_with_key(jacs_id, version, agent)
 
     @staticmethod
@@ -500,6 +522,7 @@ class HaiClient:
         preview: bool = False,
         owner_email: Optional[str] = None,
         registration_key: Optional[str] = None,
+        is_mediator: Optional[bool] = None,
     ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
         """Register a JACS agent with HAI.
 
@@ -542,6 +565,8 @@ class HaiClient:
                 public_key = pub_pem
 
         payload: dict[str, Any] = {"agent_json": agent_json}
+        if is_mediator is not None:
+            payload["is_mediator"] = is_mediator
         if public_key is not None:
             payload["public_key_pem"] = public_key
         if owner_email is not None:
@@ -577,6 +602,8 @@ class HaiClient:
             registered_at=data.get("registered_at", ""),
             capabilities=[],
             raw_response=data,
+            registration_status=data.get("registration_status"),
+            email=data.get("email"),
         )
 
     # ------------------------------------------------------------------
@@ -600,8 +627,8 @@ class HaiClient:
         documents can still be verified.
 
         Args:
-            hai_url: Base URL of the HAI server (required if
-                ``register_with_hai=True``).
+            hai_url: Optional confirmation of the client's configured HAI URL.
+                Set ``HAI_URL`` before creating the client for another deployment.
             register_with_hai: If True (default), re-register the agent
                 with HAI after local rotation. A network failure here
                 does NOT rollback the local rotation.
@@ -615,121 +642,23 @@ class HaiClient:
             whether re-registration succeeded.
 
         Raises:
-            HaiAuthError: If no agent is currently loaded.
-            RegistrationError: Only if re-registration fails and
-                ``register_with_hai=True``, but the local rotation is
-                still preserved.
+            HaiAuthError: If the loaded identity or requested config does not
+                match the client, or local rotation/reload fails. Unconfirmed
+                registration is reported as ``registered_with_hai=False``;
+                the new local key remains usable.
         """
-        from haiai import config as config_mod
-
-        cfg = config_mod.get_config()
-
-        if cfg.jacs_id is None:
-            raise HaiAuthError(
-                "Cannot rotate keys: no jacsId in config. Register an agent first."
-            )
-
-        old_version = cfg.version
-        jacs_id = cfg.jacs_id
-        loaded_config_path = config_mod._get_loaded_config_path()
-        if (
-            config_path is not None
-            and Path(config_path).resolve() != loaded_config_path
-        ):
-            raise HaiAuthError(
-                "Cannot rotate a different config path than the authenticated "
-                "identity currently loaded by haiai.config.load()."
-            )
-
-        # JACS owns the complete rotation transaction: archive the old key,
-        # generate the replacement, produce the continuity proof, save the new
-        # agent document, and re-sign the canonical config at its original path.
-        # Reimplementing any subset here can leave key, identity, and config
-        # state inconsistent after a crash.
+        cfg, loaded_path = _client_shared.rotation_config(config_path)
+        ffi = self._get_ffi()
+        _client_shared.validate_rotation_client(
+            cfg, ffi.jacs_id(), hai_url, ffi.base_url()
+        )
         try:
-            rotation_raw = config_mod._get_native_agent().rotate_keys(algorithm)
-            rotation = (
-                json.loads(rotation_raw)
-                if isinstance(rotation_raw, str)
-                else rotation_raw
+            rotation = ffi.rotate_keys(
+                {"register_with_hai": register_with_hai, "algorithm": algorithm}
             )
         except Exception as exc:
             raise HaiAuthError(f"Key rotation failed: {exc}") from exc
-
-        if not isinstance(rotation, dict):
-            raise HaiAuthError("Key rotation failed: JACS returned an invalid result")
-        if rotation.get("jacs_id") != jacs_id:
-            raise HaiAuthError("Key rotation failed: JACS changed the agent identity")
-        if rotation.get("old_version") != old_version:
-            raise HaiAuthError(
-                "Key rotation failed: JACS returned the wrong old version"
-            )
-
-        new_version = rotation.get("new_version")
-        signed_agent_json = rotation.get("signed_agent_json")
-        new_public_key_hash = rotation.get("new_public_key_hash")
-        pub_pem_str = rotation.get("new_public_key_pem")
-        if not all(
-            isinstance(value, str) and value
-            for value in (
-                new_version,
-                signed_agent_json,
-                new_public_key_hash,
-                pub_pem_str,
-            )
-        ):
-            raise HaiAuthError("Key rotation failed: JACS returned incomplete metadata")
-
-        config_mod._config = AgentConfig(
-            name=cfg.name,
-            version=new_version,
-            key_dir=cfg.key_dir,
-            jacs_id=jacs_id,
-        )
-
-        logger.info(
-            "Key rotation complete: %s -> %s (agent=%s)",
-            old_version,
-            new_version,
-            jacs_id,
-        )
-
-        # Optionally re-register with HAI using the JACS-produced document.
-        registered = False
-        if register_with_hai:
-            if hai_url is None:
-                logger.warning(
-                    "register_with_hai=True but no hai_url; skipping registration"
-                )
-            else:
-                try:
-                    # Reset FFI adapter to pick up new keys
-                    self._ffi = None
-                    ffi = self._get_ffi()
-                    reg_payload: dict[str, Any] = {
-                        "agent_json": signed_agent_json,
-                    }
-                    if pub_pem_str:
-                        reg_payload["public_key"] = base64.b64encode(
-                            pub_pem_str.encode("utf-8")
-                        ).decode("utf-8")
-                    ffi.register(reg_payload)
-                    registered = True
-                    logger.info("Re-registered with HAI after rotation")
-                except Exception as exc:
-                    logger.warning(
-                        "HAI re-registration failed (local rotation preserved): %s",
-                        exc,
-                    )
-
-        return RotationResult(
-            jacs_id=jacs_id,
-            old_version=old_version,
-            new_version=new_version,
-            new_public_key_hash=new_public_key_hash,
-            registered_with_hai=registered,
-            signed_agent_json=signed_agent_json,
-        )
+        return _client_shared.complete_key_rotation(rotation, cfg, loaded_path)
 
     # ------------------------------------------------------------------
     # status
@@ -1079,7 +1008,7 @@ class HaiClient:
         data = ffi.submit_response(
             {
                 "job_id": job_id,
-                "response": response_body,
+                **response_body,
             }
         )
 
@@ -2324,6 +2253,7 @@ def register(
     preview: bool = False,
     owner_email: Optional[str] = None,
     registration_key: Optional[str] = None,
+    is_mediator: Optional[bool] = None,
 ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
     """Register the loaded JACS agent with HAI."""
     return _get_client().register(
@@ -2331,6 +2261,7 @@ def register(
         preview=preview,
         owner_email=owner_email,
         registration_key=registration_key,
+        is_mediator=is_mediator,
     )
 
 
@@ -2873,8 +2804,14 @@ def register_new_agent(
     # Print next-step messaging
     if not quiet:
         print("\nAgent created and submitted for registration!")
-        print(f"  -> Check your email ({owner_email}) for a verification link")
-        print("  -> Your agent is registered with username from your reservation")
+        print(
+            f"  -> Registration status: {data.get('registration_status') or 'unknown'}"
+        )
+        if data.get("email"):
+            print(f"  -> Assigned email: {data['email']}")
+        print(
+            "  -> Email delivery and active mailbox status are not established by this response"
+        )
         print(f"  -> Config saved to {config_path}")
         print(f"  -> Keys saved to {key_directory}")
         print(
@@ -2912,7 +2849,12 @@ def register_new_agent(
         else:
             print()
 
-    return RegistrationResult(agent_id=agent_id, jacs_id=jacs_id)
+    return RegistrationResult(
+        agent_id=agent_id,
+        jacs_id=jacs_id,
+        registration_status=data.get("registration_status"),
+        email=data.get("email"),
+    )
 
 
 def _compute_public_key_hash(pem: str) -> str:

@@ -41,10 +41,31 @@ console.log("valid");
 
 Expected output: `valid`. The file-level `signed` status only means a signature was found; each signature must be `valid`. This proves agent provenance, not a person's approval of an Agreement.
 
+## Caller-built request authentication
+
+SDK API methods authenticate requests automatically. For your own HTTP call,
+use `await client.buildRequestAuthHeader('POST', finalUrl, bodyBytes)` with a
+`Buffer` or `Uint8Array`. Send those exact bytes to that URL without redirects,
+and build a fresh header for each retry. The URL must match the configured HAI
+origin. The old no-argument helper now returns a clear error.
+
+The service audience defaults to `hai.ai`; set the client option
+`requestAuthAudience` only when your API deployment uses another pinned
+audience. It cannot be changed per request. Node only encodes bytes for FFI;
+Rust/JACS owns the authentication policy and cryptography.
+
 ## Email
 
 For admitted existing-identity registration, `HaiClient.register` accepts optional
 `registrationKey`. See the shared [registration guidance](../README.md#admitted-registration-and-email).
+
+Ordinary and bootstrap registration results preserve `registrationStatus` and `email` (`undefined` when absent).
+Status strings are forwarded without restricting future values. Missing or
+unknown status is not confirmation of admission, and an assigned address does
+not establish mailbox readiness or email delivery. For manual enrollment of
+an existing local identity, the CLI also provides
+`haiai register --key KEY --config-path ./jacs.config.json`; follow the shared guidance above to distinguish
+a confirmed rejection from a transport failure that may have committed.
 
 Platform email requires admitted registration and server-returned email status `active`; an allocated or pending address cannot send. Inspect `agent.email.status()` for the actual address, status and limits. Quota, external-recipient and content gates still apply; see [capability boundaries](../README.md#capability-boundaries).
 

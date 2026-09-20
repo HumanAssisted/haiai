@@ -58,7 +58,11 @@ impl ServerHandler for HaiMcpServer {
             .with_instructions(
                 "This MCP server runs locally over stdio only. It embeds the canonical JACS MCP \
                  server in-process and adds HAI platform tools for registration, authenticated \
-                 agent operations, and mailbox/email workflows.",
+                 agent operations, and mailbox/email workflows. The JACS profile limits only \
+                 embedded jacs_* tools: the CLI requests local-sign from its loaded signed config \
+                 and falls back to verify-only if JACS refuses. HAI platform tools retain their \
+                 separate configured permissions, including API requests and existing email, media \
+                 and storage operations. Local agent signatures are not per-action human approval.",
             )
     }
 

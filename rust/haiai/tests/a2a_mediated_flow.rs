@@ -3,95 +3,30 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use futures_util::SinkExt;
-use haiai::{
-    A2AMediatedJobOptions, A2ATrustPolicy, HaiClient, HaiClientOptions, StaticJacsProvider,
-    TransportType,
-};
-use httpmock::Method::{GET, POST};
-use httpmock::MockServer;
-use jacs::simple::SimpleAgent;
+use haiai::{A2AMediatedJobOptions, A2ATrustPolicy, TransportType};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::time::{timeout, Duration};
-use tokio_tungstenite::{accept_async, tungstenite::Message};
+use tokio_tungstenite::{
+    accept_hdr_async,
+    tungstenite::{
+        handshake::server::{Request, Response},
+        Message,
+    },
+};
+#[path = "support/signed_transport.rs"]
+mod signed_transport;
+use signed_transport::*;
 
 /// No mediated run in this file may outlive this budget. Every mock server
 /// here speaks raw HTTP or WebSocket frames, so a contract change that leaves
 /// the client waiting must surface as a failure, never as a hung suite.
 const MEDIATED_RUN_BUDGET: Duration = Duration::from_secs(20);
 
-fn make_client(base_url: &str) -> HaiClient<StaticJacsProvider> {
-    let provider = StaticJacsProvider::new("agent/with/slash");
-    HaiClient::new(
-        provider,
-        HaiClientOptions {
-            base_url: base_url.to_string(),
-            ..HaiClientOptions::default()
-        },
-    )
-    .expect("client")
-}
-
 fn can_bind_localhost() -> bool {
     std::net::TcpListener::bind("127.0.0.1:0").is_ok()
-}
-
-/// A stand-in for the HAI server's live-event signing key.
-///
-/// `connect_sse`/`connect_ws` prefetch `/.well-known/hai-keys.json` and refuse
-/// to surface any transport frame that is not a signed event verifiable
-/// against an active key from that document. Mirrors the fixture in
-/// `transport_parity.rs`; a mediated mock server that serves unsigned frames
-/// never reaches the A2A layer under test.
-struct SignedEventFixture {
-    signer: SimpleAgent,
-    signer_id: String,
-    public_key_pem: String,
-}
-
-impl SignedEventFixture {
-    fn new() -> Self {
-        let (signer, _) = SimpleAgent::ephemeral(Some("ed25519")).expect("ephemeral signer");
-        let probe = signer
-            .sign_response(&json!({"type": "fixture_probe"}))
-            .expect("sign fixture probe");
-        let signer_id = probe["jacsSignature"]["agentID"]
-            .as_str()
-            .expect("fixture signer id")
-            .to_string();
-        let public_key_pem = signer.get_public_key_pem().expect("fixture public key");
-        Self {
-            signer,
-            signer_id,
-            public_key_pem,
-        }
-    }
-
-    fn sign(&self, payload: serde_json::Value) -> String {
-        serde_json::to_string(
-            &self
-                .signer
-                .sign_response(&payload)
-                .expect("sign transport event"),
-        )
-        .expect("serialize signed transport event")
-    }
-
-    fn key_document(&self) -> serde_json::Value {
-        json!({
-            "keys": [{
-                "signer_id": self.signer_id,
-                "public_key": self.public_key_pem,
-                "is_active": true
-            }]
-        })
-    }
-
-    fn key_document_string(&self) -> String {
-        serde_json::to_string(&self.key_document()).expect("serialize key document")
-    }
 }
 
 async fn read_http_request(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
@@ -121,7 +56,13 @@ async fn write_json_response(stream: &mut tokio::net::TcpStream, document: &str)
 
 /// Serve the key prefetch on the first connection, then the WebSocket upgrade
 /// on the second — the exact order `connect_ws` performs them in.
-async fn start_ws_server(key_document: String, events: Vec<String>) -> SocketAddr {
+// Tungstenite requires its concrete HTTP rejection response in this callback.
+#[allow(clippy::result_large_err)]
+async fn start_ws_server(
+    fixture: SignedEventFixture,
+    events: Vec<serde_json::Value>,
+) -> SocketAddr {
+    let key_document = fixture.key_document().to_string();
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");
 
@@ -136,9 +77,18 @@ async fn start_ws_server(key_document: String, events: Vec<String>) -> SocketAdd
         write_json_response(&mut key_stream, &key_document).await;
 
         let (stream, _) = listener.accept().await.expect("accept");
-        let mut ws = accept_async(stream).await.expect("handshake");
+        let mut auth = String::new();
+        let mut ws = accept_hdr_async(stream, |request: &Request, response: Response| {
+            auth = request.headers()["authorization"]
+                .to_str()
+                .unwrap()
+                .to_string();
+            Ok(response)
+        })
+        .await
+        .expect("handshake");
         for event in events {
-            ws.send(Message::Text(event.into()))
+            ws.send(Message::Text(fixture.sign(event, &auth, true).into()))
                 .await
                 .expect("send signed event");
         }
@@ -149,9 +99,8 @@ async fn start_ws_server(key_document: String, events: Vec<String>) -> SocketAdd
 }
 
 async fn start_flaky_sse_server(
-    key_document: String,
-    benchmark_event: String,
-    disconnect_event: String,
+    fixture: SignedEventFixture,
+    fail_first: bool,
 ) -> (
     String,
     Arc<AtomicUsize>,
@@ -160,6 +109,7 @@ async fn start_flaky_sse_server(
 ) {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
+    let key_document = fixture.key_document().to_string();
     let connect_calls = Arc::new(AtomicUsize::new(0));
     let submit_calls = Arc::new(AtomicUsize::new(0));
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
@@ -205,7 +155,7 @@ async fn start_flaky_sse_server(
 
                     if req.starts_with("GET /api/v1/agents/connect ") {
                         let attempt = connect_calls_task.fetch_add(1, Ordering::SeqCst);
-                        if attempt == 0 {
+                        if fail_first && attempt == 0 {
                             let body = "temporary";
                             let response = format!(
                                 "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -217,6 +167,12 @@ async fn start_flaky_sse_server(
                             continue;
                         }
 
+                        let auth = req.lines().find_map(|line| {
+                            let (name,value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("authorization").then(||value.trim())
+                        }).expect("request authentication");
+                        let benchmark_event = fixture.sign(json!({"type":"benchmark_job","job_id":"job-77"}), auth, false);
+                        let disconnect_event = fixture.sign(json!({"type":"disconnect"}), auth, false);
                         let body = format!(
                             "event: benchmark_job\ndata: {benchmark_event}\n\nevent: disconnect\ndata: {disconnect_event}\n\n"
                         );
@@ -231,6 +187,19 @@ async fn start_flaky_sse_server(
                     }
 
                     if req.starts_with("POST /api/v1/agents/jobs/job-77/response ") {
+                        // The reply must keep both A2A artifacts inside the signed job response.
+                        let mut request_bytes = buf[..n].to_vec();
+                        let header_end = request_bytes.windows(4).position(|w|w==b"\r\n\r\n").unwrap()+4;
+                        let length: usize = req.lines().find_map(|line| {
+                            let (name,value)=line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length").then(||value.trim().parse().unwrap())
+                        }).unwrap();
+                        while request_bytes.len()<header_end+length {
+                            let n=stream.read(&mut buf).await.expect("read reply body");
+                            assert!(n>0);request_bytes.extend_from_slice(&buf[..n]);
+                        }
+                        let body=String::from_utf8_lossy(&request_bytes[header_end..]);
+                        assert!(body.contains("a2aTask") && body.contains("a2aResult"));
                         submit_calls_task.fetch_add(1, Ordering::SeqCst);
                         let body = "{\"success\":true,\"job_id\":\"job-77\",\"message\":\"ok\"}";
                         let response = format!(
@@ -273,44 +242,13 @@ async fn mediated_sse_signs_and_submits_wrapped_artifacts() {
         return;
     }
 
-    let server = MockServer::start_async().await;
+    let _guard = TEST_ENV_LOCK.lock().await;
+    let _password = RestorePassword::set();
     let fixture = SignedEventFixture::new();
-    let benchmark = fixture.sign(json!({"type": "benchmark_job", "job_id": "job-42"}));
-    let disconnect = fixture.sign(json!({"type": "disconnect"}));
-
-    let keys = server
-        .mock_async(|when, then| {
-            when.method(GET).path("/.well-known/hai-keys.json");
-            then.status(200).json_body(fixture.key_document());
-        })
-        .await;
-
-    let connect = server
-        .mock_async(|when, then| {
-            when.method(GET).path("/api/v1/agents/connect");
-            then.status(200)
-                .header("Content-Type", "text/event-stream")
-                .body(format!(
-                    "event: benchmark_job\ndata: {benchmark}\n\nevent: disconnect\ndata: {disconnect}\n\n"
-                ));
-        })
-        .await;
-
-    let submit = server
-        .mock_async(|when, then| {
-            when.method(POST)
-                .path("/api/v1/agents/jobs/job-42/response")
-                .body_includes("a2aTask")
-                .body_includes("a2aResult");
-            then.status(200).json_body(json!({
-                "success": true,
-                "job_id": "job-42",
-                "message": "ok"
-            }));
-        })
-        .await;
-
-    let client = make_client(&server.base_url());
+    let requester = SignedEventFixture::new();
+    let (base_url, connect_calls, submit_calls, shutdown_tx) =
+        start_flaky_sse_server(fixture, false).await;
+    let client = make_client(&base_url, &requester);
     let a2a = client.get_a2a(Some(A2ATrustPolicy::Verified));
 
     timeout(
@@ -327,9 +265,9 @@ async fn mediated_sse_signs_and_submits_wrapped_artifacts() {
     .expect("mediated sse run timed out")
     .expect("mediated sse run");
 
-    keys.assert_async().await;
-    connect.assert_async().await;
-    submit.assert_async().await;
+    assert_eq!(connect_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(submit_calls.load(Ordering::SeqCst), 1);
+    let _ = shutdown_tx.send(());
 }
 
 #[tokio::test]
@@ -339,10 +277,13 @@ async fn mediated_ws_rejects_untrusted_card_when_policy_enforced() {
         return;
     }
 
+    let _guard = TEST_ENV_LOCK.lock().await;
+    let _password = RestorePassword::set();
+    let requester = SignedEventFixture::new();
     let fixture = SignedEventFixture::new();
     let addr = start_ws_server(
-        fixture.key_document_string(),
-        vec![fixture.sign(json!({
+        fixture,
+        vec![json!({
             "type": "benchmark_job",
             "job_id": "job-9",
             "remoteAgentCard": {
@@ -350,11 +291,11 @@ async fn mediated_ws_rejects_untrusted_card_when_policy_enforced() {
                 "metadata": {"jacsId": "unknown-agent"},
                 "capabilities": {}
             }
-        }))],
+        })],
     )
     .await;
 
-    let client = make_client(&format!("http://{addr}"));
+    let client = make_client(&format!("http://{addr}"), &requester);
     let a2a = client.get_a2a(Some(A2ATrustPolicy::Strict));
     let handler_called = Arc::new(AtomicBool::new(false));
     let handler_called_inner = Arc::clone(&handler_called);
@@ -394,12 +335,15 @@ async fn mediated_ws_rejects_invalid_inbound_signature() {
         return;
     }
 
+    let _guard = TEST_ENV_LOCK.lock().await;
+    let _password = RestorePassword::set();
+    let requester = SignedEventFixture::new();
     let fixture = SignedEventFixture::new();
     // The transport envelope is authentic; the *inner* A2A task carries a
     // bogus signature, which is the rejection this test is about.
     let addr = start_ws_server(
-        fixture.key_document_string(),
-        vec![fixture.sign(json!({
+        fixture,
+        vec![json!({
             "type": "benchmark_job",
             "job_id": "job-11",
             "a2aTask": {
@@ -415,11 +359,11 @@ async fn mediated_ws_rejects_invalid_inbound_signature() {
                     "signature": "not-a-valid-signature"
                 }
             }
-        }))],
+        })],
     )
     .await;
 
-    let client = make_client(&format!("http://{addr}"));
+    let client = make_client(&format!("http://{addr}"), &requester);
     let a2a = client.get_a2a(Some(A2ATrustPolicy::Verified));
 
     let err = timeout(
@@ -453,14 +397,13 @@ async fn mediated_sse_reconnects_after_initial_failure() {
         return;
     }
 
+    let _guard = TEST_ENV_LOCK.lock().await;
+    let _password = RestorePassword::set();
     let fixture = SignedEventFixture::new();
-    let (base_url, connect_calls, submit_calls, shutdown_tx) = start_flaky_sse_server(
-        fixture.key_document_string(),
-        fixture.sign(json!({"type": "benchmark_job", "job_id": "job-77"})),
-        fixture.sign(json!({"type": "disconnect"})),
-    )
-    .await;
-    let client = make_client(&base_url);
+    let requester = SignedEventFixture::new();
+    let (base_url, connect_calls, submit_calls, shutdown_tx) =
+        start_flaky_sse_server(fixture, true).await;
+    let client = make_client(&base_url, &requester);
     let a2a = client.get_a2a(Some(A2ATrustPolicy::Verified));
 
     timeout(

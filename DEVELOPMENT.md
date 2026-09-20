@@ -180,8 +180,15 @@ export HAI_URL=http://localhost:3000
 export HAI_URL=https://hai.ai
 ```
 
-An endpoint selection does not grant admission or resolve the
-[request-auth compatibility gap](README.md#platform-compatibility).
+An endpoint selection does not grant admission. Request-bound authentication
+also requires matching SDK/API ingress origins and audiences; see
+[platform compatibility](README.md#platform-compatibility).
+
+CLI and MCP read `HAI_REQUEST_AUTH_AUDIENCE` separately from the origin. Set it
+to the API's configured ingress audience for ordinary requests and remote records;
+it is never inferred from `HAI_URL`. Only an absent variable defaults to `hai.ai`.
+Blank, invalid UTF-8, or values over 256 UTF-8 bytes refuse startup. MCP retains
+the startup value across tool calls and environment changes.
 
 | Surface | Where the origin comes from |
 |---------|-----------------------------|
@@ -304,6 +311,12 @@ make versions          # show all package versions
 make check-versions    # fail if versions don't match
 make release-all       # tag + push all releases (triggers CI publish)
 ```
+
+The current 0.4.1 candidate is source-tested, not published. Its JACS pin uses
+archived native adapters, which disable publication. Resolve the portable SDK
+migration and distributable dependencies before running release targets;
+merging the candidate does not authorize publishing.
+
 
 > **Windows:** JACS uses `:` in filenames (`{id}:{version}.json`), which is illegal on Windows NTFS. Use WSL2 or a Linux container.
 

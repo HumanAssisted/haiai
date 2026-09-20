@@ -1,8 +1,8 @@
 /**
  * Real-FFI smoke tests for haiinpm.
  *
- * Two tests, one per backend, both loading the real haiinpm native addon
- * and exercising `saveMemory("...")` end-to-end:
+ * The storage tests load the real haiinpm native addon and exercise
+ * `saveMemory("...")` end-to-end for each backend:
  *
  * 1. **Remote** (`saveMemory round-trips through the real native binding`)
  *    — hosted production path. Sets `JACS_DEFAULT_STORAGE=remote` so the
@@ -17,8 +17,8 @@
  *    disk, and returns a client-side `{jacsId}:{jacsVersion}` key. Verifies
  *    the doc round-trips via `getRecordBytes(key)`.
  *
- * Together these cover the only two backends production and dev users
- * actually exercise.
+ * The request-auth test additionally exercises the public SDK facade with
+ * binary bytes, pinned audience, and native validation errors.
  *
  * Skipped cleanly when:
  * - haiinpm is not built / installable (try-import + describe.skip).
@@ -36,6 +36,8 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import { JacsAgent } from '@hai.ai/jacs';
+import { HaiClient } from '../src/client.js';
 
 const dynamicRequire = createRequire(import.meta.url);
 
@@ -161,6 +163,13 @@ function createFreshJacsAgentConfig(
       skipReason: `cannot bootstrap a fresh JACS agent with @hai.ai/jacs: ${String(error)}`,
     };
   }
+}
+
+function unverifiedRequestAuthClaims(header: string): Record<string, unknown> {
+  // Inspect transport fields only; cryptographic verification stays in JACS.
+  expect(header).toMatch(/^JACS v2\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+  const segment = header.slice('JACS v2.'.length).split('.', 1)[0];
+  return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8')) as Record<string, unknown>;
 }
 
 describeWhenAvailable('haiinpm native FFI smoke test', () => {
@@ -336,6 +345,58 @@ describeWhenAvailable('haiinpm native FFI smoke test', () => {
         const recordBytes: Buffer = await client.getRecordBytes(key);
         expect(Buffer.isBuffer(recordBytes)).toBe(true);
         expect(recordBytes.toString('utf8')).toContain('local-smoke-content');
+      } finally {
+        rmSync(workdir, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
+  it(
+    'buildRequestAuthHeader carries binary bytes through the public native facade',
+    async (ctx: TaskContext) => {
+      if (!haiinpm) throw new Error(`haiinpm not loaded: ${String(loadError)}`);
+      process.env.JACS_DEFAULT_STORAGE = 'fs';
+      const workdir = realpathSync(mkdtempSync(join(tmpdir(), 'haiai-smoke-request-auth-')));
+      try {
+        const fresh = resolveFreshJacsAgentConfig(workdir);
+        if (!fresh.configPath) {
+          console.warn(`request-auth smoke test skipped: ${fresh.skipReason}`);
+          ctx.skip();
+          return;
+        }
+        const audience = 'smoke-request-audience';
+        const url = 'http://127.0.0.1:1/api/example?q=a%20b';
+        const body = Buffer.from([0x00, 0xff, 0x0d, 0x0a, 0x62, 0x6f, 0x64, 0x79]);
+        const client = await HaiClient.create({
+          configPath: fresh.configPath,
+          url: 'http://127.0.0.1:1',
+          requestAuthAudience: audience,
+        });
+        const header = await client.buildRequestAuthHeader('POST', url, body);
+        const claims = unverifiedRequestAuthClaims(header);
+
+        // Compare with JACS's own builder, not a second hash/signature implementation.
+        const signer = new JacsAgent();
+        await signer.load(fresh.configPath);
+        const reference = await signer.buildRequestAuthHeader('POST', url, body, audience);
+        const expected = unverifiedRequestAuthClaims(reference);
+        for (const field of ['keyId', 'method', 'authority', 'target', 'audience', 'contentDigest']) {
+          expect(expected).toHaveProperty(field);
+          expect(claims[field]).toEqual(expected[field]);
+        }
+        expect(claims.audience).toBe(audience);
+        expect(claims.target).toBe('/api/example?q=a%20b');
+
+        await expect(
+          client.buildRequestAuthHeader('POST', 'http://127.0.0.1:2/api/example', body),
+        ).rejects.toThrow(/origin/);
+        expect(() => client.buildAuthHeader()).toThrow(/request/i);
+        const native = new haiinpm.HaiClient(JSON.stringify({
+          base_url: 'http://127.0.0.1:1',
+          jacs_config_path: fresh.configPath,
+        })) as { buildAuthHeader: () => Promise<string> };
+        await expect(native.buildAuthHeader()).rejects.toThrow(/request authentication requires/);
       } finally {
         rmSync(workdir, { recursive: true, force: true });
       }

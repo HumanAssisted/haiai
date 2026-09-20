@@ -108,7 +108,14 @@ Tool dispatch checks HAI tools first, then falls through to JACS.
 | `JACS_CONFIG` | Path to `jacs.config.json` |
 | `JACS_PRIVATE_KEY_PASSWORD` | Private key password |
 | `HAI_URL` | HAI API base URL override |
+| `HAI_REQUEST_AUTH_AUDIENCE` | Startup API ingress audience for ordinary requests and remote records (default when absent: `hai.ai`) |
 | `RUST_LOG` | Tracing filter (default: `info,rmcp=warn`) |
+
+Set `HAI_REQUEST_AUTH_AUDIENCE` to match the API's configured ingress audience.
+It is independent of `HAI_URL`; blank, invalid UTF-8, or values over 256 UTF-8
+bytes refuse startup. MCP retains the startup value for ordinary clients and
+remote document providers. Subsequent environment changes and tool arguments
+cannot replace it.
 
 ## License
 

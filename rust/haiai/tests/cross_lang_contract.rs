@@ -15,23 +15,21 @@ use std::sync::Mutex;
 
 #[derive(Debug, Deserialize)]
 struct CrossLangFixture {
-    auth_header: AuthHeaderFixture,
+    request_auth: RequestAuthFixture,
     canonical_json_cases: Vec<CanonicalJsonCase>,
 }
 
 #[derive(Debug, Deserialize)]
-struct AuthHeaderFixture {
-    scheme: String,
-    parts: Vec<String>,
-    signed_message_template: String,
-    example: AuthHeaderExample,
+struct RequestAuthFixture {
+    scheme_prefix: String,
+    example: RequestAuthExample,
 }
 
 #[derive(Debug, Deserialize)]
-struct AuthHeaderExample {
-    jacs_id: String,
-    timestamp: i64,
-    nonce: String,
+struct RequestAuthExample {
+    method: String,
+    url: String,
+    body_base64: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,49 +62,52 @@ fn canonical_json_matches_shared_cases() {
 }
 
 #[test]
-fn auth_header_matches_shared_shape() {
+fn request_auth_header_matches_shared_context() {
     let fixture = load_fixture();
     let client = HaiClient::new(
-        StaticJacsProvider::new(fixture.auth_header.example.jacs_id.clone()),
+        StaticJacsProvider::new("fixture-agent"),
         HaiClientOptions::default(),
     )
     .expect("client");
+    let example = fixture.request_auth.example;
+    let body = base64::engine::general_purpose::STANDARD
+        .decode(example.body_base64)
+        .expect("fixture bytes");
+    let header = client
+        .build_request_auth_header(&example.method, &example.url, &body)
+        .expect("request auth");
+    assert!(header.starts_with(&fixture.request_auth.scheme_prefix));
+    // Inspecting claims here tests encoding/delegation, not cryptographic validity.
+    let claims =
+        jacs::protocol::inspect_unverified_request_auth_header(&header).expect("request claims");
+    assert_eq!(claims.method, example.method);
+    assert_eq!(claims.scheme, "https");
+    assert_eq!(claims.authority, "hai.ai");
+    assert_eq!(claims.target, "/api/example?q=a%20b");
+    assert_eq!(claims.audience, "hai.ai");
+    assert!(!claims.content_digest.is_empty());
+    assert!(!claims.nonce.is_empty());
+    let next_header = client
+        .build_request_auth_header("POST", &example.url, &body)
+        .expect("fresh auth");
+    let next_claims =
+        jacs::protocol::inspect_unverified_request_auth_header(&next_header).expect("fresh claims");
+    assert_ne!(claims.nonce, next_claims.nonce);
+    assert_eq!(claims.content_digest, next_claims.content_digest);
+}
 
-    let header = client.build_auth_header().expect("auth header");
-    let token = header.strip_prefix("JACS ").expect("auth header prefix");
-    let parts: Vec<&str> = token.splitn(4, ':').collect();
-
-    assert_eq!(fixture.auth_header.scheme, "JACS");
-    assert_eq!(
-        fixture.auth_header.parts,
-        vec!["jacs_id", "timestamp", "nonce", "signature_base64"]
-    );
-    assert_eq!(parts.len(), 4);
-    assert_eq!(parts[0], fixture.auth_header.example.jacs_id);
-    assert_eq!(
-        fixture.auth_header.signed_message_template,
-        "{jacs_id}:{timestamp}:{nonce}"
-    );
-
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(parts[3])
-        .expect("decode static provider signature");
-    let signed_message = String::from_utf8(decoded).expect("utf8 signature payload");
-    assert_eq!(
-        signed_message,
-        format!("sig:{}:{}:{}", parts[0], parts[1], parts[2])
-    );
-
-    let parsed_timestamp = parts[1].parse::<i64>().expect("timestamp");
-    assert!(
-        parsed_timestamp >= fixture.auth_header.example.timestamp,
-        "timestamp should be unix seconds"
-    );
-    assert!(
-        !fixture.auth_header.example.nonce.is_empty(),
-        "fixture should include an example nonce"
-    );
-    assert!(!parts[2].is_empty(), "nonce should be present");
+#[test]
+fn no_context_auth_header_has_actionable_error() {
+    let client = HaiClient::new(
+        StaticJacsProvider::new("fixture-agent"),
+        HaiClientOptions::default(),
+    )
+    .expect("client");
+    assert!(client
+        .build_auth_header()
+        .expect_err("missing context")
+        .to_string()
+        .contains("build_request_auth_header"));
 }
 
 // ===========================================================================

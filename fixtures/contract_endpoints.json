@@ -8,7 +8,16 @@
   "submit_response": {
     "method": "POST",
     "path": "/api/v1/agents/jobs/{job_id}/response",
-    "auth_required": true
+    "auth_required": true,
+    "signed_context": {
+      "contextClass": "private_event",
+      "eventType": "job_response",
+      "contract": "hai.job-response",
+      "contractVersion": "2",
+      "transport": {"type": "channel", "value_template": "job:{job_id}"},
+      "causation": {"type": "job", "id_template": "{job_id}"},
+      "expected_config": ["expected_event_tenant", "response_audience"]
+    }
   },
   "update_labels": {
     "method": "POST",

@@ -50,6 +50,19 @@ print("valid")
 
 Expected output: `valid`. The file-level `signed` status only means a signature was found; each signature must be `valid`. This proves agent provenance, not a person's approval of an Agreement.
 
+## Caller-built request authentication
+
+SDK API methods authenticate requests automatically. For your own HTTP call,
+use `client.build_request_auth_header("POST", final_url, body_bytes)` (or `await`
+the same method on `AsyncHaiClient`). Send those exact bytes to that URL without
+redirects, and build a fresh header for each retry. The URL must match the
+configured HAI origin. The old no-argument helper now returns a clear error.
+
+The service audience defaults to `hai.ai`; set `request_auth_audience` on the
+client only when your API deployment uses a different pinned audience. It is
+never chosen from the outgoing request. Python only encodes the bytes for FFI;
+Rust/JACS owns the authentication policy and cryptography.
+
 ## Email
 
 For admitted existing-identity registration, `HaiClient.register`,
@@ -58,6 +71,14 @@ For admitted existing-identity registration, `HaiClient.register`,
 show FFI options (raw `public_key_pem`, masked registration key), before Rust
 encodes the HTTP body. See the shared
 [registration guidance](../README.md#admitted-registration-and-email).
+
+Ordinary and bootstrap registration results preserve `registration_status` and `email` (`None` when absent).
+Status strings are forwarded without restricting future values. Missing or
+unknown status is not confirmation of admission, and an assigned address does
+not establish mailbox readiness or email delivery. For manual enrollment of
+an existing local identity, the CLI also provides
+`haiai register --key KEY --config-path ./jacs.config.json`; follow the shared guidance above to distinguish
+a confirmed rejection from a transport failure that may have committed.
 
 Platform email requires admitted registration and server-returned email status `active`; an allocated or pending address cannot send. Inspect `agent.email.status()` for the actual address, status and limits. Quota, external-recipient and content gates still apply; see [capability boundaries](../README.md#capability-boundaries).
 
@@ -138,3 +159,9 @@ Working example: `examples/a2a_quickstart.py`.
 ## License
 
 BUSL-1.1 — see [LICENSE](../LICENSE) for details.
+
+## Benchmark mediator
+
+See [SDK setup](../README.md#benchmark-mediator) and the runnable
+[worker](examples/benchmark_mediator.py) for private 3.1 campaigns. It uses the
+frozen prompt, reports provider usage, and journals replies across reconnects.

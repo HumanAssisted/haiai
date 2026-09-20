@@ -1131,7 +1131,15 @@
       "category": "sync",
       "group": "jacs_delegation",
       "returns": "string",
-      "notes": "Delegates to JacsProvider for signing."
+      "notes": "Retired no-context helper; returns an actionable error directing callers to build_request_auth_header."
+    },
+    {
+      "name": "build_request_auth_header",
+      "category": "sync",
+      "group": "jacs_delegation",
+      "params": {"request_json": "closed JSON: method, url, body_base64 strings"},
+      "returns": "string",
+      "notes": "Delegates exact method, URL and body bytes to HaiClient/JACS request-auth-v2; audience remains pinned by client configuration."
     },
     {
       "name": "sign_message",
@@ -1211,10 +1219,10 @@
     "async_methods": 92,
     "streaming_methods": 6,
     "callback_methods": 2,
-    "sync_methods": 12,
+    "sync_methods": 13,
     "mutating_methods": 2,
     "excluded_methods": 5,
-    "total_public_methods": 119,
-    "binding_core_scope": "92 async + 6 streaming + 2 callback + 12 sync + 2 mutating = 114 methods"
+    "total_public_methods": 120,
+    "binding_core_scope": "92 async + 6 streaming + 2 callback + 13 sync + 2 mutating = 115 methods"
   }
 }

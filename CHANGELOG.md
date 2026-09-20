@@ -2,6 +2,65 @@
 
 ## Unreleased
 
+### Current JACS integration — 2026-09-19
+
+- Rebase the registration and packaging fixes together and pin JACS
+  `1c9cafcd6fee012e0d71927cc5e7c3d062e55bc5`. Fix the MCP dependency lock,
+  native source paths and embedded guidance; move synchronous MCP document
+  calls off async workers. Signed-stream tests now use current event contexts.
+- Version 0.4.1 remains unpublished. This SDK uses JACS’s archived native
+  adapters; portable migration and distributable release dependencies remain
+  separate work. See [compatibility](README.md#platform-compatibility).
+- Verified locally: 718 Rust, 650 Python and 449 Node tests, Go with race
+  detection, package assembly and import checks. Live service tests remain gated.
+
+### Benchmark mediator — 2026-09-19
+
+- Add a reference worker for private HAI benchmark 3.1 campaigns, with durable
+  reply replay and provider usage receipts. All four SDKs preserve the shared
+  completion contract and expose explicit mediator registration. Every external
+  agent requires separate benchmark admin approval; setup is in the README.
+- Fix Python/Go response parameters to match Rust, preserve Go job metadata,
+  and expose Node's response job ID separately from the campaign run ID.
+  The API adapter and deployment requirements are in [setup](README.md#benchmark-mediator).
+
+### Registration retries — 2026-09-15
+
+- **2026-09-15:** Registration now submits once across Rust, CLI, MCP and language
+  bindings, including new-agent bootstrap, regardless of generic retry settings.
+  It refuses redirects and surfaces the first failure instead of resubmitting a
+  potentially consumed admission key. Other operations keep their existing retry
+  behavior. After an uncertain outcome, preserve the local identity and inspect
+  server registration state before any manual submission. Native request-count
+  regressions cover failures, redirects and bootstrap; packaged release candidates
+  still need verification.
+
+### Native Node releases — 2026-09-14
+
+
+- **2026-09-14:** Node platform/native publication failures now fail their jobs
+  and block the dependent SDK release, including authentication, registry and
+  already-published-version errors. Reruns require inspection; version existence
+  alone no longer bypasses a failed publish. Offline execution of the actual
+  workflow commands verified exit-status propagation; no package was published.
+
+- **2026-09-14:** Native Node releases now preserve all four qualified addon
+  filenames and validate separate build artifacts plus the packed loader/layout
+  before publishing. Missing, duplicate, unexpected, unqualified, or empty addons
+  fail packaging instead of being overwritten or producing a partial package.
+
+### Registration outcomes — 2026-09-13
+
+
+- Registration results now retain optional server status and assigned email across
+  Rust/FFI, Python, Node, and Go, including bootstrap results. CLI `init` reports
+  those values instead of guessing an address and exits nonzero on enrollment
+  failure while preserving the local identity. New `haiai register --key KEY
+  [--config-path PATH]` manually enrolls an existing local identity with an unused
+  admission key. Confirmed rejection and ambiguous transport/server failure have
+  distinct guidance; CLI enrollment submits once. This unsigned path does not
+  repair already-committed enrollment or failed rotation.
+
 ### Breaking
 
 - **`haiai[crewai]` is gone**, following JACS 0.13.0, which removed the CrewAI
@@ -29,7 +88,7 @@
   delivery needs an HTTPS origin unless the host is loopback.
 
 - **Agreement v2 parity with JACS across the SDK.** `LocalJacsProvider` now implements the full `JacsAgreementProvider` v2 surface against `jacs::agreements::v2` (requires jacs 0.11.2): `create_agreement_v2`, `apply_agreement_v2` (typed mutations: appendTranscript/updateTerms/setStatus/setParties/setSignaturePolicy/addLink/setOwners), `sign_agreement_v2` (signer/witness/notary roles), `verify_agreement_v2` (structural + hash + policy + signature report), `detect_agreement_branch_conflict`, `merge_agreement_transcript_branches`, and `resolve_agreement_branch_conflict` — replacing the "deferred for P1" stubs. Covered by a real-Ed25519 lifecycle suite mirroring JACS's shared parity scenario (create → append transcript → sign → verify; transcript branches auto-merge; conflicting terms detect then resolve; unknown roles rejected with the same message as JACS binding-core).
-- **Release ordering:** the `agreements` feature requires **jacs 0.11.2**, which is not yet published — JACS main must be pushed, tagged `v0.11.2` (CI `JACS_REF` now points there), and published to crates.io (and jacspy to PyPI for the Python pipeline) before haiai can be released. `save_agreement`/`search_agreements` target HAI workflow endpoints that are PRD-documented ahead of their server implementation.
+- **Release ordering:** the `agreements` feature requires **jacs 0.11.2**, which is not yet published — JACS main must be pushed, tagged `v0.11.2`, and published to crates.io (and jacspy to PyPI for the Python pipeline) before haiai can be released. `save_agreement`/`search_agreements` target HAI workflow endpoints that are PRD-documented ahead of their server implementation.
 - **Agreements are first-class across FFI.** The 11 agreement methods (4 HTTP workflow: save/search/get/countersign; 7 local JACS v2 ops) are exposed through hai-binding-core, haiipy (Python), haiinpm (Node), and the Go FFI, with client methods, mocks, and adapter-coverage tests in all three language SDKs. `fixtures/ffi_method_parity.json` grows to 105 methods across 16 categories with the new `agreements` section pinned member-by-member in `contract_test`.
 
 - **`RemoteJacsProvider` now implements `JacsVerificationProvider` and `JacsMediaProvider` (verification surfaces).** JACS verification is local (recompute hash + check the Ed25519 signature against the signer's public key), so the remote provider verifies without inner-provider key material: signer public keys are fetched from hai-api's public `GET /jacs/v1/agents/{jacs_id}/keys/{version}` endpoint, cached per `(agent_id, version)`, and materialized as `<signer_id>.public.pem` for the inline-text/image resolver. A signature with a missing `agentVersion` fails closed, and a registry key that does not match the signature's `publicKeyHash` is rejected (JACS rehash check, pinned by test). `verify_with_key` accepts PEM or raw key bytes; media *signing* (`sign_text_file`, `sign_image`) and `verify_dns` intentionally return `BackendUnsupported`. This unblocks hosted agents (signing via signer-service) from running fail-closed verified document stores, e.g. hai temporal memory.
@@ -41,10 +100,15 @@
 
 ### Changed
 
-- **2026-09-13 — Local-first developer onboarding and registration key passthrough.** Entry guides
+- **2026-09-13 — Local-first onboarding, registration key passthrough, and request-bound auth.** Entry guides
   now start with local identity/sign/verify, separate admitted registration from
-  active email and hosted Agreement participation, and disclose the v0.4.1
-  request-auth integration gap. CLI/MCP registration guidance preserves local
+  active email and hosted Agreement participation, and distinguish this source's
+  JACS v2 request-auth integration from previously published v0.4.1 binaries.
+  CLI/MCP accept an explicit `HAI_REQUEST_AUTH_AUDIENCE` for ordinary requests
+  and remote document storage, defaulting to `hai.ai` only when absent. Invalid
+  startup configuration refuses; MCP pins the audience across environment
+  changes and tool calls. Shared-fixture and loopback tests cover propagation
+  through the existing Rust/JACS providers. CLI/MCP registration guidance preserves local
   keys and storage while developer signup remains hidden. Existing-identity
   registration now accepts optional keys through Node, Go, and Python
   sync/async/module-level facades; omission is preserved and Python previews
@@ -57,9 +121,14 @@
 - Node and Go signed-email facades now pass `html_inline_jacs` explicitly when callers omit a generation type, matching Python and keeping the cross-language default visible at the FFI boundary.
 - **JACS schema consolidation compatibility.** HAIAI now treats retired JACS application schemas as generic signed documents in MCP/docs/email assertions and refreshes embedded self-knowledge from the current JACS docs.
 - **JACS is pinned to 0.13.0** across the Rust manifests, `python/pyproject.toml`
-  (`>=0.13.0,<0.14`), `node/publish.deps.json`, all three lockfiles, and CI's
-  `JACS_REF`. These are forward-looking: crates.io and PyPI publish 0.11.3 and
-  npm publishes 0.10.1, so CI cannot clone `crate/v0.13.0` until JACS tags it.
+  (`>=0.13.0,<0.14`), `node/publish.deps.json`, and all three lockfiles. CI's
+  `JACS_REF` separately pins `992953ea77d4c9a16953aee28e4a1e5d26e62200`, the
+  validated native source required by the security-source check. All five CI
+  checkout sites shallow-fetch the exact commit and check its identity and native
+  manifest versions against the separate `JACS_VERSION: 0.13.0` expectation.
+  Package parity checks remain enforced; version bumps update the expected
+  version and release tag together. Package versions remain JACS `0.13.0` and
+  HAIAI `0.4.1`.
 - **`haiai mcp` starts JACS in the `local-sign` profile.** JACS 0.13.0 made MCP
   tool profiles fail-closed: a server built from an agent handle alone runs
   `verify-only` and refuses every other JACS tool at dispatch, so haiai was
