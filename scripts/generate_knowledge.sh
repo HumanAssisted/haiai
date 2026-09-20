@@ -12,7 +12,12 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 JACS_ROOT="$(cd "${JACS_ROOT:-$REPO_ROOT/../JACS}" && pwd)"
-JACSBOOK_SRC="$JACS_ROOT/jacs/docs/jacsbook/src"
+# The SDK currently wraps JACS's retained native adapters. Their reference
+# book moved with them; the portable JACS packages remain at the repo root.
+JACSBOOK_SRC="$JACS_ROOT/archive/native/jacs/docs/jacsbook/src"
+if [ ! -d "$JACSBOOK_SRC" ]; then
+    JACSBOOK_SRC="$JACS_ROOT/jacs/docs/jacsbook/src"
+fi
 SUMMARY="$JACSBOOK_SRC/SUMMARY.md"
 KNOWLEDGE_DIR="$REPO_ROOT/rust/haiai/docs/knowledge"
 DATA_FILE="$REPO_ROOT/rust/haiai/src/self_knowledge_data.rs"

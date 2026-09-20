@@ -4057,6 +4057,56 @@ mod tests {
         restore_env("JACS_KEYCHAIN_BACKEND", saved_backend);
     }
 
+    #[test]
+    fn bootstrap_registration_does_not_repeat_failure() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let saved_password = std::env::var("JACS_PRIVATE_KEY_PASSWORD").ok();
+        let saved_keychain = std::env::var("JACS_KEYCHAIN_ENABLED").ok();
+        let saved_backend = std::env::var("JACS_KEYCHAIN_BACKEND").ok();
+        std::env::set_var(
+            "JACS_PRIVATE_KEY_PASSWORD",
+            "synthetic-registration-password",
+        );
+        std::env::set_var("JACS_KEYCHAIN_ENABLED", "false");
+        std::env::set_var("JACS_KEYCHAIN_BACKEND", "disabled");
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let fixture: Value = serde_json::from_str(include_str!("../../../fixtures/init_contract.json")).unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let directory = dir.path().canonicalize().unwrap();
+            let config_path = directory.join("jacs.config.json");
+            let key_directory = directory.join("keys");
+            let server = MockServer::start_async().await;
+            let auth_guard = server.mock_async(|when, then| {
+                when.method(HMethod::POST).path("/api/v1/agents/register").header_exists("authorization");
+                then.status(418);
+            }).await;
+            let response = server.mock_async(|when, then| {
+                when.method(HMethod::POST).path("/api/v1/agents/register");
+                then.status(503).json_body(serde_json::json!({"message": "synthetic outcome is unknown"}));
+            }).await;
+            // Bootstrap creates its own client with the generic retry default.
+            // It must still share register's single-submission policy.
+            let wrapper = HaiClientWrapper::from_config_json_auto(r#"{"jacs_id":"bootstrap"}"#).unwrap();
+            let result = wrapper.register_new_agent(&serde_json::json!({
+                "agent_name": "requested-agent", "password": "synthetic-registration-password",
+                "algorithm": "ring-Ed25519", "base_url": server.base_url(),
+                "key_directory": key_directory, "data_directory": directory.join("data"),
+                "config_path": config_path,
+                "registration_key": fixture["existing_identity_register"]["cases"][0]["request"]["registration_key"],
+            }).to_string()).await;
+            let error = result.expect_err("bootstrap must surface the first failure");
+            assert!(error.message.contains("synthetic outcome is unknown"));
+            assert!(config_path.is_file(), "created identity config must survive failure");
+            assert!(key_directory.read_dir().unwrap().next().is_some(), "created keys must survive failure");
+            response.assert_calls_async(fixture["registration_submission"]["maximum_requests"].as_u64().unwrap() as usize).await;
+            auth_guard.assert_calls_async(0).await;
+        });
+        restore_env("JACS_PRIVATE_KEY_PASSWORD", saved_password);
+        restore_env("JACS_KEYCHAIN_ENABLED", saved_keychain);
+        restore_env("JACS_KEYCHAIN_BACKEND", saved_backend);
+    }
+
     fn make_doc_store_provider(base_url: String) -> RemoteJacsProvider<StaticJacsProvider> {
         RemoteJacsProvider::new(
             StaticJacsProvider::new("agent-test"),

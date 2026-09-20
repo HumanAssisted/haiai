@@ -2,16 +2,55 @@
 
 ## Unreleased
 
+### Current JACS integration — 2026-09-19
+
+- Rebase the registration and packaging fixes together and pin JACS
+  `1c9cafcd6fee012e0d71927cc5e7c3d062e55bc5`. Fix the MCP dependency lock,
+  native source paths and embedded guidance; move synchronous MCP document
+  calls off async workers. Signed-stream tests now use current event contexts.
+- Version 0.4.1 remains unpublished. This SDK uses JACS’s archived native
+  adapters; portable migration and distributable release dependencies remain
+  separate work. See [compatibility](README.md#platform-compatibility).
+- Verified locally: 718 Rust, 650 Python and 449 Node tests, Go with race
+  detection, package assembly and import checks. Live service tests remain gated.
+
 ### Benchmark mediator — 2026-09-19
 
 - Add a reference worker for private HAI benchmark 3.1 campaigns, with durable
   reply replay and provider usage receipts. All four SDKs preserve the shared
-  completion contract and expose explicit mediator registration.
+  completion contract and expose explicit mediator registration. Every external
+  agent requires separate benchmark admin approval; setup is in the README.
 - Fix Python/Go response parameters to match Rust, preserve Go job metadata,
   and expose Node's response job ID separately from the campaign run ID.
   The API adapter and deployment requirements are in [setup](README.md#benchmark-mediator).
 
+### Registration retries — 2026-09-15
+
+- **2026-09-15:** Registration now submits once across Rust, CLI, MCP and language
+  bindings, including new-agent bootstrap, regardless of generic retry settings.
+  It refuses redirects and surfaces the first failure instead of resubmitting a
+  potentially consumed admission key. Other operations keep their existing retry
+  behavior. After an uncertain outcome, preserve the local identity and inspect
+  server registration state before any manual submission. Native request-count
+  regressions cover failures, redirects and bootstrap; packaged release candidates
+  still need verification.
+
+### Native Node releases — 2026-09-14
+
+
+- **2026-09-14:** Node platform/native publication failures now fail their jobs
+  and block the dependent SDK release, including authentication, registry and
+  already-published-version errors. Reruns require inspection; version existence
+  alone no longer bypasses a failed publish. Offline execution of the actual
+  workflow commands verified exit-status propagation; no package was published.
+
+- **2026-09-14:** Native Node releases now preserve all four qualified addon
+  filenames and validate separate build artifacts plus the packed loader/layout
+  before publishing. Missing, duplicate, unexpected, unqualified, or empty addons
+  fail packaging instead of being overwritten or producing a partial package.
+
 ### Registration outcomes — 2026-09-13
+
 
 - Registration results now retain optional server status and assigned email across
   Rust/FFI, Python, Node, and Go, including bootstrap results. CLI `init` reports

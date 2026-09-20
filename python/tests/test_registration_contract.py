@@ -96,7 +96,9 @@ OUTCOMES = json.loads(
 
 @pytest.mark.parametrize("case", OUTCOMES["cases"], ids=lambda case: case["name"])
 @pytest.mark.parametrize("entrypoint", ["sync", "async", "module", "bootstrap"])
-def test_registration_outcomes(case, entrypoint, loaded_config, monkeypatch, tmp_path, capsys):
+def test_registration_outcomes(
+    case, entrypoint, loaded_config, monkeypatch, tmp_path, capsys
+):
     calls = []
 
     class NativeRegistration:
@@ -126,12 +128,18 @@ def test_registration_outcomes(case, entrypoint, loaded_config, monkeypatch, tmp
     def invoke():
         if entrypoint == "bootstrap":
             return client_mod.register_new_agent(
-                OUTCOMES["requested_name"], "owner@example.test",
-                key_dir=str(tmp_path / "keys"), config_path=str(tmp_path / "config.json"),
+                OUTCOMES["requested_name"],
+                "owner@example.test",
+                key_dir=str(tmp_path / "keys"),
+                config_path=str(tmp_path / "config.json"),
             )
         if entrypoint == "module":
-            return client_mod.register("https://hai.example", owner_email="owner@example.test")
-        result = client.register("https://hai.example", agent_json='{"jacsId":"existing"}')
+            return client_mod.register(
+                "https://hai.example", owner_email="owner@example.test"
+            )
+        result = client.register(
+            "https://hai.example", agent_json='{"jacsId":"existing"}'
+        )
         return asyncio.run(result) if entrypoint == "async" else result
 
     if case["http_status"] >= 400:
@@ -146,7 +154,9 @@ def test_registration_outcomes(case, entrypoint, loaded_config, monkeypatch, tmp
             assert result.raw_response == case["response"]
         if entrypoint == "bootstrap":
             output = capsys.readouterr().out
-            assert f"Registration status: {case['expected_status'] or 'unknown'}" in output
+            assert (
+                f"Registration status: {case['expected_status'] or 'unknown'}" in output
+            )
             assert "requested-agent@hai.ai" not in output
             assert "verification email has been sent" not in output.lower()
             if case["expected_email"]:
