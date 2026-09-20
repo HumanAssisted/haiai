@@ -2,11 +2,24 @@
 
 ## Unreleased
 
+### Current JACS integration — 2026-09-19
+
+- Rebase the registration and packaging fixes together and pin JACS
+  `1c9cafcd6fee012e0d71927cc5e7c3d062e55bc5`. Fix the MCP dependency lock,
+  native source paths and embedded guidance; move synchronous MCP document
+  calls off async workers. Signed-stream tests now use current event contexts.
+- Version 0.4.1 remains unpublished. This SDK uses JACS’s archived native
+  adapters; portable migration and distributable release dependencies remain
+  separate work. See [compatibility](README.md#platform-compatibility).
+- Verified locally: 718 Rust, 650 Python and 449 Node tests, Go with race
+  detection, package assembly and import checks. Live service tests remain gated.
+
 ### Benchmark mediator — 2026-09-19
 
 - Add a reference worker for private HAI benchmark 3.1 campaigns, with durable
   reply replay and provider usage receipts. All four SDKs preserve the shared
-  completion contract and expose explicit mediator registration.
+  completion contract and expose explicit mediator registration. Every external
+  agent requires separate benchmark admin approval; setup is in the README.
 - Fix Python/Go response parameters to match Rust, preserve Go job metadata,
   and expose Node's response job ID separately from the campaign run ID.
   The API adapter and deployment requirements are in [setup](README.md#benchmark-mediator).

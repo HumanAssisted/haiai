@@ -2804,10 +2804,14 @@ def register_new_agent(
     # Print next-step messaging
     if not quiet:
         print("\nAgent created and submitted for registration!")
-        print(f"  -> Registration status: {data.get('registration_status') or 'unknown'}")
+        print(
+            f"  -> Registration status: {data.get('registration_status') or 'unknown'}"
+        )
         if data.get("email"):
             print(f"  -> Assigned email: {data['email']}")
-        print("  -> Email delivery and active mailbox status are not established by this response")
+        print(
+            "  -> Email delivery and active mailbox status are not established by this response"
+        )
         print(f"  -> Config saved to {config_path}")
         print(f"  -> Keys saved to {key_directory}")
         print(

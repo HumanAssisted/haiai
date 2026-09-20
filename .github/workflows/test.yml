@@ -12,7 +12,7 @@ concurrency:
 
 env:
   # Source ref and expected package version are separate; checkouts validate both.
-  JACS_REF: 0e51c2798e0c2ab52dfbc1b7b2d68654ff9f7ba9
+  JACS_REF: 1c9cafcd6fee012e0d71927cc5e7c3d062e55bc5
   JACS_VERSION: 0.13.0
 
 jobs:
