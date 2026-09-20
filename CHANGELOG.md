@@ -7,6 +7,8 @@
 - Pin the SDK build to JACS `2866d09abc37111c9c8aa1eaccfe2616a52ddd45`,
   including its native dependency and signing compatibility updates. Refresh
   the SDK lockfile and embedded JACS documentation; 0.4.1 remains unpublished.
+- Native checks build Node addons with platform names, verify the installed
+  loader, use pinned JACS source, and retain configured Go library paths.
 
 ### Isolate Rust test environments — 2026-09-19
 

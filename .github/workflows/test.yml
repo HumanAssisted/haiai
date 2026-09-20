@@ -193,17 +193,11 @@ jobs:
         run: |
           cd rust/haiinpm
           npm install @napi-rs/cli
-          npx napi build --release
+          npm run build
         timeout-minutes: 10
       - name: Build JACS napi addon (jacs.linux-x64-gnu.node)
-        # npm publishes @hai.ai/jacs 0.10.1, which predates the strict signed
-        # event verifier, and no platform-binary subpackages
-        # (@hai.ai/jacs-linux-x64-gnu, etc.) were published alongside it. The
-        # committed package.json keeps the local-dev file:../../JACS/archive/native/jacsnpm
-        # path; building the napi addon here makes the JACS loader's
-        # `existsSync(./jacs.linux-x64-gnu.node)` branch succeed without the
-        # missing registry subpackages. Once JACS 0.13.0 and its platform
-        # packages publish, restore `npm run deps:prod`.
+        # Retained native JACS 0.13.0 packages are unpublished. Build the
+        # pinned checkout and use the committed local dependency path.
         run: |
           cd "${{ github.workspace }}/../JACS/archive/native/jacsnpm"
           npm install @napi-rs/cli
@@ -215,6 +209,7 @@ jobs:
           # haiinpm is not yet on npm registry; point at the local build.
           npm pkg set "dependencies.haiinpm=file:../rust/haiinpm"
           npm install
+          node -e "if (typeof require('haiinpm').HaiClient !== 'function') throw new Error('haiinpm package loader unavailable')"
       - name: Run tests
         run: |
           cd node
@@ -231,8 +226,8 @@ jobs:
             const fs = require('fs');
             const nodeFile = fs.readdirSync('.').find(f => f.endsWith('.node'));
             if (!nodeFile) { console.error('No .node file found'); process.exit(1); }
-            const binding = require('./' + nodeFile);
-            console.log('haiinpm native addon loaded OK (' + nodeFile + ')');
+            const binding = require('./index.js');
+            console.log('haiinpm package loader loaded OK (' + nodeFile + ')');
             if (typeof binding.HaiClient !== 'function') {
               console.error('HaiClient not found in binding');
               process.exit(1);
@@ -483,14 +478,21 @@ jobs:
         run: |
           cd rust/haiinpm
           npm install @napi-rs/cli
-          npx napi build --release
+          npm run build
         timeout-minutes: 15
+      - name: Build pinned JACS napi addon for smoke tests
+        run: |
+          cd "${{ github.workspace }}/../JACS/archive/native/jacsnpm"
+          npm install @napi-rs/cli
+          npx napi build --platform --release
+        timeout-minutes: 10
       - name: Install Node SDK deps
         run: |
           cd node
-          npm run deps:prod
+          npm run deps:local
           npm pkg set "dependencies.haiinpm=file:../rust/haiinpm"
           npm install
+          node -e "if (typeof require('haiinpm').HaiClient !== 'function') throw new Error('haiinpm package loader unavailable')"
       - name: Run Node smoke test
         env:
           JACS_PRIVATE_KEY_PASSWORD: smoke-password
