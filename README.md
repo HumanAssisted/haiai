@@ -8,12 +8,16 @@ Start with a local identity: sign and verify with [JACS](https://github.com/Huma
 
 ## Benchmark mediator
 
-**Admin/lab, version 3.1, private evaluation.** A registered haiai client can
+**Admin/lab, version 3.1, private evaluation.** An admin-approved haiai agent can
 serve the benchmark's frozen moderator prompts and return `intervene`, `yield`
 or `end` through signed SSE/WebSocket jobs. The API runs the full 62 scenarios
 and required Sol judge. Results identify the agent and remain separate from
 public foundation-model rankings. Provider usage is agent-reported; client-paid
 completions do not consume HAI credits.
+
+The agent runs on your laptop or server and connects outward to HAI. No public
+URL or web hosting is required. **Registration alone does not grant benchmark
+access:** an admin must approve the agent in HAI admin before it receives jobs.
 
 1. Include this capability in the agent document **before JACS signs it**:
    ```json
@@ -25,10 +29,14 @@ completions do not consume HAI credits.
    ```
    Register that signed document with `is_mediator=True` (Python),
    `isMediator: true` (Node), `RegisterOptions.IsMediator` (Go), or
-   `RegisterAgentOptions.is_mediator` (Rust). Existing admission/ownership rules
-   still apply. Have the admin link it to a saved model-backed mediator with the
-   same config name: `PATCH /api/agents/id/{id}`, `linked_moderator_id`.
-2. Run the [Python reference worker](python/examples/benchmark_mediator.py):
+   `RegisterAgentOptions.is_mediator` (Rust). Complete owner verification.
+2. An admin opens **Benchmarks → New run → 3.1 → Private evaluation → External
+   agent approvals**, selects the registered agent and a saved mediator with the
+   same model, and clicks **Approve agent**. This links the agent without changing
+   its owner. The approval records the admin and exact identity/configuration;
+   changing the declared configuration requires another review. An admin can
+   **Revoke approval** there to block new jobs. Approval starts no paid run.
+3. Run the [Python reference worker](python/examples/benchmark_mediator.py):
    ```bash
    python python/examples/benchmark_mediator.py --config ./jacs.config.json \
      --journal ./benchmark-replies.sqlite
@@ -39,7 +47,7 @@ completions do not consume HAI credits.
    and returns `content`, `model`, `provider`, and provider `usage`.
    Use `--transport ws` for WebSocket delivery. No HAI HTTP/signing logic lives
    in the callback; the SDK handles it through Rust/JACS.
-3. In HAI admin, choose **3.1 → Private evaluation**, select the connected
+4. In HAI admin, choose **3.1 → Private evaluation**, select the connected
    **haiai SDK** mediator, review the cap and launch. Keep the worker running.
 
 `config.metadata.benchmark_mediator` contains the request;
@@ -195,8 +203,10 @@ or an address alone does not establish admission, an active mailbox, or email de
 If `init` enrollment fails, it exits nonzero and preserves the created identity.
 After a confirmed HTTP rejection, check admission and the key before any manual
 submission. After a transport failure or server error, the request may already
-have committed: check server registration state before submitting again. CLI
-enrollment makes one attempt and never retries automatically. An unused-key
+have committed: check server registration state before submitting again. All SDK
+registration entrypoints, including CLI and bootstrap creation, submit once
+regardless of generic retry settings and refuse redirects. Retryable HTTP statuses
+(429/500/502/503/504) are returned to the caller without resubmission. An unused-key
 submission only enrolls an identity that has not already committed on HAI.
 These unsigned bootstrap commands cannot repair an existing server registration
 or failed rotation: existing server identities require current-key request
@@ -235,8 +245,12 @@ Rust transport and JACS 0.13.0. Authenticated requests bind the final method,
 URL, exact body bytes and configured audience; context-free helpers fail with
 an actionable error. Current HAI API source requires this v2 contract. Configure
 matching SDK/API ingress origins and audiences, and deploy compatible builds
-together. The previously installed/published v0.4.1 binaries do not establish
-that this integration is deployed. Local signing remains independent of API
+together. Version 0.4.1 remains an unpublished release candidate; the checked
+registries still serve 0.4.0 as of September 19, 2026. CI pins JACS commit
+`1c9cafcd6fee012e0d71927cc5e7c3d062e55bc5` and uses its retained native adapters
+under `archive/native`. This is native compatibility, not the portable SDK
+migration; those archived JACS packages are not publication candidates.
+Local signing remains independent of API
 admission. See [the request-auth contract](docs/HAIAI_LANGUAGE_SYNC_GUIDE.md#authentication-header-format), the existing
 [JACS security policy](https://github.com/HumanAssisted/JACS/blob/main/SECURITY.md)
 and [local security guide](rust/haiai/docs/knowledge/jacsbook/advanced/security.md).

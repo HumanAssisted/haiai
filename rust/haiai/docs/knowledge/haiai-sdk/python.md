@@ -159,3 +159,9 @@ Working example: `examples/a2a_quickstart.py`.
 ## License
 
 BUSL-1.1 — see [LICENSE](../LICENSE) for details.
+
+## Benchmark mediator
+
+See [SDK setup](../README.md#benchmark-mediator) and the runnable
+[worker](examples/benchmark_mediator.py) for private 3.1 campaigns. It uses the
+frozen prompt, reports provider usage, and journals replies across reconnects.

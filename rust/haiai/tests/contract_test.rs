@@ -352,7 +352,7 @@ fn ffi_method_parity_includes_media_local_section() {
 }
 
 #[test]
-fn ffi_method_parity_total_count_is_110() {
+fn ffi_method_parity_total_count_is_111() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/ffi_method_parity.json");
     let raw =
@@ -362,11 +362,10 @@ fn ffi_method_parity_total_count_is_110() {
     let total = val["total_method_count"]
         .as_u64()
         .expect("total_method_count must be a number");
-    // Conflict memory MVP bumps 105 -> 110 by adding five conflict methods
-    // to the jacs_document_store section.
+    // Five conflict methods and request-bound auth are included in the contract.
     assert_eq!(
-        total, 110,
-        "total_method_count must include the conflict methods"
+        total, 111,
+        "total_method_count must include conflict methods and request-bound auth"
     );
 
     let methods = val["methods"]
@@ -377,7 +376,7 @@ fn ffi_method_parity_total_count_is_110() {
         sum += arr.as_array().expect("section must be an array").len() as u64;
     }
     assert_eq!(
-        sum, 110,
+        sum, total,
         "Sum of method counts across all sections must equal total_method_count"
     );
 
