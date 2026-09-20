@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### JACS maintenance update — 2026-09-19
+
+- Pin the SDK build to JACS `2866d09abc37111c9c8aa1eaccfe2616a52ddd45`,
+  including its native dependency and signing compatibility updates. Refresh
+  the SDK lockfile and embedded JACS documentation; 0.4.1 remains unpublished.
+
 ### Isolate Rust test environments — 2026-09-19
 
 - CI and `make test-rust` now use cargo-nextest 0.9.143 with all features,
