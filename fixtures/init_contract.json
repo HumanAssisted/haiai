@@ -119,5 +119,26 @@
         "cli_exit_success": false
       }
     ]
+  },
+  "registration_submission": {
+    "maximum_requests": 1,
+    "generic_retry_limits": [
+      0,
+      3
+    ],
+    "retryable_http_statuses": [
+      429,
+      500,
+      502,
+      503,
+      504
+    ],
+    "redirect_http_statuses": [
+      301,
+      302,
+      303,
+      307,
+      308
+    ]
   }
 }

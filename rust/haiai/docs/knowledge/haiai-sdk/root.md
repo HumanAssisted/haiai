@@ -6,6 +6,65 @@ Start with a local identity: sign and verify with [JACS](https://github.com/Huma
 
 `@hai.ai` is a **transparent communication channel**, not a private mailbox. Messages may be processed for trust and safety. [Learn more about agent email](https://hai.ai/about/email). Public research rankings live on [MediationBench](https://whatisprogress.com).
 
+## Benchmark mediator
+
+**Admin/lab, version 3.1, private evaluation.** An admin-approved haiai agent can
+serve the benchmark's frozen moderator prompts and return `intervene`, `yield`
+or `end` through signed SSE/WebSocket jobs. The API runs the full 62 scenarios
+and required Sol judge. Results identify the agent and remain separate from
+public foundation-model rankings. Provider usage is agent-reported; client-paid
+completions do not consume HAI credits.
+
+The agent runs on your laptop or server and connects outward to HAI. No public
+URL or web hosting is required. **Registration alone does not grant benchmark
+access:** an admin must approve the agent in HAI admin before it receives jobs.
+
+1. Include this capability in the agent document **before JACS signs it**:
+   ```json
+   {"capabilities":{"benchmark_mediator":{
+     "schema":"hai.benchmark.mediator/v1", "protocol_id":"v3.1",
+     "prompt_mode":"benchmark", "model_config_name":"Gpt56Terra",
+     "implementation":"my-mediator/1"
+   }}}
+   ```
+   Register that signed document with `is_mediator=True` (Python),
+   `isMediator: true` (Node), `RegisterOptions.IsMediator` (Go), or
+   `RegisterAgentOptions.is_mediator` (Rust). Complete owner verification.
+2. An admin opens **Benchmarks → New run → 3.1 → Private evaluation → External
+   agent approvals**, selects the registered agent and a saved mediator with the
+   same model, and clicks **Approve agent**. This links the agent without changing
+   its owner. The approval records the admin and exact identity/configuration;
+   changing the declared configuration requires another review. An admin can
+   **Revoke approval** there to block new jobs. Approval starts no paid run.
+3. Run the [Python reference worker](python/examples/benchmark_mediator.py):
+   ```bash
+   python python/examples/benchmark_mediator.py --config ./jacs.config.json \
+     --journal ./benchmark-replies.sqlite
+   ```
+   The default callback requires the `openai` package and `OPENAI_API_KEY`.
+   For another provider use `--complete module:function`; the function receives
+   the exact `messages`, model, provider, effort, temperature and output limit,
+   and returns `content`, `model`, `provider`, and provider `usage`.
+   Use `--transport ws` for WebSocket delivery. No HAI HTTP/signing logic lives
+   in the callback; the SDK handles it through Rust/JACS.
+4. In HAI admin, choose **3.1 → Private evaluation**, select the connected
+   **haiai SDK** mediator, review the cap and launch. Keep the worker running.
+
+`config.metadata.benchmark_mediator` contains the request;
+`config.metadata.request_sha256` binds its reply. Return the unchanged JSON
+completion as `message`, with receipt metadata matching the
+[shared fixture](fixtures/benchmark_mediator_contract.json). Always reply to
+`job_id`, including yield/end decisions; it differs from `config.run_id`.
+Usage counts noncached input, cached input, output (including reasoning), and
+their total. Do not estimate missing provider usage or silently change models.
+
+The worker journals a completion before submitting it and resends unsent replies
+on reconnect. An interrupted provider call with an unknown outcome requires
+reconciliation, not another purchase. Keep the journal private and durable; do
+not delete it to reset retries. Identity/capability changes require a new campaign.
+HAI API migration 408 and these SDK changes are required; a live run is not part
+of local verification.
+
 ## Install
 
 ### Homebrew (macOS)
@@ -144,8 +203,10 @@ or an address alone does not establish admission, an active mailbox, or email de
 If `init` enrollment fails, it exits nonzero and preserves the created identity.
 After a confirmed HTTP rejection, check admission and the key before any manual
 submission. After a transport failure or server error, the request may already
-have committed: check server registration state before submitting again. CLI
-enrollment makes one attempt and never retries automatically. An unused-key
+have committed: check server registration state before submitting again. All SDK
+registration entrypoints, including CLI and bootstrap creation, submit once
+regardless of generic retry settings and refuse redirects. Retryable HTTP statuses
+(429/500/502/503/504) are returned to the caller without resubmission. An unused-key
 submission only enrolls an identity that has not already committed on HAI.
 These unsigned bootstrap commands cannot repair an existing server registration
 or failed rotation: existing server identities require current-key request
@@ -184,8 +245,12 @@ Rust transport and JACS 0.13.0. Authenticated requests bind the final method,
 URL, exact body bytes and configured audience; context-free helpers fail with
 an actionable error. Current HAI API source requires this v2 contract. Configure
 matching SDK/API ingress origins and audiences, and deploy compatible builds
-together. The previously installed/published v0.4.1 binaries do not establish
-that this integration is deployed. Local signing remains independent of API
+together. Version 0.4.1 remains an unpublished release candidate; the checked
+registries still serve 0.4.0 as of September 19, 2026. CI pins JACS commit
+`1c9cafcd6fee012e0d71927cc5e7c3d062e55bc5` and uses its retained native adapters
+under `archive/native`. This is native compatibility, not the portable SDK
+migration; those archived JACS packages are not publication candidates.
+Local signing remains independent of API
 admission. See [the request-auth contract](docs/HAIAI_LANGUAGE_SYNC_GUIDE.md#authentication-header-format), the existing
 [JACS security policy](https://github.com/HumanAssisted/JACS/blob/main/SECURITY.md)
 and [local security guide](rust/haiai/docs/knowledge/jacsbook/advanced/security.md).

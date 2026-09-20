@@ -149,6 +149,14 @@ impl<P: JacsProvider> RequestBuilder<'_, P> {
         Ok(request)
     }
 
+    /// Send using the existing no-redirect transport. Authentication remains
+    /// opt-in in `build`; unsigned registration deliberately leaves it disabled.
+    pub(crate) async fn send_without_redirects(self) -> Result<reqwest::Response> {
+        let client = self.client;
+        let request = self.build()?;
+        client.execute_authenticated(request).await
+    }
+
     pub(crate) async fn send(self) -> Result<reqwest::Response> {
         let authenticated = self.authenticated;
         let client = self.client;

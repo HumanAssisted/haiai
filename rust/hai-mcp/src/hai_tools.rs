@@ -1319,8 +1319,13 @@ async fn call_save_memory(context: &HaiServerContext, args: &Value) -> ToolResul
     let provider = context
         .document_provider(config_path)
         .map_err(ToolError::Message)?;
-    let content = optional_string(args, "content");
-    let key = match provider.save_memory(content) {
+    let content = optional_string(args, "content").map(str::to_owned);
+    // The document trait is synchronous, including remote storage. Keep it off
+    // the MCP runtime worker so nested HTTP progress cannot stall dispatch.
+    let result = tokio::task::spawn_blocking(move || provider.save_memory(content.as_deref()))
+        .await
+        .map_err(tool_message)?;
+    let key = match result {
         Ok(key) => key,
         Err(e) => {
             tracing::warn!(
@@ -1357,7 +1362,10 @@ async fn call_get_memory(context: &HaiServerContext, args: &Value) -> ToolResult
     let provider = context
         .document_provider(config_path)
         .map_err(ToolError::Message)?;
-    let document = match provider.get_memory() {
+    let result = tokio::task::spawn_blocking(move || provider.get_memory())
+        .await
+        .map_err(tool_message)?;
+    let document = match result {
         Ok(doc) => doc,
         Err(e) => {
             tracing::warn!(
@@ -1395,8 +1403,11 @@ async fn call_save_soul(context: &HaiServerContext, args: &Value) -> ToolResult 
     let provider = context
         .document_provider(config_path)
         .map_err(ToolError::Message)?;
-    let content = optional_string(args, "content");
-    let key = match provider.save_soul(content) {
+    let content = optional_string(args, "content").map(str::to_owned);
+    let result = tokio::task::spawn_blocking(move || provider.save_soul(content.as_deref()))
+        .await
+        .map_err(tool_message)?;
+    let key = match result {
         Ok(key) => key,
         Err(e) => {
             tracing::warn!(
@@ -1433,7 +1444,10 @@ async fn call_get_soul(context: &HaiServerContext, args: &Value) -> ToolResult {
     let provider = context
         .document_provider(config_path)
         .map_err(ToolError::Message)?;
-    let document = match provider.get_soul() {
+    let result = tokio::task::spawn_blocking(move || provider.get_soul())
+        .await
+        .map_err(tool_message)?;
+    let document = match result {
         Ok(doc) => doc,
         Err(e) => {
             tracing::warn!(
@@ -1464,7 +1478,11 @@ async fn call_store_text_file(context: &HaiServerContext, args: &Value) -> ToolR
     let provider = context
         .document_provider(optional_string(args, "config_path"))
         .map_err(ToolError::Message)?;
-    let key = provider.store_text_file(&path).map_err(tool_message)?;
+    let input_path = path.clone();
+    let key = tokio::task::spawn_blocking(move || provider.store_text_file(&input_path))
+        .await
+        .map_err(tool_message)?
+        .map_err(tool_message)?;
     Ok(success_tool_result(
         format!("store_text_file path={path} key={key}"),
         json!({ "path": path, "key": key }),
@@ -1477,7 +1495,11 @@ async fn call_store_image_file(context: &HaiServerContext, args: &Value) -> Tool
     let provider = context
         .document_provider(optional_string(args, "config_path"))
         .map_err(ToolError::Message)?;
-    let key = provider.store_image_file(&path).map_err(tool_message)?;
+    let input_path = path.clone();
+    let key = tokio::task::spawn_blocking(move || provider.store_image_file(&input_path))
+        .await
+        .map_err(tool_message)?
+        .map_err(tool_message)?;
     Ok(success_tool_result(
         format!("store_image_file path={path} key={key}"),
         json!({ "path": path, "key": key }),
@@ -1490,7 +1512,11 @@ async fn call_get_record_bytes(context: &HaiServerContext, args: &Value) -> Tool
     let provider = context
         .document_provider(optional_string(args, "config_path"))
         .map_err(ToolError::Message)?;
-    let bytes = provider.get_record_bytes(key).map_err(tool_message)?;
+    let record_key = key.to_owned();
+    let bytes = tokio::task::spawn_blocking(move || provider.get_record_bytes(&record_key))
+        .await
+        .map_err(tool_message)?
+        .map_err(tool_message)?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     Ok(success_tool_result(
         format!("get_record_bytes key={key} bytes_len={}", bytes.len()),
