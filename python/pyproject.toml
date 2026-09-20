@@ -50,7 +50,7 @@ packages = ["src/haiai"]
 # source checkouts. Published wheel metadata still carries the registry version
 # floors above; uv uses these sources only while working in this repository.
 [tool.uv.sources]
-jacs = { path = "../../JACS/jacspy", editable = true }
+jacs = { path = "../../JACS/archive/native/jacspy", editable = true }
 haiipy = { path = "../rust/haiipy", editable = true }
 
 [tool.pytest.ini_options]

@@ -312,6 +312,12 @@ make check-versions    # fail if versions don't match
 make release-all       # tag + push all releases (triggers CI publish)
 ```
 
+The current 0.4.1 candidate is source-tested, not published. Its JACS pin uses
+archived native adapters, which disable publication. Resolve the portable SDK
+migration and distributable dependencies before running release targets;
+merging the candidate does not authorize publishing.
+
+
 > **Windows:** JACS uses `:` in filenames (`{id}:{version}.json`), which is illegal on Windows NTFS. Use WSL2 or a Linux container.
 
 > **Python test deps:** Use `pip install -e ".[dev,mcp]"` not just `.[dev]` — MCP tests need the `mcp` package.
