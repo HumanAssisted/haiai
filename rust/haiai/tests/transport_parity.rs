@@ -200,6 +200,18 @@ async fn start_refreshing_sse_server(
         let request = read_http_request(&mut sse_stream).await;
         assert!(String::from_utf8_lossy(&request).starts_with("GET /api/v1/agents/connect "));
         let auth = request_auth_header(&request);
+        // Prepare real signatures before opening the stream: slow fixture
+        // signing must not consume the client's bounded refresh deadline.
+        let refreshed_event = replacement.sign(
+            json!({"type": "benchmark_job", "job_id": "new-key-job"}),
+            &auth,
+            false,
+        );
+        let retired_event = retired.sign(
+            json!({"type": "benchmark_job", "job_id": "retired-key-job"}),
+            &auth,
+            false,
+        );
         sse_stream
             .write_all(
                 b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
@@ -215,16 +227,6 @@ async fn start_refreshing_sse_server(
         let replacement_keys = replacement.key_document().to_string();
         write_json_response(&mut refresh_stream, &replacement_keys).await;
 
-        let refreshed_event = replacement.sign(
-            json!({"type": "benchmark_job", "job_id": "new-key-job"}),
-            &auth,
-            false,
-        );
-        let retired_event = retired.sign(
-            json!({"type": "benchmark_job", "job_id": "retired-key-job"}),
-            &auth,
-            false,
-        );
         let body = format!("data: {refreshed_event}\n\ndata: {retired_event}\n\n");
         sse_stream
             .write_all(body.as_bytes())

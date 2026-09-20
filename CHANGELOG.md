@@ -15,7 +15,8 @@
   changes from racing registration tests. Canonical temporary paths also keep
   macOS fixtures compatible with JACS path checks. The mock server explicitly
   uses blocking accepted sockets to avoid dropping delayed request bytes on
-  macOS; runtime behavior is unchanged.
+  macOS. Stream fixtures sign events before their timed key-refresh check so
+  slow CI signing does not consume its deadline. Runtime behavior is unchanged.
 
 ### Current JACS integration — 2026-09-19
 
