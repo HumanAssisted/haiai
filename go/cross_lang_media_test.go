@@ -7,8 +7,8 @@
 // `python/tests/test_cross_lang_media.py`, and
 // `node/tests/cross-lang-media.test.ts`. Loads the same pre-signed fixtures
 // from `fixtures/media/signed.{png,jpg,webp,md}` (signed once by the Rust
-// regenerator in `rust/haiai/tests/regen_media_fixtures.rs`, signer = the
-// shared test agent in `fixtures/jacs-agent/`) and asserts that the Go FFI
+// regenerator in `rust/haiai/tests/regen_media_fixtures.rs`, with its public
+// key committed beside the media) and asserts that the Go FFI
 // VerifyImage / VerifyText paths return the same Valid / HashMismatch
 // verdicts.
 //
@@ -36,7 +36,7 @@ import (
 // Paths
 // ---------------------------------------------------------------------------
 
-const fixtureAgentPassword = "secretpassord"
+const verifierAgentPassword = "MediaFixtureVerifierPass!123"
 
 func mediaRepoRoot(t *testing.T) string {
 	t.Helper()
@@ -52,17 +52,15 @@ func mediaDir(t *testing.T) string {
 	return filepath.Join(mediaRepoRoot(t), "fixtures", "media")
 }
 
-func jacsAgentDir(t *testing.T) string {
-	return filepath.Join(mediaRepoRoot(t), "fixtures", "jacs-agent")
-}
-
 // ---------------------------------------------------------------------------
 // Signer fixture
 // ---------------------------------------------------------------------------
 
 type signerFixture struct {
-	SignerID  string `json:"signer_id"`
-	Algorithm string `json:"algorithm"`
+	SignerID         string `json:"signer_id"`
+	Algorithm        string `json:"algorithm"`
+	PublicKeyFile    string `json:"public_key_file"`
+	VerifierAgentDir string `json:"verifier_agent_dir"`
 }
 
 func loadSigner(t *testing.T) signerFixture {
@@ -114,7 +112,7 @@ func readSignedWithChecksum(t *testing.T, name string) []byte {
 }
 
 // ---------------------------------------------------------------------------
-// Fixture-agent staging — mirrors Rust `cross_lang_contract.rs::stage_fixture_agent`
+// Signed verifier staging — mirrors Rust `stage_media_verifier`.
 // ---------------------------------------------------------------------------
 
 func copyFile(src, dst string) error {
@@ -135,10 +133,10 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-// copyWithColons mirrors Rust `copy_fixture_dir` — converts `_` to `:` in
-// filenames so that JACS finds its data files at the expected `{id}:{ver}`
-// paths (the on-disk fixture uses `_` to stay Windows-friendly).
-func copyWithColons(src, dst string) error {
+// copyVerifierTree preserves directory names such as `public_keys`, while
+// restoring the `:` in agent document `{id}:{version}.json` filenames that
+// Git stores with `_` for Windows compatibility.
+func copyVerifierTree(src, dst string, inAgentDir bool) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
@@ -147,11 +145,14 @@ func copyWithColons(src, dst string) error {
 		return err
 	}
 	for _, entry := range entries {
-		newName := strings.ReplaceAll(entry.Name(), "_", ":")
+		newName := entry.Name()
+		if inAgentDir && !entry.IsDir() {
+			newName = strings.ReplaceAll(newName, "_", ":")
+		}
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, newName)
 		if entry.IsDir() {
-			if err := copyWithColons(srcPath, dstPath); err != nil {
+			if err := copyVerifierTree(srcPath, dstPath, inAgentDir || entry.Name() == "agent"); err != nil {
 				return err
 			}
 		} else {
@@ -164,72 +165,47 @@ func copyWithColons(src, dst string) error {
 }
 
 type stagedAgent struct {
-	configPath string
-	tmpDir     string
+	configPath         string
+	tmpDir             string
+	verificationKeyDir string
 }
 
-func stageFixtureAgent(t *testing.T) stagedAgent {
+func stageVerifierAgent(t *testing.T, signer signerFixture) stagedAgent {
 	t.Helper()
-	t.Setenv("JACS_PRIVATE_KEY_PASSWORD", fixtureAgentPassword)
+	t.Setenv("JACS_PRIVATE_KEY_PASSWORD", verifierAgentPassword)
 
 	tmpDir := t.TempDir()
-	agentDir := jacsAgentDir(t)
-
-	srcCfgRaw, err := os.ReadFile(filepath.Join(agentDir, "jacs.config.json"))
-	if err != nil {
-		t.Fatalf("read fixture agent config: %v", err)
+	verifierDir := filepath.Join(mediaRepoRoot(t), signer.VerifierAgentDir)
+	if err := copyVerifierTree(verifierDir, tmpDir, false); err != nil {
+		t.Fatalf("stage signed verifier agent: %v", err)
 	}
-	var cfg map[string]interface{}
-	if err := json.Unmarshal(srcCfgRaw, &cfg); err != nil {
-		t.Fatalf("decode fixture agent config: %v", err)
-	}
-
-	// Keys: copy verbatim.
-	srcKeys := filepath.Join(agentDir, cfg["jacs_key_directory"].(string))
-	tmpKeys := filepath.Join(tmpDir, "keys")
-	if err := os.MkdirAll(tmpKeys, 0o755); err != nil {
-		t.Fatalf("mkdir keys: %v", err)
-	}
-	keyEntries, err := os.ReadDir(srcKeys)
-	if err != nil {
-		t.Fatalf("read keys dir: %v", err)
-	}
-	for _, k := range keyEntries {
-		if err := copyFile(filepath.Join(srcKeys, k.Name()), filepath.Join(tmpKeys, k.Name())); err != nil {
-			t.Fatalf("copy key %s: %v", k.Name(), err)
-		}
-	}
-
-	// Data: agent JSON filenames use `_` placeholders for `:`. Map back.
-	srcData := filepath.Join(agentDir, cfg["jacs_data_directory"].(string))
-	tmpData := filepath.Join(tmpDir, "data")
-	if err := copyWithColons(srcData, tmpData); err != nil {
-		t.Fatalf("copy data with colons: %v", err)
-	}
-
-	cfg["jacs_data_directory"] = tmpData
-	cfg["jacs_key_directory"] = tmpKeys
-
 	configPath := filepath.Join(tmpDir, "jacs.config.json")
-	cfgRaw, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal staged config: %v", err)
+	verificationKeyDir := filepath.Join(tmpDir, "verification-keys")
+	if err := os.MkdirAll(verificationKeyDir, 0o755); err != nil {
+		t.Fatalf("create verification key directory: %v", err)
 	}
-	if err := os.WriteFile(configPath, cfgRaw, 0o644); err != nil {
-		t.Fatalf("write staged config: %v", err)
+	if err := copyFile(
+		filepath.Join(mediaRepoRoot(t), signer.PublicKeyFile),
+		filepath.Join(verificationKeyDir, signer.SignerID+".public.pem"),
+	); err != nil {
+		t.Fatalf("stage signer public key: %v", err)
 	}
 
-	return stagedAgent{configPath: configPath, tmpDir: tmpDir}
+	return stagedAgent{
+		configPath:         configPath,
+		tmpDir:             tmpDir,
+		verificationKeyDir: verificationKeyDir,
+	}
 }
 
 // ---------------------------------------------------------------------------
 // FFI client — wraps the staged fixture agent into a real `Client`.
 // ---------------------------------------------------------------------------
 
-func mediaParityClient(t *testing.T) *Client {
+func mediaParityVerifier(t *testing.T, signer signerFixture) (*Client, string) {
 	t.Helper()
 
-	staged := stageFixtureAgent(t)
+	staged := stageVerifierAgent(t, signer)
 	cfgRaw, err := os.ReadFile(staged.configPath)
 	if err != nil {
 		t.Fatalf("re-read staged config: %v", err)
@@ -243,9 +219,9 @@ func mediaParityClient(t *testing.T) *Client {
 
 	ffiConfig := map[string]interface{}{
 		"jacs_id":          jacsID,
-		"agent_name":       "FixtureAgent",
+		"agent_name":       "MediaFixtureVerifier",
 		"agent_version":    "1.0.0",
-		"key_dir":          cfg["jacs_key_directory"],
+		"key_dir":          filepath.Join(staged.tmpDir, cfg["jacs_key_directory"].(string)),
 		"jacs_config_path": staged.configPath,
 		"base_url":         "http://localhost:1", // never used; verify is local-only
 	}
@@ -262,7 +238,16 @@ func mediaParityClient(t *testing.T) *Client {
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
-	return cl
+	return cl, staged.verificationKeyDir
+}
+
+// mediaParityClient is shared by the Go sign-image/text tests. It uses the
+// same current signed verifier fixture but does not need the external PQ key
+// directory when signing and self-verifying newly created media.
+func mediaParityClient(t *testing.T) *Client {
+	t.Helper()
+	client, _ := mediaParityVerifier(t, loadSigner(t))
+	return client
 }
 
 // ---------------------------------------------------------------------------
@@ -323,10 +308,10 @@ func TestCrossLang_SignedImagePNGVerifies(t *testing.T) {
 	if signer.Algorithm != "pq2025" {
 		t.Fatalf("fixture algorithm = %q, want pq2025 (parity baseline)", signer.Algorithm)
 	}
-	cl := mediaParityClient(t)
+	cl, keyDir := mediaParityVerifier(t, signer)
 
 	path := writeStaged(t, "signed.png", readSignedWithChecksum(t, "signed.png"))
-	got, err := cl.VerifyImage(context.Background(), path, VerifyImageOptions{})
+	got, err := cl.VerifyImage(context.Background(), path, VerifyImageOptions{KeyDir: keyDir})
 	if err != nil {
 		t.Fatalf("VerifyImage: %v", err)
 	}
@@ -339,11 +324,12 @@ func TestCrossLang_SignedImagePNGVerifies(t *testing.T) {
 }
 
 func TestCrossLang_SignedImagePNGTamperedReturnsHashMismatch(t *testing.T) {
-	cl := mediaParityClient(t)
+	signer := loadSigner(t)
+	cl, keyDir := mediaParityVerifier(t, signer)
 
 	tampered := tamperAfter(t, readSignedWithChecksum(t, "signed.png"), []byte("IDAT"), 6)
 	path := writeStaged(t, "signed.png", tampered)
-	got, err := cl.VerifyImage(context.Background(), path, VerifyImageOptions{})
+	got, err := cl.VerifyImage(context.Background(), path, VerifyImageOptions{KeyDir: keyDir})
 	if err != nil {
 		t.Fatalf("VerifyImage: %v", err)
 	}
@@ -354,10 +340,10 @@ func TestCrossLang_SignedImagePNGTamperedReturnsHashMismatch(t *testing.T) {
 
 func TestCrossLang_SignedImageJPEGVerifies(t *testing.T) {
 	signer := loadSigner(t)
-	cl := mediaParityClient(t)
+	cl, keyDir := mediaParityVerifier(t, signer)
 
 	path := writeStaged(t, "signed.jpg", readSignedWithChecksum(t, "signed.jpg"))
-	got, err := cl.VerifyImage(context.Background(), path, VerifyImageOptions{})
+	got, err := cl.VerifyImage(context.Background(), path, VerifyImageOptions{KeyDir: keyDir})
 	if err != nil {
 		t.Fatalf("VerifyImage: %v", err)
 	}
@@ -370,11 +356,12 @@ func TestCrossLang_SignedImageJPEGVerifies(t *testing.T) {
 }
 
 func TestCrossLang_SignedImageJPEGTamperedReturnsHashMismatch(t *testing.T) {
-	cl := mediaParityClient(t)
+	signer := loadSigner(t)
+	cl, keyDir := mediaParityVerifier(t, signer)
 
 	tampered := tamperAfter(t, readSignedWithChecksum(t, "signed.jpg"), []byte{0xFF, 0xDA}, 4)
 	path := writeStaged(t, "signed.jpg", tampered)
-	got, err := cl.VerifyImage(context.Background(), path, VerifyImageOptions{})
+	got, err := cl.VerifyImage(context.Background(), path, VerifyImageOptions{KeyDir: keyDir})
 	if err != nil {
 		t.Fatalf("VerifyImage: %v", err)
 	}
@@ -385,10 +372,10 @@ func TestCrossLang_SignedImageJPEGTamperedReturnsHashMismatch(t *testing.T) {
 
 func TestCrossLang_SignedImageWebPVerifies(t *testing.T) {
 	signer := loadSigner(t)
-	cl := mediaParityClient(t)
+	cl, keyDir := mediaParityVerifier(t, signer)
 
 	path := writeStaged(t, "signed.webp", readSignedWithChecksum(t, "signed.webp"))
-	got, err := cl.VerifyImage(context.Background(), path, VerifyImageOptions{})
+	got, err := cl.VerifyImage(context.Background(), path, VerifyImageOptions{KeyDir: keyDir})
 	if err != nil {
 		t.Fatalf("VerifyImage: %v", err)
 	}
@@ -401,11 +388,12 @@ func TestCrossLang_SignedImageWebPVerifies(t *testing.T) {
 }
 
 func TestCrossLang_SignedImageWebPTamperedReturnsHashMismatch(t *testing.T) {
-	cl := mediaParityClient(t)
+	signer := loadSigner(t)
+	cl, keyDir := mediaParityVerifier(t, signer)
 
 	tampered := tamperAfter(t, readSignedWithChecksum(t, "signed.webp"), []byte("VP8L"), 4)
 	path := writeStaged(t, "signed.webp", tampered)
-	got, err := cl.VerifyImage(context.Background(), path, VerifyImageOptions{})
+	got, err := cl.VerifyImage(context.Background(), path, VerifyImageOptions{KeyDir: keyDir})
 	if err != nil {
 		t.Fatalf("VerifyImage: %v", err)
 	}
@@ -416,10 +404,10 @@ func TestCrossLang_SignedImageWebPTamperedReturnsHashMismatch(t *testing.T) {
 
 func TestCrossLang_SignedTextMDVerifies(t *testing.T) {
 	signer := loadSigner(t)
-	cl := mediaParityClient(t)
+	cl, keyDir := mediaParityVerifier(t, signer)
 
 	path := writeStaged(t, "signed.md", readSignedWithChecksum(t, "signed.md"))
-	got, err := cl.VerifyText(context.Background(), path, VerifyTextOptions{})
+	got, err := cl.VerifyText(context.Background(), path, VerifyTextOptions{KeyDir: keyDir})
 	if err != nil {
 		t.Fatalf("VerifyText: %v", err)
 	}
@@ -439,11 +427,12 @@ func TestCrossLang_SignedTextMDVerifies(t *testing.T) {
 }
 
 func TestCrossLang_SignedTextMDTamperedReturnsHashMismatch(t *testing.T) {
-	cl := mediaParityClient(t)
+	signer := loadSigner(t)
+	cl, keyDir := mediaParityVerifier(t, signer)
 
 	tampered := tamperTextBody(t, readSignedWithChecksum(t, "signed.md"))
 	path := writeStaged(t, "signed.md", tampered)
-	got, err := cl.VerifyText(context.Background(), path, VerifyTextOptions{})
+	got, err := cl.VerifyText(context.Background(), path, VerifyTextOptions{KeyDir: keyDir})
 	if err != nil {
 		t.Fatalf("VerifyText: %v", err)
 	}

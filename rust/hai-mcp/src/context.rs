@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex as StdMutex;
 
+use haiai::document_store::build_document_provider_with_request_auth_audience;
 use haiai::{
-    build_document_provider, resolve_storage_backend, HaiClient, HaiClientOptions,
+    resolve_storage_backend, HaiClient, HaiClientOptions, JacsConflictProvider,
     JacsDocumentProvider, JacsProvider, LocalJacsProvider, NoopJacsProvider,
 };
 
@@ -17,6 +18,9 @@ struct CachedAgentState {
 
 pub struct HaiServerContext {
     base_url: String,
+    // Capture once, including errors, to preserve the constructors' existing
+    // signatures without allowing later env changes to repair/downgrade a pin.
+    request_auth_audience: Result<String, String>,
     fallback_jacs_id: String,
     default_config_path: Option<PathBuf>,
     storage_override: Option<String>,
@@ -44,12 +48,15 @@ impl HaiServerContext {
         embedded_provider: EmbeddedJacsProvider,
         storage_override: Option<String>,
     ) -> Self {
-        let base_url = normalize_base_url(
-            &std::env::var("HAI_URL").unwrap_or_else(|_| haiai::DEFAULT_BASE_URL.to_string()),
-        );
+        // `HAI_URL` > `HAI_API_URL` > `DEFAULT_BASE_URL`, the same precedence
+        // every HAIAI SDK uses; this is how an operator points `haiai mcp` at
+        // a benchmark or staging deployment.
+        let base_url = normalize_base_url(&haiai::base_url_from_env());
         let default_config_path = default_config_path.map(PathBuf::from);
         Self {
             base_url,
+            request_auth_audience: haiai::client::request_auth_audience_from_env()
+                .map_err(|error| error.to_string()),
             fallback_jacs_id,
             default_config_path,
             storage_override,
@@ -127,12 +134,43 @@ impl HaiServerContext {
         config_path: Option<&str>,
     ) -> Result<Box<dyn JacsDocumentProvider>, String> {
         self.validate_embedded_config_path(config_path)?;
-        build_document_provider(
+        build_document_provider_with_request_auth_audience(
             self.effective_config_path(config_path),
             self.storage_override.as_deref(),
             Some(self.resolve_base_url(None)?),
+            self.request_auth_audience()?,
         )
         .map_err(|e| format!("failed to build routed JACS document provider: {e}"))
+    }
+
+    pub fn conflict_provider(
+        &self,
+        config_path: Option<&str>,
+    ) -> Result<Box<dyn JacsConflictProvider>, String> {
+        self.validate_embedded_config_path(config_path)?;
+        let backend = resolve_storage_backend(
+            self.storage_override.as_deref(),
+            self.effective_config_path(config_path),
+        )
+        .map_err(|e| format!("failed to resolve routed JACS conflict storage: {e}"))?;
+
+        match backend.as_str() {
+            "fs" | "rusqlite" | "sqlite" => {
+                let provider = LocalJacsProvider::from_config_path(
+                    self.effective_config_path(config_path),
+                    Some(backend.as_str()),
+                )
+                .map_err(|e| format!("failed to build routed JACS conflict provider: {e}"))?;
+                Ok(Box::new(provider))
+            }
+            "remote" => Err(
+                "conflict tools require a local JACS conflict provider; remote conflict storage is not implemented"
+                    .to_string(),
+            ),
+            other => Err(format!(
+                "Unsupported storage backend '{other}'. Valid routed labels: fs, rusqlite, sqlite, remote"
+            )),
+        }
     }
 
     pub fn document_storage_label(&self, config_path: Option<&str>) -> Result<String, String> {
@@ -154,11 +192,16 @@ impl HaiServerContext {
             provider,
             HaiClientOptions {
                 base_url,
+                request_auth_audience: self.request_auth_audience()?.to_string(),
                 client_identifier: Some(format!("haiai-mcp/{}", env!("CARGO_PKG_VERSION"))),
                 ..HaiClientOptions::default()
             },
         )
         .map_err(|e| e.to_string())
+    }
+
+    fn request_auth_audience(&self) -> Result<&str, String> {
+        self.request_auth_audience.as_deref().map_err(Clone::clone)
     }
 
     /// Exposed for tools that need the same startup-pinned base URL as the email path.
@@ -271,6 +314,7 @@ mod tests {
     ) -> HaiServerContext {
         HaiServerContext {
             base_url: normalize_base_url(base_url),
+            request_auth_audience: Ok(haiai::client::DEFAULT_REQUEST_AUTH_AUDIENCE.to_string()),
             fallback_jacs_id: "anonymous-agent".to_string(),
             default_config_path: default_config_path.map(PathBuf::from),
             storage_override: None,
@@ -287,6 +331,76 @@ mod tests {
         client.set_agent_email("agent@hai.ai".to_string());
         context.remember_hai_agent_id(client.jacs_id(), "hai-agent-123");
         context.remember_agent_email(client.jacs_id(), "agent@hai.ai");
+    }
+
+    #[test]
+    fn operator_audience_snapshot_survives_environment_changes() {
+        const CASE_ENV: &str = "HAIAI_TEST_AUDIENCE_CASE";
+        const AUDIENCE_ENV: &str = haiai::client::REQUEST_AUTH_AUDIENCE_ENV;
+        // Each case changes process environment only in its own test subprocess,
+        // so parallel MCP tests cannot observe a transient audience or error.
+        let raw_case = match std::env::var(CASE_ENV) {
+            Ok(value) => value,
+            Err(_) => {
+                let fixture: serde_json::Value =
+                    serde_json::from_str(include_str!("../../../fixtures/cross_lang_test.json"))
+                        .unwrap();
+                let contract = &fixture["request_auth"]["cli_mcp_audience"];
+                for case in contract["valid_cases"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .chain(contract["invalid_cases"].as_array().unwrap())
+                {
+                    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+                    command.args(["context::tests::operator_audience_snapshot_survives_environment_changes", "--exact"])
+                        .env(CASE_ENV, case.to_string())
+                        .env("HAI_URL", "https://unrelated-origin.example");
+                    match case["value"].as_str() {
+                        Some(value) => {
+                            command.env(AUDIENCE_ENV, value);
+                        }
+                        None => {
+                            command.env_remove(AUDIENCE_ENV);
+                        }
+                    }
+                    let output = command.output().unwrap();
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    assert!(
+                        output.status.success() && stdout.contains("1 passed; 0 failed"),
+                        "{case}: {} {}",
+                        stdout,
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+                return;
+            }
+        };
+        let case: serde_json::Value = serde_json::from_str(&raw_case).unwrap();
+        let context = HaiServerContext::from_process_env(
+            "fixture-agent".into(),
+            None,
+            EmbeddedJacsProvider::testing("fixture-agent"),
+        );
+        std::env::set_var(AUDIENCE_ENV, "changed-after-startup");
+        let client =
+            context.client_with_provider(haiai::StaticJacsProvider::new("fixture-agent"), None);
+        if let Some(expected) = case["expected"].as_str() {
+            let client = client.expect("startup audience remains valid");
+            let header = client
+                .build_request_auth_header("GET", "https://unrelated-origin.example/api", &[])
+                .unwrap();
+            let claims = jacs::protocol::inspect_unverified_request_auth_header(&header).unwrap();
+            assert_eq!(claims.audience, expected);
+            assert_eq!(context.request_auth_audience().unwrap(), expected);
+        } else {
+            assert!(client.err().unwrap().contains(AUDIENCE_ENV));
+            assert!(context
+                .document_provider(None)
+                .err()
+                .unwrap()
+                .contains(AUDIENCE_ENV));
+        }
     }
 
     #[test]

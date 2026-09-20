@@ -1,7 +1,7 @@
 {
   "description": "Canonical MCP tool parity contract. The Rust MCP server (hai-mcp) must expose exactly these tools with matching names, properties, and required fields. Other SDKs validate against this fixture to ensure cross-language parity.",
-  "version": "2.1.0",
-  "total_tool_count": 39,
+  "version": "2.2.0",
+  "total_tool_count": 44,
   "required_tools": [
     {
       "name": "hai_hello",
@@ -58,6 +58,7 @@
         "bcc": "array",
         "labels": "array",
         "in_reply_to": "string",
+        "generation_type": "string",
         "agent_id": "string",
         "config_path": "string"
       },
@@ -434,6 +435,57 @@
     },
     {
       "name": "hai_get_record_bytes",
+      "properties": {
+        "key": "string",
+        "config_path": "string"
+      },
+      "required": [
+        "key"
+      ]
+    },
+    {
+      "name": "hai_conflict_create",
+      "properties": {
+        "body": "object",
+        "config_path": "string"
+      },
+      "required": [
+        "body"
+      ]
+    },
+    {
+      "name": "hai_conflict_update",
+      "properties": {
+        "key": "string",
+        "mutation": "object",
+        "config_path": "string"
+      },
+      "required": [
+        "key",
+        "mutation"
+      ]
+    },
+    {
+      "name": "hai_conflict_get",
+      "properties": {
+        "key": "string",
+        "config_path": "string"
+      },
+      "required": [
+        "key"
+      ]
+    },
+    {
+      "name": "hai_conflict_list",
+      "properties": {
+        "limit": "number",
+        "offset": "number",
+        "config_path": "string"
+      },
+      "required": []
+    },
+    {
+      "name": "hai_conflict_check_readiness",
       "properties": {
         "key": "string",
         "config_path": "string"

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 from urllib.parse import quote
 
 import pytest
@@ -26,7 +25,11 @@ def test_update_username_passes_raw_agent_id_to_ffi(
 ) -> None:
     client = HaiClient()
     mock_ffi = client._get_ffi()
-    mock_ffi.responses["update_username"] = {"username": "new-name", "email": "new-name@hai.ai", "previous_username": "old-name"}
+    mock_ffi.responses["update_username"] = {
+        "username": "new-name",
+        "email": "new-name@hai.ai",
+        "previous_username": "old-name",
+    }
 
     client.update_username("https://hai.ai", "agent/../with/slash", "new-name")
 
@@ -130,7 +133,10 @@ def test_submit_benchmark_response_passes_job_id_to_ffi(
 ) -> None:
     client = HaiClient()
     mock_ffi = client._get_ffi()
-    mock_ffi.responses["submit_response"] = {"success": True, "job_id": "job/with/slash"}
+    mock_ffi.responses["submit_response"] = {
+        "success": True,
+        "job_id": "job/with/slash",
+    }
 
     client.submit_benchmark_response(
         "https://hai.ai",
@@ -225,7 +231,9 @@ async def test_async_verify_agent_document_calls_ffi() -> None:
         "verification": {},
     }
 
-    await client.verify_agent_document("https://hai.ai", {"jacsId": "agent-1"}, domain="example.com")
+    await client.verify_agent_document(
+        "https://hai.ai", {"jacsId": "agent-1"}, domain="example.com"
+    )
 
     assert mock_ffi.calls[0][0] == "verify_agent_document"
 
@@ -236,7 +244,11 @@ async def test_async_verify_agent_document_calls_ffi() -> None:
 
 
 def _load_path_escaping_fixture() -> dict:
-    path = Path(__file__).resolve().parent.parent.parent / "fixtures" / "path_escaping_contract.json"
+    path = (
+        Path(__file__).resolve().parent.parent.parent
+        / "fixtures"
+        / "path_escaping_contract.json"
+    )
     return json.loads(path.read_text())
 
 

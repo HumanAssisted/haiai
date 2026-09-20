@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::client::DEFAULT_BASE_URL;
+use crate::client::DEFAULT_REQUEST_AUTH_AUDIENCE;
 use crate::config::resolve_storage_backend;
 use crate::error::{HaiError, Result};
 use crate::jacs::JacsDocumentProvider;
@@ -25,6 +25,22 @@ pub fn build_document_provider(
     storage: Option<&str>,
     base_url: Option<String>,
 ) -> Result<Box<dyn JacsDocumentProvider>> {
+    build_document_provider_with_request_auth_audience(
+        config_path,
+        storage,
+        base_url,
+        DEFAULT_REQUEST_AUTH_AUDIENCE,
+    )
+}
+
+/// Build the routed provider with the caller's already-pinned API audience.
+/// Reconstructed FFI providers must preserve this rather than resetting it.
+pub fn build_document_provider_with_request_auth_audience(
+    config_path: Option<&Path>,
+    storage: Option<&str>,
+    base_url: Option<String>,
+    request_auth_audience: &str,
+) -> Result<Box<dyn JacsDocumentProvider>> {
     let backend = resolve_storage_backend(storage, config_path)?;
     let remote = crate::config::resolve_remote(None, config_path);
 
@@ -32,10 +48,20 @@ pub fn build_document_provider(
     // remote provider with local signing — the PRD's two-axis model.
     if remote && backend != "remote" {
         tracing::info!(backend = %backend, remote = true, "promoting to remote provider (remote=true in config)");
-        return build_document_provider_for_backend(config_path, "remote", base_url);
+        return build_document_provider_for_backend_with_audience(
+            config_path,
+            "remote",
+            base_url,
+            request_auth_audience,
+        );
     }
 
-    build_document_provider_for_backend(config_path, &backend, base_url)
+    build_document_provider_for_backend_with_audience(
+        config_path,
+        &backend,
+        base_url,
+        request_auth_audience,
+    )
 }
 
 /// Build a document provider for a pre-resolved backend label.
@@ -43,6 +69,20 @@ pub fn build_document_provider_for_backend(
     config_path: Option<&Path>,
     backend: &str,
     base_url: Option<String>,
+) -> Result<Box<dyn JacsDocumentProvider>> {
+    build_document_provider_for_backend_with_audience(
+        config_path,
+        backend,
+        base_url,
+        DEFAULT_REQUEST_AUTH_AUDIENCE,
+    )
+}
+
+fn build_document_provider_for_backend_with_audience(
+    config_path: Option<&Path>,
+    backend: &str,
+    base_url: Option<String>,
+    request_auth_audience: &str,
 ) -> Result<Box<dyn JacsDocumentProvider>> {
     match backend {
         "fs" | "rusqlite" | "sqlite" => {
@@ -59,13 +99,14 @@ pub fn build_document_provider_for_backend(
                             "failed to load local JACS signer for remote document provider: {e}"
                         ))
                     })?;
-            let base_url = base_url
-                .or_else(|| std::env::var("HAI_URL").ok())
-                .unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
+            // `HAI_URL` > `HAI_API_URL` > `DEFAULT_BASE_URL`, one contract for
+            // the whole crate.
+            let base_url = base_url.unwrap_or_else(crate::client::base_url_from_env);
             let remote = RemoteJacsProvider::new(
                 local,
                 RemoteJacsProviderOptions {
                     base_url,
+                    request_auth_audience: request_auth_audience.to_string(),
                     ..RemoteJacsProviderOptions::default()
                 },
             )?;
@@ -82,29 +123,10 @@ pub fn build_document_provider_for_backend(
 
 #[cfg(test)]
 mod tests {
-    use jacs::simple::CreateAgentParams;
-
     use super::*;
 
     fn create_test_agent() -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let base = dir.path().canonicalize().expect("canonical tempdir");
-        let config_path = base.join("jacs.config.json");
-        let data_dir = base.join("jacs_data");
-        let key_dir = base.join("jacs_keys");
-        std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "TestPass!123");
-        LocalJacsProvider::create_agent(CreateAgentParams {
-            name: "doc-store-test".to_string(),
-            password: "TestPass!123".to_string(),
-            config_path: config_path.to_string_lossy().into_owned(),
-            data_directory: data_dir.to_string_lossy().into_owned(),
-            key_directory: key_dir.to_string_lossy().into_owned(),
-            algorithm: "ed25519".to_string(),
-            default_storage: "fs".to_string(),
-            ..CreateAgentParams::default()
-        })
-        .expect("create agent");
-        (dir, config_path)
+        crate::test_support::create_test_agent("doc-store-test")
     }
 
     #[test]

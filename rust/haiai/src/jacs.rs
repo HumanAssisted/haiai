@@ -175,6 +175,18 @@ pub fn media_verify_result_to_json(result: &MediaVerificationResult) -> Value {
 // Layer 0: Core Signing (JacsProvider)
 // =============================================================================
 
+/// One registration entity authenticated with the pre-change identity version.
+/// This is ephemeral request data, not a reusable old-key signer.
+pub struct AgentRegistrationRequest<T> {
+    pub result: T,
+    /// The exact serialized registration entity authenticated before the change.
+    pub body: Vec<u8>,
+    pub auth_header: String,
+}
+
+pub type RotationRegistrationRequest = AgentRegistrationRequest<RotationResult>;
+pub type UpdateRegistrationRequest = AgentRegistrationRequest<UpdateAgentResult>;
+
 /// Bridge trait for JACS operations that HAI SDK depends on.
 ///
 /// Implement this trait by adapting the canonical JACS Rust package (or a
@@ -191,6 +203,20 @@ pub trait JacsProvider: Send + Sync {
     fn jacs_id(&self) -> &str;
     fn sign_string(&self, message: &str) -> Result<String>;
 
+    /// Build the shipped request-auth-v2 header over final method, URL, exact
+    /// entity bytes and deployment-pinned audience. No legacy fallback.
+    fn build_request_auth_header(
+        &self,
+        _method: &str,
+        _url: &str,
+        _body: &[u8],
+        _audience: &str,
+    ) -> Result<String> {
+        Err(HaiError::Provider(
+            "request-auth-v2 is unsupported by this provider".into(),
+        ))
+    }
+
     /// Sign raw bytes and return the signature bytes.
     /// Required for email signing where the payload is binary.
     fn sign_bytes(&self, data: &[u8]) -> Result<Vec<u8>>;
@@ -198,7 +224,7 @@ pub trait JacsProvider: Send + Sync {
     /// Return the key identifier used for signing.
     fn key_id(&self) -> &str;
 
-    /// Return the signing algorithm name (e.g., "ed25519", "rsa-pss-sha256").
+    /// Return the signing algorithm name (e.g., "ed25519", "pq2025").
     fn algorithm(&self) -> &str;
 
     /// Return canonical JSON text for `value` in the same way JACS signs.
@@ -232,6 +258,36 @@ pub trait JacsProvider: Send + Sync {
              or any provider that wraps a real JACS SimpleAgent"
                 .to_string(),
         ))
+    }
+
+    /// Sign the canonical HTML-inline email pre-image as a hidden JACS envelope.
+    fn sign_html_inline_email_envelope(
+        &self,
+        raw_email: &[u8],
+    ) -> Result<crate::email_inline::HtmlInlineJacsEnvelope> {
+        #[cfg(feature = "jacs-crate")]
+        let content = {
+            let payload = jacs::email::build_html_inline_email_signature_payload(raw_email)
+                .map_err(|e| {
+                    HaiError::Provider(format!("JACS inline email payload failed: {e}"))
+                })?;
+            serde_json::to_value(payload)?
+        };
+
+        #[cfg(not(feature = "jacs-crate"))]
+        let content = {
+            use sha2::Digest as _;
+            let digest = sha2::Sha256::digest(raw_email);
+            let hash: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+            serde_json::json!({ "raw_email_sha256": format!("sha256:{hash}") })
+        };
+
+        let signed = self.sign_envelope(&serde_json::json!({
+            "jacsType": "email_inline_signature",
+            "jacsLevel": "raw",
+            "content": content,
+        }))?;
+        crate::email_inline::build_hidden_jacs_envelope(&signed)
     }
 
     /// Sign a file as a JACS file envelope (JACS attachment pipeline).
@@ -300,8 +356,21 @@ pub trait JacsProvider: Send + Sync {
         ))
     }
 
-    /// Return a signed payload accepted by `/api/v1/agents/jobs/{job_id}/response`.
+    /// Legacy response-v2 mathematical signing; not an action authorization.
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload>;
+
+    /// Sign the closed action context through a named JACS operation.
+    /// Restricted remote providers must authorize this operation separately.
+    #[cfg(feature = "jacs-crate")]
+    fn sign_response_with_context(
+        &self,
+        _data: &jacs::response_context::ResponseData,
+        _operation: jacs::response_context::ResponseOperation,
+    ) -> Result<SignedPayload> {
+        Err(HaiError::Provider(
+            "context-bound response signing is unsupported by this provider".into(),
+        ))
+    }
 
     /// Verify a wrapped A2A artifact using JACS cryptographic verification.
     ///
@@ -368,6 +437,28 @@ pub trait JacsProvider: Send + Sync {
         ))
     }
 
+    /// Rotate with an optional explicit JACS algorithm. Providers that only
+    /// support their current algorithm must refuse an override before mutation.
+    fn rotate_with_algorithm(&self, algorithm: Option<&str>) -> Result<RotationResult> {
+        if algorithm.is_some() {
+            return Err(HaiError::Provider(
+                "rotation algorithm override is not supported by this provider".into(),
+            ));
+        }
+        self.rotate()
+    }
+
+    /// Rotate locally and authorize the exact registration entity with the
+    /// pre-rotation key. Unsupported providers fail before changing keys.
+    fn rotate_for_registration(
+        &self,
+        _url: &str,
+        _audience: &str,
+        _algorithm: Option<&str>,
+    ) -> Result<RotationRegistrationRequest> {
+        Err(HaiError::Provider("request-bound key rotation registration is not supported by this provider; implement rotate_for_registration or choose local-only rotation".into()))
+    }
+
     /// Export the current agent document as a JSON string.
     ///
     /// **Deprecated:** Use [`JacsAgentLifecycle::export_agent_json()`] instead.
@@ -386,6 +477,19 @@ pub trait JacsProvider: Send + Sync {
         let _ = new_agent_data;
         Err(HaiError::Provider(
             "update_agent not supported by this provider; use LocalJacsProvider".to_string(),
+        ))
+    }
+
+    /// Update metadata and authorize the exact registration entity using the
+    /// previously registered identity version, before advancing local state.
+    fn update_for_registration(
+        &self,
+        _new_agent_data: &str,
+        _url: &str,
+        _audience: &str,
+    ) -> Result<UpdateRegistrationRequest> {
+        Err(HaiError::Provider(
+            "request-bound agent update registration is not supported by this provider".into(),
         ))
     }
 }
@@ -1109,6 +1213,32 @@ fn extract_jacs_type_from_text(text: &str) -> Option<String> {
 }
 
 // =============================================================================
+// Layer 2a: Conflict Documents (feature-gated)
+// =============================================================================
+
+/// Extension trait for signed, versioned conflict documents.
+#[cfg(feature = "conflict")]
+pub trait JacsConflictProvider: JacsDocumentProvider {
+    /// Create and persist a standalone `conflict/v1` document.
+    fn create_conflict(&self, body: Value) -> Result<SignedDocument>;
+
+    /// Apply a typed conflict mutation to a key or document id, producing a new version.
+    fn update_conflict(&self, key_or_id: &str, mutation: Value) -> Result<SignedDocument>;
+
+    /// Fetch a specific conflict version by key (`id:version`).
+    fn get_conflict(&self, key: &str) -> Result<String>;
+
+    /// Fetch the latest conflict version by document id.
+    fn get_latest_conflict(&self, id: &str) -> Result<String>;
+
+    /// List conflict document keys via the shared document store.
+    fn list_conflicts(&self, limit: usize, offset: usize) -> Result<Vec<String>>;
+
+    /// Run the deterministic JACS readiness checker for a conflict key or id.
+    fn check_conflict_readiness(&self, key_or_id: &str) -> Result<Value>;
+}
+
+// =============================================================================
 // Layer 3: Batch Operations (JacsBatchProvider)
 // =============================================================================
 
@@ -1125,6 +1255,27 @@ pub trait JacsBatchProvider: JacsProvider {
 // Layer 4: Verification (JacsVerificationProvider)
 // =============================================================================
 
+/// Map a JACS `VerificationResult` to haiai's `DocVerificationResult`.
+/// Single source of truth for the mapping — used by `LocalJacsProvider` and
+/// `RemoteJacsProvider` verification impls.
+#[cfg(feature = "jacs-crate")]
+pub(crate) fn map_verification_result(
+    result: jacs::simple::VerificationResult,
+) -> crate::types::DocVerificationResult {
+    crate::types::DocVerificationResult {
+        key: result.signer_id.clone(),
+        valid: result.valid,
+        error: if result.errors.is_empty() {
+            None
+        } else {
+            Some(result.errors.join("; "))
+        },
+        signer_id: Some(result.signer_id),
+        timestamp: Some(result.timestamp),
+        signer_name: result.signer_name,
+    }
+}
+
 /// Extension trait for document verification, DNS trust, and auth headers.
 pub trait JacsVerificationProvider: JacsProvider {
     /// Verify a signed document.
@@ -1139,14 +1290,18 @@ pub trait JacsVerificationProvider: JacsProvider {
     /// Verify an agent's public key via DNS (L2 trust).
     fn verify_dns(&self, domain: &str) -> Result<()>;
 
-    /// Build a JACS Authorization header for HTTP requests.
+    /// Retired context-free HTTP helper. Current providers reject this request;
+    /// use [`JacsProvider::build_request_auth_header`] with exact request data.
     fn build_auth_header_jacs(&self) -> Result<String>;
 
     /// Unwrap a signed event, verifying its signature against known server public keys.
     ///
-    /// Returns a tuple of (unwrapped data, was_verified). If the signer's key is found
-    /// in `server_public_keys`, the signature is verified and `was_verified` is `true`.
-    /// If the signer's key is not found, the data is returned unverified.
+    /// Returns a tuple of (unwrapped data, was_verified) only after strict v2
+    /// envelope verification succeeds. `was_verified` is therefore always
+    /// `true`; unknown keys, plain/legacy events, stale timestamps, replay, and
+    /// invalid signatures are errors and never return payload data. New live
+    /// transport code should prefer `HaiEvent::verification`, which preserves
+    /// the complete signer provenance instead of this compatibility tuple.
     fn unwrap_signed_event(
         &self,
         event: &Value,
@@ -1165,6 +1320,15 @@ pub trait JacsEmailProvider: JacsProvider {
 
     /// Verify a signed email with the given public key.
     fn verify_email(&self, raw: &[u8], key: Vec<u8>) -> Result<Value>;
+
+    /// Verify either attachment or HTML-inline signed email through JACS.
+    #[cfg(feature = "jacs-crate")]
+    fn verify_signed_email_transport(
+        &self,
+        raw: &[u8],
+        key: Vec<u8>,
+        mode: jacs::email::VerificationMode,
+    ) -> Result<jacs::email::SignedEmailVerificationResult>;
 
     /// Add a JACS attachment to an email.
     fn add_jacs_attachment(&self, email: &[u8], doc: &[u8]) -> Result<Vec<u8>>;
@@ -1238,6 +1402,43 @@ pub trait JacsMediaProvider: JacsProvider {
 /// Extension trait for multi-party agreements.
 #[cfg(feature = "agreements")]
 pub trait JacsAgreementProvider: JacsProvider {
+    /// Create a standalone JACS agreement v2 document.
+    fn create_agreement_v2(&self, input: Value) -> Result<SignedDocument>;
+
+    /// Apply a policy-controlled v2 agreement mutation.
+    fn apply_agreement_v2(&self, document: &str, mutation: Value) -> Result<SignedDocument>;
+
+    /// Add a signer, witness, or notary signature to a v2 agreement.
+    fn sign_agreement_v2(&self, document: &str, role: &str) -> Result<SignedDocument>;
+
+    /// Verify v2 agreement structure, hashes, policy, and signatures.
+    fn verify_agreement_v2(&self, document: &str) -> Result<Value>;
+
+    /// Compare two v2 agreement branches against their shared base.
+    fn detect_agreement_branch_conflict(
+        &self,
+        base_document: &str,
+        left_document: &str,
+        right_document: &str,
+    ) -> Result<Value>;
+
+    /// Auto-merge two transcript-only v2 agreement branches.
+    fn merge_agreement_transcript_branches(
+        &self,
+        base_document: &str,
+        left_document: &str,
+        right_document: &str,
+    ) -> Result<SignedDocument>;
+
+    /// Resolve a v2 agreement branch conflict with an explicit mutation.
+    fn resolve_agreement_branch_conflict(
+        &self,
+        base_document: &str,
+        previous_document: &str,
+        side_branch_document: &str,
+        resolution: Value,
+    ) -> Result<SignedDocument>;
+
     /// Create an agreement with specified agents and optional quorum.
     fn create_agreement(
         &self,
@@ -1300,8 +1501,42 @@ impl JacsProvider for Box<dyn JacsProvider> {
         (**self).canonical_json(value)
     }
 
+    fn sign_envelope(&self, value: &Value) -> Result<String> {
+        (**self).sign_envelope(value)
+    }
+
+    fn sign_html_inline_email_envelope(
+        &self,
+        raw_email: &[u8],
+    ) -> Result<crate::email_inline::HtmlInlineJacsEnvelope> {
+        (**self).sign_html_inline_email_envelope(raw_email)
+    }
+
+    fn sign_file_envelope(&self, path: &str, embed: bool) -> Result<SignedDocument> {
+        (**self).sign_file_envelope(path, embed)
+    }
+
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
         (**self).sign_response(payload)
+    }
+
+    fn build_request_auth_header(
+        &self,
+        method: &str,
+        url: &str,
+        body: &[u8],
+        audience: &str,
+    ) -> Result<String> {
+        (**self).build_request_auth_header(method, url, body, audience)
+    }
+
+    #[cfg(feature = "jacs-crate")]
+    fn sign_response_with_context(
+        &self,
+        data: &jacs::response_context::ResponseData,
+        operation: jacs::response_context::ResponseOperation,
+    ) -> Result<SignedPayload> {
+        (**self).sign_response_with_context(data, operation)
     }
 
     fn verify_a2a_artifact(&self, wrapped_json: &str) -> Result<String> {
@@ -1316,12 +1551,34 @@ impl JacsProvider for Box<dyn JacsProvider> {
         (**self).rotate()
     }
 
+    fn rotate_with_algorithm(&self, algorithm: Option<&str>) -> Result<RotationResult> {
+        (**self).rotate_with_algorithm(algorithm)
+    }
+
+    fn rotate_for_registration(
+        &self,
+        url: &str,
+        audience: &str,
+        algorithm: Option<&str>,
+    ) -> Result<RotationRegistrationRequest> {
+        (**self).rotate_for_registration(url, audience, algorithm)
+    }
+
     fn export_agent_json(&self) -> Result<String> {
         (**self).export_agent_json()
     }
 
     fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
         (**self).update_agent(new_agent_data)
+    }
+
+    fn update_for_registration(
+        &self,
+        new_agent_data: &str,
+        url: &str,
+        audience: &str,
+    ) -> Result<UpdateRegistrationRequest> {
+        (**self).update_for_registration(new_agent_data, url, audience)
     }
 
     fn sign_text_create(
@@ -1379,8 +1636,42 @@ impl JacsProvider for Box<dyn JacsMediaProvider> {
         (**self).canonical_json(value)
     }
 
+    fn sign_envelope(&self, value: &Value) -> Result<String> {
+        (**self).sign_envelope(value)
+    }
+
+    fn sign_html_inline_email_envelope(
+        &self,
+        raw_email: &[u8],
+    ) -> Result<crate::email_inline::HtmlInlineJacsEnvelope> {
+        (**self).sign_html_inline_email_envelope(raw_email)
+    }
+
+    fn sign_file_envelope(&self, path: &str, embed: bool) -> Result<SignedDocument> {
+        (**self).sign_file_envelope(path, embed)
+    }
+
     fn sign_response(&self, payload: &Value) -> Result<SignedPayload> {
         (**self).sign_response(payload)
+    }
+
+    fn build_request_auth_header(
+        &self,
+        method: &str,
+        url: &str,
+        body: &[u8],
+        audience: &str,
+    ) -> Result<String> {
+        (**self).build_request_auth_header(method, url, body, audience)
+    }
+
+    #[cfg(feature = "jacs-crate")]
+    fn sign_response_with_context(
+        &self,
+        data: &jacs::response_context::ResponseData,
+        operation: jacs::response_context::ResponseOperation,
+    ) -> Result<SignedPayload> {
+        (**self).sign_response_with_context(data, operation)
     }
 
     fn verify_a2a_artifact(&self, wrapped_json: &str) -> Result<String> {
@@ -1395,12 +1686,34 @@ impl JacsProvider for Box<dyn JacsMediaProvider> {
         (**self).rotate()
     }
 
+    fn rotate_with_algorithm(&self, algorithm: Option<&str>) -> Result<RotationResult> {
+        (**self).rotate_with_algorithm(algorithm)
+    }
+
+    fn rotate_for_registration(
+        &self,
+        url: &str,
+        audience: &str,
+        algorithm: Option<&str>,
+    ) -> Result<RotationRegistrationRequest> {
+        (**self).rotate_for_registration(url, audience, algorithm)
+    }
+
     fn export_agent_json(&self) -> Result<String> {
         (**self).export_agent_json()
     }
 
     fn update_agent(&self, new_agent_data: &str) -> Result<UpdateAgentResult> {
         (**self).update_agent(new_agent_data)
+    }
+
+    fn update_for_registration(
+        &self,
+        new_agent_data: &str,
+        url: &str,
+        audience: &str,
+    ) -> Result<UpdateRegistrationRequest> {
+        (**self).update_for_registration(new_agent_data, url, audience)
     }
 
     fn sign_text_create(
@@ -1540,6 +1853,45 @@ impl StaticJacsProvider {
 impl JacsProvider for StaticJacsProvider {
     fn jacs_id(&self) -> &str {
         &self.jacs_id
+    }
+
+    fn build_request_auth_header(
+        &self,
+        method: &str,
+        url: &str,
+        body: &[u8],
+        audience: &str,
+    ) -> Result<String> {
+        #[cfg(feature = "jacs-crate")]
+        {
+            // Contract-test signature only; production verification always rejects it.
+            jacs::protocol::build_request_auth_header_with_signer(
+                &self.jacs_id,
+                &self.algorithm,
+                "test-only-not-a-public-key-hash",
+                method,
+                url,
+                body,
+                audience,
+                |input| {
+                    self.sign_string(input)
+                        .map_err(|error| jacs::error::JacsError::SigningFailed {
+                            reason: error.to_string(),
+                        })
+                },
+            )
+            .map_err(|error| HaiError::Provider(error.to_string()))
+        }
+        #[cfg(not(feature = "jacs-crate"))]
+        {
+            // No protocol reimplementation without JACS: HTTP-only fixtures
+            // receive a visibly invalid marker, never usable authentication.
+            let _ = (method, url, body, audience);
+            Ok(format!(
+                "JACS v2.test-only-{}.c2ln",
+                Uuid::new_v4().simple()
+            ))
+        }
     }
 
     fn sign_email_locally(&self, raw_email: &[u8]) -> Result<Vec<u8>> {
@@ -1897,7 +2249,7 @@ mod tests {
             intent: SaveIntent::Upsert,
         };
         assert_eq!(req.jacs_type, "soul");
-        assert_eq!(req.singleton, true);
+        assert!(req.singleton);
         assert!(matches!(req.intent, SaveIntent::Upsert));
         assert_eq!(req.logical_name, Some("SOUL.md".into()));
         assert_eq!(req.content_type, "text/markdown; profile=jacs-text-v1");

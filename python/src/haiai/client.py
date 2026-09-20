@@ -1,7 +1,14 @@
+# Copyright (c) 2026 Human Assisted Intelligence, Inc.
+#
+# Use of this software is governed by the Business Source License 1.1
+# included in the LICENSE file.
+#
+# SPDX-License-Identifier: BUSL-1.1
+
 """HaiClient -- full-featured client for the HAI benchmark platform.
 
-All HTTP-based API calls delegate to the FFI adapter (haiipy binding-core).
-SSE/WS streaming, key rotation, and local signing remain native Python.
+All HTTP calls, streaming, and key rotation delegate to the Rust FFI adapter.
+Local signing delegates to JACS.
 """
 
 from __future__ import annotations
@@ -12,32 +19,20 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any, Generator, Iterator, Optional, Union
+from typing import Any, Iterator, Optional, Union
 
 from haiai import _client_shared
-from haiai._ffi_adapter import FFIAdapter, map_ffi_error
-from haiai._sse import flatten_benchmark_job, parse_sse_lines
+from haiai._ffi_adapter import FFIAdapter
+from haiai._sse import flatten_benchmark_job
 from haiai.signing import canonicalize_json, create_agent_document
 from haiai.errors import (
-    BenchmarkError,
-    BodyTooLarge,
-    EmailNotActive,
-    HaiApiError,
     HaiAuthError,
     HaiConnectionError,
     HaiError,
-    RateLimited,
-    RecipientNotFound,
-    RegistrationError,
-    SSEError,
-    SubjectTooLong,
-    WebSocketError,
 )
 from haiai.models import (
     AgentConfig,
     AgentVerificationResult,
-    AttestationResult,
-    AttestationVerifyResult,
     BaselineRunResult,
     BenchmarkResult,
     ChainEntry,
@@ -70,7 +65,7 @@ from haiai.models import (
     VerifyTextResult,
     VerifyTextSignature,
 )
-from haiai.signing import is_signed_event, sign_response, unwrap_signed_event
+from haiai.signing import _sign_payload, is_signed_event, unwrap_signed_event
 
 logger = logging.getLogger("haiai.client")
 
@@ -84,7 +79,7 @@ MAX_VERIFY_DOCUMENT_BYTES = 1515
 
 def _armor_key_bytes(raw: bytes, block_type: str) -> str:
     encoded = base64.b64encode(raw).decode("ascii")
-    lines = [encoded[i:i + 64] for i in range(0, len(encoded), 64)]
+    lines = [encoded[i : i + 64] for i in range(0, len(encoded), 64)]
     return (
         f"-----BEGIN {block_type}-----\n"
         + "\n".join(lines)
@@ -162,7 +157,11 @@ def _verify_hai_message_impl(
         return False
 
 
-def _build_ffi_config() -> str:
+def _build_ffi_config(
+    expected_event_tenant: Optional[str] = None,
+    response_audience: Optional[str] = None,
+    request_auth_audience: str = "hai.ai",
+) -> str:
     """Build the JSON config string for the FFI adapter from loaded JACS config."""
     from haiai.config import get_config, is_loaded
 
@@ -176,9 +175,20 @@ def _build_ffi_config() -> str:
         config["agent_version"] = cfg.version
         config["key_dir"] = cfg.key_dir
 
-    # Pick up base URL from env
-    base_url = os.environ.get("HAI_URL") or os.environ.get("HAI_API_URL") or DEFAULT_BASE_URL
+    # Pick up base URL from env. Precedence matches every other HAIAI SDK:
+    # HAI_URL > HAI_API_URL > DEFAULT_BASE_URL, with a set-but-blank variable
+    # counting as unset.
+    base_url = (
+        os.environ.get("HAI_URL", "").strip()
+        or os.environ.get("HAI_API_URL", "").strip()
+        or DEFAULT_BASE_URL
+    )
     config["base_url"] = base_url
+    config["request_auth_audience"] = request_auth_audience
+    if expected_event_tenant is not None:
+        config["expected_event_tenant"] = expected_event_tenant
+    if response_audience is not None:
+        config["response_audience"] = response_audience
 
     # Pick up config path from env
     config_path = os.environ.get("JACS_CONFIG_PATH", "./jacs.config.json")
@@ -216,10 +226,16 @@ class HaiClient:
         timeout: float = 30.0,
         max_retries: int = 3,
         verify_server_signatures: bool = False,
+        expected_event_tenant: Optional[str] = None,
+        response_audience: Optional[str] = None,
+        request_auth_audience: str = "hai.ai",
     ) -> None:
         self._timeout = timeout
         self._max_retries = max_retries
         self._verify_server_signatures = verify_server_signatures
+        self._expected_event_tenant = expected_event_tenant
+        self._response_audience = response_audience
+        self._request_auth_audience = request_auth_audience
         self._connected = False
         self._should_disconnect = False
         self._ws: Any = None
@@ -236,7 +252,13 @@ class HaiClient:
     def _get_ffi(self) -> FFIAdapter:
         """Lazily create the FFI adapter."""
         if self._ffi is None:
-            self._ffi = FFIAdapter(_build_ffi_config())
+            self._ffi = FFIAdapter(
+                _build_ffi_config(
+                    self._expected_event_tenant,
+                    self._response_audience,
+                    self._request_auth_audience,
+                )
+            )
         return self._ffi
 
     # ------------------------------------------------------------------
@@ -297,13 +319,20 @@ class HaiClient:
         return _client_shared.get_hai_agent_id(self._hai_agent_id)
 
     def _build_jacs_auth_header(self) -> str:
-        """Build ``Authorization: JACS {jacsId}:{timestamp}:{signature}``.
-
-        Delegates to JACS binding-core ``build_auth_header`` when available.
-        Otherwise constructs the header locally using JACS ``sign_string``.
-        Both paths require a loaded JACS agent.
-        """
+        """Retired helper: use build_request_auth_header with request context."""
         return _client_shared.build_jacs_auth_header()
+
+    def build_request_auth_header(
+        self, method: str, url: str, body: bytes = b""
+    ) -> str:
+        """Authenticate exact request bytes through Rust/JACS, using the pinned audience.
+
+        Pass the final URL (including query) and send these same body bytes.
+        Build a new header for each attempt; ordinary SDK calls do this automatically.
+        """
+        return self._get_ffi().build_request_auth_header(
+            _client_shared.request_auth_input(method, url, body)
+        )
 
     def _build_auth_headers(self) -> dict[str, str]:
         """Return auth headers using JACS signature authentication."""
@@ -315,16 +344,8 @@ class HaiClient:
         version: str,
         agent: Any,
     ) -> str:
-        """Build a 4-part JACS auth header signed by an explicit agent.
-
-        Returns ``JACS {jacsId}:{version}:{timestamp}:{signature}``.
-        Used during key rotation to authenticate re-registration with
-        the OLD agent's key (chain of trust).
-        Signing delegates to JACS binding-core.
-        """
-        return _client_shared.build_jacs_auth_header_with_key(
-            jacs_id, version, agent
-        )
+        """Retired helper: key rotation and request authentication are Rust-owned."""
+        return _client_shared.build_jacs_auth_header_with_key(jacs_id, version, agent)
 
     @staticmethod
     def _parse_transcript(
@@ -365,18 +386,7 @@ class HaiClient:
 
         reputation_data = data.get("reputation")
         reputation = (
-            EmailReputationInfo(
-                score=float(reputation_data.get("score", 0.0)),
-                tier=reputation_data.get("tier", ""),
-                email_score=float(reputation_data.get("email_score", 0.0)),
-                hai_score=(
-                    float(reputation_data["hai_score"])
-                    if reputation_data.get("hai_score") is not None
-                    else None
-                ),
-            )
-            if reputation_data
-            else None
+            EmailReputationInfo.from_dict(reputation_data) if reputation_data else None
         )
 
         return EmailStatus(
@@ -511,6 +521,8 @@ class HaiClient:
         public_key: Optional[str] = None,
         preview: bool = False,
         owner_email: Optional[str] = None,
+        registration_key: Optional[str] = None,
+        is_mediator: Optional[bool] = None,
     ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
         """Register a JACS agent with HAI.
 
@@ -518,8 +530,11 @@ class HaiClient:
             hai_url: Base URL of the HAI server (defaults to DEFAULT_BASE_URL).
             agent_json: Signed JACS agent document as a JSON string.
             public_key: PEM-encoded public key (optional).
-            preview: If True, return preview without actually registering.
+            preview: If True, show FFI options without registering. Rust builds
+                the HTTP body and base64-encodes the public PEM when sending.
             owner_email: Owner's email for linking agent to a HAI user.
+            registration_key: One-use reservation key for admitted enrollment.
+                Masked in preview output; forwarded unchanged to the FFI otherwise.
 
         Returns:
             HaiRegistrationResult or HaiRegistrationPreview.
@@ -550,12 +565,14 @@ class HaiClient:
                 public_key = pub_pem
 
         payload: dict[str, Any] = {"agent_json": agent_json}
+        if is_mediator is not None:
+            payload["is_mediator"] = is_mediator
         if public_key is not None:
-            payload["public_key"] = base64.b64encode(
-                public_key.encode("utf-8")
-            ).decode("utf-8")
+            payload["public_key_pem"] = public_key
         if owner_email is not None:
             payload["owner_email"] = owner_email
+        if registration_key is not None:
+            payload["registration_key"] = "***" if preview else registration_key
 
         url = self._make_url(hai_url, "/api/v1/agents/register")
 
@@ -565,7 +582,10 @@ class HaiClient:
                 agent_name=cfg.name,
                 payload_json=json.dumps(payload, indent=2),
                 endpoint=url,
-                headers={"Content-Type": "application/json", "Authorization": "JACS ***"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": "JACS ***",
+                },
             )
 
         ffi = self._get_ffi()
@@ -582,6 +602,8 @@ class HaiClient:
             registered_at=data.get("registered_at", ""),
             capabilities=[],
             raw_response=data,
+            registration_status=data.get("registration_status"),
+            email=data.get("email"),
         )
 
     # ------------------------------------------------------------------
@@ -605,8 +627,8 @@ class HaiClient:
         documents can still be verified.
 
         Args:
-            hai_url: Base URL of the HAI server (required if
-                ``register_with_hai=True``).
+            hai_url: Optional confirmation of the client's configured HAI URL.
+                Set ``HAI_URL`` before creating the client for another deployment.
             register_with_hai: If True (default), re-register the agent
                 with HAI after local rotation. A network failure here
                 does NOT rollback the local rotation.
@@ -620,213 +642,23 @@ class HaiClient:
             whether re-registration succeeded.
 
         Raises:
-            HaiAuthError: If no agent is currently loaded.
-            RegistrationError: Only if re-registration fails and
-                ``register_with_hai=True``, but the local rotation is
-                still preserved.
+            HaiAuthError: If the loaded identity or requested config does not
+                match the client, or local rotation/reload fails. Unconfirmed
+                registration is reported as ``registered_with_hai=False``;
+                the new local key remains usable.
         """
-        # rotate_keys stays native -- it involves file I/O, JACS agent creation,
-        # and key archival that are inherently local operations.
-        import shutil
-        import tempfile
-        import uuid
-
-        from haiai import config as config_mod
-        from haiai.signing import create_agent_document
-
-        cfg = config_mod.get_config()
-        old_agent = config_mod.get_agent()
-
-        if cfg.jacs_id is None:
-            raise HaiAuthError(
-                "Cannot rotate keys: no jacsId in config. "
-                "Register an agent first."
-            )
-
-        old_version = cfg.version
-        jacs_id = cfg.jacs_id
-        key_dir = Path(cfg.key_dir)
-
-        # 1. Determine archive paths
-        priv_candidates = [
-            key_dir / "agent_private_key.pem",
-            key_dir / "jacs.private.pem.enc",
-            key_dir / f"{cfg.name}.private.pem",
-            key_dir / "private_key.pem",
-        ]
-        priv_path: Optional[Path] = None
-        for p in priv_candidates:
-            if p.is_file():
-                priv_path = p
-                break
-
-        if priv_path is None:
-            raise HaiAuthError(
-                "Cannot rotate keys: private key file not found. "
-                f"Searched: {', '.join(str(p) for p in priv_candidates)}"
-            )
-
-        archive_priv = priv_path.with_suffix(f".{old_version}.pem")
-
-        pub_path = key_dir / priv_path.name.replace("private", "public")
-        if not pub_path.is_file():
-            for name in ["agent_public_key.pem", "jacs.public.pem", f"{cfg.name}.public.pem", "public_key.pem"]:
-                alt = key_dir / name
-                if alt.is_file():
-                    pub_path = alt
-                    break
-
-        archive_pub = pub_path.with_suffix(f".{old_version}.pem") if pub_path.is_file() else None
-
-        # 2. Pre-sign auth header with old agent BEFORE archiving keys
-        old_auth_header = None
-        if register_with_hai and hai_url is not None:
-            try:
-                old_auth_header = self._build_jacs_auth_header_with_key(
-                    jacs_id, old_version, old_agent,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to pre-sign rotation auth header: %s", exc
-                )
-
-        # 3. Archive old keys (after pre-signing)
-        logger.info("Archiving old private key: %s -> %s", priv_path, archive_priv)
-        shutil.move(str(priv_path), str(archive_priv))
-
-        if pub_path.is_file() and archive_pub is not None:
-            logger.info("Archiving old public key: %s -> %s", pub_path, archive_pub)
-            shutil.move(str(pub_path), str(archive_pub))
-
-        # 4. Generate new keypair via JACS SimpleAgent.create_agent()
+        cfg, loaded_path = _client_shared.rotation_config(config_path)
+        ffi = self._get_ffi()
+        _client_shared.validate_rotation_client(
+            cfg, ffi.jacs_id(), hai_url, ffi.base_url()
+        )
         try:
-            from jacs import SimpleAgent as _SimpleAgent
-        except ImportError:
-            from jacs.jacs import SimpleAgent as _SimpleAgent  # type: ignore[no-redef]
-
-        password_bytes = config_mod.load_private_key_password()
-        password_str = password_bytes.decode("utf-8")
-
-        try:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                tmp_path = Path(tmp_dir)
-                tmp_key_dir = tmp_path / "keys"
-                tmp_key_dir.mkdir()
-                tmp_data_dir = tmp_path / "data"
-                tmp_data_dir.mkdir()
-                tmp_config = tmp_path / "jacs.config.json"
-
-                _new_agent, new_info = _SimpleAgent.create_agent(
-                    name=cfg.name,
-                    password=password_str,
-                    algorithm=algorithm,
-                    data_directory=str(tmp_data_dir),
-                    key_directory=str(tmp_key_dir),
-                    config_path=str(tmp_config),
-                    description="",
-                    domain="",
-                    default_storage="fs",
-                )
-
-                new_priv_src = Path(new_info.get("private_key_path", ""))
-                new_pub_src = Path(new_info.get("public_key_path", ""))
-
-                if new_priv_src.is_file():
-                    shutil.copy2(str(new_priv_src), str(priv_path))
-                    os.chmod(str(priv_path), 0o600)
-                if new_pub_src.is_file():
-                    shutil.copy2(str(new_pub_src), str(pub_path))
-                    os.chmod(str(pub_path), 0o644)
-
+            rotation = ffi.rotate_keys(
+                {"register_with_hai": register_with_hai, "algorithm": algorithm}
+            )
         except Exception as exc:
-            logger.error("Key generation failed, rolling back: %s", exc)
-            shutil.move(str(archive_priv), str(priv_path))
-            if archive_pub is not None and archive_pub.is_file():
-                shutil.move(str(archive_pub), str(pub_path))
-            raise HaiAuthError(f"Key generation failed: {exc}") from exc
-
-        # 5. Use the newly-created agent directly for signing
-        new_version = str(uuid.uuid4())
-
-        cfg_path = config_path or os.environ.get(
-            "JACS_CONFIG_PATH", "./jacs.config.json"
-        )
-
-        try:
-            from jacs.simple import _EphemeralAgentAdapter
-            new_agent = _EphemeralAgentAdapter(_new_agent)
-        except ImportError:
-            new_agent = _new_agent
-
-        config_mod._config = AgentConfig(
-            name=cfg.name,
-            version=new_version,
-            key_dir=cfg.key_dir,
-            jacs_id=jacs_id,
-        )
-        config_mod._agent = new_agent
-        config_mod.save(cfg_path)
-
-        # 6. Build new agent document signed by the new agent
-        agent_doc = create_agent_document(
-            agent=new_agent,
-            name=cfg.name,
-            version=new_version,
-            jacs_id=jacs_id,
-            extra_fields={"jacsPreviousVersion": old_version},
-        )
-        signed_agent_json = json.dumps(agent_doc, indent=2)
-
-        # 7. Compute new public key hash and read PEM for re-registration
-        pub_pem_str = ""
-        if pub_path.is_file():
-            pub_key_raw = pub_path.read_bytes()
-            pub_pem_str = _normalize_public_key_pem(pub_key_raw)
-            new_public_key_hash = _compute_public_key_hash(pub_pem_str)
-        else:
-            new_public_key_hash = ""
-
-        logger.info(
-            "Key rotation complete: %s -> %s (agent=%s)",
-            old_version, new_version, jacs_id,
-        )
-
-        # 8. Optionally re-register with HAI using FFI
-        registered = False
-        if register_with_hai:
-            if hai_url is None:
-                logger.warning(
-                    "register_with_hai=True but no hai_url; skipping registration"
-                )
-            else:
-                try:
-                    # Reset FFI adapter to pick up new keys
-                    self._ffi = None
-                    ffi = self._get_ffi()
-                    reg_payload: dict[str, Any] = {
-                        "agent_json": signed_agent_json,
-                    }
-                    if pub_pem_str:
-                        reg_payload["public_key"] = base64.b64encode(
-                            pub_pem_str.encode("utf-8")
-                        ).decode("utf-8")
-                    ffi.register(reg_payload)
-                    registered = True
-                    logger.info("Re-registered with HAI after rotation")
-                except Exception as exc:
-                    logger.warning(
-                        "HAI re-registration failed (local rotation preserved): %s",
-                        exc,
-                    )
-
-        return RotationResult(
-            jacs_id=jacs_id,
-            old_version=old_version,
-            new_version=new_version,
-            new_public_key_hash=new_public_key_hash,
-            registered_with_hai=registered,
-            signed_agent_json=signed_agent_json,
-        )
+            raise HaiAuthError(f"Key rotation failed: {exc}") from exc
+        return _client_shared.complete_key_rotation(rotation, cfg, loaded_path)
 
     # ------------------------------------------------------------------
     # status
@@ -858,9 +690,7 @@ class HaiClient:
             agent_id=data.get("jacs_id", jacs_id),
             registration_id="",
             registered_at=data.get("registered_at", ""),
-            hai_signatures=[
-                r.get("algorithm", "") for r in registrations
-            ],
+            hai_signatures=[r.get("algorithm", "") for r in registrations],
             raw_response=data,
         )
 
@@ -898,9 +728,7 @@ class HaiClient:
             agent_id=data.get("jacs_id", agent_id),
             registration_id="",
             registered_at=data.get("registered_at", ""),
-            hai_signatures=[
-                r.get("algorithm", "") for r in registrations
-            ],
+            hai_signatures=[r.get("algorithm", "") for r in registrations],
             raw_response=data,
         )
 
@@ -919,7 +747,9 @@ class HaiClient:
         ffi = self._get_ffi()
         return ffi.update_username(agent_id, username)
 
-    def delete_username(self, hai_url: Optional[str] = None, agent_id: str = "") -> dict[str, Any]:
+    def delete_username(
+        self, hai_url: Optional[str] = None, agent_id: str = ""
+    ) -> dict[str, Any]:
         """Delete a claimed username for an agent."""
         if not agent_id:
             raise ValueError("'agent_id' is required")
@@ -958,7 +788,9 @@ class HaiClient:
         """Verify an agent document via HAI's advanced verification endpoint."""
         ffi = self._get_ffi()
         request: dict[str, Any] = {
-            "agent_json": agent_json if isinstance(agent_json, str) else json.dumps(agent_json),
+            "agent_json": agent_json
+            if isinstance(agent_json, str)
+            else json.dumps(agent_json),
         }
         if public_key is not None:
             request["public_key"] = public_key
@@ -1084,9 +916,7 @@ class HaiClient:
             success=True,
             run_id=data.get("run_id", data.get("runId", "")),
             transcript=transcript,
-            upsell_message=data.get(
-                "upsell_message", data.get("upsellMessage", "")
-            ),
+            upsell_message=data.get("upsell_message", data.get("upsellMessage", "")),
             raw_response=data,
         )
 
@@ -1112,11 +942,13 @@ class HaiClient:
             BaselineRunResult with benchmark results.
         """
         ffi = self._get_ffi()
-        data = ffi.pro_run({
-            "transport": transport,
-            "poll_interval_ms": 2000,
-            "poll_timeout_secs": 300,
-        })
+        data = ffi.pro_run(
+            {
+                "transport": transport,
+                "poll_interval_ms": 2000,
+                "poll_timeout_secs": 300,
+            }
+        )
 
         transcript = self._parse_transcript(data.get("transcript", []))
         score = float(data.get("score", 0.0))
@@ -1173,10 +1005,12 @@ class HaiClient:
             response_body["metadata"] = metadata
         response_body["processing_time_ms"] = processing_time_ms
 
-        data = ffi.submit_response({
-            "job_id": job_id,
-            "response": response_body,
-        })
+        data = ffi.submit_response(
+            {
+                "job_id": job_id,
+                **response_body,
+            }
+        )
 
         return JobResponseResult(
             success=data.get("success", True),
@@ -1220,7 +1054,7 @@ class HaiClient:
         if metadata is not None:
             payload["metadata"] = metadata
 
-        return sign_response(payload, get_agent(), cfg.jacs_id or "")
+        return _sign_payload(payload, get_agent(), cfg.jacs_id or "")
 
     # ------------------------------------------------------------------
     # Email CRUD
@@ -1237,6 +1071,7 @@ class HaiClient:
         cc: Optional[list[str]] = None,
         bcc: Optional[list[str]] = None,
         labels: Optional[list[str]] = None,
+        idempotency_key: Optional[str] = None,
     ) -> SendEmailResult:
         """Send an email from this agent's @hai.ai address."""
         if not to:
@@ -1262,6 +1097,8 @@ class HaiClient:
             options["bcc"] = bcc
         if labels:
             options["labels"] = labels
+        if idempotency_key is not None:
+            options["idempotency_key"] = idempotency_key
         if attachments:
             options["attachments"] = [
                 {
@@ -1278,9 +1115,12 @@ class HaiClient:
             status=data.get("status", "sent"),
         )
 
-    def sign_email(self, hai_url: Optional[str] = None, raw_email: bytes = b"") -> bytes:
+    def sign_email(
+        self, hai_url: Optional[str] = None, raw_email: bytes = b""
+    ) -> bytes:
         """Sign a raw RFC 5822 email via the HAI server."""
         import email.message
+
         if isinstance(raw_email, email.message.EmailMessage):
             raw_email = raw_email.as_bytes()
         if not raw_email:
@@ -1290,6 +1130,74 @@ class HaiClient:
         b64_input = base64.b64encode(raw_email).decode("ascii")
         b64_result = ffi.sign_email_raw(b64_input)
         return base64.b64decode(b64_result)
+
+    # =========================================================================
+    # Agreements
+    # =========================================================================
+
+    def save_agreement(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Save a signed agreement through the HAI agreement workflow API."""
+        return self._get_ffi().save_agreement(request)
+
+    def search_agreements(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Search agreements visible to this agent."""
+        return self._get_ffi().search_agreements(request)
+
+    def get_agreement(self, agreement_id: str) -> dict[str, Any]:
+        """Retrieve one agreement by HAI agreement id or JACS document id."""
+        return self._get_ffi().get_agreement(agreement_id)
+
+    def countersign_agreement(
+        self, agreement_id: str, request: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        """Request HAI notary/countersignature workflow for an agreement."""
+        return self._get_ffi().countersign_agreement(agreement_id, request or {})
+
+    def create_agreement_v2(self, input_data: dict[str, Any]) -> dict[str, Any]:
+        """Create a standalone JACS agreement v2 document locally."""
+        return self._get_ffi().create_agreement_v2(input_data)
+
+    def apply_agreement_v2(
+        self, document: str, mutation: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Apply a JACS agreement v2 mutation locally."""
+        return self._get_ffi().apply_agreement_v2(document, mutation)
+
+    def sign_agreement_v2(self, document: str, role: str) -> dict[str, Any]:
+        """Add a signer, witness, or notary signature locally."""
+        return self._get_ffi().sign_agreement_v2(document, role)
+
+    def verify_agreement_v2(self, document: str) -> dict[str, Any]:
+        """Verify a JACS agreement v2 document locally."""
+        return self._get_ffi().verify_agreement_v2(document)
+
+    def detect_agreement_branch_conflict(
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict[str, Any]:
+        """Compare two v2 agreement branches against a shared base."""
+        return self._get_ffi().detect_agreement_branch_conflict(
+            base_document, left_document, right_document
+        )
+
+    def merge_agreement_transcript_branches(
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict[str, Any]:
+        """Auto-merge two transcript-only v2 agreement branches locally."""
+        return self._get_ffi().merge_agreement_transcript_branches(
+            base_document, left_document, right_document
+        )
+
+    def resolve_agreement_branch_conflict(
+        self,
+        base_document: str,
+        previous_document: str,
+        side_branch_document: str,
+        resolution: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Resolve a v2 agreement branch conflict with an explicit mutation."""
+        return self._get_ffi().resolve_agreement_branch_conflict(
+            base_document, previous_document, side_branch_document, resolution
+        )
 
     # =========================================================================
     # Layer 8: Local Media Sign/Verify (TASK_007)
@@ -1453,6 +1361,8 @@ class HaiClient:
         cc: Optional[list[str]] = None,
         bcc: Optional[list[str]] = None,
         labels: Optional[list[str]] = None,
+        generation_type: str = "html_inline_jacs",
+        idempotency_key: Optional[str] = None,
     ) -> SendEmailResult:
         """Send an agent-signed email.
 
@@ -1474,6 +1384,7 @@ class HaiClient:
             "to": to,
             "subject": subject,
             "body": body,
+            "generation_type": generation_type,
         }
         if in_reply_to is not None:
             options["in_reply_to"] = in_reply_to
@@ -1483,6 +1394,8 @@ class HaiClient:
             options["bcc"] = bcc
         if labels:
             options["labels"] = labels
+        if idempotency_key is not None:
+            options["idempotency_key"] = idempotency_key
         if attachments:
             options["attachments"] = [
                 {
@@ -1499,9 +1412,12 @@ class HaiClient:
             status=data.get("status", "sent"),
         )
 
-    def verify_email(self, hai_url: Optional[str] = None, raw_email: bytes = b"") -> EmailVerificationResultV2:
+    def verify_email(
+        self, hai_url: Optional[str] = None, raw_email: bytes = b""
+    ) -> EmailVerificationResultV2:
         """Verify a JACS-signed email via the HAI API."""
         import email.message
+
         if isinstance(raw_email, email.message.EmailMessage):
             raw_email = raw_email.as_bytes()
         if not raw_email:
@@ -1590,7 +1506,9 @@ class HaiClient:
         data = ffi.get_email_status()
         return self._parse_email_status(data)
 
-    def get_message(self, hai_url: Optional[str] = None, message_id: str = "") -> EmailMessage:
+    def get_message(
+        self, hai_url: Optional[str] = None, message_id: str = ""
+    ) -> EmailMessage:
         """Get a single email message by ID."""
         if not message_id:
             raise ValueError("'message_id' is required")
@@ -1616,7 +1534,9 @@ class HaiClient:
         data = ffi.get_raw_email(message_id)
         return RawEmailResult.from_dict(data)
 
-    def delete_message(self, hai_url: Optional[str] = None, message_id: str = "") -> bool:
+    def delete_message(
+        self, hai_url: Optional[str] = None, message_id: str = ""
+    ) -> bool:
         """Delete an email message."""
         if not message_id:
             raise ValueError("'message_id' is required")
@@ -1761,11 +1681,13 @@ class HaiClient:
         if not message_id:
             raise ValueError("'message_id' is required")
         ffi = self._get_ffi()
-        data = ffi.update_labels({
-            "message_id": message_id,
-            "add": add or [],
-            "remove": remove or [],
-        })
+        data = ffi.update_labels(
+            {
+                "message_id": message_id,
+                "add": add or [],
+                "remove": remove or [],
+            }
+        )
         return data.get("labels", [])
 
     def _ensure_agent_email(self, hai_url: Optional[str] = None) -> None:
@@ -1844,7 +1766,9 @@ class HaiClient:
             options["q"] = q
         return ffi.list_email_templates(options)
 
-    def get_email_template(self, hai_url: Optional[str] = None, template_id: str = "") -> dict:
+    def get_email_template(
+        self, hai_url: Optional[str] = None, template_id: str = ""
+    ) -> dict:
         """Get a single email template by ID."""
         ffi = self._get_ffi()
         return ffi.get_email_template(template_id)
@@ -1874,7 +1798,9 @@ class HaiClient:
             options["rules"] = rules
         return ffi.update_email_template(template_id, options)
 
-    def delete_email_template(self, hai_url: Optional[str] = None, template_id: str = "") -> None:
+    def delete_email_template(
+        self, hai_url: Optional[str] = None, template_id: str = ""
+    ) -> None:
         """Delete an email template."""
         ffi = self._get_ffi()
         ffi.delete_email_template(template_id)
@@ -2035,9 +1961,7 @@ class HaiClient:
                         f"SSE connection failed after {attempt} attempts: {exc}"
                     )
                 delay = backoff(attempt)
-                logger.warning(
-                    "SSE connection lost, retrying in %.1fs: %s", delay, exc
-                )
+                logger.warning("SSE connection lost, retrying in %.1fs: %s", delay, exc)
                 time.sleep(delay)
                 attempt += 1
             finally:
@@ -2077,9 +2001,7 @@ class HaiClient:
                         f"WS connection failed after {attempt} attempts: {exc}"
                     )
                 delay = backoff(attempt)
-                logger.warning(
-                    "WS connection lost, retrying in %.1fs: %s", delay, exc
-                )
+                logger.warning("WS connection lost, retrying in %.1fs: %s", delay, exc)
                 time.sleep(delay)
                 attempt += 1
             finally:
@@ -2101,15 +2023,14 @@ class HaiClient:
                 data,
                 hai_url=self._hai_url,
                 verify=self._verify_server_signatures,
+                ffi=self._get_ffi(),
             )
             if self._verify_server_signatures and not verified:
                 logger.warning("Server signature verification failed")
             return payload
         return data
 
-    def _make_event(
-        self, event_type: str, data_str: str
-    ) -> Optional[HaiEvent]:
+    def _make_event(self, event_type: str, data_str: str) -> Optional[HaiEvent]:
         """Build HaiEvent from an SSE (event_type, data_string) pair."""
         try:
             data: Any = json.loads(data_str)
@@ -2273,6 +2194,32 @@ class HaiClient:
         """Fetch raw record bytes (no UTF-8 decode, no JSON parse)."""
         return self._get_ffi().get_record_bytes(key)
 
+    # Conflict documents
+
+    def conflict_create(self, body: dict[str, Any] | str) -> dict[str, Any]:
+        """Create and sign a conflict document. Returns ``{"key", "json"}``."""
+        body_json = body if isinstance(body, str) else json.dumps(body)
+        return self._get_ffi().conflict_create(body_json)
+
+    def conflict_update(
+        self, key_or_id: str, mutation: dict[str, Any] | str
+    ) -> dict[str, Any]:
+        """Apply a conflict mutation and return the new signed document."""
+        mutation_json = mutation if isinstance(mutation, str) else json.dumps(mutation)
+        return self._get_ffi().conflict_update(key_or_id, mutation_json)
+
+    def conflict_get(self, key: str) -> str:
+        """Fetch a signed conflict document by key."""
+        return self._get_ffi().conflict_get(key)
+
+    def conflict_list(self, limit: int = 25, offset: int = 0) -> list[str]:
+        """List signed conflict document keys."""
+        return self._get_ffi().conflict_list(limit, offset)
+
+    def conflict_check_readiness(self, key_or_id: str) -> dict[str, Any]:
+        """Run the JACS conflict readiness checker for a key or id."""
+        return self._get_ffi().conflict_check_readiness(key_or_id)
+
 
 # ---------------------------------------------------------------------------
 # Module-level convenience functions
@@ -2294,7 +2241,9 @@ def testconnection(hai_url: Optional[str] = None) -> bool:
     return _get_client().testconnection(hai_url)
 
 
-def hello_world(hai_url: Optional[str] = None, include_test: bool = False) -> HelloWorldResult:
+def hello_world(
+    hai_url: Optional[str] = None, include_test: bool = False
+) -> HelloWorldResult:
     """Perform a hello world exchange with HAI."""
     return _get_client().hello_world(hai_url, include_test)
 
@@ -2303,9 +2252,17 @@ def register(
     hai_url: Optional[str] = None,
     preview: bool = False,
     owner_email: Optional[str] = None,
+    registration_key: Optional[str] = None,
+    is_mediator: Optional[bool] = None,
 ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
     """Register the loaded JACS agent with HAI."""
-    return _get_client().register(hai_url, preview=preview, owner_email=owner_email)
+    return _get_client().register(
+        hai_url,
+        preview=preview,
+        owner_email=owner_email,
+        registration_key=registration_key,
+        is_mediator=is_mediator,
+    )
 
 
 def status(hai_url: Optional[str] = None) -> HaiStatusResult:
@@ -2313,12 +2270,16 @@ def status(hai_url: Optional[str] = None) -> HaiStatusResult:
     return _get_client().status(hai_url)
 
 
-def update_username(hai_url: Optional[str] = None, agent_id: str = "", username: str = "") -> dict[str, Any]:
+def update_username(
+    hai_url: Optional[str] = None, agent_id: str = "", username: str = ""
+) -> dict[str, Any]:
     """Update (rename) a claimed username for an agent."""
     return _get_client().update_username(hai_url, agent_id, username)
 
 
-def delete_username(hai_url: Optional[str] = None, agent_id: str = "") -> dict[str, Any]:
+def delete_username(
+    hai_url: Optional[str] = None, agent_id: str = ""
+) -> dict[str, Any]:
     """Delete a claimed username for an agent."""
     return _get_client().delete_username(hai_url, agent_id)
 
@@ -2340,7 +2301,8 @@ def free_run(
 
 
 def pro_run(
-    hai_url: Optional[str] = None, transport: str = "sse",
+    hai_url: Optional[str] = None,
+    transport: str = "sse",
 ) -> BaselineRunResult:
     """Run a pro tier benchmark ($20/month)."""
     return _get_client().pro_run(hai_url, transport)
@@ -2357,8 +2319,7 @@ def enterprise_run(**kwargs: Any) -> None:
     Contact support@hai.ai for early access.
     """
     raise NotImplementedError(
-        "The enterprise tier is coming soon. "
-        "Contact support@hai.ai for early access."
+        "The enterprise tier is coming soon. Contact support@hai.ai for early access."
     )
 
 
@@ -2375,7 +2336,11 @@ def submit_benchmark_response(
 ) -> JobResponseResult:
     """Submit a benchmark job response."""
     return _get_client().submit_benchmark_response(
-        hai_url, job_id, message, metadata, processing_time_ms,
+        hai_url,
+        job_id,
+        message,
+        metadata,
+        processing_time_ms,
     )
 
 
@@ -2388,7 +2353,11 @@ def sign_benchmark_result(
 ) -> dict[str, str]:
     """Sign a benchmark result for independent verification."""
     return _get_client().sign_benchmark_result(
-        run_id, score, tier, transcript, metadata,
+        run_id,
+        score,
+        tier,
+        transcript,
+        metadata,
     )
 
 
@@ -2419,8 +2388,15 @@ def send_email(
 ) -> SendEmailResult:
     """Send an email from this agent's @hai.ai address."""
     return _get_client().send_email(
-        hai_url, to, subject, body, in_reply_to,
-        attachments=attachments, cc=cc, bcc=bcc, labels=labels,
+        hai_url,
+        to,
+        subject,
+        body,
+        in_reply_to,
+        attachments=attachments,
+        cc=cc,
+        bcc=bcc,
+        labels=labels,
     )
 
 
@@ -2439,15 +2415,26 @@ def send_signed_email(
     cc: Optional[list[str]] = None,
     bcc: Optional[list[str]] = None,
     labels: Optional[list[str]] = None,
+    generation_type: str = "html_inline_jacs",
 ) -> SendEmailResult:
     """Send an agent-signed email (builds MIME, signs, and sends)."""
     return _get_client().send_signed_email(
-        hai_url, to, subject, body, in_reply_to,
-        attachments=attachments, cc=cc, bcc=bcc, labels=labels,
+        hai_url,
+        to,
+        subject,
+        body,
+        in_reply_to,
+        attachments=attachments,
+        cc=cc,
+        bcc=bcc,
+        labels=labels,
+        generation_type=generation_type,
     )
 
 
-def verify_email(hai_url: Optional[str] = None, raw_email: bytes = b"") -> EmailVerificationResultV2:
+def verify_email(
+    hai_url: Optional[str] = None, raw_email: bytes = b""
+) -> EmailVerificationResultV2:
     """Verify a JACS-signed email via the HAI API."""
     return _get_client().verify_email(hai_url, raw_email)
 
@@ -2466,9 +2453,16 @@ def list_messages(
 ) -> list[EmailMessage]:
     """List email messages for this agent."""
     return _get_client().list_messages(
-        hai_url, limit, offset, direction,
-        is_read=is_read, folder=folder, label=label,
-        has_attachments=has_attachments, since=since, until=until,
+        hai_url,
+        limit,
+        offset,
+        direction,
+        is_read=is_read,
+        folder=folder,
+        label=label,
+        has_attachments=has_attachments,
+        since=since,
+        until=until,
     )
 
 
@@ -2515,11 +2509,20 @@ def search_messages(
 ) -> list[EmailMessage]:
     """Search email messages."""
     return _get_client().search_messages(
-        hai_url, q=q, direction=direction, from_address=from_address,
-        to_address=to_address, since=since, until=until,
-        is_read=is_read, jacs_verified=jacs_verified,
-        folder=folder, label=label, has_attachments=has_attachments,
-        limit=limit, offset=offset,
+        hai_url,
+        q=q,
+        direction=direction,
+        from_address=from_address,
+        to_address=to_address,
+        since=since,
+        until=until,
+        is_read=is_read,
+        jacs_verified=jacs_verified,
+        folder=folder,
+        label=label,
+        has_attachments=has_attachments,
+        limit=limit,
+        offset=offset,
     )
 
 
@@ -2581,8 +2584,10 @@ def rotate_keys(
 ) -> RotationResult:
     """Rotate the agent's cryptographic keys."""
     return _get_client().rotate_keys(
-        hai_url, register_with_hai=register_with_hai,
-        config_path=config_path, algorithm=algorithm,
+        hai_url,
+        register_with_hai=register_with_hai,
+        config_path=config_path,
+        algorithm=algorithm,
     )
 
 
@@ -2595,7 +2600,9 @@ def fetch_remote_key(
     return _get_client().fetch_remote_key(hai_url, jacs_id, version)
 
 
-def fetch_key_by_hash(hai_url: Optional[str] = None, public_key_hash: str = "") -> PublicKeyInfo:
+def fetch_key_by_hash(
+    hai_url: Optional[str] = None, public_key_hash: str = ""
+) -> PublicKeyInfo:
     """Fetch an agent's public key by its SHA-256 hash."""
     return _get_client().fetch_key_by_hash(hai_url, public_key_hash)
 
@@ -2605,7 +2612,9 @@ def fetch_key_by_email(hai_url: Optional[str] = None, email: str = "") -> Public
     return _get_client().fetch_key_by_email(hai_url, email)
 
 
-def fetch_key_by_domain(hai_url: Optional[str] = None, domain: str = "") -> PublicKeyInfo:
+def fetch_key_by_domain(
+    hai_url: Optional[str] = None, domain: str = ""
+) -> PublicKeyInfo:
     """Fetch the latest DNS-verified agent key for a domain."""
     return _get_client().fetch_key_by_domain(hai_url, domain)
 
@@ -2623,7 +2632,9 @@ def verify_document(
     return _get_client().verify_document(hai_url, document)
 
 
-def get_verification(hai_url: Optional[str] = None, agent_id: str = "") -> dict[str, Any]:
+def get_verification(
+    hai_url: Optional[str] = None, agent_id: str = ""
+) -> dict[str, Any]:
     """Get advanced 3-level verification status for an agent."""
     return _get_client().get_verification(hai_url, agent_id)
 
@@ -2664,9 +2675,9 @@ def _encode_verify_payload(document: str) -> str:
     if hasattr(agent, "encode_verify_payload"):
         return agent.encode_verify_payload(document)
 
-    return base64.urlsafe_b64encode(
-        document.encode("utf-8")
-    ).rstrip(b"=").decode("ascii")
+    return (
+        base64.urlsafe_b64encode(document.encode("utf-8")).rstrip(b"=").decode("ascii")
+    )
 
 
 def generate_verify_link(
@@ -2792,9 +2803,15 @@ def register_new_agent(
 
     # Print next-step messaging
     if not quiet:
-        print(f"\nAgent created and submitted for registration!")
-        print(f"  -> Check your email ({owner_email}) for a verification link")
-        print(f"  -> Your agent is registered with username from your reservation")
+        print("\nAgent created and submitted for registration!")
+        print(
+            f"  -> Registration status: {data.get('registration_status') or 'unknown'}"
+        )
+        if data.get("email"):
+            print(f"  -> Assigned email: {data['email']}")
+        print(
+            "  -> Email delivery and active mailbox status are not established by this response"
+        )
         print(f"  -> Config saved to {config_path}")
         print(f"  -> Keys saved to {key_directory}")
         print(
@@ -2804,12 +2821,12 @@ def register_new_agent(
         if domain:
             dns_record = data.get("dns_record", "")
             if dns_record:
-                print(f"\n--- DNS Setup Instructions ---")
+                print("\n--- DNS Setup Instructions ---")
                 print(f"Add this TXT record to your domain '{domain}':")
                 print(f"  Name:  _v1.agent.jacs.{domain}")
-                print(f"  Type:  TXT")
+                print("  Type:  TXT")
                 print(f"  Value: {dns_record}")
-                print(f"DNS verification enables the pro tier.\n")
+                print("DNS verification enables the pro tier.\n")
             else:
                 # Fallback for older Rust FFI responses that did not include
                 # dns_record. Hashing still delegates to JACS.
@@ -2817,22 +2834,27 @@ def register_new_agent(
                 if pub_key_path.is_file():
                     public_pem = pub_key_path.read_text(encoding="utf-8")
                     key_hash = _compute_public_key_hash(public_pem)
-                    print(f"\n--- DNS Setup Instructions ---")
+                    print("\n--- DNS Setup Instructions ---")
                     print(f"Add this TXT record to your domain '{domain}':")
                     print(f"  Name:  _v1.agent.jacs.{domain}")
-                    print(f"  Type:  TXT")
+                    print("  Type:  TXT")
                     print(
                         "  Value: "
                         f"v=hai.ai; jacs_agent_id={jacs_id}; alg=SHA-256; "
                         f"enc=base64; jacs_public_key_hash={key_hash}"
                     )
-                    print(f"DNS verification enables the pro tier.\n")
+                    print("DNS verification enables the pro tier.\n")
                 else:
                     print()
         else:
             print()
 
-    return RegistrationResult(agent_id=agent_id, jacs_id=jacs_id)
+    return RegistrationResult(
+        agent_id=agent_id,
+        jacs_id=jacs_id,
+        registration_status=data.get("registration_status"),
+        email=data.get("email"),
+    )
 
 
 def _compute_public_key_hash(pem: str) -> str:
@@ -2951,6 +2973,7 @@ def verify_agent(
     if sig_b64 and pub_key_pem:
         try:
             import copy
+
             signing_doc = copy.deepcopy(doc)
             if isinstance(signing_doc.get("jacsSignature"), dict):
                 signing_doc["jacsSignature"].pop("signature", None)

@@ -21,14 +21,13 @@ fn armor_key_data(raw: &[u8], block_type: &str) -> String {
 /// Convert JACS public-key bytes into canonical PEM text for HAI APIs.
 ///
 /// JACS may keep public keys in raw algorithm-specific byte form (for example,
-/// Ed25519 and pq2025) or as PEM text (for example, RSA). This helper preserves
-/// existing PEM blocks and otherwise ASCII-armors the exact key bytes without
-/// lossy decoding.
+/// Ed25519 and pq2025) or as PEM text. This helper preserves existing PEM
+/// blocks and otherwise ASCII-armors the exact key bytes without lossy decoding.
 #[must_use]
 pub fn normalize_public_key_pem(raw: &[u8]) -> String {
     if let Ok(text) = std::str::from_utf8(raw) {
         let trimmed = text.trim();
-        if trimmed.contains("BEGIN PUBLIC KEY") || trimmed.contains("BEGIN RSA PUBLIC KEY") {
+        if trimmed.contains("BEGIN PUBLIC KEY") {
             let mut normalized = trimmed.replace("\r\n", "\n").replace('\r', "\n");
             if !normalized.ends_with('\n') {
                 normalized.push('\n');

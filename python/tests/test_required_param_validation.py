@@ -275,12 +275,14 @@ class TestValidationPassesWithValidArgs:
 
     def test_mark_read_valid_args_passes_validation(self, loaded_config: None) -> None:
         client = HaiClient()
-        ffi = client._get_ffi()
+        client._get_ffi()
         result = client.mark_read(message_id="msg-1")
         assert result is True
 
-    def test_delete_message_valid_args_passes_validation(self, loaded_config: None) -> None:
+    def test_delete_message_valid_args_passes_validation(
+        self, loaded_config: None
+    ) -> None:
         client = HaiClient()
-        ffi = client._get_ffi()
+        client._get_ffi()
         result = client.delete_message(message_id="msg-1")
         assert result is True

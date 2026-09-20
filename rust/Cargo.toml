@@ -4,7 +4,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-license = "Apache-2.0 OR MIT"
+license = "BUSL-1.1"
 authors = ["HAI.AI <engineering@hai.ai>"]
 repository = "https://github.com/HumanAssisted/haiai"
 homepage = "https://hai.ai"
@@ -25,7 +25,7 @@ sha2 = "0.10"
 
 # Local development: uncomment to build against local JACS instead of crates.io.
 [patch.crates-io]
-jacs = { path = "../../JACS/jacs" }
-jacs-binding-core = { path = "../../JACS/binding-core" }
-jacs-mcp = { path = "../../JACS/jacs-mcp" }
-jacs-media = { path = "../../JACS/jacs-media" }
+jacs = { path = "../../JACS/archive/native/jacs" }
+jacs-binding-core = { path = "../../JACS/archive/native/binding-core" }
+jacs-mcp = { path = "../../JACS/archive/native/jacs-mcp" }
+jacs-media = { path = "../../JACS/archive/native/jacs-media" }

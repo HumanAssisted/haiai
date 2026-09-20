@@ -34,6 +34,12 @@ pub enum HaiError {
     #[error("validation error on '{field}': {message}")]
     Validation { field: String, message: String },
 
+    /// A live SSE/WebSocket event failed strict JACS verification, freshness,
+    /// trusted-key binding, or replay consumption. The rejected payload is
+    /// intentionally not carried in this error.
+    #[error("signed event verification failed: {message}")]
+    SignedEventVerification { message: String },
+
     /// Issue 052: typed signal that a backend doesn't support a particular
     /// trait method (e.g., `RemoteJacsProvider::query_by_field` cannot run
     /// against a server whose envelope JSON lives in S3 rather than Postgres,

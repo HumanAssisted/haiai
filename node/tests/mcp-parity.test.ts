@@ -88,6 +88,11 @@ const MCP_TOOL_TO_FFI_METHODS: Record<string, string[]> = {
   hai_store_text_file: ['storeTextFile'],
   hai_store_image_file: ['storeImageFile'],
   hai_get_record_bytes: ['getRecordBytes'],
+  hai_conflict_create: ['conflictCreate'],
+  hai_conflict_update: ['conflictUpdate'],
+  hai_conflict_get: ['conflictGet'],
+  hai_conflict_list: ['conflictList'],
+  hai_conflict_check_readiness: ['conflictCheckReadiness'],
 };
 
 // ---------------------------------------------------------------------------

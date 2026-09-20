@@ -169,7 +169,8 @@ class TestGetRawEmailAsync:
 
 class TestRawEmailConformanceFixture:
     def test_raw_email_roundtrip_scenario_byte_identity(
-        self, loaded_config: None,
+        self,
+        loaded_config: None,
     ) -> None:
         # Issue 017 note: this test asserts *byte-identity forwarding
         # through the verify call chain*, not real post-quantum crypto

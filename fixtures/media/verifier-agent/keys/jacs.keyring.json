@@ -1,0 +1,14 @@
+{
+  "keys": [
+    {
+      "role": "native_root",
+      "algorithm": "ring-Ed25519",
+      "kid": "0f46e66da1133009cc6efb5b89abe36120865b91ed10a8b540e7db79edec8a67"
+    },
+    {
+      "role": "ecosystem_signing",
+      "algorithm": "ES256",
+      "kid": "-cvxHEKD9Ad10f6q53hqiZzFG1y7CYK6s2G7yH7eC58"
+    }
+  ]
+}

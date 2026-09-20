@@ -2,9 +2,17 @@
 
 ## What This Is
 
-HAIAI SDK — multi-language SDK (Python, Node, Go, Rust) for the HAI.AI agent benchmarking platform. Thin wrapper around `jacs` for cryptographic identity + HAI platform integration.
+HAIAI SDK — multi-language SDK (Python, Node, Go, Rust) for HAI.AI platform integration (agents, agreements, signed email, JACS identity). Thin wrapper around `jacs`.
 
 The HTTP client is implemented once in Rust and exposed to Python, Node, and Go via FFI bindings (PyO3, napi-rs, CGo). Each SDK is a thin type-safe wrapper that parses JSON responses from the FFI layer into language-native types.
+
+## Working Norms
+
+1. **Observability.** Good logging and how a system admin monitors the system. More 12-factor. Structured logs to stdout, env-driven config (`RUST_LOG`, `LOG_FORMAT`, `LOG_LEVEL`), request IDs propagated to the HAI API. Auth and verification failures log at WARN, not DEBUG. `--log-file` on `haiai mcp` (`rust/haiai-cli/src/main.rs` ~1434) is dev-only — production deployments rely on stdout. Every PRD says what the sysadmin sees when this fails: which log line, which metric, which alert.
+
+2. **Vertical integration.** In a buy-or-build decision, prefer a well-integrated monolith over a bloated open-source dependency we use 10% of, when the feature is simple, sure, and well known. Every PRD that introduces or depends on an external service includes a buy/build assessment: what surface we use, what ships unused, what the smallest owned alternative would cost.
+
+3. **Simplicity.** We don't want a cap on tasks. We want small reversible changes. 100 tasks is fine if each is clear, well-defined, simple, and atomic. The bar is per-task: each task is reversible — its diff can be reverted in one commit without dependent fallout. When stuck, cut scope before adding layers.
 
 ## Commands
 
@@ -52,7 +60,7 @@ scripts/ci/              # CI enforcement (crypto policy denylist)
 - **CLI and MCP server are Rust-only.** `cli.ts`, `mcp-server.ts`, `cli.py`, `mcp_server.py`, `go/cmd/haiai/`, and `go/cmd/hai-mcp/` have been deleted. The `haiai` CLI binary and `haiai mcp` subcommand are the canonical implementations.
 - **Python test deps.** Use `pip install -e ".[dev,mcp]"` not just `.[dev]` -- MCP tests need the `mcp` package.
 - **Path segments must be URL-escaped** in all API paths.
-- **Auth header:** `JACS {jacsId}:{timestamp}:{signature_base64}`.
+- **API auth:** request-bound JACS v2 over final method, URL, exact body bytes and configured audience. All SDK HTTP calls use the Rust request signer; caller-built requests use `build_request_auth_header`.
 - **FFI build requirements.** All language SDKs now require a Rust toolchain to build from source. CI installs Rust for Python (maturin), Node (napi-rs), and Go (cargo build cdylib).
 - **Streaming (SSE/WS) is migrated to FFI.** SSE and WebSocket connections use an opaque handle pattern through binding-core. SDKs call connect/poll/close via FFI.
 - **Raw MIME bytes stored on send, 25 MB cap.** `getRawEmail` / `get_raw_email` / `GetRawEmail` returns the exact RFC 5322 bytes JACS signed for local verification. Outbound (`send_signed_email`) rows carry `raw_mime`; **inbound filter-worker ingestion is still deferred to hai/api** — inbound messages from external agents currently return `available: false, omitted_reason: "not_stored"` until that write site lands (tracked in `docs/RAW_EMAIL_RETRIEVAL_ISSUES/ISSUE_004`). Legacy rows (pre-feature) also return `available: false`; oversize returns `"oversize"`. Byte-fidelity mandate (PRD R2): no normalization anywhere between persist and serve. Recipe in `docs/archive/2026-04/EMAIL_VERIFICATION.md`.

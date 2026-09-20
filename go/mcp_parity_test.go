@@ -98,13 +98,18 @@ var mcpToolToFFIMethods = map[string][]string{
 	"hai_verify_image":            {"VerifyImage"},
 	"hai_extract_media_signature": {"ExtractMediaSignature"},
 	// JACS Document Store D5/D9 (Issue 025).
-	"hai_save_memory":      {"SaveMemory"},
-	"hai_save_soul":        {"SaveSoul"},
-	"hai_get_memory":       {"GetMemory"},
-	"hai_get_soul":         {"GetSoul"},
-	"hai_store_text_file":  {"StoreTextFile"},
-	"hai_store_image_file": {"StoreImageFile"},
-	"hai_get_record_bytes": {"GetRecordBytes"},
+	"hai_save_memory":              {"SaveMemory"},
+	"hai_save_soul":                {"SaveSoul"},
+	"hai_get_memory":               {"GetMemory"},
+	"hai_get_soul":                 {"GetSoul"},
+	"hai_store_text_file":          {"StoreTextFile"},
+	"hai_store_image_file":         {"StoreImageFile"},
+	"hai_get_record_bytes":         {"GetRecordBytes"},
+	"hai_conflict_create":          {"ConflictCreate"},
+	"hai_conflict_update":          {"ConflictUpdate"},
+	"hai_conflict_get":             {"ConflictGet"},
+	"hai_conflict_list":            {"ConflictList"},
+	"hai_conflict_check_readiness": {"ConflictCheckReadiness"},
 }
 
 // ---------------------------------------------------------------------------

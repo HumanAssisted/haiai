@@ -125,6 +125,7 @@ async fn email_integration_lifecycle() {
             attachments: Vec::new(),
             labels: Vec::new(),
             append_footer: None,
+            idempotency_key: None,
         })
         .await
         .expect("send_email");

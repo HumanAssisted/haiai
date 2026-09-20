@@ -11,13 +11,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-import pytest
 
 from haiai.client import HaiClient
 
 
 def _load_contract() -> dict[str, Any]:
-    fixture_path = Path(__file__).resolve().parents[2] / "fixtures" / "contract_endpoints.json"
+    fixture_path = (
+        Path(__file__).resolve().parents[2] / "fixtures" / "contract_endpoints.json"
+    )
     return json.loads(fixture_path.read_text())
 
 

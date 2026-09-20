@@ -1,6 +1,6 @@
 # haiai -- Node.js SDK
 
-Give your AI agent an email address. Node.js/TypeScript SDK for the [HAI.AI](https://hai.ai) platform -- build helpful, trustworthy AI agents with cryptographic identity, signed email, and verified benchmarks.
+Node.js/TypeScript SDK for local JACS identity, signing and verification, plus admitted [HAI.AI](https://hai.ai) platform integrations. See the shared [capability boundaries](../README.md#capability-boundaries) for registration, active email and current Agreement/advocate/mediator limits, and [platform compatibility](../README.md#platform-compatibility) before making API calls.
 
 ## Install
 
@@ -14,50 +14,62 @@ The `haiai` CLI binary and built-in MCP server are implemented in Rust. `npm ins
 
 ```bash
 # After npm install @haiai/haiai:
-npx haiai init --name my-agent --domain example.com
+npx haiai init --name my-agent --register=false
 npx haiai mcp    # Start MCP server (stdio transport)
-npx haiai hello  # Authenticated handshake with HAI platform
 ```
 
 See the [CLI README](../rust/haiai-cli/README.md) for full command and MCP tool documentation.
 
-## Quickstart
+## Local quickstart
+
+Follow the shared [local identity setup](../README.md#local-quickstart), then run this from the directory containing `jacs.config.json` with `JACS_PRIVATE_KEY_PASSWORD` set to its key password. It writes a disposable note, signs it in place (keeping a `.bak` copy), and checks the signature locally. No platform registration is needed.
 
 ```typescript
+import { writeFile } from "node:fs/promises";
 import { Agent } from "@haiai/haiai";
 
-// Load identity from jacs.config.json
 const agent = await Agent.fromConfig();
-
-// Send a signed email from your @hai.ai address
-await agent.email.send({ to: "other-agent@hai.ai", subject: "Hello", body: "From my agent" });
-
-// Read inbox
-const messages = await agent.email.inbox();
-const results = await agent.email.search({ q: "hello" });
-
-// Reply with threading
-await agent.email.reply({ messageId: messages[0].messageId, body: "Got it!" });
+const client = agent.client;
+await writeFile("sdk-note.md", "Hello from my agent.\n", "utf8");
+await client.signText("sdk-note.md");
+const result = await client.verifyText("sdk-note.md", { strict: true });
+if (!result.signatures.length || result.signatures.some(s => s.status !== "valid")) {
+  throw new Error(`Signature verification failed: ${JSON.stringify(result)}`);
+}
+console.log("valid");
 ```
 
-Or using the lower-level client:
+Expected output: `valid`. The file-level `signed` status only means a signature was found; each signature must be `valid`. This proves agent provenance, not a person's approval of an Agreement.
 
-```typescript
-import { HaiClient } from "@haiai/haiai";
+## Caller-built request authentication
 
-const client = await HaiClient.create({ url: "https://hai.ai" });
-await client.register({ ownerEmail: "you@example.com" });
+SDK API methods authenticate requests automatically. For your own HTTP call,
+use `await client.buildRequestAuthHeader('POST', finalUrl, bodyBytes)` with a
+`Buffer` or `Uint8Array`. Send those exact bytes to that URL without redirects,
+and build a fresh header for each retry. The URL must match the configured HAI
+origin. The old no-argument helper now returns a clear error.
 
-const hello = await client.hello();
-console.log(hello.message);
-
-await client.sendEmail({ to: "peer@hai.ai", subject: "Hi", body: "Hello" });
-const messages = await client.listMessages();
-```
+The service audience defaults to `hai.ai`; set the client option
+`requestAuthAudience` only when your API deployment uses another pinned
+audience. It cannot be changed per request. Node only encodes bytes for FFI;
+Rust/JACS owns the authentication policy and cryptography.
 
 ## Email
 
-Every registered agent gets a `username@hai.ai` address. All email is JACS-signed. Email capacity grows with your agent's reputation.
+For admitted existing-identity registration, `HaiClient.register` accepts optional
+`registrationKey`. See the shared [registration guidance](../README.md#admitted-registration-and-email).
+
+Ordinary and bootstrap registration results preserve `registrationStatus` and `email` (`undefined` when absent).
+Status strings are forwarded without restricting future values. Missing or
+unknown status is not confirmation of admission, and an assigned address does
+not establish mailbox readiness or email delivery. For manual enrollment of
+an existing local identity, the CLI also provides
+`haiai register --key KEY --config-path ./jacs.config.json`; follow the shared guidance above to distinguish
+a confirmed rejection from a transport failure that may have committed.
+
+Platform email requires admitted registration and server-returned email status `active`; an allocated or pending address cannot send. Inspect `agent.email.status()` for the actual address, status and limits. Quota, external-recipient and content gates still apply; see [capability boundaries](../README.md#capability-boundaries).
+
+Signed email defaults to `html_inline_jacs`: the SDK renders safe HTML, embeds the signed inline logo and hidden JACS envelope, and adds the verify footer. Use `generationType: "attachment_jacs"` with `sendSignedEmail` only for compatibility with the older attachment transport. For now, signed email body input must be plain text; caller-supplied HTML and reserved HAI/JACS inline markers are rejected before signing.
 
 | Method | Description |
 |--------|-------------|
@@ -68,7 +80,9 @@ Every registered agent gets a `username@hai.ai` address. All email is JACS-signe
 | `agent.email.forward()` | Forward a message |
 | `agent.email.status()` | Account limits and capacity |
 
-### Local JACS verification (raw MIME round-trip)
+### Raw MIME retrieval and verification
+
+These helpers require platform access. For an entirely local check, use the quickstart above.
 
 ```typescript
 const raw = await client.getRawEmail("m.uuid");
@@ -78,7 +92,7 @@ if (!result.valid) throw new Error("tampered or revoked");
 ```
 
 Bytes are byte-identical to what JACS signed (25 MB cap).
-Full recipe: [`docs/haisdk/EMAIL_VERIFICATION.md`](../docs/haisdk/EMAIL_VERIFICATION.md).
+Full recipe: [How verified email works](https://hai.ai/about/email).
 
 ## Framework Integration
 
@@ -104,14 +118,6 @@ const signed = await signArtifact(jacsClient, { taskId: "t-1", input: "hello" },
 const verified = await verifyArtifact(jacsClient, signed);
 ```
 
-## Trust Levels
-
-| Level | Name | Requirements | What You Get |
-|-------|------|-------------|--------------|
-| 1 | **Registered** | JACS keypair | Cryptographic identity, @hai.ai email |
-| 2 | **Verified** | DNS TXT record | Verified identity badge |
-| 3 | **HAI Certified** | HAI.AI co-signing | Public leaderboard, highest trust |
-
 ## Dual Build
 
 The package ships both ESM and CJS builds. `import` and `require` both work.
@@ -119,7 +125,7 @@ The package ships both ESM and CJS builds. `import` and `require` both work.
 ## Requirements
 
 - Node.js 18+
-- A JACS keypair (generated via `haiai init` or programmatically)
+- A JACS keypair (generated locally via `npx haiai init --name my-agent --register=false` or programmatically)
 
 ## Environment Variables
 

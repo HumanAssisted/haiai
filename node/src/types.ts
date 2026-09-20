@@ -4,6 +4,12 @@
 
 /** Options for HaiClient constructor. */
 export interface HaiClientOptions {
+  /** Explicit tenant expected on actionable signed events. Never inferred from discovery. */
+  expectedEventTenant?: string;
+  /** Pinned server recipient for job responses (the API's configured request audience). */
+  responseAudience?: string;
+  /** Pinned request-auth service audience. Defaults to hai.ai; not inferred from a request. */
+  requestAuthAudience?: string;
   /** Path to jacs.config.json. Defaults to JACS_CONFIG_PATH env or ./jacs.config.json. */
   configPath?: string;
   /** HAI server URL. Default: https://hai.ai */
@@ -70,6 +76,8 @@ export type BenchmarkTier = 'free' | 'pro' | 'enterprise';
 
 /** A benchmark job received from HAI via SSE or WebSocket. */
 export interface BenchmarkJob {
+  /** Response target; distinct from the enclosing run. */
+  jobId: string;
   /** Unique run/job ID. */
   runId: string;
   /** Scenario description or prompt for the mediator. */
@@ -141,6 +149,10 @@ export interface RegistrationResult {
   haiSignature: string;
   registrationId: string;
   registeredAt: string;
+  /** Server-reported outcome; absent or future values do not establish admission. */
+  registrationStatus?: string;
+  /** Address returned by the server; does not establish an active mailbox or delivery. */
+  email?: string;
   /** Filesystem path where the agent's keys were written (set by registerNewAgent). */
   keyDirectory?: string;
   /** Path to the agent's public key PEM (set by registerNewAgent when available). */
@@ -367,6 +379,8 @@ export interface EmailAttachment {
   dataBase64?: string;
 }
 
+export type EmailGenerationType = 'html_inline_jacs' | 'attachment_jacs';
+
 /** Options for sending an email. */
 export interface SendEmailOptions {
   /** Recipient email address. */
@@ -385,6 +399,10 @@ export interface SendEmailOptions {
   bcc?: string[];
   /** Labels/tags for the message. */
   labels?: string[];
+  /** Stable key for one logical send; reused by Rust core across retries. */
+  idempotencyKey?: string;
+  /** Signed email generation type. Defaults to html_inline_jacs. */
+  generationType?: EmailGenerationType;
 }
 
 /** Result of sending an email. */
@@ -393,6 +411,18 @@ export interface SendEmailResult {
   messageId: string;
   /** Delivery status. */
   status: string;
+}
+
+/** Compact Musubi safety summary attached to an email message. */
+export interface MusubiSummary {
+  /** Per-risk Musubi trust vector values. */
+  trustVector: Record<string, number>;
+  /** Content risk label, if the scorer provided one. */
+  contentRisk?: string | null;
+  /** Whether the message should be escalated for owner attention. */
+  escalate: boolean;
+  /** Short scorer explanation, if available. */
+  explanation?: string | null;
 }
 
 /** An email message. */
@@ -423,6 +453,28 @@ export interface EmailMessage {
   readAt: string | null;
   /** Whether the JACS signature on this message was verified. */
   jacsVerified: boolean;
+  /** JACS signer id extracted from the inbound signature, when present. */
+  jacsSignerId?: string;
+  /** True only when HAI attested that the signer key belongs to the owner. */
+  jacsKeyIsOwner?: boolean;
+  /** True only when ordinary owner email authentication passed. */
+  ownerMailAuthPassed: boolean;
+  /** Server-side owner ordinary-mail auth method, such as dkim_spf. */
+  ownerMailAuthMethod?: string | null;
+  /** Redacted DKIM/SPF/DMARC evidence for owner ordinary-mail auth. */
+  ownerMailAuthDetails?: Record<string, unknown> | null;
+  /** True when ordinary sender email authentication passed for the visible From domain. */
+  senderMailAuthPassed: boolean;
+  /** Server-side sender ordinary-mail auth method, such as dkim_spf. */
+  senderMailAuthMethod?: string | null;
+  /** Redacted DKIM/SPF/DMARC evidence for sender ordinary-mail auth. */
+  senderMailAuthDetails?: Record<string, unknown> | null;
+  /** Deterministic one-line gist from the API, when available. */
+  emailSummary?: string | null;
+  /** Compact Musubi safety summary for this message, when available. */
+  musubiSummary?: MusubiSummary | null;
+  /** Sender reputation snapshot using the same shape as email status. */
+  senderReputation?: EmailReputationInfo | null;
   /** CC recipient addresses. */
   ccAddresses: string[];
   /** Labels/tags on the message. */

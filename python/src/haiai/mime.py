@@ -62,9 +62,7 @@ def build_rfc5322_email(
             part = MIMEBase(maintype, subtype)
             part.set_payload(att["data"])
             email.encoders.encode_base64(part)
-            part.add_header(
-                "Content-Disposition", "attachment", filename=filename
-            )
+            part.add_header("Content-Disposition", "attachment", filename=filename)
             msg.attach(part)
     else:
         msg = MIMEText(body, "plain", "utf-8")  # type: ignore[assignment]
@@ -83,6 +81,8 @@ def build_rfc5322_email(
 
     # Produce bytes with CRLF line endings using SMTP policy
     buf = io.BytesIO()
-    gen = email.generator.BytesGenerator(buf, mangle_from_=False, policy=email.policy.SMTP)
+    gen = email.generator.BytesGenerator(
+        buf, mangle_from_=False, policy=email.policy.SMTP
+    )
     gen.flatten(msg)
     return buf.getvalue()

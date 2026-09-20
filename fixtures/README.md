@@ -4,11 +4,12 @@ Cross-language test fixtures used by Python, Node, and Go test suites.
 
 ## Files
 
+- `init_contract.json` - Existing-identity/bootstrap registration fields and results, plus the single-submission contract: no automatic retries or redirects, regardless of generic retry configuration. Native HTTP tests count requests for retryable status responses and every standard redirect, with and without an admission key.
 - `cross_lang_test.json` - Cross-language HAIAI wrapper contract for auth-header shaping and canonical JSON selection
 - `contract_endpoints.json` - Shared HAI endpoint contract used for parity tests
-- `mcp_tool_contract.json` - Canonical MCP tool parity contract. Lists all 28 HAI MCP tools with properties and required fields. Rust tests enforce bidirectional parity (code must match fixture and vice versa). CI validates structural integrity via `scripts/ci/check_mcp_parity_fixture.sh`
-- `cli_command_parity.json` - CLI command parity contract. Lists all 29 haiai CLI subcommands. Rust tests enforce bidirectional parity via Clap introspection
-- `ffi_method_parity.json` - FFI method parity contract. Lists all 68 FFI methods across 12 categories. Python and Node tests enforce adapter coverage
+- `mcp_tool_contract.json` - Canonical MCP tool parity contract. Lists all 44 HAI MCP tools with properties and required fields. Rust tests enforce bidirectional parity (code must match fixture and vice versa). CI validates structural integrity via `scripts/ci/check_mcp_parity_fixture.sh`
+- `cli_command_parity.json` - CLI command parity contract. Lists all 37 haiai CLI command groups. Rust tests enforce bidirectional parity via Clap introspection
+- `ffi_method_parity.json` - FFI method parity contract. Lists all 110 FFI methods across 16 categories. Python, Node, and Go tests enforce adapter coverage
 - `email_conformance.json` - Cross-SDK email conformance tests for EmailVerificationResultV2, content hash golden values, API contracts, FieldStatus enum, and error type mapping
 - `crypto_delegation_contract.json` - JACS-only crypto policy enforcement vectors (canonicalization, signing, verification)
 - `error_contract.json` - Error codes, message patterns, and action hints across all SDKs
@@ -24,3 +25,5 @@ Tests in each language directory reference these fixtures via relative paths
 
 `cross_lang_test.json` is intentionally scoped to HAIAI-owned behavior.
 Key material and raw signature vectors belong in JACS fixtures, not here.
+
+`benchmark_mediator_contract.json` is the shared private-3.1 mediator job, usage receipt, registration opt-in and Rust FFI response contract. Rust, Python, Node and Go test against the same synthetic data.

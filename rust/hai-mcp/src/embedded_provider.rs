@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::{anyhow, Context as _};
+use haiai::jacs_local::{lock_jacs_config_env, JacsConfigEnvOverrideGuard, JacsConfigEnvSnapshot};
 use haiai::key_format::normalize_public_key_pem;
 use haiai::{
     HaiError, JacsMediaProvider, JacsProvider, MediaVerificationResult, Result as HaiResult,
@@ -29,6 +30,7 @@ Alternatively, run from a directory that contains jacs.config.json (current dire
 pub struct LoadedSharedAgent {
     inner: Arc<StdMutex<Agent>>,
     config_path: PathBuf,
+    jacs_config_env: JacsConfigEnvSnapshot,
     /// `agent_email` extracted from the config file at load time.
     agent_email: Option<String>,
 }
@@ -66,6 +68,7 @@ impl LoadedSharedAgent {
             ));
         }
 
+        let _config_env_lock = lock_jacs_config_env();
         let mut config =
             jacs::config::Config::from_file(&config_path.to_string_lossy()).map_err(|error| {
                 anyhow!("Invalid config file '{}': {}", config_path.display(), error)
@@ -77,6 +80,7 @@ impl LoadedSharedAgent {
 
         // Extract agent_email before config is consumed by Agent::from_config.
         let agent_email = config.agent_email.clone();
+        let jacs_config_env = JacsConfigEnvSnapshot::from_config(&config);
 
         let agent = Agent::from_config(config, None)
             .map_err(|error| anyhow!("Failed to load agent: {}", error))?;
@@ -84,6 +88,7 @@ impl LoadedSharedAgent {
         Ok(Self {
             inner: Arc::new(StdMutex::new(agent)),
             config_path,
+            jacs_config_env,
             agent_email,
         })
     }
@@ -102,7 +107,11 @@ impl LoadedSharedAgent {
     }
 
     pub fn embedded_provider(&self) -> HaiResult<EmbeddedJacsProvider> {
-        EmbeddedJacsProvider::new(Arc::clone(&self.inner), self.config_path.clone())
+        EmbeddedJacsProvider::new(
+            Arc::clone(&self.inner),
+            self.config_path.clone(),
+            self.jacs_config_env.clone(),
+        )
     }
 }
 
@@ -117,10 +126,15 @@ pub struct EmbeddedJacsProvider {
     /// constructor — media operations reload a `SimpleAgent` view from this
     /// path on each call. Cost is negligible (local file IO).
     config_path: PathBuf,
+    jacs_config_env: JacsConfigEnvSnapshot,
 }
 
 impl EmbeddedJacsProvider {
-    pub fn new(inner: Arc<StdMutex<Agent>>, config_path: PathBuf) -> HaiResult<Self> {
+    pub fn new(
+        inner: Arc<StdMutex<Agent>>,
+        config_path: PathBuf,
+        jacs_config_env: JacsConfigEnvSnapshot,
+    ) -> HaiResult<Self> {
         let (jacs_id, algorithm, public_key_pem) = {
             let agent = inner.lock().map_err(|error| {
                 HaiError::Provider(format!("failed to lock JACS agent: {error}"))
@@ -145,6 +159,7 @@ impl EmbeddedJacsProvider {
             algorithm,
             public_key_pem,
             config_path,
+            jacs_config_env,
         })
     }
 
@@ -157,6 +172,7 @@ impl EmbeddedJacsProvider {
             public_key_pem: "-----BEGIN PUBLIC KEY-----\nTEST\n-----END PUBLIC KEY-----\n"
                 .to_string(),
             config_path: PathBuf::from("/dev/null"),
+            jacs_config_env: JacsConfigEnvSnapshot::empty(),
         }
     }
 
@@ -166,6 +182,7 @@ impl EmbeddedJacsProvider {
     /// (local file IO; same approach `LocalJacsProvider::load_simple_agent`
     /// already takes).
     fn simple_agent(&self) -> HaiResult<SimpleAgent> {
+        let _env_guard = JacsConfigEnvOverrideGuard::apply(&self.jacs_config_env)?;
         SimpleAgent::load(Some(&self.config_path.to_string_lossy()), Some(false)).map_err(|e| {
             HaiError::Provider(format!(
                 "failed to load SimpleAgent for media op from {}: {e}",
@@ -205,7 +222,7 @@ struct AgentSigner(Arc<StdMutex<Agent>>);
 impl JacsSigner for AgentSigner {
     fn sign_message(&self, data: &Value) -> Result<SignedDocument, JacsError> {
         let doc_content = json!({
-            "jacsType": "message",
+            "jacsType": "document",
             "jacsLevel": "raw",
             "content": data
         });
@@ -262,19 +279,62 @@ impl JacsSigner for AgentSigner {
             errors.push(format!("Hash verification failed: {e}"));
         }
 
-        let valid = errors.is_empty();
-        let signer_id = jacs_doc
+        // Mirror `jacs::simple::SimpleAgent::build_verification_result`: local
+        // enrollment evidence is only consulted once the cryptographic checks
+        // pass, and a trust-store error is an additional verification error
+        // rather than a silent downgrade.
+        let identity_binding_status = if errors.is_empty() {
+            match jacs::trust::verify_document_identity_binding(&jacs_doc.value) {
+                Ok(status) => status,
+                Err(error) => {
+                    errors.push(error.to_string());
+                    Default::default()
+                }
+            }
+        } else {
+            Default::default()
+        };
+
+        if !errors.is_empty() {
+            // A failed verification authenticates nothing, so it must not
+            // surface the document's self-asserted signer or timestamp.
+            return Ok(VerificationResult {
+                valid: false,
+                identity_binding_status: Default::default(),
+                data: serde_json::Value::Null,
+                signer_id: String::new(),
+                signer_name: None,
+                timestamp: String::new(),
+                attachments: vec![],
+                errors,
+            });
+        }
+
+        // Legacy-v1 signatures (no `signatureContentVersion`) authenticate
+        // payload fields only; their signer/date metadata is mutable and is
+        // never surfaced on a successful result.
+        let legacy_signature = jacs_doc
             .value
-            .pointer("/jacsSignature/agentID")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let timestamp = jacs_doc
-            .value
-            .pointer("/jacsSignature/date")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+            .pointer("/jacsSignature/signatureContentVersion")
+            .is_none();
+        let (signer_id, timestamp) = if legacy_signature {
+            (String::new(), String::new())
+        } else {
+            (
+                jacs_doc
+                    .value
+                    .pointer("/jacsSignature/agentID")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                jacs_doc
+                    .value
+                    .pointer("/jacsSignature/date")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            )
+        };
         let data = jacs_doc
             .value
             .get("content")
@@ -282,7 +342,8 @@ impl JacsSigner for AgentSigner {
             .unwrap_or_else(|| jacs_doc.value.clone());
 
         Ok(VerificationResult {
-            valid,
+            valid: true,
+            identity_binding_status,
             data,
             signer_id,
             signer_name: None,
@@ -360,6 +421,26 @@ impl JacsProvider for EmbeddedJacsProvider {
             signed_document: serde_json::to_string(&envelope)?,
             agent_jacs_id: self.jacs_id.clone(),
         })
+    }
+
+    fn build_request_auth_header(
+        &self,
+        method: &str,
+        url: &str,
+        body: &[u8],
+        audience: &str,
+    ) -> HaiResult<String> {
+        let mut agent = self
+            .inner
+            .lock()
+            .map_err(|error| HaiError::Provider(format!("failed to lock JACS agent: {error}")))?;
+        jacs::protocol::build_request_auth_header(&mut agent, method, url, body, audience).map_err(
+            |error| {
+                HaiError::Provider(format!(
+                    "embedded JACS request authentication failed: {error}"
+                ))
+            },
+        )
     }
 
     fn sign_email_locally(&self, raw_email: &[u8]) -> HaiResult<Vec<u8>> {
@@ -540,7 +621,57 @@ pub(crate) mod tests {
         )
         .expect("write temp config");
 
+        sign_temp_fixture_config(&config_path);
+
         (temp_dir, config_path)
+    }
+
+    /// Sign the freshly rewritten temp config with the fixture agent's own key.
+    ///
+    /// JACS >= 0.11.4 refuses to load an unsigned *persisted* config for an
+    /// existing-agent load. Real deployments get a signed config from
+    /// `haiai init`, but the checked-in fixture is an unsigned legacy config
+    /// whose directory fields are rewritten per tempdir — and those fields sit
+    /// inside the signed payload — so the signature has to be produced here,
+    /// after the rewrite.
+    ///
+    /// The signing agent is loaded from a *programmatic* `Config` (no
+    /// `raw_json`, so the caller is the trust source and nothing on disk is
+    /// trusted unverified). The `JACS_ALLOW_UNSIGNED_AGENT_CONFIG` migration
+    /// hatch is deliberately not used: every load performed by an actual test
+    /// body then goes through the strict signed-config path, exactly as
+    /// production does.
+    fn sign_temp_fixture_config(config_path: &Path) {
+        let raw: Value =
+            serde_json::from_str(&fs::read_to_string(config_path).expect("read temp config"))
+                .expect("parse temp config");
+        let field = |name: &str| raw.get(name).and_then(Value::as_str).map(str::to_string);
+
+        let mut config = jacs::config::Config::new(
+            field("jacs_use_security"),
+            field("jacs_data_directory"),
+            field("jacs_key_directory"),
+            field("jacs_agent_private_key_filename"),
+            field("jacs_agent_public_key_filename"),
+            field("jacs_agent_key_algorithm"),
+            None,
+            field("jacs_agent_id_and_version"),
+            field("jacs_default_storage"),
+        );
+        config.set_config_dir(config_path.parent().map(PathBuf::from));
+
+        let signed = {
+            let _config_env_lock = lock_jacs_config_env();
+            let mut agent =
+                Agent::from_config(config, None).expect("load fixture agent for config signing");
+            agent.sign_config(&raw).expect("sign temp fixture config")
+        };
+
+        fs::write(
+            config_path,
+            serde_json::to_vec_pretty(&signed).expect("encode signed fixture config"),
+        )
+        .expect("write signed temp config");
     }
 
     #[test]
@@ -563,6 +694,62 @@ pub(crate) mod tests {
         let local_json: Value =
             serde_json::from_str(&local.export_agent_json().unwrap()).expect("local json");
         assert_eq!(embedded_json, local_json);
+    }
+
+    #[test]
+    fn embedded_provider_authenticates_exact_client_request_with_shared_identity() {
+        let (_temp_dir, config_path) = write_temp_fixture_config();
+        let shared = LoadedSharedAgent::load_from_config_path(&config_path).expect("load shared");
+        let embedded = shared.embedded_provider().expect("embedded provider");
+        let public_key = embedded.public_key_pem().expect("public key");
+        let agent_json: Value =
+            serde_json::from_str(&embedded.export_agent_json().unwrap()).expect("agent json");
+        let key_id = format!(
+            "{}:{}",
+            agent_json["jacsId"].as_str().unwrap(),
+            agent_json["jacsVersion"].as_str().unwrap()
+        );
+        let audience = "embedded-hai-deployment";
+        let client = haiai::HaiClient::new(
+            embedded,
+            haiai::HaiClientOptions {
+                base_url: "https://hai.example".into(),
+                request_auth_audience: audience.into(),
+                ..Default::default()
+            },
+        )
+        .expect("embedded HAI client");
+        let url = "https://hai.example/api/items/a%2Fb?x=%2B&x=two";
+        let body = [0, 0xff, b'\r', b'\n'];
+        let header = client
+            .build_request_auth_header("PATCH", url, &body)
+            .expect("embedded provider must support authenticated HAI requests");
+
+        jacs::protocol::verify_request_auth_header_with_trusted_key_without_replay(
+            &header,
+            public_key.as_bytes(),
+            &key_id,
+            "PATCH",
+            url,
+            &body,
+            audience,
+            60,
+        )
+        .expect("shared registered identity verifies the exact request");
+        assert!(
+            jacs::protocol::verify_request_auth_header_with_trusted_key_without_replay(
+                &header,
+                public_key.as_bytes(),
+                &key_id,
+                "PATCH",
+                url,
+                b"changed body",
+                audience,
+                60,
+            )
+            .is_err(),
+            "the embedded adapter must preserve request-byte binding"
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -615,7 +802,7 @@ pub(crate) mod tests {
         let embedded = shared.embedded_provider().expect("embedded provider");
 
         let in_path = temp_dir.path().join("in.png");
-        fs::write(&in_path, &make_test_png(32, 32)).expect("write png");
+        fs::write(&in_path, make_test_png(32, 32)).expect("write png");
         let out_path = temp_dir.path().join("out.png");
 
         let signed = embedded
@@ -641,7 +828,7 @@ pub(crate) mod tests {
         let embedded = shared.embedded_provider().expect("embedded provider");
 
         let in_path = temp_dir.path().join("ex.png");
-        fs::write(&in_path, &make_test_png(32, 32)).expect("write png");
+        fs::write(&in_path, make_test_png(32, 32)).expect("write png");
         let out_path = temp_dir.path().join("ex_signed.png");
         embedded
             .sign_image(
@@ -673,7 +860,7 @@ pub(crate) mod tests {
         let embedded = shared.embedded_provider().expect("embedded provider");
 
         let in_path = temp_dir.path().join("in.png");
-        fs::write(&in_path, &make_test_png(32, 32)).expect("write png");
+        fs::write(&in_path, make_test_png(32, 32)).expect("write png");
         let out_path = temp_dir.path().join("local_signed.png");
 
         let signed = local

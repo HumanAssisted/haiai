@@ -15,9 +15,9 @@ def parse_sse_lines(lines: list[str]) -> Optional[tuple[str, str]]:
 
     for line in lines:
         if line.startswith("event:"):
-            event_type = line[len("event:"):].strip()
+            event_type = line[len("event:") :].strip()
         elif line.startswith("data:"):
-            data_parts.append(line[len("data:"):].strip())
+            data_parts.append(line[len("data:") :].strip())
         # Comments (":") and other fields are ignored
 
     if not data_parts:
@@ -41,9 +41,7 @@ def flatten_benchmark_job(raw: dict[str, Any]) -> dict[str, Any]:
     return {
         "job_id": str(raw.get("job_id", "")),
         "run_id": str(config.get("run_id", "")),
-        "scenario_context": config.get(
-            "scenario_name", raw.get("scenario_id", "")
-        ),
+        "scenario_context": config.get("scenario_name", raw.get("scenario_id", "")),
         "conversation": config.get("conversation", []),
         "max_turns": config.get("max_turns", 30),
         "metadata": config.get("metadata", {}),

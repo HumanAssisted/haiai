@@ -1,129 +1,107 @@
 # Multi-Agent Agreements
 
-**Three agents from different organizations sign an agreement with 2-of-3 quorum.**
+Agreement v2 records terms and agent consent signatures in a standalone `jacsType: "agreement"` document. Its verifier inspects mathematical and structural checks. It does not accept the full authorization policy or prove human approval, even when the supplied quorum produces a `final` status.
 
-Imagine three departments -- Finance, Compliance, and Legal -- must approve a production deployment. Requiring all three creates bottlenecks. With JACS quorum agreements, any two of three is sufficient: cryptographically signed, independently verifiable, with a full audit trail.
-
-No central authority. No shared database. Every signature is independently verifiable.
+Use this walkthrough to inspect agent provenance. An application must separately establish the authority and any exact-action human approval required before acting.
 
 ## The Lifecycle
 
-```
-Create Agreement --> Agent A Signs --> Agent B Signs --> Quorum Met (2/3) --> Verified
+```text
+Create agreement -> append transcript refs -> collect signer/notary signatures -> inspect math and policy scope
 ```
 
 ## Python
 
+All three demo identities are controlled by this code, including the agent labeled `notary`; no person or external notary approves anything here.
+
+The three agents are persistent and share one `data_directory` so each can resolve the others' public keys when verifying. Independent `ephemeral()` agents keep keys in memory only and cannot verify each other's signatures.
+
 ```python
-from jacs.client import JacsClient
+import os
+import secrets
+import tempfile
+from pathlib import Path
 
-# Step 1: Create three agents (one per organization)
-finance = JacsClient.quickstart(
-    name="finance",
-    domain="finance.example.com",
-    algorithm="ring-Ed25519",
-    config_path="./finance.config.json",
-)
-compliance = JacsClient.quickstart(
-    name="compliance",
-    domain="compliance.example.com",
-    algorithm="ring-Ed25519",
-    config_path="./compliance.config.json",
-)
-legal = JacsClient.quickstart(
-    name="legal",
-    domain="legal.example.com",
-    algorithm="ring-Ed25519",
-    config_path="./legal.config.json",
-)
+from jacs import SimpleAgent
 
-# Step 2: Finance proposes an agreement with quorum
-from datetime import datetime, timedelta, timezone
+os.environ["JACS_KEYCHAIN_BACKEND"] = "disabled"  # throwaway demo only
+PASSWORD = secrets.token_urlsafe(32)
+workspace = Path(tempfile.mkdtemp(prefix="jacs_multi_agent_"))
+shared_data = workspace / "shared_data"  # all agents share this so keys resolve
 
-proposal = {
-    "action": "Deploy model v2 to production",
-    "conditions": ["passes safety audit", "approved by 2 of 3 signers"],
-}
-deadline = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
 
-agreement = finance.create_agreement(
-    document=proposal,
-    agent_ids=[finance.agent_id, compliance.agent_id, legal.agent_id],
-    question="Do you approve deployment of model v2?",
-    context="Production rollout pending safety audit sign-off.",
-    quorum=2,           # only 2 of 3 need to sign
-    timeout=deadline,
-)
+def make_agent(name, agent_type="ai"):
+    agent, info = SimpleAgent.create_agent(
+        name=name,
+        password=PASSWORD,
+        algorithm="ring-Ed25519",
+        data_directory=str(shared_data),
+        key_directory=str(workspace / f"{name}_keys"),
+        config_path=str(workspace / f"{name}.config.json"),
+        agent_type=agent_type,
+    )
+    return agent, info
 
-# Step 3: Finance signs
-agreement = finance.sign_agreement(agreement)
 
-# Step 4: Compliance co-signs -- quorum is now met
-agreement = compliance.sign_agreement(agreement)
+agent_a, a = make_agent("agent-a")
+agent_b, b = make_agent("agent-b")
+notary, n = make_agent("demo-notary")
 
-# Step 5: Verify -- any party can confirm independently
-status = finance.check_agreement(agreement)
-print(f"Complete: {status.complete}")  # True -- 2 of 3 signed
+agreement = agent_a.create_agreement_v2({
+    "title": "Bounded refund authorization",
+    "description": "Demo refund terms for agent signature inspection; no refund is authorized.",
+    "terms": "Agent B may issue a refund up to $25 for order 123 after Agent A approval.",
+    "termsFormat": "text/markdown",
+    "status": "proposed",
+    "parties": [
+        {"agentId": a["agent_id"], "agentType": "ai", "role": "signer"},
+        {"agentId": b["agent_id"], "agentType": "ai", "role": "signer"},
+        {"agentId": n["agent_id"], "agentType": "ai", "role": "notary"},
+    ],
+    "signaturePolicy": {
+        "partyQuorum": "all",
+        "witnessRequired": 0,
+        "notaryRequired": 1,
+        "minimumStrength": "classical",
+    },
+    "controllers": [a["agent_id"], b["agent_id"], n["agent_id"]],
+})
 
-for s in status.signers:
-    label = "signed" if s.signed else "pending"
-    print(f"  {s.agent_id[:12]}... {label}")
+agreement = agent_a.sign_agreement_v2(agreement, "signer")
+agreement = agent_b.sign_agreement_v2(agreement, "signer")
+agreement = notary.sign_agreement_v2(agreement, "notary")
+
+# The demo notary resolves the signers' public keys from shared storage.
+report = notary.verify_agreement_v2(agreement)
+assert report["mathematicalChecksValid"] is True
+assert report["valid"] is False
+assert report["policyAccepted"] is False
+assert report["overallScope"] == "consent_signatures_only"
+assert report["expectedStatus"] == "final"  # structural diagnostic only
 ```
 
-## Node.js / TypeScript
+This abbreviated snippet leaves its temporary workspace for inspection; remove it when finished. The runnable version includes transcript references and adversarial checks, and cleans up its temporary keys:
 
-```typescript
-import { JacsClient } from "@hai.ai/jacs/client";
-
-async function main() {
-  // Step 1: Create three agents
-  const finance    = await JacsClient.ephemeral("ring-Ed25519");
-  const compliance = await JacsClient.ephemeral("ring-Ed25519");
-  const legal      = await JacsClient.ephemeral("ring-Ed25519");
-
-  // Step 2: Finance proposes an agreement with quorum
-  const proposal = {
-    action: "Deploy model v2 to production",
-    conditions: ["passes safety audit", "approved by 2 of 3 signers"],
-  };
-  const deadline = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-  const agentIds = [finance.agentId, compliance.agentId, legal.agentId];
-
-  let agreement = await finance.createAgreement(proposal, agentIds, {
-    question: "Do you approve deployment of model v2?",
-    context: "Production rollout pending safety audit sign-off.",
-    quorum: 2,
-    timeout: deadline,
-  });
-
-  // Step 3: Finance signs
-  agreement = await finance.signAgreement(agreement);
-
-  // Step 4: Compliance co-signs -- quorum is now met
-  agreement = await compliance.signAgreement(agreement);
-
-  // Step 5: Verify
-  const doc = JSON.parse(agreement.raw);
-  const ag = doc.jacsAgreement;
-  const sigCount = ag.signatures?.length ?? 0;
-  console.log(`Signatures: ${sigCount} of ${agentIds.length}`);
-  console.log(`Quorum met: ${sigCount >= (ag.quorum ?? agentIds.length)}`);
-}
-
-main().catch(console.error);
+```bash
+python examples/agreement_v2_three_party.py
 ```
 
-## What Just Happened?
+## What the Report Means
 
-1. **Three independent agents** were created, each with their own keys -- no shared secrets.
-2. **Finance proposed** an agreement requiring 2-of-3 quorum with a one-hour deadline.
-3. **Finance and Compliance signed.** Legal never needed to act -- quorum was met.
-4. **Any party can verify** the agreement independently. The cryptographic proof chain is self-contained.
+- `mathematicalChecksValid` covers the native hash, signature and structural checks. Inspect `errors` for failures and `notes`, `verifiedChainDepth` and `chainFullyVerified` for lineage coverage limits.
+- Consent signatures bind the agreement identity and consent hash; signatures made with a nonempty transcript also bind its prefix at signing. Later unsigned transcript entries are not retroactively covered.
+- Signer counts, quorum, witness/notary requirements and `expectedStatus` are diagnostics against the supplied document. Neither a count nor `status: "final"` is an accepted policy verdict.
+- Helpers check membership, role and controller lists. These checks do not establish portable role/controller authority or a person's approval. Changing an agent's label to `human` does not add human approval evidence.
+- `valid` and `policyAccepted` remain false, including for the successful mathematical inspection above. Do not turn either field into true or treat `mathematicalChecksValid` as permission to act.
 
-Every signature includes: the signer's agent ID, the signing algorithm, a timestamp, and a hash of the agreement content. If anyone tampers with the document after signing, verification fails.
+## Legacy Sidecar Agreements
+
+The older `create_agreement()` / `sign_agreement()` / `check_agreement()` API still exists for adding `jacsAgreement` metadata to an arbitrary signed document. It supports signature inspection of an existing payload; those signatures alone do not establish human approval or the complete application policy.
+
+V2 adds standalone terms, transcript-prefix evidence and branch helpers. Moving to v2 does not create an actionable authorization.
 
 ## Next Steps
 
-- [Agreements API Reference](../rust/agreements.md) -- timeout, algorithm constraints, and more
-- [Python Framework Adapters](../python/adapters.md) -- use agreements inside LangChain, FastAPI, CrewAI
-- [Security Model](../advanced/security.md) -- how the cryptographic proof chain works
+- [Agreement v2 Developer Guide](../guides/agreement-v2.md)
+- [Creating and Using Agreements](../rust/agreements.md)
+- [Security Model](../advanced/security.md)

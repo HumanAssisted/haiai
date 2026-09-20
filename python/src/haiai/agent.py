@@ -19,12 +19,10 @@ Example::
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from haiai.client import DEFAULT_BASE_URL, HaiClient
-from haiai.errors import HaiError, RateLimited
 from haiai.models import (
     EmailMessage,
     EmailStatus,

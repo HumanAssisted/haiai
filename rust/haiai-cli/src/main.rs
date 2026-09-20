@@ -1,9 +1,16 @@
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 use anyhow::Context as _;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use hai_mcp::{HaiMcpServer, HaiServerContext, LoadedSharedAgent};
 use haiai::{
-    build_document_provider, CreateAgentOptions, CreateEmailTemplateOptions, HaiClient,
-    HaiClientOptions, JacsAgentLifecycle, JacsDocumentProvider, JacsProvider,
+    CreateAgentOptions, CreateEmailTemplateOptions, EmailGenerationType, HaiClient,
+    HaiClientOptions, JacsAgentLifecycle, JacsConflictProvider, JacsDocumentProvider, JacsProvider,
     ListEmailTemplatesOptions, ListMessagesOptions, LocalJacsProvider, RegisterAgentOptions,
     SaveDocumentRequest, SaveIntent, SearchOptions, SendEmailOptions, UpdateEmailTemplateOptions,
 };
@@ -42,6 +49,23 @@ const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b']');
 
 const JACS_MARKDOWN_CONTENT_TYPE: &str = "text/markdown; profile=jacs-text-v1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CliEmailGenerationType {
+    #[value(name = "html_inline_jacs")]
+    HtmlInlineJacs,
+    #[value(name = "attachment_jacs")]
+    AttachmentJacs,
+}
+
+impl From<CliEmailGenerationType> for EmailGenerationType {
+    fn from(value: CliEmailGenerationType) -> Self {
+        match value {
+            CliEmailGenerationType::HtmlInlineJacs => EmailGenerationType::HtmlInlineJacs,
+            CliEmailGenerationType::AttachmentJacs => EmailGenerationType::AttachmentJacs,
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "haiai", version, about = "HAIAI CLI")]
@@ -110,6 +134,21 @@ enum Commands {
         config_path: String,
     },
 
+    /// Manually enroll an existing local identity with an unused admission key
+    ///
+    /// Preserves identity and keys. After an HTTP rejection, check admission before
+    /// submitting again. After a transport failure, first check whether HAI committed
+    /// enrollment. This unsigned command cannot repair a server registration or rotation.
+    Register {
+        /// Appropriate unused admission key (hk_ followed by 64 hex characters)
+        #[arg(long)]
+        key: String,
+
+        /// Existing config file; otherwise use normal JACS env/default discovery
+        #[arg(long)]
+        config_path: Option<String>,
+    },
+
     /// Start the built-in HAIAI MCP server (stdio transport)
     Mcp,
 
@@ -144,6 +183,10 @@ enum Commands {
         /// Labels/tags to apply (repeatable)
         #[arg(long)]
         labels: Vec<String>,
+
+        /// Signed email generation type. Default: html_inline_jacs; use attachment_jacs for compatibility.
+        #[arg(long, value_enum, default_value = "html_inline_jacs")]
+        generation_type: CliEmailGenerationType,
 
         /// Emit machine-readable JSON instead of the default two-line summary
         #[arg(long, default_value_t = false)]
@@ -504,6 +547,12 @@ enum Commands {
         #[command(subcommand)]
         command: RecordsCommands,
     },
+
+    /// Manage signed conflict documents
+    Conflict {
+        #[command(subcommand)]
+        command: ConflictCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -531,6 +580,65 @@ enum MemoryCommands {
         /// Push local MEMORY.md to the remote store
         #[arg(long, group = "direction")]
         push: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConflictCommands {
+    /// Create and sign a conflict document from a JSON file.
+    Create {
+        /// Path to conflict body JSON.
+        #[arg(long)]
+        body: String,
+
+        /// Emit machine-readable JSON instead of the conflict key.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Apply a typed mutation to a conflict key or id.
+    Update {
+        /// Conflict key (id:version) or document id.
+        key: String,
+
+        /// Mutation JSON string.
+        #[arg(long)]
+        mutation: String,
+
+        /// Emit machine-readable JSON instead of the new conflict key.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Fetch a signed conflict document by key.
+    Get {
+        /// Conflict key in id:version format.
+        key: String,
+    },
+
+    /// List signed conflict document keys.
+    List {
+        /// Maximum number of keys to return.
+        #[arg(long, default_value = "20")]
+        limit: usize,
+
+        /// Offset for pagination.
+        #[arg(long, default_value = "0")]
+        offset: usize,
+
+        /// Emit machine-readable JSON instead of one key per line.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Run the JACS readiness checker for a conflict key or id.
+    CheckReadiness {
+        /// Conflict key (id:version) or document id.
+        key: String,
+
+        /// Emit machine-readable JSON instead of a human summary.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1098,7 +1206,7 @@ fn read_deploy_state() -> anyhow::Result<DeployState> {
 }
 
 fn hai_url() -> String {
-    std::env::var("HAI_URL").unwrap_or_else(|_| haiai::DEFAULT_BASE_URL.to_string())
+    haiai::base_url_from_env()
 }
 
 /// Read and trim a password from a file path.
@@ -1202,6 +1310,7 @@ fn load_client() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
     let cached_email = provider.agent_email_from_config();
     let options = HaiClientOptions {
         base_url: hai_url(),
+        request_auth_audience: haiai::client::request_auth_audience_from_env()?,
         client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
         ..Default::default()
     };
@@ -1210,6 +1319,113 @@ fn load_client() -> anyhow::Result<HaiClient<LocalJacsProvider>> {
         client.set_agent_email(email);
     }
     Ok(client)
+}
+
+fn validate_registration_key(key: Option<&str>) -> anyhow::Result<&str> {
+    let key = key.context(
+        "An unused registration key is required for HAI enrollment; use an issued admission key.",
+    )?;
+    if !key.starts_with("hk_")
+        || key.len() != 67
+        || !key[3..].chars().all(|c| c.is_ascii_hexdigit())
+    {
+        anyhow::bail!(
+            "Invalid registration key format. Keys start with 'hk_' followed by 64 hex characters."
+        );
+    }
+    Ok(key)
+}
+
+fn manual_enrollment_command(config_path: &std::path::Path) -> String {
+    let quoted = config_path.to_string_lossy().replace('\'', "'\\''");
+    format!("haiai register --config-path '{quoted}' --key <unused-admission-key>")
+}
+
+fn enrollment_error(
+    error: &haiai::HaiError,
+    key: &str,
+    config_path: &std::path::Path,
+) -> anyhow::Error {
+    let guidance = match error {
+        haiai::HaiError::Api { status: 400..=499, .. } => format!(
+            "HAI rejected this enrollment request. Check admission and the registration key.\nFor a local identity whose enrollment has not committed on HAI, manually submit an appropriate unused key with: {}\nThis unsigned command cannot repair an existing server registration or a failed key update.",
+            manual_enrollment_command(config_path)
+        ),
+        _ => "Enrollment outcome is unknown. Check the HAI URL, connectivity, and server registration state before another submission; the request may already have committed. Do not blindly retry with another key.".to_string(),
+    };
+    // Render the complete message before redaction; anyhow's Display only shows
+    // the outer context, which would hide the preservation and recovery guidance.
+    let message = format!(
+        "HAI enrollment failed: {error}\n{guidance}\nLocal identity preserved at {}.",
+        config_path.display()
+    );
+    anyhow::Error::msg(message.replace(key, "[redacted]"))
+}
+
+fn registration_summary(response: &haiai::RegistrationResult) -> String {
+    let status = response
+        .registration_status
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown");
+    let mut summary = format!(
+        "Registration status: {status}\n  Registration ID: {}\n",
+        response.agent_id
+    );
+    if let Some(email) = response.email.as_deref().filter(|s| !s.is_empty()) {
+        summary.push_str(&format!("  Assigned email: {email}\n"));
+    }
+    summary
+        .push_str("Active mailbox status and email delivery are not established by this response.");
+    summary
+}
+
+async fn enroll_existing_identity(
+    config_path: Option<&std::path::Path>,
+    key: &str,
+    domain: Option<String>,
+    storage: Option<&str>,
+) -> anyhow::Result<()> {
+    validate_registration_key(Some(key))?;
+    let provider = LocalJacsProvider::from_config_path(config_path, storage).context(
+        "failed to load the existing local identity; no identity was created or replaced",
+    )?;
+    let saved_config = provider.config_path().to_path_buf();
+    let reg_options = RegisterAgentOptions {
+        agent_json: provider.export_agent_json()?,
+        public_key_pem: Some(provider.public_key_pem()?),
+        domain,
+        is_mediator: Some(false),
+        registration_key: Some(key.to_string()),
+        ..Default::default()
+    };
+    let client = HaiClient::new(
+        provider,
+        HaiClientOptions {
+            base_url: hai_url(),
+            request_auth_audience: haiai::client::request_auth_audience_from_env()?,
+            client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
+            // Enrollment is a manual submission: a lost response can follow a commit.
+            max_retries: 0,
+            ..Default::default()
+        },
+    )?;
+    let response = client
+        .register(&reg_options)
+        .await
+        .map_err(|error| enrollment_error(&error, key, &saved_config))?;
+    println!(
+        "{}",
+        registration_summary(&response).replace(key, "[redacted]")
+    );
+    if let Some(email) = response.email.as_deref().filter(|s| !s.is_empty()) {
+        let cache_result = LocalJacsProvider::from_config_path(Some(&saved_config), None)
+            .and_then(|provider| provider.update_config_email(email));
+        if cache_result.is_err() {
+            eprintln!("The server returned an address, but it could not be cached locally. Preserve this registration outcome; do not resubmit enrollment to fix the cache.");
+        }
+    }
+    Ok(())
 }
 
 /// Load client and resolve the agent email address.
@@ -1221,6 +1437,7 @@ async fn load_client_with_email() -> anyhow::Result<HaiClient<LocalJacsProvider>
     let config_path = provider.config_path().to_path_buf();
     let options = HaiClientOptions {
         base_url: hai_url(),
+        request_auth_audience: haiai::client::request_auth_audience_from_env()?,
         client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
         ..Default::default()
     };
@@ -1245,8 +1462,37 @@ async fn load_client_with_email() -> anyhow::Result<HaiClient<LocalJacsProvider>
 fn load_document_provider(
     storage_flag: Option<&str>,
 ) -> anyhow::Result<Box<dyn JacsDocumentProvider>> {
-    build_document_provider(None, storage_flag, Some(hai_url()))
-        .context("failed to load routed JACS document provider")
+    haiai::document_store::build_document_provider_with_request_auth_audience(
+        None,
+        storage_flag,
+        Some(hai_url()),
+        &haiai::client::request_auth_audience_from_env()?,
+    )
+    .context("failed to load routed JACS document provider")
+}
+
+fn load_conflict_provider(
+    storage_flag: Option<&str>,
+) -> anyhow::Result<Box<dyn JacsConflictProvider>> {
+    let backend = haiai::config::resolve_storage_backend(storage_flag, None)
+        .context("failed to resolve routed JACS conflict storage")?;
+
+    match backend.as_str() {
+        "fs" | "rusqlite" | "sqlite" => {
+            let provider = LocalJacsProvider::from_config_path(None, Some(backend.as_str()))
+                .with_context(|| {
+                    format!("failed to load routed JACS conflict provider '{}'", backend)
+                })?;
+            Ok(Box::new(provider))
+        }
+        "remote" => anyhow::bail!(
+            "conflict commands require a local JACS conflict provider; remote conflict storage is not implemented"
+        ),
+        other => anyhow::bail!(
+            "Unsupported storage backend '{}'. Valid routed labels: fs, rusqlite, sqlite, remote",
+            other
+        ),
+    }
 }
 
 fn load_local_sync_provider(storage_flag: Option<&str>) -> anyhow::Result<LocalJacsProvider> {
@@ -1324,6 +1570,8 @@ fn print_message_table(messages: &[haiai::EmailMessage]) {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    // Refuse malformed operator configuration before loading keys or starting MCP.
+    haiai::client::request_auth_audience_from_env()?;
 
     // Resolve effective storage label from --storage or --storage-env.
     let effective_storage =
@@ -1333,7 +1581,10 @@ async fn main() -> anyhow::Result<()> {
     // Commands that load an existing agent need the private key password. Prompt once if not set and not -q.
     if !matches!(
         cli.command,
-        Commands::Init { .. } | Commands::SelfKnowledge { .. } | Commands::Deploy { .. }
+        Commands::Init { .. }
+            | Commands::SelfKnowledge { .. }
+            | Commands::Deploy { .. }
+            | Commands::ExtractMediaSignature { .. }
     ) {
         ensure_agent_password(cli.quiet, cli.password_file.as_deref())
             .context("failed to resolve private key password")?;
@@ -1365,22 +1616,9 @@ async fn main() -> anyhow::Result<()> {
                 anyhow::bail!("Invalid username '{}': must be 3-30 lowercase alphanumeric characters or hyphens, no leading/trailing hyphens.", name);
             }
 
-            // When register=true, --key is required
+            // Reject a missing or malformed key before creating an identity.
             if register {
-                if key.is_none() {
-                    anyhow::bail!(
-                        "Registration key is required. Log in at https://hai.ai, reserve your username, and copy the registration key from your dashboard."
-                    );
-                }
-                let k = key.as_ref().unwrap();
-                if !k.starts_with("hk_")
-                    || k.len() != 67
-                    || !k[3..].chars().all(|c| c.is_ascii_hexdigit())
-                {
-                    anyhow::bail!(
-                        "Invalid registration key format. Keys start with 'hk_' followed by 64 hex characters."
-                    );
-                }
+                validate_registration_key(key.as_deref())?;
             }
 
             let password_resolved = resolve_init_password(cli.password_file.as_deref())?;
@@ -1423,68 +1661,28 @@ async fn main() -> anyhow::Result<()> {
 
             if register {
                 println!("\nRegistering with HAI...");
-                // Load the created agent and register
-                let provider = LocalJacsProvider::from_config_path(
+                enroll_existing_identity(
                     Some(std::path::Path::new(&result.config_path)),
+                    key.as_deref()
+                        .expect("registration key validated before creation"),
+                    domain,
                     effective_storage.as_deref(),
                 )
-                .context("failed to load created agent")?;
-                let agent_json = provider
-                    .export_agent_json()
-                    .context("failed to export agent JSON")?;
-                let public_key_pem = provider
-                    .public_key_pem()
-                    .context("failed to read public key PEM")?;
-
-                let hai_options = HaiClientOptions {
-                    base_url: hai_url(),
-                    client_identifier: Some(format!("haiai-cli/{}", env!("CARGO_PKG_VERSION"))),
-                    ..Default::default()
-                };
-                let client = HaiClient::new(provider, hai_options)
-                    .context("failed to construct HaiClient")?;
-
-                let reg_options = RegisterAgentOptions {
-                    agent_json,
-                    public_key_pem: Some(public_key_pem),
-                    domain: domain.clone(),
-                    owner_email: None,
-                    is_mediator: Some(false),
-                    registration_key: key,
-                    ..Default::default()
-                };
-
-                match client.register(&reg_options).await {
-                    Ok(response) => {
-                        println!(
-                            "Agent '{}' registered. Email: {}@hai.ai",
-                            name_lower, name_lower
-                        );
-                        println!("  Registration ID: {}", response.agent_id);
-                        // Persist the email address to config so future
-                        // invocations skip the GET /email/status round-trip.
-                        if let Some(ref email) = response.email {
-                            if let Ok(wp) = LocalJacsProvider::from_config_path(
-                                Some(std::path::Path::new(&result.config_path)),
-                                None,
-                            ) {
-                                let _ = wp.update_config_email(email);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let msg = e.to_string();
-                        if msg.contains("already registered") {
-                            println!("This agent is already registered. If you need new keys, use 'haiai rotate'.");
-                        } else {
-                            eprintln!("Registration failed: {}. Your agent was created locally. Fix connectivity and run 'haiai init --name {} --key <key>' again.", msg, name_lower);
-                        }
-                    }
-                }
+                .await?;
             } else {
                 println!("Agent '{}' created locally.", name_lower);
                 println!("\nStart the MCP server with: haiai mcp");
             }
+        }
+
+        Commands::Register { key, config_path } => {
+            enroll_existing_identity(
+                config_path.as_deref().map(std::path::Path::new),
+                &key,
+                None,
+                effective_storage.as_deref(),
+            )
+            .await?;
         }
 
         Commands::Mcp => {
@@ -1547,8 +1745,35 @@ async fn main() -> anyhow::Result<()> {
             if let Some(email) = shared_agent.agent_email() {
                 context.remember_agent_email(&fallback_jacs_id, email);
             }
-            let server =
-                HaiMcpServer::new(JacsMcpServer::new(shared_agent.agent_wrapper()), context);
+            // JACS 0.11.4 fail-closed profiles: an embedded `JacsMcpServer`
+            // built from an agent handle alone runs `verify-only` and refuses
+            // every other JACS tool at dispatch. `haiai mcp` has already loaded
+            // and unlocked an existing signed config, which is exactly the
+            // `local-sign` precondition, so authorize that scope from the same
+            // config to keep JACS document/agreement signing available. If JACS
+            // refuses (unsigned config, non-fs storage, or an ambient network
+            // capability enabled) fall back to verify-only rather than failing
+            // startup — the HAI platform tools must still serve.
+            let jacs_server =
+                match JacsMcpServer::local_signing_from_config(shared_agent.config_path()) {
+                    Ok(server) => {
+                        tracing::info!(
+                            profile = "local-sign",
+                            "JACS MCP local signing authorized from the loaded config"
+                        );
+                        server
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            event = "mcp_local_signing_denied",
+                            reason = %error,
+                            profile = "verify-only",
+                            "JACS MCP local signing unavailable; serving verification tools only"
+                        );
+                        JacsMcpServer::new(shared_agent.agent_wrapper())
+                    }
+                };
+            let server = HaiMcpServer::new(jacs_server, context);
 
             tracing::info!("haiai mcp ready, waiting for MCP client on stdio");
 
@@ -1585,6 +1810,7 @@ async fn main() -> anyhow::Result<()> {
             cc,
             bcc,
             labels,
+            generation_type,
             json,
         } => {
             let client = load_client_with_email().await?;
@@ -1598,9 +1824,10 @@ async fn main() -> anyhow::Result<()> {
                 attachments: vec![],
                 labels,
                 append_footer: None,
+                idempotency_key: None,
             };
             let result = client
-                .send_signed_email(&options)
+                .send_signed_email_with_generation_type(&options, generation_type.into())
                 .await
                 .context("send email failed")?;
             if json {
@@ -1837,7 +2064,7 @@ async fn main() -> anyhow::Result<()> {
             if result.registered_with_hai {
                 println!("  Re-registered: yes");
             } else {
-                println!("  Re-registered: no (run `haiai init --name <name> --key <key>` to re-register)");
+                println!("  Server key update failed. Preserve the local identity; authenticated recovery of the server registration is required.");
             }
         }
 
@@ -1857,7 +2084,7 @@ async fn main() -> anyhow::Result<()> {
             if result.registered_with_hai {
                 println!("  Re-registered:  yes");
             } else {
-                println!("  Re-registered:  no (run `haiai init --name <name> --key <key>` to re-register)");
+                println!("  Server metadata update failed. Preserve the local identity; resolve the authenticated update before proceeding.");
             }
         }
 
@@ -2803,6 +3030,86 @@ async fn main() -> anyhow::Result<()> {
                 println!("Wrote {} bytes to {}", bytes.len(), out);
             }
         },
+        Commands::Conflict { command } => match command {
+            ConflictCommands::Create { body, json } => {
+                let body = read_json_file(&body)?;
+                let provider = load_conflict_provider(effective_storage.as_deref())?;
+                let signed = provider
+                    .create_conflict(body)
+                    .context("create_conflict failed")?;
+                print_conflict_signed("created", &signed, json)?;
+            }
+            ConflictCommands::Update {
+                key,
+                mutation,
+                json,
+            } => {
+                let mutation: Value =
+                    serde_json::from_str(&mutation).context("--mutation must be valid JSON")?;
+                let provider = load_conflict_provider(effective_storage.as_deref())?;
+                let signed = provider
+                    .update_conflict(&key, mutation)
+                    .context("update_conflict failed")?;
+                print_conflict_signed("updated", &signed, json)?;
+            }
+            ConflictCommands::Get { key } => {
+                let provider = load_conflict_provider(effective_storage.as_deref())?;
+                let document = provider.get_conflict(&key).context("get_conflict failed")?;
+                println!("{}", document);
+            }
+            ConflictCommands::List {
+                limit,
+                offset,
+                json,
+            } => {
+                let provider = load_conflict_provider(effective_storage.as_deref())?;
+                let keys = provider
+                    .list_conflicts(limit, offset)
+                    .context("list_conflicts failed")?;
+                if json {
+                    let count = keys.len();
+                    println!(
+                        "{}",
+                        serde_json::to_string(&serde_json::json!({
+                            "keys": keys,
+                            "count": count,
+                            "limit": limit,
+                            "offset": offset
+                        }))
+                        .context("serialize conflict list")?
+                    );
+                } else {
+                    for key in keys {
+                        println!("{}", key);
+                    }
+                }
+            }
+            ConflictCommands::CheckReadiness { key, json } => {
+                let provider = load_conflict_provider(effective_storage.as_deref())?;
+                let readiness = provider
+                    .check_conflict_readiness(&key)
+                    .context("check_conflict_readiness failed")?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&readiness)
+                            .context("serialize conflict readiness")?
+                    );
+                } else {
+                    let ready = readiness
+                        .get("ready")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let blockers = readiness
+                        .get("blockers")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or(0);
+                    println!("ready: {}", ready);
+                    println!("blockers: {}", blockers);
+                }
+            }
+        },
     }
 
     Ok(())
@@ -2922,6 +3229,34 @@ fn resolve_typed_body(
     }
     let path = from.unwrap_or_else(|| default_filename.to_string());
     std::fs::read_to_string(&path).with_context(|| format!("failed to read {}", path))
+}
+
+fn read_json_file(path: &str) -> anyhow::Result<Value> {
+    let raw = std::fs::read_to_string(path).with_context(|| format!("failed to read {}", path))?;
+    serde_json::from_str(&raw).with_context(|| format!("{} must contain valid JSON", path))
+}
+
+fn print_conflict_signed(
+    action: &str,
+    signed: &haiai::SignedDocument,
+    json_output: bool,
+) -> anyhow::Result<()> {
+    if json_output {
+        let document: Value =
+            serde_json::from_str(&signed.json).context("signed conflict document is not JSON")?;
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "key": signed.key,
+                "document": document
+            }))
+            .context("serialize conflict signed document")?
+        );
+    } else {
+        tracing::info!(action, key = %signed.key, "conflict_document");
+        println!("{}", signed.key);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -3222,6 +3557,86 @@ mod tests {
     }
 
     #[test]
+    fn parse_register_existing_identity() {
+        assert!(Cli::try_parse_from(["haiai", "register"]).is_err());
+        let cli = Cli::parse_from([
+            "haiai",
+            "register",
+            "--key",
+            "key",
+            "--config-path",
+            "/tmp/custom config.json",
+        ]);
+        match cli.command {
+            Commands::Register { key, config_path } => {
+                assert_eq!(key, "key");
+                assert_eq!(config_path.as_deref(), Some("/tmp/custom config.json"));
+            }
+            _ => panic!("expected Register"),
+        }
+    }
+
+    #[test]
+    fn registration_outcomes_report_only_server_status_and_address() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../fixtures/init_contract.json")).unwrap();
+        for case in fixture["registration_outcomes"]["cases"]
+            .as_array()
+            .unwrap()
+        {
+            if !case["cli_exit_success"].as_bool().unwrap() {
+                continue;
+            }
+            let response: haiai::RegistrationResult =
+                serde_json::from_value(case["response"].clone()).unwrap();
+            let summary = registration_summary(&response);
+            assert!(summary.contains(&format!(
+                "Registration status: {}",
+                case["expected_status"].as_str().unwrap_or("unknown")
+            )));
+            assert!(!summary.contains("requested-agent@hai.ai"));
+            match case["expected_email"].as_str() {
+                Some(email) => assert!(summary.contains(&format!("Assigned email: {email}"))),
+                None => assert!(!summary.contains("Assigned email:")),
+            }
+            assert!(summary.contains("not established"));
+        }
+    }
+
+    #[test]
+    fn registration_errors_preserve_guidance_and_redact_keys() {
+        let key = format!("hk_{}", "a".repeat(64));
+        assert!(validate_registration_key(Some(&key)).is_ok());
+        for invalid in [None, Some("hk_short"), Some("invalid-secret")] {
+            let message = validate_registration_key(invalid).unwrap_err().to_string();
+            assert!(!message.contains("invalid-secret"));
+        }
+        let config = std::path::Path::new("/tmp/agent's config.json");
+        let rejection = haiai::HaiError::Api {
+            status: 403,
+            message: format!("refused {key}"),
+        };
+        let message = enrollment_error(&rejection, &key, config).to_string();
+        assert!(message.contains("HAI rejected this enrollment request"));
+        assert!(message.contains("Local identity preserved"));
+        assert!(message.contains("enrollment has not committed"));
+        assert!(message.contains("cannot repair an existing server registration"));
+        assert!(message.contains("haiai register --config-path '/tmp/agent'\\''s config.json'"));
+        assert!(!message.contains(&key));
+        // A server-side error, like a lost response, does not prove rollback.
+        let uncertain = haiai::HaiError::Api {
+            status: 503,
+            message: format!("unavailable {key}"),
+        };
+        let message = enrollment_error(&uncertain, &key, config).to_string();
+        assert!(message.contains("outcome is unknown"));
+        assert!(message.contains("may already have committed"));
+        assert!(message.contains("Local identity preserved"));
+        assert!(!message.contains("haiai register"));
+        assert!(!message.contains(&key));
+    }
+
+    #[test]
     fn parse_removed_commands_fail() {
         assert!(Cli::try_parse_from(["haiai", "register", "--owner-email", "a@b.com"]).is_err());
         assert!(Cli::try_parse_from(["haiai", "claim-username", "bob"]).is_err());
@@ -3254,6 +3669,7 @@ mod tests {
                 cc,
                 bcc,
                 labels,
+                generation_type,
                 json,
             } => {
                 assert_eq!(to, "friend@hai.ai");
@@ -3262,6 +3678,7 @@ mod tests {
                 assert!(cc.is_empty());
                 assert!(bcc.is_empty());
                 assert!(labels.is_empty());
+                assert_eq!(generation_type, CliEmailGenerationType::HtmlInlineJacs);
                 assert!(!json);
             }
             _ => panic!("expected SendEmail command"),
@@ -3309,6 +3726,28 @@ mod tests {
             result.is_err(),
             "send-email without --subject and --body should fail"
         );
+    }
+
+    #[test]
+    fn parse_send_email_generation_type() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "send-email",
+            "--to",
+            "friend@hai.ai",
+            "--subject",
+            "Hello",
+            "--body",
+            "Hi",
+            "--generation-type",
+            "attachment_jacs",
+        ]);
+        match cli.command {
+            Commands::SendEmail {
+                generation_type, ..
+            } => assert_eq!(generation_type, CliEmailGenerationType::AttachmentJacs),
+            _ => panic!("expected SendEmail command"),
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -3420,9 +3859,8 @@ mod tests {
     }
 
     #[test]
-    fn cli_command_parity_total_count_is_36() {
-        // Issue 005: bumped from 33 to 36 with the three D5/D9 record-store
-        // command groups (memory, soul, records).
+    fn cli_command_parity_total_count_is_38() {
+        // Manual existing-identity enrollment adds register to the 37 commands.
         let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/cli_command_parity.json");
         let raw = std::fs::read_to_string(&fixture_path).expect("read parity fixture");
@@ -3431,8 +3869,67 @@ mod tests {
             .as_u64()
             .expect("total_command_count");
         let count = fixture["commands"].as_array().expect("commands").len() as u64;
-        assert_eq!(total, 36, "total_command_count must be 36 after Issue 005");
-        assert_eq!(count, 36, "commands array length must be 36");
+        assert_eq!(
+            total, 38,
+            "total_command_count must be 38 after manual registration"
+        );
+        assert_eq!(count, 38, "commands array length must be 38");
+    }
+
+    #[test]
+    fn parse_conflict_commands() {
+        let cli = Cli::parse_from([
+            "haiai",
+            "conflict",
+            "create",
+            "--body",
+            "conflict.json",
+            "--json",
+        ]);
+        match cli.command {
+            Commands::Conflict {
+                command: ConflictCommands::Create { body, json },
+            } => {
+                assert_eq!(body, "conflict.json");
+                assert!(json);
+            }
+            _ => panic!("expected conflict create"),
+        }
+
+        let cli = Cli::parse_from([
+            "haiai",
+            "conflict",
+            "update",
+            "abc:1",
+            "--mutation",
+            r#"{"type":"noop"}"#,
+        ]);
+        match cli.command {
+            Commands::Conflict {
+                command:
+                    ConflictCommands::Update {
+                        key,
+                        mutation,
+                        json,
+                    },
+            } => {
+                assert_eq!(key, "abc:1");
+                assert_eq!(mutation, r#"{"type":"noop"}"#);
+                assert!(!json);
+            }
+            _ => panic!("expected conflict update"),
+        }
+
+        let cli = Cli::parse_from(["haiai", "conflict", "check-readiness", "abc:1", "--json"]);
+        match cli.command {
+            Commands::Conflict {
+                command: ConflictCommands::CheckReadiness { key, json },
+            } => {
+                assert_eq!(key, "abc:1");
+                assert!(json);
+            }
+            _ => panic!("expected conflict check-readiness"),
+        }
     }
 
     #[test]

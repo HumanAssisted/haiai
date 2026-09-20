@@ -2,8 +2,7 @@
 
 // Real-FFI smoke tests for haiigo (libhaiigo cdylib).
 //
-// Two tests, one per backend, both loading the real cgo binding and
-// exercising `SaveMemory("...")` end-to-end:
+// Real native tests cover both storage backends and request authentication:
 //
 //  1. `TestNativeSmokeSaveMemoryRoundTripsThroughLibhaiigo` (REMOTE) —
 //     hosted production path. Sets `JACS_DEFAULT_STORAGE=remote` so the FFI
@@ -18,8 +17,8 @@
 //     and returns a client-side `{jacsId}:{jacsVersion}` key. Verifies the
 //     doc round-trips via `GetRecordBytes(key)`.
 //
-// Together these cover the only two backends production and dev users
-// actually exercise.
+//  3. `TestNativeSmokeRequestAuthHeader` — loads a fresh local signer and
+//     exercises the real C JSON envelope for a request-bound header.
 //
 // Gated by the `cgo_smoke` build tag so it only runs when explicitly
 // invoked:
@@ -229,6 +228,51 @@ func TestNativeSmokeSaveMemoryLocalPath(t *testing.T) {
 	if !strings.Contains(string(recordBytes), "local-smoke-content") {
 		t.Errorf("expected stored signed-text artifact to contain plaintext, got %q",
 			string(recordBytes))
+	}
+}
+
+// TestNativeSmokeRequestAuthHeader exercises the plain-string return boundary,
+// which mock FFI tests cannot cover. It performs local signing only.
+func TestNativeSmokeRequestAuthHeader(t *testing.T) {
+	t.Setenv("JACS_DEFAULT_STORAGE", "fs")
+	configPath := bootstrapFreshJacsAgentOrSkip(t, "haiai-smoke-go-request-auth-")
+	cfgJSON, err := json.Marshal(map[string]any{
+		"base_url":              "http://127.0.0.1:1",
+		"jacs_config_path":      configPath,
+		"jacs_storage_backend":  "fs",
+		"request_auth_audience": "native-smoke.hai",
+		"client_type":           "go",
+	})
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	client, err := ffi.NewClient(string(cfgJSON))
+	if err != nil {
+		t.Fatalf("ffi.NewClient: %v", err)
+	}
+	defer client.Close()
+
+	// The request body represents binary bytes, including NUL and non-UTF-8.
+	request := `{"method":"POST","url":"http://127.0.0.1:1/api/items/a%2Fb?x=%2B","body_base64":"AP8NCg=="}`
+	header, err := client.BuildRequestAuthHeader(request)
+	if err != nil {
+		t.Fatalf("BuildRequestAuthHeader must return a JSON-encoded string through libhaiigo: %v", err)
+	}
+	if !strings.HasPrefix(header, "JACS v2.") || strings.ContainsAny(header, "\r\n") {
+		t.Fatalf("expected a single-line request-auth-v2 header")
+	}
+	nextHeader, err := client.BuildRequestAuthHeader(request)
+	if err != nil {
+		t.Fatalf("BuildRequestAuthHeader retry: %v", err)
+	}
+	if nextHeader == header {
+		t.Fatal("a new signing request must receive a fresh authentication proof")
+	}
+	if _, err := client.BuildRequestAuthHeader(`{"method":"GET","url":"https://other.invalid/api","body_base64":""}`); err == nil {
+		t.Fatal("request headers must remain bound to the configured origin")
+	}
+	if _, err := client.BuildAuthHeader(); err == nil {
+		t.Fatal("the no-context helper must not produce legacy authentication")
 	}
 }
 

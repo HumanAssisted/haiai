@@ -2,7 +2,7 @@
 
 ## Purpose
 
-HAIAI SDK -- HAI platform integration layer around `jacs`. Helps agents use JACS identity/provenance to register with HAI, receive benchmark jobs, interact with other agents, and send/receive agent email.
+HAIAI SDK -- HAI platform integration layer around `jacs`. Helps agents use JACS identity/provenance to register with HAI, run agreement/conflict workflows, and send/receive agent email. Lab benchmark jobs stay admin/lab.
 
 ## Working Norms
 
@@ -85,8 +85,6 @@ The Rust SDK exposes JACS capabilities through 9 layered extension traits define
 
 Storage backend selection: `rust/haiai/src/config.rs` (`resolve_storage_backend()`). Labels: `fs`, `rusqlite`, `sqlite` (alias).
 
-Full parity map: `docs/haisdk/PARITY_MAP.md` (60 exposed, 19 excluded, 79 total).
-
 ## Rules
 
 1. **No local crypto, no JACS reimplementation in haiai.** Delegate every crypto, hashing, canonicalization, or key-handling primitive to `jacs`. If the JACS function exists but is `pub(crate)` or otherwise non-public, promote it upstream (or add a thin public wrapper) and delegate from haiai — do NOT vendor the algorithm into haiai "just for this case." This applies to source AND tests: import the JACS public function rather than recompute the algorithm inline. CI enforces via `scripts/ci/check_no_local_crypto.sh`.
@@ -162,7 +160,7 @@ until that lands, inbound raw bytes return `available: false`.
 25 MB cap (matches existing attachment limit). Legacy rows predating the
 feature return `available: false` with `omitted_reason: "not_stored"`;
 oversize rows return `"oversize"`. Recipe + cross-language snippets live
-in `docs/haisdk/EMAIL_VERIFICATION.md`.
+in the verification sections of the per-language READMEs.
 
 ## Local JACS Development
 
@@ -180,6 +178,6 @@ Each SDK pins a published JACS version for CI/release, but supports local path o
 - **CLI and MCP server are Rust-only.** `cli.ts`, `mcp-server.ts`, `cli.py`, `mcp_server.py`, `go/cmd/haiai/`, and `go/cmd/hai-mcp/` have been deleted. The `haiai` CLI binary and `haiai mcp` subcommand are the canonical implementations.
 - **Python test deps.** Use `pip install -e ".[dev,mcp]"` not just `.[dev]`.
 - **Path segments must be URL-escaped** in all API paths.
-- **Auth header:** `JACS {jacsId}:{timestamp}:{signature_base64}`.
+- **API auth:** request-bound JACS v2 over the final method, URL, exact body bytes and configured audience. Actual HTTP calls share the Rust request signer; caller-built requests use `build_request_auth_header`, never the context-free legacy helper.
 - **FFI build requirements.** All language SDKs require a Rust toolchain to build from source. CI installs Rust for Python (maturin), Node (napi-rs), and Go (cargo build cdylib).
 - **Streaming (SSE/WS) is migrated to FFI.** SSE and WebSocket connections use an opaque handle pattern through binding-core. SDKs call connect/poll/close via FFI.

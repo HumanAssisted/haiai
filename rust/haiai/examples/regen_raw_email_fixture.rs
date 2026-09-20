@@ -28,7 +28,7 @@ use std::path::PathBuf;
 fn normalize_public_key_pem(raw: &[u8]) -> String {
     if let Ok(text) = std::str::from_utf8(raw) {
         let trimmed = text.trim();
-        if trimmed.contains("BEGIN PUBLIC KEY") || trimmed.contains("BEGIN RSA PUBLIC KEY") {
+        if trimmed.contains("BEGIN PUBLIC KEY") {
             let mut normalized = trimmed.replace("\r\n", "\n").replace('\r', "\n");
             if !normalized.ends_with('\n') {
                 normalized.push('\n');
@@ -64,6 +64,39 @@ fn copy_fixture_dir(src: &std::path::Path, dst: &std::path::Path) {
     }
 }
 
+/// Sign the staged temp config with the fixture agent's own key so the strict
+/// signed-config load path (JACS >= 0.11.4) accepts it.
+fn sign_staged_config(config_path: &std::path::Path, config_value: &serde_json::Value) {
+    let field = |name: &str| {
+        config_value
+            .get(name)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+    };
+    let mut config = jacs::config::Config::new(
+        field("jacs_use_security"),
+        field("jacs_data_directory"),
+        field("jacs_key_directory"),
+        field("jacs_agent_private_key_filename"),
+        field("jacs_agent_public_key_filename"),
+        field("jacs_agent_key_algorithm"),
+        None,
+        field("jacs_agent_id_and_version"),
+        field("jacs_default_storage"),
+    );
+    config.set_config_dir(config_path.parent().map(PathBuf::from));
+    let mut agent = jacs::agent::Agent::from_config(config, None)
+        .expect("load fixture agent for config signing");
+    let signed = agent
+        .sign_config(config_value)
+        .expect("sign staged fixture config");
+    std::fs::write(
+        config_path,
+        serde_json::to_vec_pretty(&signed).expect("encode signed staged config"),
+    )
+    .expect("write signed staged config");
+}
+
 fn main() {
     // Repo root = rust/haiai/../../
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -85,12 +118,16 @@ fn main() {
             .expect("parse config");
 
     let temp = tempfile::tempdir().expect("tempdir");
+    // JACS >= 0.11.4 reads authority files through a no-follow parent walk that
+    // rejects symlinked path components, and macOS `/var` is a symlink to
+    // `/private/var`. Stage everything under the resolved path.
+    let temp_root = temp.path().canonicalize().expect("canonical tempdir");
     let src_key_dir = source_agent_dir.join(
         config_value["jacs_key_directory"]
             .as_str()
             .unwrap_or("keys"),
     );
-    let tmp_key_dir = temp.path().join("keys");
+    let tmp_key_dir = temp_root.join("keys");
     std::fs::create_dir_all(&tmp_key_dir).expect("mkdir keys");
     for entry in std::fs::read_dir(&src_key_dir).expect("read keys") {
         let entry = entry.expect("entry");
@@ -99,7 +136,7 @@ fn main() {
 
     let src_data_dir =
         source_agent_dir.join(config_value["jacs_data_directory"].as_str().unwrap_or("."));
-    let tmp_data_dir = temp.path().join("data");
+    let tmp_data_dir = temp_root.join("data");
     copy_fixture_dir(&src_data_dir, &tmp_data_dir);
 
     config_value["jacs_data_directory"] =
@@ -107,7 +144,7 @@ fn main() {
     config_value["jacs_key_directory"] =
         serde_json::Value::String(tmp_key_dir.to_string_lossy().into_owned());
 
-    let tmp_config = temp.path().join("jacs.config.json");
+    let tmp_config = temp_root.join("jacs.config.json");
     std::fs::write(
         &tmp_config,
         serde_json::to_vec_pretty(&config_value).expect("encode"),
@@ -121,6 +158,14 @@ fn main() {
     unsafe {
         std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "secretpassord");
     }
+
+    // JACS >= 0.11.4 refuses to load an unsigned *persisted* config for an
+    // existing agent, and the directory fields rewritten above sit inside the
+    // signed payload — so the staged config must be signed after the rewrite.
+    // The signing agent is loaded from a programmatic config (no `raw_json`,
+    // so the caller is the trust source); no compatibility env hatch is set,
+    // and the `SimpleAgent::load` below goes through the strict signed path.
+    sign_staged_config(&tmp_config, &config_value);
 
     let agent =
         jacs::simple::SimpleAgent::load(Some(&tmp_config.display().to_string()), Some(false))
@@ -197,6 +242,21 @@ fn main() {
     let mut doc: serde_json::Value =
         serde_json::from_str(&src).expect("parse email_conformance.json");
 
+    // Hand-maintained annotations on this scenario (e.g. Issue 017's
+    // `verify_implemented_by*`) are asserted by the per-SDK conformance tests
+    // and are not derivable here, so carry any existing extra keys forward
+    // instead of dropping them on regeneration.
+    let preserved: Vec<(String, serde_json::Value)> = doc
+        .get("raw_email_roundtrip")
+        .and_then(serde_json::Value::as_object)
+        .map(|existing| {
+            existing
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+
     doc["raw_email_roundtrip"] = serde_json::json!({
         "description": "Sign → persist → fetch → decode → verify chain. Bytes MUST byte-equal the signed input (R2), AND verify_email(bytes) MUST return valid=true when the HAI registry is mocked with the verify_registry data below. Re-generate with: cargo run --example regen_raw_email_fixture --features jacs-crate.",
         "input_raw_b64": b64,
@@ -217,6 +277,12 @@ fn main() {
             "benchmarks_completed": []
         }
     });
+
+    if let Some(scenario) = doc["raw_email_roundtrip"].as_object_mut() {
+        for (key, value) in preserved {
+            scenario.entry(key).or_insert(value);
+        }
+    }
 
     let out = serde_json::to_string_pretty(&doc).expect("serialize");
     std::fs::write(&fixture_path, format!("{out}\n")).expect("write fixture");

@@ -27,9 +27,7 @@ from haiai import AsyncHaiClient, HaiClient
 
 
 def _last_sign_image_opts(mock_ffi: Any) -> dict[str, Any]:
-    matches = [
-        call for call in mock_ffi.calls if call[0] == "sign_image"
-    ]
+    matches = [call for call in mock_ffi.calls if call[0] == "sign_image"]
     assert matches, "sign_image was not called on the FFI adapter"
     # MockFFIAdapter records (method, args, kwargs); sign_image's positional
     # args are (in_path, out_path, opts).
@@ -52,9 +50,7 @@ class TestSignImageOptionTranslationSync:
     """HaiClient.sign_image must shape `opts` for the FFI exactly as the
     Go SDK does (Issue 009)."""
 
-    def test_no_backup_true_maps_to_backup_false(
-        self, loaded_config: None
-    ) -> None:
+    def test_no_backup_true_maps_to_backup_false(self, loaded_config: None) -> None:
         client = HaiClient()
         mock_ffi = client._get_ffi()
         _stub_sign_image_response(mock_ffi, "/tmp/out.png")
@@ -90,9 +86,7 @@ class TestSignImageOptionTranslationSync:
         opts = _last_sign_image_opts(mock_ffi)
         assert opts.get("unsafe_bak_mode") == 0o644
 
-    def test_unsafe_bak_mode_omitted_when_none(
-        self, loaded_config: None
-    ) -> None:
+    def test_unsafe_bak_mode_omitted_when_none(self, loaded_config: None) -> None:
         client = HaiClient()
         mock_ffi = client._get_ffi()
         _stub_sign_image_response(mock_ffi, "/tmp/out.png")
@@ -124,9 +118,7 @@ class TestSignImageOptionTranslationAsync:
         opts = _last_sign_image_opts(mock_ffi)
         assert opts.get("backup") is False
 
-    async def test_default_maps_to_backup_true(
-        self, loaded_config: None
-    ) -> None:
+    async def test_default_maps_to_backup_true(self, loaded_config: None) -> None:
         client = AsyncHaiClient()
         mock_ffi = client._get_ffi()
         _stub_sign_image_response(mock_ffi, "/tmp/out.png")
@@ -136,9 +128,7 @@ class TestSignImageOptionTranslationAsync:
         opts = _last_sign_image_opts(mock_ffi)
         assert opts.get("backup") is True
 
-    async def test_unsafe_bak_mode_forwarded(
-        self, loaded_config: None
-    ) -> None:
+    async def test_unsafe_bak_mode_forwarded(self, loaded_config: None) -> None:
         client = AsyncHaiClient()
         mock_ffi = client._get_ffi()
         _stub_sign_image_response(mock_ffi, "/tmp/out.png")

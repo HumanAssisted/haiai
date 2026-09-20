@@ -310,7 +310,9 @@ def on_mediated_benchmark_job(
                         )
                     verify = verify_artifact(
                         jacs_client,
-                        inbound if isinstance(inbound, dict) else json.loads(str(inbound)),
+                        inbound
+                        if isinstance(inbound, dict)
+                        else json.loads(str(inbound)),
                         trust_policy=trust_policy,
                     )
                     if not verify.get("valid", False):
@@ -362,7 +364,8 @@ def on_mediated_benchmark_job(
                     hai_client.send_email(
                         hai_url,
                         to=notify_email,
-                        subject=email_subject or f"A2A mediated result for job {job_id}",
+                        subject=email_subject
+                        or f"A2A mediated result for job {job_id}",
                         body="Signed A2A artifact:\n\n"
                         + json.dumps(result_artifact, indent=2),
                     )

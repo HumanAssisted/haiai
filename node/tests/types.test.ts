@@ -80,6 +80,7 @@ describe('type definitions', () => {
 
   it('BenchmarkJob has correct shape', () => {
     const job: BenchmarkJob = {
+      jobId: 'job-1',
       runId: 'run-1',
       scenario: { prompt: 'test' },
       data: { run_id: 'run-1' },

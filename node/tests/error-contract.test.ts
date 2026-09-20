@@ -34,7 +34,7 @@ describe('error_contract', () => {
     const fakeSigner = {} as never;
 
     try {
-      signResponse({ test: true }, fakeSigner, 'test-id');
+      signResponse('job-1', { response: { message: 'test' } }, fakeSigner, 'test-id');
       expect.fail('Expected HaiError to be thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(HaiError);

@@ -6,7 +6,7 @@
  * `python/tests/test_cross_lang_media.py`. Loads the same pre-signed
  * fixtures from `fixtures/media/signed.{png,jpg,webp,md}` (signed once by
  * the Rust regenerator in `rust/haiai/tests/regen_media_fixtures.rs`,
- * signer = the shared test agent in `fixtures/jacs-agent/`) and asserts
+ * with its public key committed beside the media) and asserts
  * that the Node FFI verifyImage / verifyText paths return the same
  * Valid / HashMismatch verdicts.
  *
@@ -35,17 +35,16 @@ const __dirnameLocal = dirname(__filenameLocal);
 
 const REPO_ROOT = resolve(__dirnameLocal, '../..');
 const MEDIA_DIR = join(REPO_ROOT, 'fixtures', 'media');
-const JACS_AGENT_DIR = join(REPO_ROOT, 'fixtures', 'jacs-agent');
 const SIGNER_FIXTURE_PATH = join(MEDIA_DIR, 'SIGNER.json');
 const CHECKSUMS_PATH = join(MEDIA_DIR, 'CHECKSUMS.txt');
 
-// Password for the shared fixture agent (matches Rust + Python).
-const FIXTURE_AGENT_PASSWORD = 'secretpassord';
+// Password for the committed test-only verifier (not the media signer).
+const VERIFIER_AGENT_PASSWORD = 'MediaFixtureVerifierPass!123';
 
 // Set the password before any FFI module is loaded — JACS reads this at
 // agent-construction time, and vitest's workers do not always propagate
 // process.env mutations made later in the test lifecycle.
-process.env.JACS_PRIVATE_KEY_PASSWORD = FIXTURE_AGENT_PASSWORD;
+process.env.JACS_PRIVATE_KEY_PASSWORD = VERIFIER_AGENT_PASSWORD;
 
 // ---------------------------------------------------------------------------
 // FFI availability — skip when haiinpm pre-dates TASK_008.
@@ -104,6 +103,8 @@ const SKIP_REASON =
 interface SignerFixture {
   signer_id: string;
   algorithm: string;
+  public_key_file: string;
+  verifier_agent_dir: string;
 }
 
 function loadSigner(): SignerFixture {
@@ -128,14 +129,17 @@ function readSignedWithChecksum(name: string): Buffer {
   return bytes;
 }
 
-function copyWithColons(src: string, dst: string): void {
+function copyVerifierTree(src: string, dst: string, inAgentDir = false): void {
   mkdirSync(dst, { recursive: true });
   for (const name of readdirSync(src)) {
-    const newName = name.replace(/_/g, ':');
     const srcPath = join(src, name);
+    const isDirectory = statSync(srcPath).isDirectory();
+    // Git stores `{id}_{version}.json` because `:` is illegal on Windows.
+    // Only restore agent-document filenames; preserve `public_keys`.
+    const newName = !isDirectory && inAgentDir ? name.replace(/_/g, ':') : name;
     const dstPath = join(dst, newName);
-    if (statSync(srcPath).isDirectory()) {
-      copyWithColons(srcPath, dstPath);
+    if (isDirectory) {
+      copyVerifierTree(srcPath, dstPath, inAgentDir || name === 'agent');
     } else {
       copyFileSync(srcPath, dstPath);
     }
@@ -145,36 +149,22 @@ function copyWithColons(src: string, dst: string): void {
 interface StagedAgent {
   configPath: string;
   tmpDir: string;
+  verificationKeyDir: string;
 }
 
-function stageFixtureAgent(): StagedAgent {
-  process.env.JACS_PRIVATE_KEY_PASSWORD = FIXTURE_AGENT_PASSWORD;
+function stageVerifierAgent(signer: SignerFixture): StagedAgent {
+  process.env.JACS_PRIVATE_KEY_PASSWORD = VERIFIER_AGENT_PASSWORD;
 
   const tmpDir = realpathSync(mkdtempSync(join(tmpdir(), 'haiai-media-parity-')));
-  const cfg = JSON.parse(readFileSync(join(JACS_AGENT_DIR, 'jacs.config.json'), 'utf-8')) as Record<
-    string,
-    unknown
-  >;
-
-  // Keys: copy verbatim.
-  const srcKeys = join(JACS_AGENT_DIR, cfg.jacs_key_directory as string);
-  const tmpKeys = join(tmpDir, 'keys');
-  mkdirSync(tmpKeys, { recursive: true });
-  for (const name of readdirSync(srcKeys)) {
-    copyFileSync(join(srcKeys, name), join(tmpKeys, name));
-  }
-
-  // Data: agent JSON filenames use `_` placeholders for `:`. Map back.
-  const srcData = join(JACS_AGENT_DIR, cfg.jacs_data_directory as string);
-  const tmpData = join(tmpDir, 'data');
-  copyWithColons(srcData, tmpData);
-
-  cfg.jacs_data_directory = tmpData;
-  cfg.jacs_key_directory = tmpKeys;
-
+  copyVerifierTree(join(REPO_ROOT, signer.verifier_agent_dir), tmpDir);
   const configPath = join(tmpDir, 'jacs.config.json');
-  writeFileSync(configPath, JSON.stringify(cfg, null, 2));
-  return { configPath, tmpDir };
+  const verificationKeyDir = join(tmpDir, 'verification-keys');
+  mkdirSync(verificationKeyDir);
+  copyFileSync(
+    join(REPO_ROOT, signer.public_key_file),
+    join(verificationKeyDir, `${signer.signer_id}.public.pem`),
+  );
+  return { configPath, tmpDir, verificationKeyDir };
 }
 
 interface FFIClient {
@@ -182,7 +172,11 @@ interface FFIClient {
   verifyText: (path: string, optsJson: string) => Promise<string>;
 }
 
-function buildFFIClient(): { client: FFIClient; tmpDir: string } {
+function buildFFIClient(signer: SignerFixture): {
+  client: FFIClient;
+  tmpDir: string;
+  verifyOptionsJson: string;
+} {
   const haiinpm = loadHaiinpm();
   if (!haiinpm) throw new Error('haiinpm not loadable');
 
@@ -191,15 +185,15 @@ function buildFFIClient(): { client: FFIClient; tmpDir: string } {
   // proxy). vitest's default `threads` pool wraps env mutations so the
   // native side does not see them; this test runs in the `forks` pool via
   // `poolMatchGlobs` in `vitest.config.ts` so re-setting here is sufficient.
-  process.env.JACS_PRIVATE_KEY_PASSWORD = FIXTURE_AGENT_PASSWORD;
+  process.env.JACS_PRIVATE_KEY_PASSWORD = VERIFIER_AGENT_PASSWORD;
 
-  const staged = stageFixtureAgent();
+  const staged = stageVerifierAgent(signer);
   const cfg = JSON.parse(readFileSync(staged.configPath, 'utf-8')) as Record<string, unknown>;
   const ffiConfig = JSON.stringify({
     jacs_id: (cfg.jacs_agent_id_and_version as string).split(':')[0],
-    agent_name: 'FixtureAgent',
+    agent_name: 'MediaFixtureVerifier',
     agent_version: '1.0.0',
-    key_dir: cfg.jacs_key_directory,
+    key_dir: join(staged.tmpDir, cfg.jacs_key_directory as string),
     jacs_config_path: staged.configPath,
     base_url: 'http://localhost:1', // never used; verify is local-only
   });
@@ -207,6 +201,7 @@ function buildFFIClient(): { client: FFIClient; tmpDir: string } {
   return {
     client: native as unknown as FFIClient,
     tmpDir: staged.tmpDir,
+    verifyOptionsJson: JSON.stringify({ key_dir: staged.verificationKeyDir }),
   };
 }
 
@@ -243,6 +238,7 @@ let ffiClient: FFIClient | null = null;
 let parityTmpDir: string | null = null;
 let stageTmpDir: string | null = null;
 let signer: SignerFixture | null = null;
+let verifyOptionsJson = '{}';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -254,9 +250,10 @@ describeMaybe('cross-language media verify-parity (node)', () => {
   beforeAll(() => {
     if (!MEDIA_SUPPORTED) return;
     signer = loadSigner();
-    const built = buildFFIClient();
+    const built = buildFFIClient(signer);
     ffiClient = built.client;
     parityTmpDir = built.tmpDir;
+    verifyOptionsJson = built.verifyOptionsJson;
     stageTmpDir = realpathSync(mkdtempSync(join(tmpdir(), 'haiai-media-stage-')));
   });
 
@@ -276,11 +273,17 @@ describeMaybe('cross-language media verify-parity (node)', () => {
   // -------------------------------------------------------------------------
 
   async function verifyImage(path: string): Promise<Record<string, unknown>> {
-    return JSON.parse(await ffiClient!.verifyImage(path, '{}')) as Record<string, unknown>;
+    return JSON.parse(await ffiClient!.verifyImage(path, verifyOptionsJson)) as Record<
+      string,
+      unknown
+    >;
   }
 
   async function verifyText(path: string): Promise<Record<string, unknown>> {
-    return JSON.parse(await ffiClient!.verifyText(path, '{}')) as Record<string, unknown>;
+    return JSON.parse(await ffiClient!.verifyText(path, verifyOptionsJson)) as Record<
+      string,
+      unknown
+    >;
   }
 
   function stageSigned(name: string): string {

@@ -2,33 +2,22 @@
 
 SDK development guide, library usage, and architecture reference.
 
+Start with the [local identity/sign/verify quickstart](README.md#local-quickstart).
+The language guides below load that local identity and perform local JACS
+operations. No platform account is needed for this first journey. Before using
+HTTP methods, read the shared [capability boundaries](README.md#capability-boundaries)
+and [v0.4.1 compatibility note](README.md#platform-compatibility).
+
 ## Rust library
 
 ```toml
 [dependencies]
-haiai = "0.1.5"
+haiai = "0.4.1"
 ```
 
-```rust
-use haiai::{Agent, SendEmailOptions};
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let agent = Agent::from_config(None).await?;
-
-    agent.email.send(SendEmailOptions {
-        to: "other-agent@hai.ai".into(),
-        subject: "Hello".into(),
-        body: "From my agent".into(),
-        ..Default::default()
-    }).await?;
-
-    let messages = agent.email.inbox(None).await?;
-    println!("{:?}", messages);
-
-    Ok(())
-}
-```
+Follow the [Rust local example](rust/haiai/README.md#local-quickstart) to load a
+`LocalJacsProvider`, sign a document, and verify it. `Agent::from_config` and
+`HaiClient` also expose platform operations subject to the shared requirements.
 
 The Rust crate is the canonical implementation. All cryptographic operations delegate to [JACS](https://github.com/HumanAssisted/JACS).
 
@@ -42,7 +31,6 @@ pip install "haiai[ws]"         # WebSocket support
 pip install "haiai[sse]"        # SSE support
 pip install "haiai[langchain]"  # LangChain integration
 pip install "haiai[langgraph]"  # LangGraph integration
-pip install "haiai[crewai]"     # CrewAI integration
 pip install "haiai[mcp]"        # MCP helper wrappers
 pip install "haiai[agentsdk]"   # Agent SDK tool wrappers
 pip install "haiai[a2a]"        # A2A protocol support
@@ -51,28 +39,19 @@ pip install "haiai[all]"        # Everything
 
 ### High-level API
 
-```python
-from haiai import Agent
-
-agent = Agent.from_config()
-
-agent.email.send(to="other-agent@hai.ai", subject="Hello", body="From my agent")
-
-messages = agent.email.inbox()
-results = agent.email.search(q="hello")
-```
+`Agent.from_config()` provides signing and email facades. Start with the
+[Python local quickstart](python/README.md#local-quickstart); use `agent.email` only
+after the platform reports active email capability.
 
 ### Low-level client
 
-```python
-from haiai import HaiClient
-
-client = HaiClient()
-client.register("https://hai.ai", owner_email="you@example.com")
-
-client.send_email("https://hai.ai", to="peer@hai.ai", subject="Hi", body="Hello")
-messages = client.list_messages("https://hai.ai")
-```
+`HaiClient` exposes local `sign_text`/`verify_text` and platform HTTP methods.
+For admitted existing-identity registration, `HaiClient.register`,
+`AsyncHaiClient.register`, and module-level `register` accept optional
+`registration_key`. Preview shows FFI options with that key masked and raw
+`public_key_pem` when supplied or loaded. The public `public_key` argument accepts
+PEM text; Rust alone builds the HTTP body and base64-encodes it once.
+See the shared [registration guidance](README.md#admitted-registration-and-email).
 
 ### Framework integrations
 
@@ -80,8 +59,8 @@ messages = client.list_messages("https://hai.ai")
 from haiai.integrations import (
     langchain_signing_middleware,
     langgraph_wrap_tool_call,
-    crewai_guardrail,
-    crewai_signed_tool,
+    crewai_guardrail,   # needs JACS < 0.12; the adapter was removed upstream
+    crewai_signed_tool, # needs JACS < 0.12; the adapter was removed upstream
     agentsdk_tool_wrapper,
     create_mcp_server,
     register_a2a_tools,
@@ -90,7 +69,8 @@ from haiai.integrations import (
 )
 ```
 
-Working example: `python/examples/mcp_quickstart.py`.
+Framework example: `python/examples/mcp_quickstart.py`. Executable examples may
+include platform calls; inspect their prerequisites before running them.
 
 ## Node.js SDK (pre-alpha)
 
@@ -100,28 +80,16 @@ npm install @haiai/haiai
 
 ### High-level API
 
-```typescript
-import { Agent } from "@haiai/haiai";
-
-const agent = await Agent.fromConfig();
-
-await agent.email.send({ to: "other-agent@hai.ai", subject: "Hello", body: "From my agent" });
-
-const messages = await agent.email.inbox();
-const results = await agent.email.search({ q: "hello" });
-```
+`Agent.fromConfig()` provides signing and email facades. Start with the
+[Node.js local quickstart](node/README.md#local-quickstart); use `agent.email` only
+after the platform reports active email capability.
 
 ### Low-level client
 
-```typescript
-import { HaiClient } from "@haiai/haiai";
-
-const client = await HaiClient.create({ url: "https://hai.ai" });
-await client.register({ ownerEmail: "you@example.com" });
-
-await client.sendEmail({ to: "peer@hai.ai", subject: "Hi", body: "Hello" });
-const messages = await client.listMessages();
-```
+`HaiClient` exposes local `signText`/`verifyText` and platform HTTP methods.
+Its low-level `register` accepts optional `registrationKey` for admitted
+existing-identity enrollment. See the shared
+[registration guidance](README.md#admitted-registration-and-email).
 
 ### Framework integrations
 
@@ -142,42 +110,18 @@ import {
 go get github.com/HumanAssisted/haiai-go
 ```
 
-```go
-package main
+Follow the [Go local quickstart](go/README.md#local-quickstart) for `Client.SignText`
+and `Client.VerifyText`. `AgentFromConfig` also provides the higher-level facade.
+`Client.Register` accepts optional `RegisterOptions.RegistrationKey` for admitted
+existing-identity enrollment; leaving it empty omits it. `RegisterOptions.PublicKey`
+accepts raw PEM text; Rust handles its HTTP encoding. See
+[registration guidance](README.md#admitted-registration-and-email).
+`agent.Email` requires active platform email.
 
-import (
-	"context"
-	"fmt"
-	"log"
-
-	hai "github.com/HumanAssisted/haiai-go"
-)
-
-func main() {
-	agent, err := hai.AgentFromConfig("")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	ctx := context.Background()
-
-	result, err := agent.Email.Send(ctx, hai.SendEmailOptions{
-		To:      "other-agent@hai.ai",
-		Subject: "Hello",
-		Body:    "From my agent",
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(result)
-
-	messages, err := agent.Email.Inbox(ctx, hai.ListMessagesOptions{})
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println(messages)
-}
-```
+The language `hai_quickstart`/Go `quickstart` executable examples still contain
+owner-email-only registration and free benchmark onboarding. They are pending
+an executable-example update and are not the local onboarding path. Benchmarks
+remain admin/lab workflows.
 
 ## A2A integration
 
@@ -215,6 +159,74 @@ let wrapped = a2a.sign_artifact(json!({"taskId":"t-1","input":"hello"}), "task",
 let verified = a2a.verify_artifact(&wrapped)?;
 ```
 
+## Choosing an endpoint
+
+Nothing in the SDKs hard-codes a deployment. The HAI API origin resolves as:
+
+```
+explicit option  >  $HAI_URL  >  $HAI_API_URL  >  https://hai.ai
+```
+
+A variable that is set but blank counts as unset, in all four languages.
+
+```bash
+# Benchmark / MediationBench deployment
+export HAI_URL=https://sim.hai.ai
+
+# Local hai/api checkout
+export HAI_URL=http://localhost:3000
+
+# Production (or just leave both unset)
+export HAI_URL=https://hai.ai
+```
+
+An endpoint selection does not grant admission. Request-bound authentication
+also requires matching SDK/API ingress origins and audiences; see
+[platform compatibility](README.md#platform-compatibility).
+
+CLI and MCP read `HAI_REQUEST_AUTH_AUDIENCE` separately from the origin. Set it
+to the API's configured ingress audience for ordinary requests and remote records;
+it is never inferred from `HAI_URL`. Only an absent variable defaults to `hai.ai`.
+Blank, invalid UTF-8, or values over 256 UTF-8 bytes refuse startup. MCP retains
+the startup value across tool calls and environment changes.
+
+| Surface | Where the origin comes from |
+|---------|-----------------------------|
+| Rust — `Agent::from_config(..)` | Resolved from the environment for you |
+| Rust — `HaiClient::new(..)` | `HaiClientOptions.base_url`, which you set. `HaiClientOptions::default()` is always `https://hai.ai`; pass `base_url: haiai::base_url_from_env()` to opt into the environment |
+| Rust CLI (`haiai …`) | `haiai::base_url_from_env()` |
+| MCP server (`haiai mcp`) | `haiai::base_url_from_env()`; set `env` in your MCP client config |
+| Python | `HaiClient(...)` resolves it in `haiai/client.py`; or pass the base URL per call |
+| Node | `HaiClient.create({ url })`, resolved in `node/src/client.ts` |
+| Go | `haiai.NewClient(...)` resolves it; `WithEndpoint("https://…")` overrides |
+
+The low-level Rust constructor is the one exception, deliberately: a
+`HaiClientOptions` you built by hand should mean exactly what it says.
+
+```rust
+// Opt a low-level client into the environment explicitly:
+let client = haiai::HaiClient::new(
+    provider,
+    haiai::HaiClientOptions {
+        base_url: haiai::base_url_from_env(),
+        ..Default::default()
+    },
+)?;
+```
+
+`RemoteJacsProvider::from_inner` reads the same variables but has **no**
+default: sending documents to production because an environment variable was
+missing is not a safe fallback, so it errors instead.
+
+`HAI_API_URL` is honoured as a fallback so the export used by the `hai` API's
+own benchmark tooling (`api/benchmark/README.md`) works here unchanged.
+
+Live SSE/WebSocket delivery verifies every event against the origin's
+published signing keys, so the origin must be **HTTPS unless its host is
+loopback** (`haiai::client::validate_live_event_key_origin`). `https://sim.hai.ai`
+and `http://localhost:3000` both work; `http://some-lan-host:3000` is refused
+before any connection is made.
+
 ## Connection models
 
 HAI supports three transport protocols for agent communication:
@@ -222,8 +234,12 @@ HAI supports three transport protocols for agent communication:
 | Transport | Endpoint | Use case |
 |-----------|----------|----------|
 | **SSE** (recommended) | `GET /api/v1/agents/connect` | Persistent connection, server pushes events |
-| **WebSocket** | `wss://hai.ai/ws/v1/agents/connect` | Bidirectional, lower latency |
+| **WebSocket** | `GET /ws/agent/connect` (`wss://` against the configured origin) | Bidirectional, lower latency |
 | **HTTP Outbound** | `POST` to your agent's webhook | Agent receives jobs via HTTP callback |
+
+Both live transports first fetch `GET /.well-known/hai-keys.json` from the
+configured origin and refuse any frame that is not a signed event verifiable
+against an active key from that document.
 
 ## Error handling
 
@@ -237,12 +253,12 @@ try:
 except HaiError as e:
     print(f"Error: {e.message}")
     print(f"Code: {e.code}")        # e.g. "JACS_NOT_LOADED"
-    print(f"Fix: {e.action}")       # e.g. "Run 'haiai init' or set JACS_CONFIG_PATH"
+    print(f"Fix: {e.action}")       # Server/client-provided recovery guidance
 ```
 
 Common errors:
-- `JACS_NOT_LOADED` — JACS agent not initialized. Run `haiai init` or set `JACS_CONFIG_PATH`.
-- `CONFIG_MISSING` — `jacs.config.json` not found. Run `haiai init`.
+- `JACS_NOT_LOADED` — Load the intended local identity or create one with `haiai init --name myagent --register=false` in a new directory.
+- `CONFIG_MISSING` — Locate your existing `jacs.config.json`; for a new identity, follow the [local quickstart](README.md#local-quickstart).
 - `VERIFICATION_FAILED` — Signature verification failed. Check key ID and algorithm match.
 
 See `docs/error-catalog.md` for the full error catalog.
@@ -295,6 +311,12 @@ make versions          # show all package versions
 make check-versions    # fail if versions don't match
 make release-all       # tag + push all releases (triggers CI publish)
 ```
+
+The current 0.4.1 candidate is source-tested, not published. Its JACS pin uses
+archived native adapters, which disable publication. Resolve the portable SDK
+migration and distributable dependencies before running release targets;
+merging the candidate does not authorize publishing.
+
 
 > **Windows:** JACS uses `:` in filenames (`{id}:{version}.json`), which is illegal on Windows NTFS. Use WSL2 or a Linux container.
 

@@ -1,10 +1,15 @@
 # Node.js Installation
 
-The JACS Node.js package (`@hai.ai/jacs`) provides JavaScript/TypeScript bindings to the JACS Rust library, making it easy to integrate JACS into web applications, servers, and Node.js projects.
+{{#include ../_snippets/node-registry-status.md}}
+
+The JACS Node.js package (`@hai.ai/jacs`) provides JavaScript/TypeScript
+bindings to the JACS Rust library for servers and other Node.js projects. It is
+a native `.node` package and does not run in a browser; see the source-built
+WASM package for browser applications.
 
 ## Requirements
 
-- **Node.js**: Version 16.0 or higher
+- **Node.js**: Version 20.0 or higher
 - **npm** or **yarn**: For package management
 - **Operating System**: macOS, Linux, or Windows with WSL
 
@@ -208,29 +213,15 @@ AWS credentials are read from standard AWS environment variables.
 **Pros**: Fast, secure, small signatures
 **Cons**: Requires elliptic curve support
 
-### Legacy RSA-PSS Verification
-
-JACS can still verify older artifacts whose metadata says `RSA-PSS`, but new Node-managed agents should use `ring-Ed25519` or `pq2025`.
-
-### pq-dilithium (Post-Quantum)
-```json
-{
-  "jacs_agent_key_algorithm": "pq-dilithium"
-}
-```
-
-**Pros**: Quantum-resistant
-**Cons**: Experimental, large signatures
-
-### pq2025 (Post-Quantum Hybrid)
+### pq2025 (Post-Quantum)
 ```json
 {
   "jacs_agent_key_algorithm": "pq2025"
 }
 ```
 
-**Pros**: Combines ML-DSA-87 with hybrid approach
-**Cons**: Newest algorithm, largest signatures
+**Pros**: FIPS-204 ML-DSA-87 post-quantum signatures
+**Cons**: Larger signatures than Ed25519
 
 ## Development Setup
 
@@ -301,7 +292,7 @@ If you get `Module not found` errors:
 
 ```bash
 # Check Node.js version
-node --version  # Should be 16+
+node --version  # Should be 20+
 
 # Clear node_modules and reinstall
 rm -rf node_modules package-lock.json

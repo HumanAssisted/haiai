@@ -1,0 +1,38 @@
+{
+  "$schema": "https://hai.ai/schemas/agent/v1/agent.schema.json",
+  "description": "Cross-language media fixture cross-language-media-fixture-verifier",
+  "jacsAgentType": "ai",
+  "jacsId": "ce0e4af5-edf5-415f-a47a-7eb23557ecf6",
+  "jacsLevel": "config",
+  "jacsOriginalDate": "2026-07-16T03:50:19.461353+00:00",
+  "jacsOriginalVersion": "3db90c33-c413-46b9-be7c-ee6055c8d6de",
+  "jacsSha256": "e9988ae014b558f193c610de082d273a64b5fe828363efaaace7ab1d7091e852",
+  "jacsSignature": {
+    "agentID": "ce0e4af5-edf5-415f-a47a-7eb23557ecf6",
+    "agentVersion": "3db90c33-c413-46b9-be7c-ee6055c8d6de",
+    "date": "2026-07-16T03:50:19.973386+00:00",
+    "fields": [
+      "$schema",
+      "description",
+      "jacsAgentType",
+      "jacsId",
+      "jacsLevel",
+      "jacsOriginalDate",
+      "jacsOriginalVersion",
+      "jacsType",
+      "jacsVersion",
+      "jacsVersionDate",
+      "name"
+    ],
+    "iat": 1784173819,
+    "jti": "019f690b-f845-78a3-8374-980888377924",
+    "publicKeyHash": "0f46e66da1133009cc6efb5b89abe36120865b91ed10a8b540e7db79edec8a67",
+    "signature": "+eOsTikmeWo+84RkL4H3EONFjJcUD/m/YqynhUyg6LElePOV2yamE41A0TKFvon1UP1iFB8fAz3HLny5YUCKDw==",
+    "signatureContentVersion": "jacs-signature-v2",
+    "signingAlgorithm": "ring-Ed25519"
+  },
+  "jacsType": "agent",
+  "jacsVersion": "3db90c33-c413-46b9-be7c-ee6055c8d6de",
+  "jacsVersionDate": "2026-07-16T03:50:19.461353+00:00",
+  "name": "cross-language-media-fixture-verifier"
+}

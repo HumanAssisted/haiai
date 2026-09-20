@@ -1,6 +1,8 @@
+.codex
 .claude
 jacs.config.json
 !fixtures/jacs-agent/jacs.config.json
+!fixtures/media/verifier-agent/jacs.config.json
 jacs_data
 private
 var
@@ -31,6 +33,7 @@ dist/
 .vitest/
 node/jacs.config.json
 node/jacs_data/
+node/documents/
 *.node
 
 # Go
@@ -68,3 +71,6 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# Locally seeded CLI binary for the pip shim bundled-path fallback
+python/src/haiai/bin/

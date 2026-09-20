@@ -27,21 +27,12 @@ from haiai import _client_shared
 from haiai._ffi_adapter import AsyncFFIAdapter
 from haiai.signing import canonicalize_json, create_agent_document  # noqa: F401
 from haiai.errors import (
-    BenchmarkError,
-    BodyTooLarge,
-    EmailNotActive,
-    HaiApiError,
     HaiAuthError,
     HaiConnectionError,
     HaiError,
-    RateLimited,
-    RecipientNotFound,
-    RegistrationError,
-    SubjectTooLong,
 )
 from haiai._retry import RETRY_MAX_ATTEMPTS, backoff
 from haiai.models import (
-    BaselineRunResult,
     BenchmarkResult,
     ChainEntry,
     Contact,
@@ -89,10 +80,16 @@ class AsyncHaiClient:
         timeout: float = 30.0,
         max_retries: int = 3,
         verify_server_signatures: bool = False,
+        expected_event_tenant: Optional[str] = None,
+        response_audience: Optional[str] = None,
+        request_auth_audience: str = "hai.ai",
     ) -> None:
         self._timeout = timeout
         self._max_retries = max_retries
         self._verify_server_signatures = verify_server_signatures
+        self._expected_event_tenant = expected_event_tenant
+        self._response_audience = response_audience
+        self._request_auth_audience = request_auth_audience
         self._connected = False
         self._should_disconnect = False
         self._hai_url: Optional[str] = None
@@ -105,7 +102,14 @@ class AsyncHaiClient:
         """Lazily create the async FFI adapter."""
         if self._ffi is None:
             from haiai.client import _build_ffi_config
-            self._ffi = AsyncFFIAdapter(_build_ffi_config())
+
+            self._ffi = AsyncFFIAdapter(
+                _build_ffi_config(
+                    self._expected_event_tenant,
+                    self._response_audience,
+                    self._request_auth_audience,
+                )
+            )
         return self._ffi
 
     @property
@@ -149,11 +153,25 @@ class AsyncHaiClient:
     def _build_jacs_auth_header(self) -> str:
         return _client_shared.build_jacs_auth_header()
 
+    async def build_request_auth_header(
+        self, method: str, url: str, body: bytes = b""
+    ) -> str:
+        """Authenticate final method, URL and exact body bytes through Rust/JACS.
+
+        Send the same bytes and build a fresh header per attempt. Ordinary SDK
+        requests handle this automatically; audience remains pinned by the client.
+        """
+        return await self._get_ffi().build_request_auth_header(
+            _client_shared.request_auth_input(method, url, body)
+        )
+
     def _build_auth_headers(self) -> dict[str, str]:
         return _client_shared.build_auth_headers()
 
     @staticmethod
-    def _parse_transcript(raw_messages: list[dict[str, Any]]) -> list[TranscriptMessage]:
+    def _parse_transcript(
+        raw_messages: list[dict[str, Any]],
+    ) -> list[TranscriptMessage]:
         return _client_shared.parse_transcript(raw_messages)
 
     @staticmethod
@@ -239,8 +257,13 @@ class AsyncHaiClient:
         public_key: Optional[str] = None,
         preview: bool = False,
         owner_email: Optional[str] = None,
+        registration_key: Optional[str] = None,
+        is_mediator: Optional[bool] = None,
     ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
-        """Register a JACS agent with HAI."""
+        """Register an existing JACS agent; preview shows FFI options.
+
+        Public PEM is passed unchanged to Rust, which owns HTTP encoding.
+        """
         from haiai.config import get_config
 
         cfg = get_config()
@@ -252,19 +275,23 @@ class AsyncHaiClient:
             agent = get_agent()
             pub_pem = _read_public_key_pem(cfg)
             agent_doc = create_agent_document(
-                agent=agent, name=cfg.name, version=cfg.version,
+                agent=agent,
+                name=cfg.name,
+                version=cfg.version,
             )
             agent_json = json.dumps(agent_doc, indent=2)
             if public_key is None:
                 public_key = pub_pem
 
         payload: dict[str, Any] = {"agent_json": agent_json}
+        if is_mediator is not None:
+            payload["is_mediator"] = is_mediator
         if public_key is not None:
-            payload["public_key"] = base64.b64encode(
-                public_key.encode("utf-8")
-            ).decode("utf-8")
+            payload["public_key_pem"] = public_key
         if owner_email is not None:
             payload["owner_email"] = owner_email
+        if registration_key is not None:
+            payload["registration_key"] = "***" if preview else registration_key
 
         url = self._make_url(hai_url, "/api/v1/agents/register")
 
@@ -274,7 +301,10 @@ class AsyncHaiClient:
                 agent_name=cfg.name,
                 payload_json=json.dumps(payload, indent=2),
                 endpoint=url,
-                headers={"Content-Type": "application/json", "Authorization": "JACS ***"},
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": "JACS ***",
+                },
             )
 
         ffi = self._get_ffi()
@@ -288,6 +318,8 @@ class AsyncHaiClient:
             agent_id=agent_id,
             registered_at=data.get("registered_at", ""),
             raw_response=data,
+            registration_status=data.get("registration_status"),
+            email=data.get("email"),
         )
 
     # ------------------------------------------------------------------
@@ -426,9 +458,7 @@ class AsyncHaiClient:
             success=True,
             run_id=data.get("run_id", data.get("runId", "")),
             transcript=transcript,
-            upsell_message=data.get(
-                "upsell_message", data.get("upsellMessage", "")
-            ),
+            upsell_message=data.get("upsell_message", data.get("upsellMessage", "")),
             raw_response=data,
         )
 
@@ -447,10 +477,12 @@ class AsyncHaiClient:
             response_body["metadata"] = metadata
         response_body["processing_time_ms"] = processing_time_ms
 
-        data = await ffi.submit_response({
-            "job_id": job_id,
-            "response": response_body,
-        })
+        data = await ffi.submit_response(
+            {
+                "job_id": job_id,
+                **response_body,
+            }
+        )
 
         return JobResponseResult(
             success=data.get("success", True),
@@ -468,25 +500,24 @@ class AsyncHaiClient:
     ) -> RotationResult:
         """Rotate the agent's cryptographic keys (async).
 
-        Delegates to the synchronous ``HaiClient.rotate_keys()`` in a
-        thread executor, since the operation involves file I/O and JACS
-        agent creation that are inherently synchronous.
+        Uses this client's async Rust adapter, preserving its configured
+        identity, URL and audience. Arguments and results match
+        ``HaiClient.rotate_keys()``. Local Python key state is reloaded after
+        rotation, even when HAI registration is not confirmed.
         """
-        from haiai.client import HaiClient
-
-        sync_client = HaiClient(
-            timeout=self._timeout,
-            verify_server_signatures=self._verify_server_signatures,
+        cfg, loaded_path = _client_shared.rotation_config(config_path)
+        ffi = self._get_ffi()
+        _client_shared.validate_rotation_client(
+            cfg, await ffi.jacs_id(), hai_url, await ffi.base_url()
         )
-        sync_client._hai_url = self._hai_url or hai_url or ''
-        sync_client._hai_agent_id = self._hai_agent_id or ''
-
+        try:
+            rotation = await ffi.rotate_keys(
+                {"register_with_hai": register_with_hai, "algorithm": algorithm}
+            )
+        except Exception as exc:
+            raise HaiAuthError(f"Key rotation failed: {exc}") from exc
         return await asyncio.to_thread(
-            sync_client.rotate_keys,
-            hai_url=hai_url,
-            register_with_hai=register_with_hai,
-            config_path=config_path,
-            algorithm=algorithm,
+            _client_shared.complete_key_rotation, rotation, cfg, loaded_path
         )
 
     # ------------------------------------------------------------------
@@ -504,6 +535,7 @@ class AsyncHaiClient:
         cc: Optional[list[str]] = None,
         bcc: Optional[list[str]] = None,
         labels: Optional[list[str]] = None,
+        idempotency_key: Optional[str] = None,
     ) -> SendEmailResult:
         """Send an email from this agent's @hai.ai address."""
         if self._agent_email is None:
@@ -534,9 +566,13 @@ class AsyncHaiClient:
             options["bcc"] = bcc
         if labels:
             options["labels"] = labels
+        if idempotency_key is not None:
+            options["idempotency_key"] = idempotency_key
 
         data = await ffi.send_email(options)
-        return SendEmailResult(message_id=data.get("message_id", ""), status=data.get("status", "sent"))
+        return SendEmailResult(
+            message_id=data.get("message_id", ""), status=data.get("status", "sent")
+        )
 
     async def send_signed_email(
         self,
@@ -549,6 +585,8 @@ class AsyncHaiClient:
         cc: Optional[list[str]] = None,
         bcc: Optional[list[str]] = None,
         labels: Optional[list[str]] = None,
+        generation_type: str = "html_inline_jacs",
+        idempotency_key: Optional[str] = None,
     ) -> SendEmailResult:
         """Send an agent-signed email (async).
 
@@ -566,6 +604,7 @@ class AsyncHaiClient:
             "to": to,
             "subject": subject,
             "body": body,
+            "generation_type": generation_type,
         }
         if in_reply_to is not None:
             options["in_reply_to"] = in_reply_to
@@ -584,6 +623,8 @@ class AsyncHaiClient:
             options["bcc"] = bcc
         if labels:
             options["labels"] = labels
+        if idempotency_key is not None:
+            options["idempotency_key"] = idempotency_key
 
         data = await ffi.send_signed_email(options)
         return SendEmailResult(
@@ -594,6 +635,7 @@ class AsyncHaiClient:
     async def sign_email(self, hai_url: str, raw_email: bytes) -> bytes:
         """Sign a raw RFC 5822 email via the HAI server."""
         import email.message
+
         if isinstance(raw_email, email.message.EmailMessage):
             raw_email = raw_email.as_bytes()
 
@@ -601,6 +643,74 @@ class AsyncHaiClient:
         b64_input = base64.b64encode(raw_email).decode("ascii")
         b64_result = await ffi.sign_email_raw(b64_input)
         return base64.b64decode(b64_result)
+
+    # =========================================================================
+    # Agreements
+    # =========================================================================
+
+    async def save_agreement(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Save a signed agreement through the HAI agreement workflow API."""
+        return await self._get_ffi().save_agreement(request)
+
+    async def search_agreements(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Search agreements visible to this agent."""
+        return await self._get_ffi().search_agreements(request)
+
+    async def get_agreement(self, agreement_id: str) -> dict[str, Any]:
+        """Retrieve one agreement by HAI agreement id or JACS document id."""
+        return await self._get_ffi().get_agreement(agreement_id)
+
+    async def countersign_agreement(
+        self, agreement_id: str, request: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
+        """Request HAI notary/countersignature workflow for an agreement."""
+        return await self._get_ffi().countersign_agreement(agreement_id, request or {})
+
+    async def create_agreement_v2(self, input_data: dict[str, Any]) -> dict[str, Any]:
+        """Create a standalone JACS agreement v2 document locally."""
+        return await self._get_ffi().create_agreement_v2(input_data)
+
+    async def apply_agreement_v2(
+        self, document: str, mutation: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Apply a JACS agreement v2 mutation locally."""
+        return await self._get_ffi().apply_agreement_v2(document, mutation)
+
+    async def sign_agreement_v2(self, document: str, role: str) -> dict[str, Any]:
+        """Add a signer, witness, or notary signature locally."""
+        return await self._get_ffi().sign_agreement_v2(document, role)
+
+    async def verify_agreement_v2(self, document: str) -> dict[str, Any]:
+        """Verify a JACS agreement v2 document locally."""
+        return await self._get_ffi().verify_agreement_v2(document)
+
+    async def detect_agreement_branch_conflict(
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict[str, Any]:
+        """Compare two v2 agreement branches against a shared base."""
+        return await self._get_ffi().detect_agreement_branch_conflict(
+            base_document, left_document, right_document
+        )
+
+    async def merge_agreement_transcript_branches(
+        self, base_document: str, left_document: str, right_document: str
+    ) -> dict[str, Any]:
+        """Auto-merge two transcript-only v2 agreement branches locally."""
+        return await self._get_ffi().merge_agreement_transcript_branches(
+            base_document, left_document, right_document
+        )
+
+    async def resolve_agreement_branch_conflict(
+        self,
+        base_document: str,
+        previous_document: str,
+        side_branch_document: str,
+        resolution: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Resolve a v2 agreement branch conflict with an explicit mutation."""
+        return await self._get_ffi().resolve_agreement_branch_conflict(
+            base_document, previous_document, side_branch_document, resolution
+        )
 
     # =========================================================================
     # Layer 8: Local Media Sign/Verify (TASK_007)
@@ -732,9 +842,12 @@ class AsyncHaiClient:
             payload=data.get("payload"),
         )
 
-    async def verify_email(self, hai_url: str, raw_email: bytes) -> EmailVerificationResultV2:
+    async def verify_email(
+        self, hai_url: str, raw_email: bytes
+    ) -> EmailVerificationResultV2:
         """Verify a JACS-signed email via the HAI API."""
         import email.message
+
         if isinstance(raw_email, email.message.EmailMessage):
             raw_email = raw_email.as_bytes()
 
@@ -1010,11 +1123,13 @@ class AsyncHaiClient:
     ) -> list[str]:
         """Update labels on an email message."""
         ffi = self._get_ffi()
-        data = await ffi.update_labels({
-            "message_id": message_id,
-            "add": add or [],
-            "remove": remove or [],
-        })
+        data = await ffi.update_labels(
+            {
+                "message_id": message_id,
+                "add": add or [],
+                "remove": remove or [],
+            }
+        )
         return data.get("labels", [])
 
     async def contacts(self, hai_url: str) -> list[Contact]:
@@ -1113,14 +1228,19 @@ class AsyncHaiClient:
     # ------------------------------------------------------------------
 
     async def fetch_remote_key(
-        self, hai_url: str, jacs_id: str, version: str = "latest",
+        self,
+        hai_url: str,
+        jacs_id: str,
+        version: str = "latest",
     ) -> PublicKeyInfo:
         """Fetch another agent's public key from HAI."""
         ffi = self._get_ffi()
         data = await ffi.fetch_remote_key(jacs_id, version)
         return self._parse_public_key_info(data, jacs_id=jacs_id, version=version)
 
-    async def fetch_key_by_hash(self, hai_url: str, public_key_hash: str) -> PublicKeyInfo:
+    async def fetch_key_by_hash(
+        self, hai_url: str, public_key_hash: str
+    ) -> PublicKeyInfo:
         """Fetch an agent's public key by its SHA-256 hash."""
         ffi = self._get_ffi()
         data = await ffi.fetch_key_by_hash(public_key_hash)
@@ -1167,7 +1287,9 @@ class AsyncHaiClient:
         """Verify an agent document via HAI's advanced verification endpoint."""
         ffi = self._get_ffi()
         request: dict[str, Any] = {
-            "agent_json": agent_json if isinstance(agent_json, str) else json.dumps(agent_json),
+            "agent_json": agent_json
+            if isinstance(agent_json, str)
+            else json.dumps(agent_json),
         }
         if public_key is not None:
             request["public_key"] = public_key
@@ -1180,7 +1302,10 @@ class AsyncHaiClient:
     # ------------------------------------------------------------------
 
     async def connect(
-        self, hai_url: str, *, transport: str = "sse",
+        self,
+        hai_url: str,
+        *,
+        transport: str = "sse",
     ) -> AsyncIterator[HaiEvent]:
         """Connect to HAI and yield events asynchronously via FFI."""
         if transport not in ("sse", "ws"):
@@ -1289,9 +1414,7 @@ class AsyncHaiClient:
         """Tombstone a document."""
         await self._get_ffi().remove_document(key)
 
-    async def update_document(
-        self, doc_id: str, signed_json: str
-    ) -> dict[str, Any]:
+    async def update_document(self, doc_id: str, signed_json: str) -> dict[str, Any]:
         """Update a document, creating a new signed version."""
         return await self._get_ffi().update_document(doc_id, signed_json)
 
@@ -1354,3 +1477,29 @@ class AsyncHaiClient:
     async def get_record_bytes(self, key: str) -> bytes:
         """Fetch raw record bytes (no decode)."""
         return await self._get_ffi().get_record_bytes(key)
+
+    # Conflict documents
+
+    async def conflict_create(self, body: dict[str, Any] | str) -> dict[str, Any]:
+        """Create and sign a conflict document."""
+        body_json = body if isinstance(body, str) else json.dumps(body)
+        return await self._get_ffi().conflict_create(body_json)
+
+    async def conflict_update(
+        self, key_or_id: str, mutation: dict[str, Any] | str
+    ) -> dict[str, Any]:
+        """Apply a conflict mutation and return the new signed document."""
+        mutation_json = mutation if isinstance(mutation, str) else json.dumps(mutation)
+        return await self._get_ffi().conflict_update(key_or_id, mutation_json)
+
+    async def conflict_get(self, key: str) -> str:
+        """Fetch a signed conflict document by key."""
+        return await self._get_ffi().conflict_get(key)
+
+    async def conflict_list(self, limit: int = 25, offset: int = 0) -> list[str]:
+        """List signed conflict document keys."""
+        return await self._get_ffi().conflict_list(limit, offset)
+
+    async def conflict_check_readiness(self, key_or_id: str) -> dict[str, Any]:
+        """Run the JACS conflict readiness checker for a key or id."""
+        return await self._get_ffi().conflict_check_readiness(key_or_id)

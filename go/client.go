@@ -1,4 +1,11 @@
-// Package haiai provides the Go SDK for the HAI.AI agent benchmarking platform.
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
+// Package haiai provides the Go SDK for HAI.AI platform integration.
 //
 // All authentication uses JACS agent identity (Ed25519 signatures).
 // There is no API key authentication path.
@@ -40,17 +47,35 @@ const (
 // All cryptographic operations (signing, verification, key management) are
 // delegated to the Rust FFI layer via the FFIClient interface.
 type Client struct {
-	endpoint   string
-	jacsID     string
-	mu         sync.RWMutex // protects haiAgentID and agentEmail
-	haiAgentID string       // HAI-assigned agent UUID for email URL paths (set after registration)
-	agentEmail string       // Agent's @hai.ai email address (set after registration)
-	agentKeys  *keyCache    // Agent key cache with 5-minute TTL
-	ffi        FFIClient    // Rust FFI client for all API calls and crypto operations
+	expectedEventTenant string
+	responseAudience    string
+	requestAuthAudience string
+	endpoint            string
+	jacsID              string
+	mu                  sync.RWMutex // protects haiAgentID and agentEmail
+	haiAgentID          string       // HAI-assigned agent UUID for email URL paths (set after registration)
+	agentEmail          string       // Agent's @hai.ai email address (set after registration)
+	agentKeys           *keyCache    // Agent key cache with 5-minute TTL
+	ffi                 FFIClient    // Rust FFI client for all API calls and crypto operations
 }
 
 // Option configures a Client.
 type Option func(*Client)
+
+// WithRequestAuthAudience pins the service audience for request authentication.
+// It defaults to hai.ai and must match the API's configured audience.
+func WithRequestAuthAudience(audience string) Option {
+	return func(c *Client) { c.requestAuthAudience = audience }
+}
+
+// WithExpectedEventContext pins tenant and server recipient for live signed
+// events and job responses. Neither value comes from the received envelope.
+func WithExpectedEventContext(tenant, responseAudience string) Option {
+	return func(c *Client) {
+		c.expectedEventTenant = tenant
+		c.responseAudience = responseAudience
+	}
+}
 
 // WithEndpoint sets the HAI API base URL.
 func WithEndpoint(endpoint string) Option {
@@ -116,8 +141,9 @@ func WithFFIClient(ffiClient FFIClient) Option {
 // Use options to override specific settings.
 func NewClient(opts ...Option) (*Client, error) {
 	cl := &Client{
-		endpoint:  DefaultEndpoint,
-		agentKeys: newKeyCache(),
+		endpoint:            DefaultEndpoint,
+		agentKeys:           newKeyCache(),
+		requestAuthAudience: "hai.ai",
 	}
 
 	// Apply options first -- user-provided values take priority
@@ -125,9 +151,16 @@ func NewClient(opts ...Option) (*Client, error) {
 		opt(cl)
 	}
 
-	// Override endpoint from environment if not set by option
-	if envURL := os.Getenv("HAI_URL"); envURL != "" && cl.endpoint == DefaultEndpoint {
-		cl.endpoint = strings.TrimRight(envURL, "/")
+	// Override endpoint from environment if not set by option. Precedence
+	// matches every other HAIAI SDK: option > HAI_URL > HAI_API_URL >
+	// DefaultEndpoint, with a set-but-blank variable counting as unset.
+	if cl.endpoint == DefaultEndpoint {
+		for _, name := range []string{"HAI_URL", "HAI_API_URL"} {
+			if envURL := strings.TrimSpace(os.Getenv(name)); envURL != "" {
+				cl.endpoint = strings.TrimRight(envURL, "/")
+				break
+			}
+		}
 	}
 
 	// Auto-discover config if jacsID is missing
@@ -153,11 +186,16 @@ func NewClient(opts ...Option) (*Client, error) {
 	// Use newFFIClient() (build-tagged) or WithFFIClient() for test injection.
 	if cl.ffi == nil {
 		ffiConfig := map[string]interface{}{
-			"base_url": cl.endpoint,
-			"jacs_id":  cl.jacsID,
+			"base_url":              cl.endpoint,
+			"jacs_id":               cl.jacsID,
+			"request_auth_audience": cl.requestAuthAudience,
 		}
 		if configPath != "" {
 			ffiConfig["jacs_config_path"] = configPath
+		}
+		if cl.expectedEventTenant != "" || cl.responseAudience != "" {
+			ffiConfig["expected_event_tenant"] = cl.expectedEventTenant
+			ffiConfig["response_audience"] = cl.responseAudience
 		}
 		configJSON, err := json.Marshal(ffiConfig)
 		if err != nil {
@@ -223,7 +261,7 @@ func mapFFIErr(err error) error {
 	}
 }
 
-// buildAuthHeader constructs the JACS authentication header via the FFI layer.
+// buildAuthHeader is retired; request authentication needs final request context.
 func (c *Client) buildAuthHeader() (string, error) {
 	if c.ffi == nil {
 		return "", newError(ErrSigningFailed, "FFI client is not initialized")
@@ -231,6 +269,28 @@ func (c *Client) buildAuthHeader() (string, error) {
 	header, err := c.ffi.BuildAuthHeader()
 	if err != nil {
 		return "", wrapError(ErrSigningFailed, err, "failed to build JACS auth header via FFI")
+	}
+	return header, nil
+}
+
+// BuildRequestAuthHeader authenticates the final method, URL (including query)
+// and exact transmitted body via Rust/JACS. Build a fresh header per attempt.
+// Ordinary SDK API calls do this automatically; audience is client-pinned.
+func (c *Client) BuildRequestAuthHeader(method, url string, body []byte) (string, error) {
+	if c.ffi == nil {
+		return "", newError(ErrSigningFailed, "FFI client is not initialized")
+	}
+	request, err := json.Marshal(struct {
+		Method     string `json:"method"`
+		URL        string `json:"url"`
+		BodyBase64 string `json:"body_base64"`
+	}{method, url, base64.StdEncoding.EncodeToString(body)})
+	if err != nil {
+		return "", wrapError(ErrSigningFailed, err, "failed to encode request context")
+	}
+	header, err := c.ffi.BuildRequestAuthHeader(string(request))
+	if err != nil {
+		return "", wrapError(ErrSigningFailed, err, "failed to build JACS request auth header via FFI")
 	}
 	return header, nil
 }
@@ -297,19 +357,17 @@ func (c *Client) TestConnection(ctx context.Context) (bool, error) {
 
 // RegisterOptions configures the Register call.
 type RegisterOptions struct {
-	AgentJSON  string `json:"agent_json"`
-	PublicKey  string `json:"public_key,omitempty"`
-	OwnerEmail string `json:"owner_email,omitempty"`
+	IsMediator      *bool  `json:"is_mediator,omitempty"`
+	AgentJSON       string `json:"agent_json"`
+	PublicKey       string `json:"public_key_pem,omitempty"`
+	OwnerEmail      string `json:"owner_email,omitempty"`
+	RegistrationKey string `json:"registration_key,omitempty"`
 }
 
 // Register registers the agent with HAI.
-// The public key PEM is base64-encoded on the wire to match Python/Node SDKs.
+// PublicKey is passed to FFI as raw PEM; Rust alone base64-encodes it for HTTP.
 func (c *Client) Register(ctx context.Context, opts RegisterOptions) (*RegistrationResult, error) {
-	wireOpts := opts
-	if wireOpts.PublicKey != "" {
-		wireOpts.PublicKey = base64.StdEncoding.EncodeToString([]byte(opts.PublicKey))
-	}
-	optsJSON, err := json.Marshal(wireOpts)
+	optsJSON, err := json.Marshal(opts)
 	if err != nil {
 		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal registration options")
 	}
@@ -524,8 +582,10 @@ func (c *Client) CertifiedRun(ctx context.Context) (*BenchmarkResult, error) {
 // in a signed JACS document envelope.
 func (c *Client) SubmitResponse(ctx context.Context, jobID string, response ModerationResponse) (*JobResponseResult, error) {
 	params := map[string]interface{}{
-		"job_id":   jobID,
-		"response": response,
+		"job_id":             jobID,
+		"message":            response.Message,
+		"metadata":           response.Metadata,
+		"processing_time_ms": response.ProcessingTimeMs,
 	}
 	paramsJSON, err := json.Marshal(params)
 	if err != nil {
@@ -752,6 +812,9 @@ func (c *Client) SendSignedEmail(ctx context.Context, opts SendEmailOptions) (*S
 			opts.Attachments[i].DataBase64 = base64.StdEncoding.EncodeToString(opts.Attachments[i].Data)
 		}
 	}
+	if opts.GenerationType == "" {
+		opts.GenerationType = EmailGenerationTypeHtmlInlineJacs
+	}
 
 	optsJSON, err := json.Marshal(opts)
 	if err != nil {
@@ -781,6 +844,98 @@ func (c *Client) VerifyEmail(ctx context.Context, rawEmail []byte) (*EmailVerifi
 		return nil, wrapError(ErrInvalidResponse, err, "failed to decode verify email response")
 	}
 	return &result, nil
+}
+
+// =============================================================================
+// Agreements
+// =============================================================================
+
+// SaveAgreement saves a signed agreement through the HAI agreement workflow API.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SaveAgreement(_ctx context.Context, requestJSON string) (json.RawMessage, error) {
+	return c.ffi.SaveAgreement(requestJSON)
+}
+
+// SearchAgreements searches agreements visible to this agent.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SearchAgreements(_ctx context.Context, requestJSON string) (json.RawMessage, error) {
+	return c.ffi.SearchAgreements(requestJSON)
+}
+
+// GetAgreement retrieves one agreement by HAI agreement id or JACS document id.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) GetAgreement(_ctx context.Context, agreementID string) (json.RawMessage, error) {
+	return c.ffi.GetAgreement(agreementID)
+}
+
+// CountersignAgreement requests HAI notary/countersignature workflow for an agreement.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) CountersignAgreement(_ctx context.Context, agreementID, requestJSON string) (json.RawMessage, error) {
+	return c.ffi.CountersignAgreement(agreementID, requestJSON)
+}
+
+// CreateAgreementV2 creates a standalone JACS agreement v2 document locally.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) CreateAgreementV2(_ctx context.Context, inputJSON string) (json.RawMessage, error) {
+	return c.ffi.CreateAgreementV2(inputJSON)
+}
+
+// ApplyAgreementV2 applies a JACS agreement v2 mutation locally.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ApplyAgreementV2(_ctx context.Context, document, mutationJSON string) (json.RawMessage, error) {
+	return c.ffi.ApplyAgreementV2(document, mutationJSON)
+}
+
+// SignAgreementV2 adds a signer, witness, or notary signature locally.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) SignAgreementV2(_ctx context.Context, document, role string) (json.RawMessage, error) {
+	return c.ffi.SignAgreementV2(document, role)
+}
+
+// VerifyAgreementV2 verifies a JACS agreement v2 document locally.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) VerifyAgreementV2(_ctx context.Context, document string) (json.RawMessage, error) {
+	return c.ffi.VerifyAgreementV2(document)
+}
+
+// DetectAgreementBranchConflict compares two agreement branches against a shared base.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) DetectAgreementBranchConflict(_ctx context.Context, baseDocument, leftDocument, rightDocument string) (json.RawMessage, error) {
+	return c.ffi.DetectAgreementBranchConflict(baseDocument, leftDocument, rightDocument)
+}
+
+// MergeAgreementTranscriptBranches auto-merges two transcript-only agreement branches.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) MergeAgreementTranscriptBranches(_ctx context.Context, baseDocument, leftDocument, rightDocument string) (json.RawMessage, error) {
+	return c.ffi.MergeAgreementTranscriptBranches(baseDocument, leftDocument, rightDocument)
+}
+
+// ResolveAgreementBranchConflict resolves a branch conflict with an explicit mutation.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ResolveAgreementBranchConflict(_ctx context.Context, baseDocument, previousDocument, sideBranchDocument, resolutionJSON string) (json.RawMessage, error) {
+	return c.ffi.ResolveAgreementBranchConflict(baseDocument, previousDocument, sideBranchDocument, resolutionJSON)
 }
 
 // =============================================================================
@@ -1603,7 +1758,7 @@ func parseRawEmailJSON(raw json.RawMessage) (*RawEmailResult, error) {
 }
 
 // =============================================================================
-// JACS Document Store (21 methods)
+// JACS Document Store (26 methods)
 //
 // Thin delegations to the FFI client.
 //
@@ -1794,4 +1949,44 @@ func (c *Client) StoreImageFile(_ctx context.Context, path string) (string, erro
 // cgo FFI boundary. See Issue 015.
 func (c *Client) GetRecordBytes(_ctx context.Context, key string) ([]byte, error) {
 	return c.ffi.GetRecordBytes(key)
+}
+
+// ConflictCreate creates and signs a conflict document from body JSON.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ConflictCreate(_ctx context.Context, bodyJSON string) (json.RawMessage, error) {
+	return c.ffi.ConflictCreate(bodyJSON)
+}
+
+// ConflictUpdate applies a conflict mutation by key or document id.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ConflictUpdate(_ctx context.Context, keyOrID, mutationJSON string) (json.RawMessage, error) {
+	return c.ffi.ConflictUpdate(keyOrID, mutationJSON)
+}
+
+// ConflictGet fetches a signed conflict document by key.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ConflictGet(_ctx context.Context, key string) (string, error) {
+	return c.ffi.ConflictGet(key)
+}
+
+// ConflictList returns signed conflict document keys.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ConflictList(_ctx context.Context, limit, offset int) ([]string, error) {
+	return c.ffi.ConflictList(limit, offset)
+}
+
+// ConflictCheckReadiness checks whether a conflict key or id is ready.
+//
+// NOTE: ctx is currently unused; cancellation is not propagated through the
+// cgo FFI boundary. See Issue 015.
+func (c *Client) ConflictCheckReadiness(_ctx context.Context, keyOrID string) (json.RawMessage, error) {
+	return c.ffi.ConflictCheckReadiness(keyOrID)
 }

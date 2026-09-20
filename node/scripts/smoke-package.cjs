@@ -59,9 +59,12 @@ async function main() {
     // Verify expected files exist in the tarball
     const requiredFiles = [
       'package.json',
+      'LICENSE',
+      'README.md',
       'bin/haiai.cjs',
       'dist/cjs/index.js',
       'dist/esm/index.js',
+      'dist/types/index.d.ts',
     ];
     for (const file of requiredFiles) {
       const fullPath = path.join(packageDir, file);
@@ -71,15 +74,72 @@ async function main() {
     }
     console.log('  tarball: all required files present');
 
+    // Source, tests, build tooling, and runtime-generated identity data must
+    // never be published. The package.json `files` allowlist is the primary
+    // boundary; this check makes release CI fail if that boundary regresses.
+    const forbiddenPrefixes = [
+      'src/',
+      'tests/',
+      'examples/',
+      'scripts/',
+      'jacs_data/',
+      'private/',
+      'var/',
+      'npm/',
+      'node_modules/',
+    ];
+    const forbiddenFiles = new Set([
+      'jacs.config.json',
+      'package-lock.json',
+      'publish.deps.json',
+      'tsconfig.json',
+      'tsconfig.cjs.json',
+      'vitest.config.ts',
+    ]);
+    const packagedFiles = [];
+    const visit = (directory, prefix = '') => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const relative = path.posix.join(prefix, entry.name);
+        if (entry.isDirectory()) {
+          visit(path.join(directory, entry.name), relative);
+        } else {
+          packagedFiles.push(relative);
+        }
+      }
+    };
+    visit(packageDir);
+    for (const file of packagedFiles) {
+      if (
+        forbiddenFiles.has(file)
+        || forbiddenPrefixes.some((prefix) => file.startsWith(prefix))
+      ) {
+        throw new Error(`Forbidden file found in package: ${file}`);
+      }
+    }
+    console.log('  tarball: source, tests, tooling, and generated data excluded');
+
     // Verify no stale CLI files in tarball
-    const staleFiles = ['dist/esm/cli.js', 'dist/cjs/cli.js'];
+    const staleFiles = [
+      'dist/esm/cli.js',
+      'dist/cjs/cli.js',
+      'dist/esm/mcp-server.js',
+      'dist/cjs/mcp-server.js',
+      'dist/types/cli.d.ts',
+      'dist/types/mcp-server.d.ts',
+      'dist/esm/crypt.js',
+      'dist/cjs/crypt.js',
+      'dist/types/crypt.d.ts',
+      'dist/esm/hash.js',
+      'dist/cjs/hash.js',
+      'dist/types/hash.d.ts',
+    ];
     for (const file of staleFiles) {
       const fullPath = path.join(packageDir, file);
       if (fs.existsSync(fullPath)) {
-        throw new Error(`Stale file found in package: ${file} (CLI is Rust-only)`);
+        throw new Error(`Stale file found in package: ${file} (source entry point was removed)`);
       }
     }
-    console.log('  tarball: no stale CLI files');
+    console.log('  tarball: no stale removed entry points');
 
     // Verify package.json has correct fields
     const pkg = JSON.parse(fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8'));
@@ -88,6 +148,21 @@ async function main() {
     }
     if (!pkg.bin || !pkg.bin.haiai) {
       throw new Error('Missing bin.haiai in package.json');
+    }
+    if (!pkg.dependencies?.haiinpm || !pkg.dependencies?.['@hai.ai/jacs']) {
+      throw new Error('Missing required JACS or haiinpm native runtime dependency');
+    }
+    const requiredCliPackages = [
+      '@haiai/cli-darwin-arm64',
+      '@haiai/cli-darwin-x64',
+      '@haiai/cli-linux-arm64',
+      '@haiai/cli-linux-x64',
+      '@haiai/cli-win32-x64',
+    ];
+    for (const dependency of requiredCliPackages) {
+      if (!pkg.optionalDependencies?.[dependency]) {
+        throw new Error(`Missing optional native CLI dependency: ${dependency}`);
+      }
     }
     console.log('  tarball: package.json valid');
 

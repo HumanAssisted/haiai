@@ -1,3 +1,10 @@
+// Copyright (c) 2026 Human Assisted Intelligence, Inc.
+//
+// Use of this software is governed by the Business Source License 1.1
+// included in the LICENSE file.
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 import type {
   HaiClientOptions,
   AgentConfig,
@@ -60,7 +67,7 @@ import {
   AuthenticationError,
   HaiConnectionError,
 } from './errors.js';
-import { signResponse, canonicalJson, getServerKeys } from './signing.js';
+import { signPayload, canonicalJson, getServerKeys } from './signing.js';
 import { loadConfig } from './config.js';
 import { JacsAgent } from '@hai.ai/jacs';
 // SSE/WS helpers retained in sse.ts and ws.ts for cleanup in Task 012.
@@ -100,6 +107,9 @@ export class HaiClient {
   /** FFI adapter that delegates all HTTP calls to the Rust binding-core. Lazily initialized. */
   private _ffi: FFIClientAdapter | null = null;
   private baseUrl: string;
+  private expectedEventTenant?: string;
+  private responseAudience?: string;
+  private requestAuthAudience: string;
   private timeout: number;
   private maxRetries: number;
   private maxReconnectAttempts: number;
@@ -134,12 +144,18 @@ export class HaiClient {
   }
 
   private constructor(options?: HaiClientOptions) {
-    // URL precedence mirrors the Python SDK (client.py:174):
+    this.expectedEventTenant = options?.expectedEventTenant;
+    this.responseAudience = options?.responseAudience;
+    this.requestAuthAudience = options?.requestAuthAudience ?? 'hai.ai';
+    // URL precedence mirrors Python and Rust `haiai::base_url_from_env`:
     //   options.url > HAI_URL > HAI_API_URL > DEFAULT_BASE_URL
+    // A variable that is set but blank counts as unset in all three, so an
+    // `export HAI_URL=` left in a shell profile falls through to the default
+    // instead of failing URL validation.
     const rawUrl =
-      options?.url
-      ?? process.env.HAI_URL
-      ?? process.env.HAI_API_URL
+      [options?.url, process.env.HAI_URL, process.env.HAI_API_URL]
+        .map((candidate) => candidate?.trim())
+        .find((candidate) => !!candidate)
       ?? DEFAULT_BASE_URL;
     if (!/^https?:\/\//i.test(rawUrl)) {
       throw new HaiError(
@@ -166,6 +182,9 @@ export class HaiClient {
       base_url: this.baseUrl,
       timeout_ms: this.timeout,
       max_retries: this.maxRetries,
+      expected_event_tenant: this.expectedEventTenant,
+      response_audience: this.responseAudience,
+      request_auth_audience: this.requestAuthAudience,
     };
     if (this.configPath) {
       ffiConfig.jacs_config_path = this.configPath;
@@ -225,8 +244,8 @@ export class HaiClient {
     privateKeyPem: string,
     options?: Omit<HaiClientOptions, 'configPath'> & {
       privateKeyPassphrase?: string;
-      /** Key algorithm. Defaults to 'ring-Ed25519'. Set to 'RSA-PSS' for RSA keys. */
-      algorithm?: 'ring-Ed25519' | 'RSA-PSS';
+      /** Key algorithm. Defaults to 'ring-Ed25519'. Use 'pq2025' for post-quantum signatures. */
+      algorithm?: 'ring-Ed25519' | 'pq2025';
     },
   ): Promise<HaiClient> {
     const { mkdir, mkdtemp, writeFile } = await import('node:fs/promises');
@@ -348,17 +367,25 @@ export class HaiClient {
     return this.agent.signStringSync(message);
   }
 
-  /** Build the JACS Authorization header value string. */
+  /** Retired no-context helper. Use buildRequestAuthHeader with the final request. */
   buildAuthHeader(): string {
-    // Prefer JACS binding delegation
-    if ('buildAuthHeaderSync' in this.agent && typeof (this.agent as unknown as Record<string, unknown>).buildAuthHeaderSync === 'function') {
-      return (this.agent as unknown as Record<string, unknown> & { buildAuthHeaderSync: () => string }).buildAuthHeaderSync();
+    throw new HaiError('Request authentication requires the final method, URL and exact body bytes; use buildRequestAuthHeader(method, url, body)');
+  }
+
+  /**
+   * Authenticate the final URL (including query) and exact bytes using Rust/JACS.
+   * Send the same body bytes and build a fresh header per attempt. Ordinary SDK
+   * calls do this automatically; audience remains pinned by client configuration.
+   */
+  async buildRequestAuthHeader(method: string, url: string, body: Uint8Array = new Uint8Array()): Promise<string> {
+    if (!(body instanceof Uint8Array)) {
+      throw new TypeError('body must be a Uint8Array containing the exact transmitted request body');
     }
-    // Fallback: local construction using JACS signStringSync
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const message = `${this.jacsId}:${timestamp}`;
-    const signature = this.agent.signStringSync(message);
-    return `JACS ${this.jacsId}:${timestamp}:${signature}`;
+    return this.ffi.buildRequestAuthHeader(JSON.stringify({
+      method,
+      url,
+      body_base64: Buffer.from(body).toString('base64'),
+    }));
   }
 
   // ---------------------------------------------------------------------------
@@ -444,14 +471,18 @@ export class HaiClient {
    * POSTs to the registration endpoint.
    */
   async register(options?: {
+    isMediator?: boolean;
     ownerEmail?: string;
+    registrationKey?: string;
     description?: string;
     domain?: string;
     agentJson?: string;
     publicKeyPem?: string;
   }): Promise<RegistrationResult> {
     const registerOptions: Record<string, unknown> = {};
+    if (options?.isMediator !== undefined) registerOptions.is_mediator = options.isMediator;
     if (options?.ownerEmail) registerOptions.owner_email = options.ownerEmail;
+    if (options?.registrationKey !== undefined) registerOptions.registration_key = options.registrationKey;
     if (options?.description) registerOptions.description = options.description;
     if (options?.domain) registerOptions.domain = options.domain;
     if (options?.agentJson) registerOptions.agent_json = options.agentJson;
@@ -472,6 +503,8 @@ export class HaiClient {
       haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
       registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
       registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
+      registrationStatus: (data.registration_status as string | null) ?? undefined,
+      email: (data.email as string | null) ?? undefined,
       rawResponse: data,
     };
   }
@@ -722,8 +755,11 @@ export class HaiClient {
           ? event.data as Record<string, unknown>
           : {};
 
+        const config = typeof data.config === 'object' && data.config !== null
+          ? data.config as Record<string, unknown> : {};
         const job: BenchmarkJob = {
-          runId: (data.run_id as string) || (data.runId as string) || '',
+          jobId: (data.job_id as string) || (data.jobId as string) || (data.run_id as string) || '',
+          runId: (config.run_id as string) || (data.run_id as string) || (data.runId as string) || '',
           scenario: data.scenario ?? data.prompt ?? data,
           data,
         };
@@ -926,7 +962,7 @@ export class HaiClient {
         const raw = content as Buffer;
         const text = raw.toString('utf-8').trim();
         let publicKeyPem: string;
-        if (text.includes('BEGIN PUBLIC KEY') || text.includes('BEGIN RSA PUBLIC KEY')) {
+        if (text.includes('BEGIN PUBLIC KEY')) {
           publicKeyPem = text;
         } else {
           const base64 = raw.toString('base64');
@@ -1033,6 +1069,8 @@ export class HaiClient {
   // ---------------------------------------------------------------------------
 
   private parseEmailMessage(m: Record<string, unknown>): EmailMessage {
+    const musubiRaw = m.musubi_summary as Record<string, unknown> | undefined;
+    const reputationRaw = m.sender_reputation as Record<string, unknown> | undefined;
     return {
       id: (m.id as string) || '',
       direction: (m.direction as string) || '',
@@ -1047,10 +1085,35 @@ export class HaiClient {
       createdAt: (m.created_at as string) || '',
       readAt: (m.read_at as string | null) ?? null,
       jacsVerified: (m.jacs_verified as boolean) ?? false,
+      jacsSignerId: (m.jacs_signer_id as string) ?? undefined,
+      jacsKeyIsOwner: (m.jacs_key_is_owner as boolean) ?? false,
+      ownerMailAuthPassed: (m.owner_mail_auth_passed as boolean) ?? false,
+      ownerMailAuthMethod: (m.owner_mail_auth_method as string | null) ?? null,
+      ownerMailAuthDetails: (m.owner_mail_auth_details as Record<string, unknown> | null) ?? null,
+      senderMailAuthPassed: (m.sender_mail_auth_passed as boolean) ?? false,
+      senderMailAuthMethod: (m.sender_mail_auth_method as string | null) ?? null,
+      senderMailAuthDetails: (m.sender_mail_auth_details as Record<string, unknown> | null) ?? null,
+      emailSummary: (m.email_summary as string | null) ?? null,
+      musubiSummary: musubiRaw ? {
+        trustVector: (musubiRaw.trust_vector as Record<string, number>) || {},
+        contentRisk: (musubiRaw.content_risk as string | null) ?? null,
+        escalate: (musubiRaw.escalate as boolean) ?? false,
+        explanation: (musubiRaw.explanation as string | null) ?? null,
+      } : null,
+      senderReputation: reputationRaw ? this.parseEmailReputation(reputationRaw) : null,
       ccAddresses: (m.cc_addresses as string[]) || [],
       labels: (m.labels as string[]) || [],
       trustScore: (m.trust_score as number) ?? undefined,
       folder: (m.folder as string) || 'inbox',
+    };
+  }
+
+  private parseEmailReputation(raw: Record<string, unknown>) {
+    return {
+      score: (raw.score as number) || 0,
+      tier: (raw.tier as string) || '',
+      emailScore: (raw.email_score as number) || 0,
+      haiScore: raw.hai_score != null ? (raw.hai_score as number) : null,
     };
   }
 
@@ -1117,7 +1180,7 @@ export class HaiClient {
    * @returns Signed JACS document envelope
    */
   signBenchmarkResult(benchmarkResult: Record<string, unknown>): { signed_document: string; agent_jacs_id: string } {
-    return signResponse(
+    return signPayload(
       benchmarkResult,
       this.agent,
       this.jacsId,
@@ -1172,6 +1235,7 @@ export class HaiClient {
     if (options.cc?.length) emailOptions.cc = options.cc;
     if (options.bcc?.length) emailOptions.bcc = options.bcc;
     if (options.labels?.length) emailOptions.labels = options.labels;
+    if (options.idempotencyKey) emailOptions.idempotency_key = options.idempotencyKey;
 
     const data = await this.ffi.sendEmail(emailOptions);
 
@@ -1214,6 +1278,7 @@ export class HaiClient {
       to: options.to,
       subject: options.subject,
       body: options.body,
+      generation_type: options.generationType ?? 'html_inline_jacs',
     };
     if (options.inReplyTo) emailOptions.in_reply_to = options.inReplyTo;
     if (options.attachments?.length) {
@@ -1226,6 +1291,7 @@ export class HaiClient {
     if (options.cc?.length) emailOptions.cc = options.cc;
     if (options.bcc?.length) emailOptions.bcc = options.bcc;
     if (options.labels?.length) emailOptions.labels = options.labels;
+    if (options.idempotencyKey) emailOptions.idempotency_key = options.idempotencyKey;
 
     const data = await this.ffi.sendSignedEmail(emailOptions);
 
@@ -1269,6 +1335,78 @@ export class HaiClient {
       agentStatus: data.agent_status as string | null | undefined,
       benchmarksCompleted: (data.benchmarks_completed as string[]) ?? [],
     };
+  }
+
+  // ===========================================================================
+  // Agreements
+  // ===========================================================================
+
+  async saveAgreement(request: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.ffi.saveAgreement(request);
+  }
+
+  async searchAgreements(request: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.ffi.searchAgreements(request);
+  }
+
+  async getAgreement(agreementId: string): Promise<Record<string, unknown>> {
+    return this.ffi.getAgreement(agreementId);
+  }
+
+  async countersignAgreement(
+    agreementId: string,
+    request: Record<string, unknown> = {},
+  ): Promise<Record<string, unknown>> {
+    return this.ffi.countersignAgreement(agreementId, request);
+  }
+
+  async createAgreementV2(input: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.ffi.createAgreementV2(input);
+  }
+
+  async applyAgreementV2(
+    document: string,
+    mutation: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return this.ffi.applyAgreementV2(document, mutation);
+  }
+
+  async signAgreementV2(document: string, role: string): Promise<Record<string, unknown>> {
+    return this.ffi.signAgreementV2(document, role);
+  }
+
+  async verifyAgreementV2(document: string): Promise<Record<string, unknown>> {
+    return this.ffi.verifyAgreementV2(document);
+  }
+
+  async detectAgreementBranchConflict(
+    baseDocument: string,
+    leftDocument: string,
+    rightDocument: string,
+  ): Promise<Record<string, unknown>> {
+    return this.ffi.detectAgreementBranchConflict(baseDocument, leftDocument, rightDocument);
+  }
+
+  async mergeAgreementTranscriptBranches(
+    baseDocument: string,
+    leftDocument: string,
+    rightDocument: string,
+  ): Promise<Record<string, unknown>> {
+    return this.ffi.mergeAgreementTranscriptBranches(baseDocument, leftDocument, rightDocument);
+  }
+
+  async resolveAgreementBranchConflict(
+    baseDocument: string,
+    previousDocument: string,
+    sideBranchDocument: string,
+    resolution: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return this.ffi.resolveAgreementBranchConflict(
+      baseDocument,
+      previousDocument,
+      sideBranchDocument,
+      resolution,
+    );
   }
 
   // ===========================================================================
@@ -1433,12 +1571,7 @@ export class HaiClient {
         spamReportCount: (deliveryRaw.spam_report_count as number) || 0,
         deliveryRate: (deliveryRaw.delivery_rate as number) || 0,
       } : null,
-      reputation: reputationRaw ? {
-        score: (reputationRaw.score as number) || 0,
-        tier: (reputationRaw.tier as string) || '',
-        emailScore: (reputationRaw.email_score as number) || 0,
-        haiScore: reputationRaw.hai_score != null ? (reputationRaw.hai_score as number) : null,
-      } : null,
+      reputation: reputationRaw ? this.parseEmailReputation(reputationRaw) : null,
     };
   }
 
@@ -2105,6 +2238,36 @@ export class HaiClient {
   async getRecordBytes(key: string): Promise<Uint8Array> {
     return this.ffi.getRecordBytes(key);
   }
+
+  /** Create and sign a conflict document. */
+  async conflictCreate(body: Record<string, unknown> | string): Promise<Record<string, unknown>> {
+    const bodyJson = typeof body === 'string' ? body : JSON.stringify(body);
+    return this.ffi.conflictCreate(bodyJson);
+  }
+
+  /** Apply a conflict mutation and return the new signed document. */
+  async conflictUpdate(
+    keyOrId: string,
+    mutation: Record<string, unknown> | string,
+  ): Promise<Record<string, unknown>> {
+    const mutationJson = typeof mutation === 'string' ? mutation : JSON.stringify(mutation);
+    return this.ffi.conflictUpdate(keyOrId, mutationJson);
+  }
+
+  /** Fetch a signed conflict document by key. */
+  async conflictGet(key: string): Promise<string> {
+    return this.ffi.conflictGet(key);
+  }
+
+  /** List signed conflict document keys. */
+  async conflictList(limit = 25, offset = 0): Promise<string[]> {
+    return this.ffi.conflictList(limit, offset);
+  }
+
+  /** Run the JACS conflict readiness checker for a key or id. */
+  async conflictCheckReadiness(keyOrId: string): Promise<Record<string, unknown>> {
+    return this.ffi.conflictCheckReadiness(keyOrId);
+  }
 }
 
 // =============================================================================
@@ -2211,6 +2374,8 @@ function toRegistrationResult(data: Record<string, unknown>): RegistrationResult
     haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
     registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
     registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
+    registrationStatus: (data.registration_status as string | null) ?? undefined,
+    email: (data.email as string | null) ?? undefined,
     keyDirectory: (data.key_directory as string) || (data.keyDirectory as string) || '',
     publicKeyPath: (data.public_key_path as string) || (data.publicKeyPath as string) || undefined,
     dnsRecord: (data.dns_record as string) || (data.dnsRecord as string) || undefined,
@@ -2227,8 +2392,9 @@ function printRegistrationGuidance(
   const keyDir = (data.key_directory as string) || (data.keyDirectory as string) || '';
   const configPath = opts.configPath ?? './jacs.config.json';
   console.log('\nAgent created and submitted for registration!');
-  console.log(`  -> Check your email (${opts.ownerEmail}) for a verification link`);
-  console.log('  -> Your agent is registered with username from your reservation');
+  console.log(`  -> Registration status: ${data.registration_status || 'unknown'}`);
+  if (data.email) console.log(`  -> Assigned email: ${data.email}`);
+  console.log('  -> Email delivery and active mailbox status are not established by this response');
   console.log(`  -> Config saved to ${configPath}`);
   if (keyDir) console.log(`  -> Keys saved to ${keyDir}`);
   console.log('  -> Private key encrypted using JACS_PASSWORD_FILE/JACS_PRIVATE_KEY_PASSWORD');

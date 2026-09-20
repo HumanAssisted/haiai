@@ -15,9 +15,11 @@
 //! (Go) all verify against — so they MUST stay byte-stable until someone
 //! intentionally regenerates and commits.
 //!
-//! Reuses the shared `fixtures/jacs-agent/` agent (password
-//! `secretpassord`) so cross-language tests don't have to materialize new
-//! keys.
+//! Creates a fresh ephemeral PQ signer and commits only its public key. It also
+//! creates a separate portable signed Ed25519 verifier fixture for bindings
+//! that cannot create agents (notably CGo). The verifier's encrypted test key
+//! is not a media-signing key; every language resolves the PQ signer through
+//! the explicit public-key directory contract.
 
 #![cfg(feature = "jacs-crate")]
 
@@ -25,7 +27,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use haiai::{
-    JacsMediaProvider, JacsProvider, LocalJacsProvider, SignImageOptions, SignTextOptions,
+    CreateAgentOptions, JacsMediaProvider, JacsProvider, LocalJacsProvider, SignImageOptions,
+    SignTextOptions,
 };
 use sha2::{Digest, Sha256};
 
@@ -77,12 +80,12 @@ fn make_webp() -> Vec<u8> {
 }
 
 const SOURCE_MARKDOWN: &[u8] = b"# Cross-language verify parity fixture\n\n\
-This markdown is signed by the JACS test agent in fixtures/jacs-agent/.\n\
+This markdown is signed by the dedicated JACS media fixture signer.\n\
 Its signed counterpart at fixtures/media/signed.md MUST verify under\n\
 status \"valid\" in Rust, Python, Node, and Go.\n";
 
 // ---------------------------------------------------------------------------
-// Repo path + fixture-agent staging.
+// Repo path + fixture-agent creation.
 // ---------------------------------------------------------------------------
 
 fn repo_root() -> PathBuf {
@@ -94,68 +97,64 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Copy a directory recursively, converting `_` → `:` in filenames so that
-/// JACS `{id}:{version}.json` data files (illegal on Windows in the repo)
-/// land at their runtime names. Mirrors `prepare_jacs_fixture` in
-/// `cli_integration.rs` and `embedded_provider.rs::write_temp_fixture_config`.
-fn copy_fixture_dir(src: &Path, dst: &Path) {
-    fs::create_dir_all(dst).expect("create dst dir");
-    for entry in fs::read_dir(src).expect("read src dir") {
-        let entry = entry.expect("dir entry");
-        let src_path = entry.path();
-        let name = entry.file_name().to_string_lossy().replace('_', ":");
-        let dst_path = dst.join(&name);
-        if src_path.is_dir() {
-            copy_fixture_dir(&src_path, &dst_path);
+fn copy_fixture_tree_for_repo(src: &Path, dst: &Path) {
+    fs::create_dir_all(dst).expect("create fixture destination");
+    for entry in fs::read_dir(src).expect("read generated fixture") {
+        let entry = entry.expect("fixture entry");
+        let source = entry.path();
+        let source_name = entry.file_name();
+        if matches!(
+            source_name.to_str(),
+            Some(".haiai_resolved_jacs.config.json" | ".gitignore" | ".dockerignore")
+        ) {
+            continue;
+        }
+        let repo_name = entry.file_name().to_string_lossy().replace(':', "_");
+        let target = dst.join(repo_name);
+        if source.is_dir() {
+            copy_fixture_tree_for_repo(&source, &target);
         } else {
-            fs::copy(&src_path, &dst_path).expect("copy file");
+            fs::copy(source, target).expect("copy generated fixture file");
         }
     }
 }
 
-fn stage_fixture_agent() -> (tempfile::TempDir, PathBuf) {
-    // Password matches commit 39ff664 ("Regenerate jacs-agent fixture with
-    // pq2025 signing"); also set in `embedded_provider.rs` test harness.
-    std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", "secretpassord");
-
-    let source = repo_root().join("fixtures/jacs-agent/jacs.config.json");
-    assert!(
-        source.exists(),
-        "fixtures/jacs-agent/jacs.config.json missing at {}",
-        source.display()
-    );
-    let source_dir = source.parent().unwrap();
-
-    let mut value: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&source).expect("read config"))
-            .expect("parse config");
-
+fn create_portable_fixture_agent(
+    name: &str,
+    algorithm: &str,
+    password: &str,
+) -> (tempfile::TempDir, LocalJacsProvider, PathBuf, PathBuf) {
+    std::env::set_var("JACS_PRIVATE_KEY_PASSWORD", password);
     let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path().canonicalize().expect("canonical tempdir");
+    let config = root.join("jacs.config.json");
 
-    let src_keys = source_dir.join(value["jacs_key_directory"].as_str().unwrap_or("keys"));
-    let tmp_keys = temp.path().join("keys");
-    fs::create_dir_all(&tmp_keys).expect("mkdir keys");
-    for entry in fs::read_dir(&src_keys).expect("read keys") {
-        let e = entry.expect("key entry");
-        fs::copy(e.path(), tmp_keys.join(e.file_name())).expect("copy key");
-    }
+    // JACS signs path values into the config. An absolute config path anchors
+    // filesystem creation at this temp root, while the relative data/key
+    // values remain portable in the signed config copied to the repository.
+    let create_result = LocalJacsProvider::create_agent_with_options(&CreateAgentOptions {
+        name: name.to_string(),
+        password: password.to_string(),
+        algorithm: Some(algorithm.to_string()),
+        data_directory: Some("data".to_string()),
+        key_directory: Some("keys".to_string()),
+        config_path: Some(config.to_string_lossy().into_owned()),
+        agent_type: Some("ai".to_string()),
+        description: Some(format!("Cross-language media fixture {name}")),
+        domain: None,
+        default_storage: Some("fs".to_string()),
+    });
+    let result = create_result.expect("create signed portable fixture agent");
 
-    let src_data = source_dir.join(value["jacs_data_directory"].as_str().unwrap_or("."));
-    let tmp_data = temp.path().join("data");
-    copy_fixture_dir(&src_data, &tmp_data);
-
-    value["jacs_data_directory"] =
-        serde_json::Value::String(tmp_data.to_string_lossy().into_owned());
-    value["jacs_key_directory"] =
-        serde_json::Value::String(tmp_keys.to_string_lossy().into_owned());
-
-    let config = temp.path().join("jacs.config.json");
-    fs::write(
-        &config,
-        serde_json::to_vec_pretty(&value).expect("encode config"),
-    )
-    .expect("write config");
-    (temp, config)
+    let provider = LocalJacsProvider::from_config_path(Some(&config), None)
+        .expect("load portable fixture agent");
+    let result_public_key = PathBuf::from(result.public_key_path);
+    let public_key_path = if result_public_key.is_absolute() {
+        result_public_key
+    } else {
+        root.join(result_public_key)
+    };
+    (temp, provider, public_key_path, root)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -214,12 +213,16 @@ fn regenerate_media_fixtures() {
     fs::write(source_dir.join("source.webp"), &webp_bytes).expect("write source.webp");
     fs::write(source_dir.join("source.md"), SOURCE_MARKDOWN).expect("write source.md");
 
-    // 2. Stage the fixture agent and load its provider.
-    let (_temp_agent, config_path) = stage_fixture_agent();
-    let provider =
-        LocalJacsProvider::from_config_path(Some(&config_path), None).expect("load fixture agent");
+    // 2. Create the ephemeral PQ signer and preserve only its public key.
+    let (_temp_agent, provider, public_key_path, _signer_root) = create_portable_fixture_agent(
+        "cross-language-media-fixture-signer",
+        "pq2025",
+        "MediaFixtureSigningPass!123",
+    );
     let signer_id = provider.jacs_id().to_string();
     let algorithm = provider.algorithm().to_string();
+    let public_key_fixture = media_dir.join("signer.public.pem");
+    fs::copy(&public_key_path, &public_key_fixture).expect("write signer public key fixture");
 
     // 3. Sign each input → fixtures/media/signed.*
     sign_image_to(
@@ -242,7 +245,26 @@ fn regenerate_media_fixtures() {
     );
     sign_markdown_to(&provider, SOURCE_MARKDOWN, &media_dir.join("signed.md"));
 
-    // 4. Write CHECKSUMS.txt watchdog.
+    // 4. Create a separate signed verifier fixture for bindings that cannot
+    //    bootstrap JACS agents. It deliberately has a different identity and
+    //    algorithm so successful verification proves explicit PQ key lookup.
+    let (_verifier_temp, _verifier, _verifier_public_key, verifier_root) =
+        create_portable_fixture_agent(
+            "cross-language-media-fixture-verifier",
+            "ed25519",
+            "MediaFixtureVerifierPass!123",
+        );
+    let verifier_fixture = media_dir.join("verifier-agent");
+    if verifier_fixture.exists() {
+        fs::remove_dir_all(&verifier_fixture).expect("remove old verifier fixture");
+    }
+    copy_fixture_tree_for_repo(&verifier_root, &verifier_fixture);
+    let obsolete_signer_fixture = media_dir.join("signer-agent");
+    if obsolete_signer_fixture.exists() {
+        fs::remove_dir_all(obsolete_signer_fixture).expect("remove obsolete signer fixture");
+    }
+
+    // 5. Write CHECKSUMS.txt watchdog.
     let mut checksums = String::new();
     for name in ["signed.png", "signed.jpg", "signed.webp", "signed.md"] {
         let bytes = fs::read(media_dir.join(name)).expect("read signed");
@@ -251,12 +273,13 @@ fn regenerate_media_fixtures() {
     }
     fs::write(media_dir.join("CHECKSUMS.txt"), checksums).expect("write CHECKSUMS.txt");
 
-    // 5. Write SIGNER.json so cross-language tests can read the expected
+    // 6. Write SIGNER.json so cross-language tests can read the expected
     //    signer identity instead of hardcoding it.
     let signer = serde_json::json!({
         "signer_id": signer_id,
         "algorithm": algorithm,
-        "fixture_agent_dir": "fixtures/jacs-agent",
+        "verifier_agent_dir": "fixtures/media/verifier-agent",
+        "public_key_file": "fixtures/media/signer.public.pem",
         "regenerator": "rust/haiai/tests/regen_media_fixtures.rs",
     });
     fs::write(

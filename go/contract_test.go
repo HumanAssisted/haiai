@@ -167,6 +167,27 @@ func TestContractDeserializeEmailMessage(t *testing.T) {
 	if *msg.JacsVerified != true {
 		t.Fatalf("JacsVerified = %v, want true", *msg.JacsVerified)
 	}
+	if msg.JacsSignerID != "owner-agent-jacs-id" {
+		t.Fatalf("JacsSignerID = %q, want owner-agent-jacs-id", msg.JacsSignerID)
+	}
+	if !msg.JacsKeyIsOwner {
+		t.Fatal("JacsKeyIsOwner should be true for the owner-attested fixture")
+	}
+	if !msg.OwnerMailAuthPassed {
+		t.Fatal("OwnerMailAuthPassed should be true for the owner-auth fixture")
+	}
+	if msg.OwnerMailAuthMethod == nil || *msg.OwnerMailAuthMethod != "dkim_spf" {
+		t.Fatalf("OwnerMailAuthMethod = %v, want dkim_spf", msg.OwnerMailAuthMethod)
+	}
+	if !msg.SenderMailAuthPassed {
+		t.Fatal("SenderMailAuthPassed should be true for the sender-auth fixture")
+	}
+	if msg.SenderMailAuthMethod == nil || *msg.SenderMailAuthMethod != "dkim_spf" {
+		t.Fatalf("SenderMailAuthMethod = %v, want dkim_spf", msg.SenderMailAuthMethod)
+	}
+	if msg.SenderMailAuthDetails["from_domain"] != "hai.ai" {
+		t.Fatalf("SenderMailAuthDetails = %v, want from_domain hai.ai", msg.SenderMailAuthDetails)
+	}
 	if msg.TrustScore == nil {
 		t.Fatal("TrustScore should not be nil for inbound message")
 	}
@@ -210,6 +231,15 @@ func TestContractDeserializeListMessagesResponse(t *testing.T) {
 	if msg.TrustScore == nil || *msg.TrustScore != 92.4 {
 		t.Fatalf("Messages[0].TrustScore = %v, want 92.4", msg.TrustScore)
 	}
+	if msg.JacsSignerID != "owner-agent-jacs-id" || !msg.JacsKeyIsOwner {
+		t.Fatalf("Messages[0] owner key fields = (%q, %v), want owner-agent-jacs-id,true", msg.JacsSignerID, msg.JacsKeyIsOwner)
+	}
+	if !msg.OwnerMailAuthPassed || !msg.SenderMailAuthPassed {
+		t.Fatalf("Messages[0] auth fields = owner:%v sender:%v, want true,true", msg.OwnerMailAuthPassed, msg.SenderMailAuthPassed)
+	}
+	if msg.SenderMailAuthMethod == nil || *msg.SenderMailAuthMethod != "dkim_spf" {
+		t.Fatalf("Messages[0].SenderMailAuthMethod = %v, want dkim_spf", msg.SenderMailAuthMethod)
+	}
 
 	// Verify the outbound message omits trust_score.
 	outbound := resp.Messages[1]
@@ -221,6 +251,15 @@ func TestContractDeserializeListMessagesResponse(t *testing.T) {
 	}
 	if outbound.TrustScore != nil {
 		t.Fatalf("Messages[1].TrustScore = %v, want nil (absent)", outbound.TrustScore)
+	}
+	if outbound.SenderMailAuthPassed {
+		t.Fatal("Messages[1].SenderMailAuthPassed = true, want false for omitted field")
+	}
+	if outbound.SenderMailAuthMethod != nil {
+		t.Fatalf("Messages[1].SenderMailAuthMethod = %v, want nil", outbound.SenderMailAuthMethod)
+	}
+	if outbound.SenderMailAuthDetails != nil {
+		t.Fatalf("Messages[1].SenderMailAuthDetails = %v, want nil", outbound.SenderMailAuthDetails)
 	}
 }
 
@@ -436,4 +475,3 @@ func TestContractTrustScoreRoundTrip(t *testing.T) {
 		t.Fatalf("restored TrustScore = %v, want 75.0", *restored.TrustScore)
 	}
 }
-

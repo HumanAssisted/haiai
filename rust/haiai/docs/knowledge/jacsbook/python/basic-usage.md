@@ -178,6 +178,8 @@ is_valid = agent.verify_string(
 
 ## Working with Agreements
 
+The methods in this section use the legacy `jacsAgreement` sidecar on an existing signed document. For new standalone consent workflows, prefer Agreement v2 through `SimpleAgent.create_agreement_v2()`, `sign_agreement_v2()`, and `verify_agreement_v2()`.
+
 ### Create an Agreement
 
 ```python
@@ -249,12 +251,21 @@ signed_agent_json = agent.sign_agent(
 )
 ```
 
-## Request/Response Signing
+## Generic Request/Response Documents
+
+> **Not HTTP authentication:** `JacsAgent.sign_request()` and
+> `verify_response()` wrap and verify a generic signed JACS document. They do
+> not bind the HTTP method, absolute URL, query, exact body bytes, or audience.
+> For an authorization credential use
+> `SimpleAgent.build_request_auth_header(method, url, body, audience)`. For v2 response
+> envelopes use `SimpleAgent.sign_response()` and fail-closed
+> `SimpleAgent.unwrap_signed_event()` with pinned server keys. See
+> [Security](../advanced/security.md#request-bound-http-authorization).
 
 ### Sign a Request
 
 ```python
-# Sign request parameters as a JACS document
+# Sign request-like data as a durable JACS document (not an HTTP credential)
 signed_request = agent.sign_request({
     "method": "GET",
     "path": "/api/resource",
@@ -266,7 +277,7 @@ signed_request = agent.sign_request({
 ### Verify a Response
 
 ```python
-# Verify a signed response
+# Verify a generic signed document (not a jacs-response-v2 event)
 result = agent.verify_response(signed_response_json)
 print('Response valid:', result)
 
@@ -338,30 +349,29 @@ def main():
     agent = jacs.JacsAgent()
     agent.load('./jacs.config.json')
 
-    # Create a task document
-    task = {
-        "title": "Code Review",
-        "description": "Review pull request #123",
-        "assignee": "developer-uuid",
-        "deadline": "2024-02-01"
+    # Create a generic proposal document
+    proposal = {
+        "title": "Project Proposal",
+        "description": "Q1 development plan",
+        "budget": 50000
     }
 
-    signed_task = agent.create_document(json.dumps(task))
-    print('Task created')
+    signed_proposal = agent.create_document(json.dumps(proposal))
+    print('Document created')
 
-    # Verify the task
-    if agent.verify_document(signed_task):
-        print('Task signature valid')
+    # Verify the document
+    if agent.verify_document(signed_proposal):
+        print('Document signature valid')
 
-    # Create agreement for task acceptance
-    task_with_agreement = agent.create_agreement(
-        signed_task,
+    # Create agreement for proposal approval
+    proposal_with_agreement = agent.create_agreement(
+        signed_proposal,
         ['manager-uuid', 'developer-uuid'],
-        'Do you accept this task assignment?'
+        'Do you approve this proposal?'
     )
 
     # Sign the agreement
-    signed_agreement = agent.sign_agreement(task_with_agreement)
+    signed_agreement = agent.sign_agreement(proposal_with_agreement)
     print('Agreement signed')
 
     # Check agreement status
@@ -369,8 +379,8 @@ def main():
     print('Status:', status)
 
     # Hash some data for reference
-    task_hash = jacs.hash_string(signed_task)
-    print('Task hash:', task_hash)
+    proposal_hash = jacs.hash_string(signed_proposal)
+    print('Document hash:', proposal_hash)
 
 if __name__ == "__main__":
     main()

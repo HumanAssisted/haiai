@@ -1,8 +1,10 @@
 use haiai::{HaiClient, HaiClientOptions, SearchOptions, SendEmailOptions, StaticJacsProvider};
+use httpmock::prelude::HttpMockRequest;
 use httpmock::Method::{DELETE, GET, POST};
 use httpmock::MockServer;
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::sync::{Arc, Mutex};
 
 fn make_client(base_url: &str) -> HaiClient<StaticJacsProvider> {
     let provider = StaticJacsProvider::new("test-agent-001");
@@ -18,22 +20,36 @@ fn make_client(base_url: &str) -> HaiClient<StaticJacsProvider> {
     client
 }
 
-// --- Task #38: JACS content signing in send_email ---
+fn basic_email_options() -> SendEmailOptions {
+    SendEmailOptions {
+        to: "recipient@hai.ai".to_string(),
+        subject: "Hello".to_string(),
+        body: "World".to_string(),
+        cc: Vec::new(),
+        bcc: Vec::new(),
+        in_reply_to: None,
+        attachments: Vec::new(),
+        labels: Vec::new(),
+        append_footer: None,
+        idempotency_key: None,
+    }
+}
+
+// --- Task #38 / 011: send_email aliases the canonical signed send path ---
 
 #[tokio::test]
-async fn send_email_sends_content_fields() {
+async fn send_email_uses_signed_send_endpoint() {
     let server = MockServer::start_async().await;
 
-    // Server handles JACS signing — client sends content fields only.
     let mock = server
         .mock_async(|when, then| {
             when.method(POST)
-                .path("/api/agents/test-agent-001/email/send")
+                .path("/api/agents/test-agent-001/email/send-signed")
                 .header_exists("authorization")
-                .header("content-type", "application/json")
-                .body_includes("\"to\"")
-                .body_includes("\"subject\"")
-                .body_includes("\"body\"");
+                .header_exists("idempotency-key")
+                .header("content-type", "message/rfc822")
+                .body_includes("data-hai-jacs-envelope")
+                .body_includes("This email is sent from an AI agent. Verify at");
             then.status(200).json_body(json!({
                 "message_id": "msg-001",
                 "status": "queued"
@@ -53,6 +69,7 @@ async fn send_email_sends_content_fields() {
             attachments: Vec::new(),
             labels: Vec::new(),
             append_footer: None,
+            idempotency_key: Some("send-email-alias-key".to_string()),
         })
         .await
         .expect("send_email");
@@ -69,7 +86,7 @@ async fn send_email_signature_uses_correct_hash_format() {
     server
         .mock_async(|when, then| {
             when.method(POST)
-                .path("/api/agents/test-agent-001/email/send");
+                .path("/api/agents/test-agent-001/email/send-signed");
             then.status(200).json_body(json!({
                 "message_id": "msg-002",
                 "status": "queued"
@@ -89,6 +106,7 @@ async fn send_email_signature_uses_correct_hash_format() {
             attachments: Vec::new(),
             labels: Vec::new(),
             append_footer: None,
+            idempotency_key: None,
         })
         .await
         .expect("send_email");
@@ -112,8 +130,8 @@ async fn send_email_includes_in_reply_to_when_set() {
     let mock = server
         .mock_async(|when, then| {
             when.method(POST)
-                .path("/api/agents/test-agent-001/email/send")
-                .body_includes("in_reply_to");
+                .path("/api/agents/test-agent-001/email/send-signed")
+                .body_includes("In-Reply-To: orig-msg-id");
             then.status(200).json_body(json!({
                 "message_id": "msg-003",
                 "status": "queued"
@@ -133,6 +151,7 @@ async fn send_email_includes_in_reply_to_when_set() {
             attachments: Vec::new(),
             labels: Vec::new(),
             append_footer: None,
+            idempotency_key: None,
         })
         .await
         .expect("send_email with in_reply_to");
@@ -141,16 +160,14 @@ async fn send_email_includes_in_reply_to_when_set() {
 }
 
 #[tokio::test]
-async fn send_email_includes_labels_when_set() {
+async fn send_email_with_labels_still_uses_signed_endpoint() {
     let server = MockServer::start_async().await;
 
     let mock = server
         .mock_async(|when, then| {
             when.method(POST)
-                .path("/api/agents/test-agent-001/email/send")
-                .body_includes("\"labels\"")
-                .body_includes("urgent")
-                .body_includes("project-x");
+                .path("/api/agents/test-agent-001/email/send-signed")
+                .header("content-type", "message/rfc822");
             then.status(200).json_body(json!({
                 "message_id": "msg-labels-001",
                 "status": "queued"
@@ -170,6 +187,7 @@ async fn send_email_includes_labels_when_set() {
             attachments: Vec::new(),
             labels: vec!["urgent".to_string(), "project-x".to_string()],
             append_footer: None,
+            idempotency_key: None,
         })
         .await
         .expect("send_email with labels");
@@ -464,6 +482,111 @@ async fn reply_posts_to_reply_endpoint() {
     assert_eq!(result.message_id, "reply-msg");
     get_mock.assert_async().await;
     send_mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn send_signed_email_posts_html_inline_by_default() {
+    let server = MockServer::start_async().await;
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(POST)
+                .path("/api/agents/test-agent-001/email/send-signed")
+                .header("content-type", "message/rfc822")
+                .body_includes("data-hai-jacs-envelope")
+                .body_includes("cid:hai-jacs-logo@hai.ai")
+                .body_includes("This email is sent from an AI agent. Verify at");
+            then.status(200).json_body(json!({
+                "message_id": "inline-msg",
+                "status": "queued"
+            }));
+        })
+        .await;
+
+    let client = make_client(&server.base_url());
+    let result = client
+        .send_signed_email(&SendEmailOptions {
+            to: "recipient@hai.ai".to_string(),
+            subject: "Inline default".to_string(),
+            body: "Hello inline".to_string(),
+            cc: vec![],
+            bcc: vec![],
+            in_reply_to: None,
+            attachments: vec![],
+            labels: vec![],
+            append_footer: None,
+            idempotency_key: None,
+        })
+        .await
+        .expect("send signed inline default");
+
+    assert_eq!(result.message_id, "inline-msg");
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn send_signed_email_retries_with_stable_idempotency_key_and_fresh_auth() {
+    let server = MockServer::start_async().await;
+    let seen_headers = Arc::new(Mutex::new(Vec::<(String, String)>::new()));
+    let seen_headers_for_matcher = seen_headers.clone();
+
+    let mock = server
+        .mock_async(move |when, then| {
+            when.method(POST)
+                .path("/api/agents/test-agent-001/email/send-signed")
+                .is_true(move |req: &HttpMockRequest| {
+                    let headers = req.headers();
+                    let auth = headers
+                        .get("authorization")
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string();
+                    let key = headers
+                        .get("idempotency-key")
+                        .and_then(|value| value.to_str().ok())
+                        .unwrap_or_default()
+                        .to_string();
+                    seen_headers_for_matcher
+                        .lock()
+                        .expect("seen headers lock")
+                        .push((auth, key));
+                    true
+                });
+            then.status(503)
+                .json_body(json!({"error": "temporarily unavailable"}));
+        })
+        .await;
+
+    let client = HaiClient::new(
+        StaticJacsProvider::new("test-agent-001"),
+        HaiClientOptions {
+            base_url: server.base_url(),
+            max_retries: 2,
+            ..HaiClientOptions::default()
+        },
+    )
+    .expect("client");
+    let mut client = client;
+    client.set_agent_email("test-agent-001@hai.ai".to_string());
+
+    let result = client.send_signed_email(&basic_email_options()).await;
+    assert!(result.is_err(), "persistent 503 should surface as an error");
+    mock.assert_calls_async(2).await;
+
+    let seen = seen_headers.lock().expect("seen headers lock");
+    assert_eq!(seen.len(), 2, "expected one captured header set per retry");
+    assert!(
+        !seen[0].1.is_empty(),
+        "first request should include idempotency key"
+    );
+    assert_eq!(
+        seen[0].1, seen[1].1,
+        "retries for one logical send must reuse the idempotency key"
+    );
+    assert_ne!(
+        seen[0].0, seen[1].0,
+        "each retry attempt must use a fresh nonce-bearing Authorization header"
+    );
 }
 
 #[tokio::test]

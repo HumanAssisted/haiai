@@ -14,7 +14,6 @@ in the wheel.
 """
 
 import argparse
-import os
 import platform
 import shutil
 import subprocess
@@ -43,7 +42,9 @@ CURRENT_PLATFORM = {
 }
 
 
-def embed_from_artifacts(artifacts_dir: str, version: str, target_platform: str | None = None):
+def embed_from_artifacts(
+    artifacts_dir: str, version: str, target_platform: str | None = None
+):
     """Extract binary from CI artifact and place in package bin dir."""
     artifacts = Path(artifacts_dir)
     PACKAGE_BIN_DIR.mkdir(parents=True, exist_ok=True)
@@ -54,7 +55,10 @@ def embed_from_artifacts(artifacts_dir: str, version: str, target_platform: str 
         # Current platform only
         key = CURRENT_PLATFORM.get((platform.system(), platform.machine()))
         if not key:
-            print(f"Unsupported platform: {platform.system()}-{platform.machine()}", file=sys.stderr)
+            print(
+                f"Unsupported platform: {platform.system()}-{platform.machine()}",
+                file=sys.stderr,
+            )
             sys.exit(1)
         platforms = {key: PLATFORM_MAP[key]}
 
@@ -69,15 +73,22 @@ def embed_from_artifacts(artifacts_dir: str, version: str, target_platform: str 
             # glob search
             matches = list(artifacts.rglob(archive_name))
             if not matches:
-                print(f"Warning: {archive_name} not found in {artifacts_dir}", file=sys.stderr)
+                print(
+                    f"Warning: {archive_name} not found in {artifacts_dir}",
+                    file=sys.stderr,
+                )
                 continue
             archive_path = matches[0]
 
         with tempfile.TemporaryDirectory() as tmpdir:
             if is_windows:
-                subprocess.run(["unzip", "-o", str(archive_path), "-d", tmpdir], check=True)
+                subprocess.run(
+                    ["unzip", "-o", str(archive_path), "-d", tmpdir], check=True
+                )
             else:
-                subprocess.run(["tar", "xzf", str(archive_path), "-C", tmpdir], check=True)
+                subprocess.run(
+                    ["tar", "xzf", str(archive_path), "-C", tmpdir], check=True
+                )
 
             # Find the binary (may be named haiai-cli or haiai)
             tmp = Path(tmpdir)
@@ -110,10 +121,13 @@ def embed_local(binary_path: str):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Embed haiai binary into Python package")
+    parser = argparse.ArgumentParser(
+        description="Embed haiai binary into Python package"
+    )
     parser.add_argument("--local", metavar="BINARY", help="Path to local binary")
-    parser.add_argument("--platform", metavar="PLATFORM",
-                        help="Target platform (e.g. darwin-arm64)")
+    parser.add_argument(
+        "--platform", metavar="PLATFORM", help="Target platform (e.g. darwin-arm64)"
+    )
     parser.add_argument("artifacts_dir", nargs="?", help="Directory with CI artifacts")
     parser.add_argument("version", nargs="?", help="Version string")
     args = parser.parse_args()

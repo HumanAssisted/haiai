@@ -1,6 +1,7 @@
 {
   "algorithm": "pq2025",
-  "fixture_agent_dir": "fixtures/jacs-agent",
+  "public_key_file": "fixtures/media/signer.public.pem",
   "regenerator": "rust/haiai/tests/regen_media_fixtures.rs",
-  "signer_id": "96160c44-9e52-4889-b5bb-5a5aec41bf32"
+  "signer_id": "b5aa941d-39d6-44f3-bf89-0b236c35174e",
+  "verifier_agent_dir": "fixtures/media/verifier-agent"
 }

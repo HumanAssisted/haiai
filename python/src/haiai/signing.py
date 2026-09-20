@@ -14,7 +14,7 @@ Handles:
 from __future__ import annotations
 
 import base64
-import hashlib
+import ipaddress
 import json
 import logging
 import threading
@@ -22,9 +22,22 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, TypedDict
+from urllib.parse import urlsplit
 
 logger = logging.getLogger("haiai.signing")
+
+SIGNED_JOB_RESPONSE_CONTRACT = "hai.job-response"
+SIGNED_JOB_RESPONSE_VERSION = 2
+
+
+class SignedJobResponsePayloadV2(TypedDict):
+    """Payload placed inside a signed HAI job-response document's data field."""
+
+    contract: str
+    version: int
+    job_id: str
+    response: Any
 
 
 # ---------------------------------------------------------------------------
@@ -109,11 +122,12 @@ def _extract_raw_key_from_pem(pem_str: str) -> bytes:
 
     Raises :class:`~haiai.errors.HaiError` on malformed input.
     """
-    import base64
 
     from haiai.errors import HaiError
 
-    body_lines = [ln for ln in pem_str.splitlines() if ln and not ln.startswith("-----")]
+    body_lines = [
+        ln for ln in pem_str.splitlines() if ln and not ln.startswith("-----")
+    ]
     if not body_lines:
         raise HaiError(
             "PEM body is empty",
@@ -284,6 +298,7 @@ _KEY_CACHE_TTL = 3600  # 1 hour
 
 @dataclass
 class _CachedKey:
+    signer_id: str
     key_id: str
     algorithm: str
     public_key_pem: str
@@ -294,10 +309,53 @@ class _KeyCache:
     keys: list[_CachedKey]
     fetched_at: float
     issuer: str
+    origin: str
 
 
 _key_cache: Optional[_KeyCache] = None
 _key_cache_lock = threading.Lock()
+
+
+def _trusted_server_key_origin(hai_url: str) -> str:
+    from haiai.errors import HaiError
+
+    try:
+        parsed = urlsplit(hai_url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise HaiError(
+            f"Invalid HAI server origin: {exc}",
+            code="SERVER_KEY_ORIGIN_INVALID",
+            action="Configure an absolute HTTPS HAI server URL",
+        ) from exc
+
+    loopback = hostname == "localhost"
+    if hostname is not None and not loopback:
+        try:
+            loopback = ipaddress.ip_address(hostname).is_loopback
+        except ValueError:
+            loopback = False
+    secure = parsed.scheme.lower() == "https"
+    loopback_http = parsed.scheme.lower() == "http" and loopback
+    if (
+        not hostname
+        or (not secure and not loopback_http)
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        raise HaiError(
+            "HAI server signing keys require HTTPS (HTTP is allowed only on loopback)",
+            code="SERVER_KEY_ORIGIN_INVALID",
+            action="Configure an HTTPS HAI server URL without userinfo or fragments",
+        )
+
+    authority = f"[{hostname.lower()}]" if ":" in hostname else hostname.lower()
+    default_port = 443 if secure else 80
+    if port is not None and port != default_port:
+        authority = f"{authority}:{port}"
+    return f"{parsed.scheme.lower()}://{authority}"
 
 
 def fetch_server_keys(hai_url: str, ffi=None) -> list[_CachedKey]:
@@ -307,39 +365,100 @@ def fetch_server_keys(hai_url: str, ffi=None) -> list[_CachedKey]:
     """
     global _key_cache
 
+    origin = _trusted_server_key_origin(hai_url)
     with _key_cache_lock:
         now = time.monotonic()
-        if _key_cache is not None and (now - _key_cache.fetched_at) < _KEY_CACHE_TTL:
+        if (
+            _key_cache is not None
+            and _key_cache.origin == origin
+            and (now - _key_cache.fetched_at) < _KEY_CACHE_TTL
+        ):
             return _key_cache.keys
 
     try:
         if ffi is None:
-            raise RuntimeError("FFI client required for fetch_server_keys (no native HTTP fallback)")
+            raise RuntimeError(
+                "FFI client required for fetch_server_keys (no native HTTP fallback)"
+            )
         data = ffi.fetch_server_keys()
     except Exception as exc:
-        logger.warning("Failed to fetch HAI signing keys: %s", exc)
-        with _key_cache_lock:
-            if _key_cache is not None:
-                return _key_cache.keys
-        return []
+        from haiai.errors import HaiError
+
+        raise HaiError(
+            f"Failed to fetch HAI signing keys: {exc}",
+            code="SERVER_KEY_UNAVAILABLE",
+            action="Reject the event and retry after the server key endpoint recovers",
+        ) from exc
 
     parsed: list[_CachedKey] = []
+    by_signer: dict[str, str] = {}
     for key_data in data.get("keys", []):
-        if not key_data.get("is_active", False):
+        if key_data.get("is_active") is not True:
             continue
         pem_str = key_data.get("public_key", "")
-        if pem_str:
-            parsed.append(
-                _CachedKey(
-                    key_id=key_data.get("key_id", ""),
-                    algorithm=key_data.get("algorithm", ""),
-                    public_key_pem=pem_str,
-                )
+        jacs_id = key_data.get("jacs_id", "")
+        key_id = key_data.get("key_id", "")
+        signer_id = key_data.get("signer_id", "")
+        if (
+            not signer_id
+            and jacs_id
+            and isinstance(key_id, str)
+            and key_id.startswith(f"{jacs_id}:")
+        ):
+            signer_id = key_id
+        if not isinstance(signer_id, str) or not signer_id.strip():
+            from haiai.errors import HaiError
+
+            raise HaiError(
+                "HAI server published an active key without an exact signer_id",
+                code="SERVER_KEY_INVALID",
+                action="The server must publish signer_id for every active signing key",
             )
+        if not isinstance(pem_str, str) or not pem_str.strip():
+            from haiai.errors import HaiError
+
+            raise HaiError(
+                f"HAI server published no PEM for signer {signer_id}",
+                code="SERVER_KEY_INVALID",
+                action="The server must publish a non-empty PEM public key",
+            )
+        signer_id = signer_id.strip()
+        prior = by_signer.get(signer_id)
+        if prior is not None and prior != pem_str:
+            from haiai.errors import HaiError
+
+            raise HaiError(
+                f"HAI server published conflicting active keys for signer {signer_id}",
+                code="SERVER_KEY_CONFLICT",
+                action="Reject events until the server key registry is consistent",
+            )
+        if prior is not None:
+            continue
+        by_signer[signer_id] = pem_str
+        parsed.append(
+            _CachedKey(
+                signer_id=signer_id,
+                key_id=key_id if isinstance(key_id, str) else "",
+                algorithm=str(key_data.get("algorithm", "")),
+                public_key_pem=pem_str,
+            )
+        )
+
+    if not parsed:
+        from haiai.errors import HaiError
+
+        raise HaiError(
+            "HAI server key response contains no usable active signing key",
+            code="SERVER_KEY_UNAVAILABLE",
+            action="The server must publish its signing key before streaming events",
+        )
 
     with _key_cache_lock:
         _key_cache = _KeyCache(
-            keys=parsed, fetched_at=time.monotonic(), issuer=data.get("issuer", "")
+            keys=parsed,
+            fetched_at=time.monotonic(),
+            issuer=data.get("issuer", ""),
+            origin=origin,
         )
 
     logger.info("Cached %d HAI signing keys", len(parsed))
@@ -360,6 +479,14 @@ def invalidate_key_cache() -> None:
 
 def is_signed_event(data: dict[str, Any]) -> bool:
     """Return True if *data* looks like a JACS-signed document."""
+    if (
+        isinstance(data.get("version"), str)
+        and isinstance(data.get("document_type"), str)
+        and "data" in data
+        and isinstance(data.get("metadata"), dict)
+        and isinstance(data.get("jacsSignature"), dict)
+    ):
+        return True
     if "payload" in data and "signature" in data and "metadata" in data:
         return True
     if "jacs_envelope" in data:
@@ -372,95 +499,126 @@ def unwrap_signed_event(
     hai_url: Optional[str] = None,
     *,
     verify: bool = True,
+    ffi=None,
 ) -> tuple[dict[str, Any], bool]:
-    """Unwrap a JACS-signed event, optionally verifying the server signature.
+    """Unwrap a JACS-signed event with fail-closed verification.
 
-    Delegates to JACS binding-core ``unwrap_signed_event`` when the agent
-    is loaded and supports it.  Falls back to local unwrap + verify_string
-    for environments without the native JACS module.
+    With ``verify=True`` this accepts only a fully bound v2 envelope and
+    delegates signature, freshness, and replay enforcement to JACS
+    binding-core ``unwrap_signed_event``. No local or payload-only verification
+    fallback is used. ``verify=False`` is an explicit unsafe migration mode;
+    its returned boolean is always ``False``.
 
     Args:
         data: The parsed JSON from SSE/WS.
         hai_url: HAI server URL (needed to fetch keys for verification).
         verify: Whether to verify the server's signature.
+        ffi: HAIAI FFI adapter used to fetch the server's authenticated key
+            registry. Required when verification is enabled.
 
     Returns:
         ``(payload, verified)`` -- the inner event payload and whether
         the signature was cryptographically verified.
     """
-    # Try JACS binding-core delegation first
-    if verify and hai_url:
+    bound_v2 = (
+        isinstance(data.get("version"), str)
+        and isinstance(data.get("document_type"), str)
+        and "data" in data
+        and isinstance(data.get("metadata"), dict)
+        and isinstance(data.get("jacsSignature"), dict)
+    )
+
+    if verify:
         from haiai.config import is_loaded, get_agent
         from haiai.errors import HaiError
 
-        if is_loaded():
-            agent = get_agent()
-            if hasattr(agent, "unwrap_signed_event"):
-                keys = fetch_server_keys(hai_url)
-                server_keys_dict: dict[str, Any] = {
-                    "keys": [
-                        {
-                            "key_id": k.key_id,
-                            "algorithm": k.algorithm,
-                            "public_key": k.public_key_pem,
-                        }
-                        for k in keys
-                    ]
-                }
-                event_json = json.dumps(data)
-                server_keys_json = json.dumps(server_keys_dict)
-                try:
-                    result_json = agent.unwrap_signed_event(
-                        event_json, server_keys_json
-                    )
-                except Exception as exc:
-                    raise HaiError(
-                        f"unwrap_signed_event failed: {exc}",
-                        code="JACS_OP_FAILED",
-                        action="Check JACS installation: pip install jacs",
-                    ) from exc
-                result = json.loads(result_json)
-                payload = result.get("data", data)
-                verified = result.get("verified", False)
-                if isinstance(payload, dict):
-                    return payload, verified
-                return data, False
+        if not hai_url:
+            raise HaiError(
+                "Strict server event verification requires the HAI server URL",
+                code="SERVER_KEY_UNAVAILABLE",
+                action="Pass the exact HAI origin used by the transport",
+            )
+        if not bound_v2:
+            legacy = "payload" in data or "signature" in data or "jacs_envelope" in data
+            raise HaiError(
+                "Legacy payload-only signed events are not accepted"
+                if legacy
+                else "Event is not a fully bound v2 JACS signed event",
+                code="VERIFICATION_FAILED",
+                action="Require the server to emit fully bound v2 event envelopes",
+            )
+        if not is_loaded():
+            raise HaiError(
+                "Strict event verification requires a loaded JACS agent",
+                code="JACS_NOT_LOADED",
+                action="Run 'haiai init' or set JACS_CONFIG_PATH",
+            )
+        agent = get_agent()
+        if not hasattr(agent, "unwrap_signed_event"):
+            raise HaiError(
+                "Loaded JACS binding lacks strict unwrap_signed_event support",
+                code="JACS_TOO_OLD",
+                action="Upgrade jacs to 0.11.4 or newer",
+            )
 
-    # Local unwrap with JACS verify_string for signature checks
-    # JacsDocument format
+        keys = fetch_server_keys(hai_url, ffi)
+        server_keys: dict[str, str] = {}
+        for key in keys:
+            prior = server_keys.get(key.signer_id)
+            if prior is not None and prior != key.public_key_pem:
+                raise HaiError(
+                    f"Conflicting public keys for server signer {key.signer_id}",
+                    code="SERVER_KEY_CONFLICT",
+                    action="Reject events until the key registry is consistent",
+                )
+            server_keys[key.signer_id] = key.public_key_pem
+
+        try:
+            result_json = agent.unwrap_signed_event(
+                json.dumps(data), json.dumps(server_keys)
+            )
+        except Exception as exc:
+            raise HaiError(
+                f"Signed event verification failed: {exc}",
+                code="VERIFICATION_FAILED",
+                action="Reject the event and refresh the server key registry",
+            ) from exc
+        try:
+            result = json.loads(result_json)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise HaiError(
+                f"Strict JACS verifier returned malformed JSON: {exc}",
+                code="JACS_CONTRACT_INVALID",
+                action="Upgrade jacs and report the malformed native result",
+            ) from exc
+        if not isinstance(result, dict):
+            raise HaiError(
+                "Strict JACS verifier result must be an object",
+                code="JACS_CONTRACT_INVALID",
+                action="Upgrade jacs and reject this event",
+            )
+        if result.get("verified") is not True or "data" not in result:
+            raise HaiError(
+                "Strict JACS verifier did not return verified data",
+                code="JACS_CONTRACT_INVALID",
+                action="Reject the event and upgrade jacs",
+            )
+        payload = result["data"]
+        if not isinstance(payload, dict):
+            raise HaiError(
+                "Verified HAI event payload must be a JSON object",
+                code="JACS_CONTRACT_INVALID",
+                action="Reject the malformed event payload",
+            )
+        return payload, True
+
+    if bound_v2:
+        payload = data["data"]
+        return (payload, False) if isinstance(payload, dict) else (data, False)
+
     if "payload" in data and "signature" in data:
         payload = data["payload"]
-        verified = False
-
-        if verify and hai_url:
-            sig_info = data.get("signature", {})
-            sig_value = sig_info.get("signature", "")
-            metadata = data.get("metadata", {})
-
-            if sig_value and isinstance(payload, dict):
-                canonical = canonicalize_json(payload)
-                keys = fetch_server_keys(hai_url)
-                for cached_key in keys:
-                    if verify_string(canonical, sig_value, cached_key.public_key_pem):
-                        verified = True
-                        break
-
-                if not verified:
-                    payload_hash = metadata.get("hash", "")
-                    if payload_hash:
-                        for cached_key in keys:
-                            if verify_string(
-                                payload_hash, sig_value, cached_key.public_key_pem
-                            ):
-                                verified = True
-                                break
-
-                if not verified:
-                    logger.warning("Could not verify server signature on event")
-
-        if isinstance(payload, dict):
-            return payload, verified
-        return data, False
+        return (payload, False) if isinstance(payload, dict) else (data, False)
 
     # Legacy "jacs_envelope" format
     if "jacs_envelope" in data:
@@ -477,24 +635,23 @@ def unwrap_signed_event(
 # ---------------------------------------------------------------------------
 
 
-def sign_response(
-    job_response_payload: dict[str, Any],
+def _sign_payload(
+    payload: dict[str, Any],
     agent: Any,
     jacs_id: str,
 ) -> dict[str, str]:
-    """Sign a job response using the loaded JACS agent.
+    """Sign arbitrary data without applying the HAI job-response contract.
 
     The returned dict matches the server's ``SignedJobResponse`` schema::
 
         {"signed_document": "<json string>", "agent_jacs_id": "..."}
 
-    Delegates full envelope construction to JACS binding-core when the
-    agent exposes ``sign_response``.  Otherwise constructs the envelope
-    locally and delegates the signature to JACS ``sign_string``.  Either
-    path requires a loaded JACS agent.
+    Delegates full v2 envelope construction to JACS binding-core. HAIAI never
+    constructs the legacy local v1 envelope because it signs only ``data``
+    and cannot pass HAI's strict complete-envelope verifier.
 
     Args:
-        job_response_payload: The ``JobResponseRequest`` dict.
+        payload: Data to place inside the signed JACS document.
         agent: A loaded JacsAgent instance (from JACS binding-core).
         jacs_id: Agent's JACS identity ID.
 
@@ -513,42 +670,112 @@ def sign_response(
             action="Run 'haiai init' or set JACS_CONFIG_PATH environment variable",
         )
 
-    # Prefer JACS binding delegation (JACS canonicalizes internally via RFC 8785)
-    if hasattr(agent, "sign_response"):
-        raw_json = json.dumps(job_response_payload, separators=(",", ":"))
-        result_json = agent.sign_response(raw_json)
-        return {"signed_document": result_json, "agent_jacs_id": jacs_id}
+    native_signer = getattr(agent, "sign_response", None)
+    if not callable(native_signer):
+        # Current JACS ephemeral agents are wrapped by a Python adapter whose
+        # underlying SimpleAgent owns the native v2 protocol helper.
+        native_signer = getattr(getattr(agent, "_native", None), "sign_response", None)
+    if not callable(native_signer):
+        raise HaiError(
+            "Strict response signing requires JACS sign_response; legacy local "
+            "v1 envelopes are not accepted",
+            code="JACS_TOO_OLD",
+            action="Upgrade jacs to 0.11.4 or newer",
+        )
 
-    # Local envelope construction with JACS sign_string delegation.
-    # NOTE: The signature covers canonicalize_json(job_response_payload).
-    # The server re-canonicalizes jacs_doc["data"] before verifying.
-    # This matches the Node SDK's signResponse behavior.
-    canonical_payload = canonicalize_json(job_response_payload)
-    doc_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
-    payload_hash = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
-    sorted_data: dict[str, Any] = json.loads(canonical_payload)
+    raw_json = json.dumps(payload, separators=(",", ":"))
+    result_json = native_signer(raw_json)
+    _assert_v2_signed_response_document(result_json)
+    return {"signed_document": result_json, "agent_jacs_id": jacs_id}
 
-    jacs_doc: dict[str, Any] = {
-        "version": "1.0.0",
-        "document_type": "job_response",
-        "data": sorted_data,
-        "metadata": {
-            "issuer": jacs_id,
-            "document_id": doc_id,
-            "created_at": now,
-            "hash": payload_hash,
-        },
-        "jacsSignature": {
-            "agentID": jacs_id,
-            "date": now,
-        },
+
+def _assert_v2_signed_response_document(signed_document: Any) -> None:
+    """Reject old or malformed native response-envelope contracts."""
+    from haiai.errors import HaiError
+
+    try:
+        document = json.loads(signed_document)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise HaiError(
+            f"JACS sign_response returned malformed JSON: {exc}",
+            code="JACS_CONTRACT_INVALID",
+            action="Upgrade jacs to 0.11.4 or newer",
+        ) from exc
+
+    metadata = document.get("metadata") if isinstance(document, dict) else None
+    signature = document.get("jacsSignature") if isinstance(document, dict) else None
+
+    def nonempty_string(value: Any) -> bool:
+        return isinstance(value, str) and bool(value)
+
+    valid = (
+        isinstance(document, dict)
+        and document.get("version") == "2.0.0"
+        and document.get("document_type") == "job_response"
+        and "data" in document
+        and isinstance(metadata, dict)
+        and all(
+            nonempty_string(metadata.get(field))
+            for field in ("issuer", "document_id", "created_at", "hash")
+        )
+        and isinstance(signature, dict)
+        and all(
+            nonempty_string(signature.get(field))
+            for field in (
+                "agentID",
+                "date",
+                "signingAlgorithm",
+                "publicKeyHash",
+                "signature",
+            )
+        )
+        and signature.get("signatureContentVersion") == "jacs-response-v2"
+    )
+    if not valid:
+        raise HaiError(
+            "JACS sign_response did not return a fully bound v2 response envelope",
+            code="JACS_CONTRACT_INVALID",
+            action="Upgrade jacs to 0.11.4 or newer",
+        )
+
+
+def sign_response(
+    job_id: str,
+    job_response_payload: dict[str, Any],
+    agent: Any,
+    jacs_id: str,
+) -> dict[str, str]:
+    """Sign a version-2 HAI job response with its job ID in the signed bytes.
+
+    The server requires the signed ``job_id`` to equal the HTTP path or
+    WebSocket event job ID. This prevents a valid response from being replayed
+    against a different job owned by the same agent.
+    """
+    from haiai.errors import HaiError
+
+    if not isinstance(job_id, str) or not job_id.strip():
+        raise HaiError(
+            "sign_response requires a non-empty job ID",
+            code="INVALID_ARGUMENT",
+            action="Pass the job ID from the HAI job event",
+        )
+    if (
+        not isinstance(job_response_payload, dict)
+        or "response" not in job_response_payload
+    ):
+        raise HaiError(
+            "sign_response requires a job response dict with a response field",
+            code="INVALID_ARGUMENT",
+            action=(
+                "Pass {'response': {'message': ..., 'metadata': ..., "
+                "'processing_time_ms': ...}}"
+            ),
+        )
+
+    signed_payload: SignedJobResponsePayloadV2 = {
+        "contract": SIGNED_JOB_RESPONSE_CONTRACT,
+        "version": SIGNED_JOB_RESPONSE_VERSION,
+        "job_id": job_id,
+        "response": job_response_payload["response"],
     }
-
-    signature = agent.sign_string(canonical_payload)
-    jacs_doc["jacsSignature"]["signature"] = signature
-
-    return {
-        "signed_document": json.dumps(jacs_doc, separators=(",", ":")),
-        "agent_jacs_id": jacs_id,
-    }
+    return _sign_payload(signed_payload, agent, jacs_id)

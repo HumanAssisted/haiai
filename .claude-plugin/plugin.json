@@ -8,6 +8,6 @@
   },
   "homepage": "https://hai.ai",
   "repository": "https://github.com/HumanAssisted/haiai",
-  "license": "MIT OR Apache-2.0",
+  "license": "BUSL-1.1",
   "keywords": ["jacs", "cryptography", "signing", "email", "agents", "trust", "mcp"]
 }

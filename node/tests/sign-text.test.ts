@@ -10,13 +10,12 @@
 import { afterAll, beforeAll, describe, it, expect } from 'vitest';
 import { createRequire } from 'node:module';
 import {
+  stageSignedMediaVerifier,
+  VERIFIER_AGENT_PASSWORD,
+} from './signed-verifier-fixture.js';
+import {
   mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
   realpathSync,
-  statSync,
-  copyFileSync,
   writeFileSync,
   rmSync,
   existsSync,
@@ -29,10 +28,8 @@ const __filenameLocal = fileURLToPath(import.meta.url);
 const __dirnameLocal = dirname(__filenameLocal);
 
 const REPO_ROOT = resolve(__dirnameLocal, '../..');
-const JACS_AGENT_DIR = join(REPO_ROOT, 'fixtures', 'jacs-agent');
-const FIXTURE_AGENT_PASSWORD = 'secretpassord';
 
-process.env.JACS_PRIVATE_KEY_PASSWORD = FIXTURE_AGENT_PASSWORD;
+process.env.JACS_PRIVATE_KEY_PASSWORD = VERIFIER_AGENT_PASSWORD;
 
 interface NativeHaiClientCtor {
   new (configJson: string): {
@@ -70,52 +67,6 @@ const SKIP_REASON =
   'Installed haiinpm native binding does not expose the Layer-8 media methods. ' +
   'Rebuild via `cargo build -p haiinpm --release`.';
 
-function copyWithColons(src: string, dst: string): void {
-  mkdirSync(dst, { recursive: true });
-  for (const name of readdirSync(src)) {
-    const newName = name.replace(/_/g, ':');
-    const srcPath = join(src, name);
-    const dstPath = join(dst, newName);
-    if (statSync(srcPath).isDirectory()) {
-      copyWithColons(srcPath, dstPath);
-    } else {
-      copyFileSync(srcPath, dstPath);
-    }
-  }
-}
-
-interface StagedAgent {
-  configPath: string;
-  tmpDir: string;
-}
-
-function stageFixtureAgent(): StagedAgent {
-  process.env.JACS_PRIVATE_KEY_PASSWORD = FIXTURE_AGENT_PASSWORD;
-
-  const tmpDir = realpathSync(mkdtempSync(join(tmpdir(), 'haiai-sign-text-')));
-  const cfg = JSON.parse(
-    readFileSync(join(JACS_AGENT_DIR, 'jacs.config.json'), 'utf-8'),
-  ) as Record<string, unknown>;
-
-  const srcKeys = join(JACS_AGENT_DIR, cfg.jacs_key_directory as string);
-  const tmpKeys = join(tmpDir, 'keys');
-  mkdirSync(tmpKeys, { recursive: true });
-  for (const name of readdirSync(srcKeys)) {
-    copyFileSync(join(srcKeys, name), join(tmpKeys, name));
-  }
-
-  const srcData = join(JACS_AGENT_DIR, cfg.jacs_data_directory as string);
-  const tmpData = join(tmpDir, 'data');
-  copyWithColons(srcData, tmpData);
-
-  cfg.jacs_data_directory = tmpData;
-  cfg.jacs_key_directory = tmpKeys;
-
-  const configPath = join(tmpDir, 'jacs.config.json');
-  writeFileSync(configPath, JSON.stringify(cfg, null, 2));
-  return { configPath, tmpDir };
-}
-
 interface FFIClient {
   signText: (path: string, optsJson: string) => Promise<string>;
   verifyText: (path: string, optsJson: string) => Promise<string>;
@@ -124,15 +75,14 @@ interface FFIClient {
 function buildFFIClient(): { client: FFIClient; tmpDir: string } {
   const haiinpm = loadHaiinpm();
   if (!haiinpm) throw new Error('haiinpm not loadable');
-  process.env.JACS_PRIVATE_KEY_PASSWORD = FIXTURE_AGENT_PASSWORD;
+  process.env.JACS_PRIVATE_KEY_PASSWORD = VERIFIER_AGENT_PASSWORD;
 
-  const staged = stageFixtureAgent();
-  const cfg = JSON.parse(readFileSync(staged.configPath, 'utf-8')) as Record<string, unknown>;
+  const staged = stageSignedMediaVerifier(REPO_ROOT, 'haiai-sign-text-');
   const ffiConfig = JSON.stringify({
-    jacs_id: (cfg.jacs_agent_id_and_version as string).split(':')[0],
-    agent_name: 'FixtureAgent',
+    jacs_id: staged.jacsId,
+    agent_name: 'MediaFixtureVerifier',
     agent_version: '1.0.0',
-    key_dir: cfg.jacs_key_directory,
+    key_dir: staged.keyDir,
     jacs_config_path: staged.configPath,
     base_url: 'http://localhost:1',
   });

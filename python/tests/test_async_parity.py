@@ -5,11 +5,13 @@ rotate_keys) must exist on AsyncHaiClient with matching parameter signatures.
 
 Also includes behavioral tests that mock FFI to verify correct endpoint calls.
 """
+
 from __future__ import annotations
 
-import asyncio
 import inspect
-from unittest.mock import AsyncMock, MagicMock, patch
+import json
+from dataclasses import replace
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -49,11 +51,7 @@ class TestAsyncSignaturesMatchSync:
     def _param_names(method: object) -> list[str]:
         """Extract non-self parameter names from a method."""
         sig = inspect.signature(method)  # type: ignore[arg-type]
-        return [
-            name
-            for name, p in sig.parameters.items()
-            if name != "self"
-        ]
+        return [name for name, p in sig.parameters.items() if name != "self"]
 
     def test_free_run_signature_matches(self) -> None:
         from haiai.async_client import AsyncHaiClient
@@ -94,6 +92,16 @@ class TestAsyncSignaturesMatchSync:
         assert async_params == sync_params, (
             f"rotate_keys param mismatch: async={async_params}, sync={sync_params}"
         )
+        assert (
+            inspect.signature(HaiClient.rotate_keys).parameters["algorithm"].default
+            == "pq2025"
+        )
+        assert (
+            inspect.signature(AsyncHaiClient.rotate_keys)
+            .parameters["algorithm"]
+            .default
+            == "pq2025"
+        )
 
 
 class TestAsyncClientConstruction:
@@ -121,7 +129,11 @@ class TestAsyncFreeRunBehavior:
         response_data = {
             "run_id": "run-abc-123",
             "transcript": [
-                {"role": "system", "content": "Hello", "timestamp": "2026-01-01T00:00:00Z"}
+                {
+                    "role": "system",
+                    "content": "Hello",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                }
             ],
             "upsell_message": "Upgrade for scoring!",
         }
@@ -185,42 +197,101 @@ class TestAsyncSubmitBenchmarkResponseBehavior:
 
 @pytest.mark.asyncio
 class TestAsyncRotateKeysBehavior:
-    """Verify async rotate_keys delegates to sync via asyncio.to_thread."""
+    """Rotation must stay on the existing async FFI client and its pinned context."""
 
-    async def test_rotate_keys_delegates_to_sync(self) -> None:
+    @pytest.mark.parametrize("registered", [True, False])
+    async def test_rotate_keys_delegates_to_existing_async_ffi(
+        self, loaded_config, tmp_path, monkeypatch, registered
+    ) -> None:
+        from haiai import config as config_mod
         from haiai.async_client import AsyncHaiClient
         from haiai.models import RotationResult
 
-        expected_result = RotationResult(
-            jacs_id="test-agent-id:v2",
-            old_version="v1",
-            new_version="v2",
-            new_public_key_hash="abc123",
-            registered_with_hai=True,
-            signed_agent_json='{"agent": "doc"}',
+        cfg = config_mod.get_config()
+        config_path = tmp_path / "canonical.config.json"
+        monkeypatch.setattr(config_mod, "_loaded_config_path", config_path)
+        native_agent = Mock()
+        native_agent.rotate_keys.side_effect = AssertionError(
+            "rotation belongs to the HAI FFI client"
         )
-
-        client = AsyncHaiClient(timeout=30.0)
-
-        with patch("haiai.async_client.AsyncHaiClient._get_jacs_id", return_value="test-agent-id:v1"):
-            # Patch HaiClient.rotate_keys to return our expected result
-            with patch("haiai.client.HaiClient.rotate_keys", return_value=expected_result) as mock_rotate:
-                result = await client.rotate_keys(
-                    hai_url="https://hai.ai",
-                    register_with_hai=True,
-                    algorithm="pq2025",
-                )
-
-        assert result.old_version == "v1"
-        assert result.new_version == "v2"
-        assert result.registered_with_hai is True
-        # Verify it was called with the right args
-        mock_rotate.assert_called_once_with(
-            hai_url="https://hai.ai",
-            register_with_hai=True,
-            config_path=None,
-            algorithm="pq2025",
+        monkeypatch.setattr(
+            config_mod, "_get_native_agent", Mock(return_value=native_agent)
         )
+        data = {
+            "jacs_id": cfg.jacs_id,
+            "old_version": cfg.version,
+            "new_version": "v2-rotated",
+            "new_public_key_hash": "a" * 64,
+            "registered_with_hai": registered,
+            "signed_agent_json": json.dumps(
+                {"jacsId": cfg.jacs_id, "jacsVersion": "v2-rotated"}
+            ),
+        }
+        ffi = Mock()
+        ffi.jacs_id = AsyncMock(return_value=cfg.jacs_id)
+        ffi.base_url = AsyncMock(return_value="https://staging.hai.example")
+        ffi.rotate_keys = AsyncMock(return_value=data)
+
+        def reload_config(path):
+            assert path == str(config_path)
+            ffi.rotate_keys.assert_awaited_once()
+            config_mod._config = replace(cfg, version=data["new_version"])
+
+        reload = Mock(side_effect=reload_config)
+        monkeypatch.setattr(config_mod, "load", reload)
+        client = AsyncHaiClient(request_auth_audience="staging.hai")
+        client._ffi = ffi
+
+        with patch(
+            "haiai.client.HaiClient.rotate_keys",
+            side_effect=AssertionError("use async FFI"),
+        ) as sync_rotate:
+            result = await client.rotate_keys(
+                hai_url="https://staging.hai.example/",
+                config_path=str(config_path),
+                algorithm="ring-Ed25519",
+            )
+
+        ffi.rotate_keys.assert_awaited_once_with(
+            {"register_with_hai": True, "algorithm": "ring-Ed25519"}
+        )
+        ffi.register.assert_not_called()
+        sync_rotate.assert_not_called()
+        native_agent.rotate_keys.assert_not_called()
+        reload.assert_called_once_with(str(config_path))
+        assert client._ffi is ffi
+        assert client._request_auth_audience == "staging.hai"
+        assert result == RotationResult(**data)
+        assert config_mod.get_config().version == result.new_version
+
+    @pytest.mark.parametrize("mismatch", ["config_path", "jacs_id", "hai_url"])
+    async def test_rotation_rejects_mismatched_context_before_ffi(
+        self, loaded_config, tmp_path, monkeypatch, mismatch
+    ) -> None:
+        from haiai import config as config_mod
+        from haiai.async_client import AsyncHaiClient
+        from haiai.errors import HaiAuthError
+
+        config_path = tmp_path / "canonical.config.json"
+        monkeypatch.setattr(config_mod, "_loaded_config_path", config_path)
+        ffi = Mock()
+        ffi.jacs_id = AsyncMock(return_value=config_mod.get_config().jacs_id)
+        ffi.base_url = AsyncMock(return_value="https://staging.hai.example")
+        ffi.rotate_keys = AsyncMock()
+        client = AsyncHaiClient()
+        client._ffi = ffi
+        kwargs = {}
+        if mismatch == "config_path":
+            kwargs["config_path"] = str(config_path.with_name("other.config.json"))
+        elif mismatch == "jacs_id":
+            ffi.jacs_id.return_value = "another-agent"
+        else:
+            kwargs["hai_url"] = "https://another.hai.example"
+
+        with pytest.raises(HaiAuthError):
+            await client.rotate_keys(**kwargs)
+
+        ffi.rotate_keys.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -338,7 +409,12 @@ class TestAsyncTransportParity:
 
         events = iter(
             [
-                {"event_type": "connected", "data": {"ok": True}, "id": "evt-ok", "raw": "raw"},
+                {
+                    "event_type": "connected",
+                    "data": {"ok": True},
+                    "id": "evt-ok",
+                    "raw": "raw",
+                },
                 None,
             ]
         )
@@ -392,7 +468,9 @@ class TestAsyncTransportParity:
             sleep_delays.append(delay)
 
         monkeypatch.setattr("haiai.async_client.RETRY_MAX_ATTEMPTS", 1)
-        monkeypatch.setattr("haiai.async_client.backoff", lambda attempt: float(attempt))
+        monkeypatch.setattr(
+            "haiai.async_client.backoff", lambda attempt: float(attempt)
+        )
         monkeypatch.setattr("haiai.async_client.asyncio.sleep", fake_sleep)
 
         mock_ffi.responses[connect_method] = always_fail

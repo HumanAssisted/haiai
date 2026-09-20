@@ -3,10 +3,12 @@ package haiai
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -18,12 +20,81 @@ type initBootstrapRegisterContract struct {
 	PublicKeyEncoding string `json:"public_key_encoding"`
 }
 
+type registrationOutcomeCase struct {
+	Name           string          `json:"name"`
+	HTTPStatus     int             `json:"http_status"`
+	Response       json.RawMessage `json:"response"`
+	ExpectedStatus *string         `json:"expected_status"`
+	ExpectedEmail  *string         `json:"expected_email"`
+}
+
 type initContractFixture struct {
-	BootstrapRegister          initBootstrapRegisterContract `json:"bootstrap_register"`
-	PrivateKeyCandidateOrder   []string                      `json:"private_key_candidate_order"`
-	ConfigDiscoveryOrder       []string                      `json:"config_discovery_order"`
-	PrivateKeyPasswordSources  []string                      `json:"private_key_password_sources"`
-	PrivateKeyPasswordStrategy string                        `json:"private_key_password_strategy"`
+	RegistrationOutcomes struct {
+		Cases []registrationOutcomeCase `json:"cases"`
+	} `json:"registration_outcomes"`
+	BootstrapRegister        initBootstrapRegisterContract `json:"bootstrap_register"`
+	ExistingIdentityRegister struct {
+		Response json.RawMessage `json:"response"`
+		Cases    []struct {
+			Name    string            `json:"name"`
+			Request map[string]string `json:"request"`
+		} `json:"cases"`
+	} `json:"existing_identity_register"`
+	PrivateKeyCandidateOrder   []string `json:"private_key_candidate_order"`
+	ConfigDiscoveryOrder       []string `json:"config_discovery_order"`
+	PrivateKeyPasswordSources  []string `json:"private_key_password_sources"`
+	PrivateKeyPasswordStrategy string   `json:"private_key_password_strategy"`
+}
+
+type registrationCaptureFFI struct {
+	FFIClient // Any unexpected operation (including identity creation) fails.
+	payloads  []string
+	response  json.RawMessage
+	err       error
+}
+
+func (f *registrationCaptureFFI) Register(optionsJSON string) (json.RawMessage, error) {
+	f.payloads = append(f.payloads, optionsJSON)
+	return f.response, f.err
+}
+
+func TestInitContractExistingIdentityRegister(t *testing.T) {
+	contract := loadInitContractFixture(t).ExistingIdentityRegister
+	if len(contract.Cases) == 0 {
+		t.Fatal("missing existing-identity registration cases")
+	}
+	for _, tc := range contract.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			ffi := &registrationCaptureFFI{response: contract.Response}
+			client := &Client{ffi: ffi}
+			result, err := client.Register(context.Background(), RegisterOptions{
+				AgentJSON:       tc.Request["agent_json"],
+				PublicKey:       tc.Request["public_key_pem"],
+				OwnerEmail:      tc.Request["owner_email"],
+				RegistrationKey: tc.Request["registration_key"],
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(ffi.payloads) != 1 {
+				t.Fatal("expected one existing-identity FFI registration call")
+			}
+			var payload map[string]string
+			if err := json.Unmarshal([]byte(ffi.payloads[0]), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(payload, tc.Request) {
+				t.Fatal("FFI registration payload does not match shared contract")
+			}
+			var expected RegistrationResult
+			if err := json.Unmarshal(contract.Response, &expected); err != nil {
+				t.Fatal(err)
+			}
+			if result.AgentID != expected.AgentID {
+				t.Fatal("registration response was not preserved")
+			}
+		})
+	}
 }
 
 func loadInitContractFixture(t *testing.T) initContractFixture {
@@ -163,5 +234,63 @@ func TestInitContractBootstrapRegister(t *testing.T) {
 	}
 	if !fixture.BootstrapRegister.AuthRequired && gotAuth != "" {
 		t.Fatalf("expected no Authorization header, got %q", gotAuth)
+	}
+}
+
+func (f *registrationCaptureFFI) RegisterNewAgent(optionsJSON string) (json.RawMessage, error) {
+	f.payloads = append(f.payloads, optionsJSON)
+	return f.response, f.err
+}
+
+func TestInitContractRegistrationOutcomes(t *testing.T) {
+	for _, tc := range loadInitContractFixture(t).RegistrationOutcomes.Cases {
+		for _, bootstrap := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/bootstrap=%t", tc.Name, bootstrap), func(t *testing.T) {
+				ffi := &registrationCaptureFFI{response: tc.Response}
+				if tc.HTTPStatus >= 400 {
+					ffi.err = fmt.Errorf("API rejection: %s", tc.Response)
+				}
+				client := &Client{ffi: ffi}
+				var status, email *string
+				var agentID string
+				var err error
+				if bootstrap {
+					var result *RegisterResult
+					result, err = client.RegisterNewAgent(context.Background(), "requested-agent", &RegisterNewAgentOptions{
+						OwnerEmail: "owner@example.test", Password: "synthetic-password", Quiet: true,
+					})
+					if result != nil {
+						status, email, agentID = result.RegistrationStatus, result.Email, result.AgentID
+					}
+				} else {
+					var result *RegistrationResult
+					result, err = client.Register(context.Background(), RegisterOptions{AgentJSON: `{"jacsId":"existing"}`})
+					if result != nil {
+						status, email, agentID = result.RegistrationStatus, result.Email, result.AgentID
+					}
+				}
+				if len(ffi.payloads) != 1 {
+					t.Fatal("expected exactly one FFI call")
+				}
+				if tc.HTTPStatus >= 400 {
+					if err == nil || !strings.Contains(err.Error(), "Registration key was not accepted") {
+						t.Fatalf("expected registration rejection, got %v", err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				var response struct {
+					AgentID string `json:"agent_id"`
+				}
+				if err := json.Unmarshal(tc.Response, &response); err != nil {
+					t.Fatal(err)
+				}
+				if agentID != response.AgentID || !reflect.DeepEqual(status, tc.ExpectedStatus) || !reflect.DeepEqual(email, tc.ExpectedEmail) {
+					t.Fatalf("registration outcome not preserved: status=%v email=%v agent=%s", status, email, agentID)
+				}
+			})
+		}
 	}
 }

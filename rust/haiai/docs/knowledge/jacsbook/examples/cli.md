@@ -71,8 +71,8 @@ EOF
 # Create signed document
 jacs document create -f invoice.json
 
-# Output shows the saved document path
-# Document saved to: jacs_data/documents/[uuid]/[version].json
+# Output shows the exact saved document path, for example:
+# Saved signed document: jacs_data/<uuid>:<version>
 ```
 
 **Create with custom output:**
@@ -80,6 +80,9 @@ jacs document create -f invoice.json
 ```bash
 # Specify output filename
 jacs document create -f invoice.json -o signed-invoice.json
+
+# Machine-readable document key and path
+jacs document create -f invoice.json --json
 
 # Print to stdout (don't save)
 jacs document create -f invoice.json --no-save
@@ -188,6 +191,8 @@ jacs document extract -d ./documents/
 ```
 
 ## Agreement Workflows
+
+This section shows the legacy `jacsAgreement` sidecar commands for simple approval of an existing signed document. For new standalone consent workflows, prefer `jacs agreement-v2`; see [Agreement v2 Developer Guide](../guides/agreement-v2.md).
 
 ### Creating an Agreement
 
@@ -380,31 +385,6 @@ jacs agent verify --require-dns          # Require DNS (not strict)
 jacs agent verify --require-strict-dns   # Require DNSSEC
 jacs agent verify --no-dns              # Skip DNS entirely
 jacs agent verify --ignore-dns          # Ignore DNS validation failures
-```
-
-## Task Management
-
-### Creating Tasks
-
-```bash
-# Simple task
-jacs task create \
-  -n "Review Contract" \
-  -d "Review the service contract and provide feedback"
-
-# Task with additional data from file
-cat > task-details.json << 'EOF'
-{
-  "priority": "high",
-  "dueDate": "2024-02-15",
-  "assignee": "legal-team"
-}
-EOF
-
-jacs task create \
-  -n "Contract Review" \
-  -d "Detailed review required" \
-  -f task-details.json
 ```
 
 ## Scripting Examples

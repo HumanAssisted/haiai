@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 
 import pytest
 
@@ -13,7 +12,10 @@ def test_connect_ws_uses_wss_scheme_and_yields_events(
     """WS connect delegates to FFI connect_ws/ws_next_event and yields HaiEvents."""
     events = [
         {"event_type": "connected", "data": {"agent_id": "agent-1"}},
-        {"event_type": "benchmark_job", "data": {"job_id": "job-1", "scenario_id": "scenario-1"}},
+        {
+            "event_type": "benchmark_job",
+            "data": {"job_id": "job-1", "scenario_id": "scenario-1"},
+        },
     ]
     event_iter = iter(events)
 

@@ -3,13 +3,12 @@
 Validates the Python SDK against the shared ``email_conformance.json`` fixture
 to ensure structural equivalence with Go, Node, and Rust SDKs.
 """
+
 from __future__ import annotations
 
 import json
-import warnings
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 
@@ -58,7 +57,10 @@ class _FakeResponse:
     """Minimal fake httpx response for monkeypatching."""
 
     def __init__(
-        self, status_code: int, payload: Any = None, text: str = "",
+        self,
+        status_code: int,
+        payload: Any = None,
+        text: str = "",
         content: bytes = b"",
     ) -> None:
         self.status_code = status_code
@@ -149,9 +151,13 @@ class TestConformanceFieldStatusValues:
     """FieldStatus enum must match the conformance fixture values."""
 
     def test_all_values_present(self) -> None:
-        expected = set(CONFORMANCE["verification_result_v2_schema"]["field_status_values"])
+        expected = set(
+            CONFORMANCE["verification_result_v2_schema"]["field_status_values"]
+        )
         actual = {fs.value for fs in FieldStatus}
-        assert actual == expected, f"FieldStatus mismatch: actual={actual}, expected={expected}"
+        assert actual == expected, (
+            f"FieldStatus mismatch: actual={actual}, expected={expected}"
+        )
 
 
 # ---------------------------------------------------------------------------
