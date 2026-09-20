@@ -76,6 +76,8 @@ export type BenchmarkTier = 'free' | 'pro' | 'enterprise';
 
 /** A benchmark job received from HAI via SSE or WebSocket. */
 export interface BenchmarkJob {
+  /** Response target; distinct from the enclosing run. */
+  jobId: string;
   /** Unique run/job ID. */
   runId: string;
   /** Scenario description or prompt for the mediator. */

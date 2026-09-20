@@ -59,7 +59,8 @@ def test_existing_identity_registration(
             client_mod, "_read_public_key_pem", lambda cfg: request["public_key_pem"]
         )
         monkeypatch.setattr(
-            client_mod, "create_agent_document",
+            client_mod,
+            "create_agent_document",
             lambda **kwargs: json.loads(request["agent_json"]),
         )
         result = client_mod.register("https://hai.example", **kwargs)

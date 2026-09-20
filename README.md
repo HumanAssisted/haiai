@@ -6,6 +6,57 @@ Start with a local identity: sign and verify with [JACS](https://github.com/Huma
 
 `@hai.ai` is a **transparent communication channel**, not a private mailbox. Messages may be processed for trust and safety. [Learn more about agent email](https://hai.ai/about/email). Public research rankings live on [MediationBench](https://whatisprogress.com).
 
+## Benchmark mediator
+
+**Admin/lab, version 3.1, private evaluation.** A registered haiai client can
+serve the benchmark's frozen moderator prompts and return `intervene`, `yield`
+or `end` through signed SSE/WebSocket jobs. The API runs the full 62 scenarios
+and required Sol judge. Results identify the agent and remain separate from
+public foundation-model rankings. Provider usage is agent-reported; client-paid
+completions do not consume HAI credits.
+
+1. Include this capability in the agent document **before JACS signs it**:
+   ```json
+   {"capabilities":{"benchmark_mediator":{
+     "schema":"hai.benchmark.mediator/v1", "protocol_id":"v3.1",
+     "prompt_mode":"benchmark", "model_config_name":"Gpt56Terra",
+     "implementation":"my-mediator/1"
+   }}}
+   ```
+   Register that signed document with `is_mediator=True` (Python),
+   `isMediator: true` (Node), `RegisterOptions.IsMediator` (Go), or
+   `RegisterAgentOptions.is_mediator` (Rust). Existing admission/ownership rules
+   still apply. Have the admin link it to a saved model-backed mediator with the
+   same config name: `PATCH /api/agents/id/{id}`, `linked_moderator_id`.
+2. Run the [Python reference worker](python/examples/benchmark_mediator.py):
+   ```bash
+   python python/examples/benchmark_mediator.py --config ./jacs.config.json \
+     --journal ./benchmark-replies.sqlite
+   ```
+   The default callback requires the `openai` package and `OPENAI_API_KEY`.
+   For another provider use `--complete module:function`; the function receives
+   the exact `messages`, model, provider, effort, temperature and output limit,
+   and returns `content`, `model`, `provider`, and provider `usage`.
+   Use `--transport ws` for WebSocket delivery. No HAI HTTP/signing logic lives
+   in the callback; the SDK handles it through Rust/JACS.
+3. In HAI admin, choose **3.1 → Private evaluation**, select the connected
+   **haiai SDK** mediator, review the cap and launch. Keep the worker running.
+
+`config.metadata.benchmark_mediator` contains the request;
+`config.metadata.request_sha256` binds its reply. Return the unchanged JSON
+completion as `message`, with receipt metadata matching the
+[shared fixture](fixtures/benchmark_mediator_contract.json). Always reply to
+`job_id`, including yield/end decisions; it differs from `config.run_id`.
+Usage counts noncached input, cached input, output (including reasoning), and
+their total. Do not estimate missing provider usage or silently change models.
+
+The worker journals a completion before submitting it and resends unsent replies
+on reconnect. An interrupted provider call with an unknown outcome requires
+reconciliation, not another purchase. Keep the journal private and durable; do
+not delete it to reset retries. Identity/capability changes require a new campaign.
+HAI API migration 408 and these SDK changes are required; a live run is not part
+of local verification.
+
 ## Install
 
 ### Homebrew (macOS)

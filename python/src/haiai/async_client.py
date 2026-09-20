@@ -258,6 +258,7 @@ class AsyncHaiClient:
         preview: bool = False,
         owner_email: Optional[str] = None,
         registration_key: Optional[str] = None,
+        is_mediator: Optional[bool] = None,
     ) -> Union[HaiRegistrationResult, HaiRegistrationPreview]:
         """Register an existing JACS agent; preview shows FFI options.
 
@@ -283,6 +284,8 @@ class AsyncHaiClient:
                 public_key = pub_pem
 
         payload: dict[str, Any] = {"agent_json": agent_json}
+        if is_mediator is not None:
+            payload["is_mediator"] = is_mediator
         if public_key is not None:
             payload["public_key_pem"] = public_key
         if owner_email is not None:
@@ -475,7 +478,7 @@ class AsyncHaiClient:
         data = await ffi.submit_response(
             {
                 "job_id": job_id,
-                "response": response_body,
+                **response_body,
             }
         )
 

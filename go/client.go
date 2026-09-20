@@ -357,6 +357,7 @@ func (c *Client) TestConnection(ctx context.Context) (bool, error) {
 
 // RegisterOptions configures the Register call.
 type RegisterOptions struct {
+	IsMediator      *bool  `json:"is_mediator,omitempty"`
 	AgentJSON       string `json:"agent_json"`
 	PublicKey       string `json:"public_key_pem,omitempty"`
 	OwnerEmail      string `json:"owner_email,omitempty"`
@@ -581,8 +582,10 @@ func (c *Client) CertifiedRun(ctx context.Context) (*BenchmarkResult, error) {
 // in a signed JACS document envelope.
 func (c *Client) SubmitResponse(ctx context.Context, jobID string, response ModerationResponse) (*JobResponseResult, error) {
 	params := map[string]interface{}{
-		"job_id":   jobID,
-		"response": response,
+		"job_id":             jobID,
+		"message":            response.Message,
+		"metadata":           response.Metadata,
+		"processing_time_ms": response.ProcessingTimeMs,
 	}
 	paramsJSON, err := json.Marshal(params)
 	if err != nil {

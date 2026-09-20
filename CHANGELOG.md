@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Benchmark mediator — 2026-09-19
+
+- Add a reference worker for private HAI benchmark 3.1 campaigns, with durable
+  reply replay and provider usage receipts. All four SDKs preserve the shared
+  completion contract and expose explicit mediator registration.
+- Fix Python/Go response parameters to match Rust, preserve Go job metadata,
+  and expose Node's response job ID separately from the campaign run ID.
+  The API adapter and deployment requirements are in [setup](README.md#benchmark-mediator).
+
+
 ### Breaking
 
 - **`haiai[crewai]` is gone**, following JACS 0.13.0, which removed the CrewAI

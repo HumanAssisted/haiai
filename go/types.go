@@ -143,6 +143,7 @@ type BenchmarkJobConfig struct {
 	Conversation []ConversationTurn `json:"conversation"`
 	RawMode      bool               `json:"raw_mode"`
 	TimeoutSecs  uint64             `json:"timeout_secs"`
+	Metadata     json.RawMessage    `json:"metadata,omitempty"`
 }
 
 // ConversationTurn represents a single turn in a conversation.

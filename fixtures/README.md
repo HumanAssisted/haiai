@@ -24,3 +24,5 @@ Tests in each language directory reference these fixtures via relative paths
 
 `cross_lang_test.json` is intentionally scoped to HAIAI-owned behavior.
 Key material and raw signature vectors belong in JACS fixtures, not here.
+
+`benchmark_mediator_contract.json` is the shared private-3.1 mediator job, usage receipt, registration opt-in and Rust FFI response contract. Rust, Python, Node and Go test against the same synthetic data.

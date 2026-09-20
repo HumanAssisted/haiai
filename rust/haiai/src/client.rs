@@ -3715,7 +3715,7 @@ mod tests {
             payload: json!({
                 "type": "benchmark_job",
                 "job_id": "job-7",
-                "config": {"timeout_secs": 30}
+                "config": serde_json::from_str::<Value>(include_str!("../../../fixtures/benchmark_mediator_contract.json")).unwrap()["event"]["config"].clone()
             }),
         };
         let signed = signer
@@ -3767,6 +3767,14 @@ mod tests {
             verify_live_transport_event(&signed.signed_document, &keys, Some(&replay), &expected)
                 .expect("first delivery should verify");
         assert_eq!(event.event_type, "benchmark_job");
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../fixtures/benchmark_mediator_contract.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            event.data["config"]["metadata"],
+            fixture["event"]["config"]["metadata"]
+        );
         assert_eq!(event.data["job_id"], "job-7");
         assert_eq!(event.verification.signer_id, signer_id);
         assert_eq!(event.verification.status, "verified");

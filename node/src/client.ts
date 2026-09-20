@@ -471,6 +471,7 @@ export class HaiClient {
    * POSTs to the registration endpoint.
    */
   async register(options?: {
+    isMediator?: boolean;
     ownerEmail?: string;
     registrationKey?: string;
     description?: string;
@@ -479,6 +480,7 @@ export class HaiClient {
     publicKeyPem?: string;
   }): Promise<RegistrationResult> {
     const registerOptions: Record<string, unknown> = {};
+    if (options?.isMediator !== undefined) registerOptions.is_mediator = options.isMediator;
     if (options?.ownerEmail) registerOptions.owner_email = options.ownerEmail;
     if (options?.registrationKey !== undefined) registerOptions.registration_key = options.registrationKey;
     if (options?.description) registerOptions.description = options.description;
@@ -751,8 +753,11 @@ export class HaiClient {
           ? event.data as Record<string, unknown>
           : {};
 
+        const config = typeof data.config === 'object' && data.config !== null
+          ? data.config as Record<string, unknown> : {};
         const job: BenchmarkJob = {
-          runId: (data.run_id as string) || (data.runId as string) || '',
+          jobId: (data.job_id as string) || (data.jobId as string) || (data.run_id as string) || '',
+          runId: (config.run_id as string) || (data.run_id as string) || (data.runId as string) || '',
           scenario: data.scenario ?? data.prompt ?? data,
           data,
         };
