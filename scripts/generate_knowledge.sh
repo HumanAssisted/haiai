@@ -4,15 +4,20 @@
 # into rust/haiai/docs/knowledge/ and generates rust/haiai/src/self_knowledge_data.rs
 # with include_str!() references for compile-time embedding.
 #
-# Usage: ./scripts/generate_knowledge.sh
+# Usage: JACS_ROOT=/path/to/reviewed/JACS ./scripts/generate_knowledge.sh
 #
-# Run from the haiai repo root. Requires sibling ../JACS repo for jacsbook source.
+# Defaults to sibling ../JACS; the selected source is read only.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-JACS_ROOT="$(cd "$REPO_ROOT/../JACS" && pwd)"
-JACSBOOK_SRC="$JACS_ROOT/jacs/docs/jacsbook/src"
+JACS_ROOT="$(cd "${JACS_ROOT:-$REPO_ROOT/../JACS}" && pwd)"
+# The SDK currently wraps JACS's retained native adapters. Their reference
+# book moved with them; the portable JACS packages remain at the repo root.
+JACSBOOK_SRC="$JACS_ROOT/archive/native/jacs/docs/jacsbook/src"
+if [ ! -d "$JACSBOOK_SRC" ]; then
+    JACSBOOK_SRC="$JACS_ROOT/jacs/docs/jacsbook/src"
+fi
 SUMMARY="$JACSBOOK_SRC/SUMMARY.md"
 KNOWLEDGE_DIR="$REPO_ROOT/rust/haiai/docs/knowledge"
 DATA_FILE="$REPO_ROOT/rust/haiai/src/self_knowledge_data.rs"
@@ -137,7 +142,7 @@ for i in "${!README_SRCS[@]}"; do
     name="${README_NAMES[$i]}"
     if [ -f "$src" ]; then
         cp "$src" "$KNOWLEDGE_DIR/haiai-sdk/$name"
-        ((readme_count++))
+        ((++readme_count))
     else
         echo "WARN: README not found: $src (skipping)" >&2
     fi
@@ -154,7 +159,7 @@ for i in "${!GUIDE_SRCS[@]}"; do
     name="${GUIDE_NAMES[$i]}"
     if [ -f "$src" ]; then
         cp "$src" "$KNOWLEDGE_DIR/haiai-guides/$name"
-        ((guide_count++))
+        ((++guide_count))
     else
         echo "WARN: Guide not found: $src (skipping)" >&2
     fi
@@ -169,7 +174,7 @@ schema_count=0
 for schema_file in "$REPO_ROOT"/schemas/*.json; do
     if [ -f "$schema_file" ]; then
         cp "$schema_file" "$KNOWLEDGE_DIR/schemas/"
-        ((schema_count++))
+        ((++schema_count))
     fi
 done
 

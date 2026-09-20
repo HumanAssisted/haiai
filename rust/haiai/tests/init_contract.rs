@@ -136,3 +136,152 @@ async fn register_bootstrap_matches_shared_fixture() {
     expected.assert_async().await;
     assert_eq!(auth_guard.calls_async().await, 0);
 }
+
+#[tokio::test]
+async fn registration_outcomes_preserve_server_status_and_email() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/init_contract.json")).unwrap();
+    for case in fixture["registration_outcomes"]["cases"]
+        .as_array()
+        .unwrap()
+    {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/api/v1/agents/register");
+                then.status(case["http_status"].as_u64().unwrap() as u16)
+                    .json_body(case["response"].clone());
+            })
+            .await;
+        let result = make_client(&server.base_url())
+            .register(&RegisterAgentOptions {
+                agent_json: r#"{"jacsId":"fixture-existing-agent"}"#.into(),
+                ..Default::default()
+            })
+            .await;
+        if case["http_status"].as_u64().unwrap() >= 400 {
+            assert!(
+                matches!(result, Err(haiai::HaiError::Api { status: 403, .. })),
+                "{case}"
+            );
+        } else {
+            let serialized = serde_json::to_value(result.expect("accepted response")).unwrap();
+            assert_eq!(
+                serialized["registration_status"], case["expected_status"],
+                "{case}"
+            );
+            assert_eq!(serialized["email"], case["expected_email"], "{case}");
+            assert_eq!(serialized["agent_id"], case["response"]["agent_id"]);
+        }
+        mock.assert_async().await;
+    }
+}
+
+#[tokio::test]
+async fn registration_does_not_repeat_retryable_responses() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/init_contract.json")).unwrap();
+    let submission = &fixture["registration_submission"];
+    for status in submission["retryable_http_statuses"].as_array().unwrap() {
+        let status = status.as_u64().unwrap() as u16;
+        for retry_limit in submission["generic_retry_limits"].as_array().unwrap() {
+            for case in &fixture["existing_identity_register"]["cases"]
+                .as_array()
+                .unwrap()[..2]
+            {
+                let server = MockServer::start_async().await;
+                let auth_guard = server
+                    .mock_async(|when, then| {
+                        when.method(POST)
+                            .path("/api/v1/agents/register")
+                            .header_exists("authorization");
+                        then.status(418);
+                    })
+                    .await;
+                let response = server
+                    .mock_async(|when, then| {
+                        when.method(POST).path("/api/v1/agents/register");
+                        then.status(status)
+                            .json_body(json!({"message": "synthetic outcome is unknown"}));
+                    })
+                    .await;
+                let client = HaiClient::new(
+                    StaticJacsProvider::new("fixture-existing-agent"),
+                    HaiClientOptions {
+                        base_url: server.base_url(),
+                        max_retries: retry_limit.as_u64().unwrap() as usize,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                let options: RegisterAgentOptions =
+                    serde_json::from_value(case["request"].clone()).unwrap();
+                let result = client.register(&options).await;
+                assert!(
+                    matches!(result, Err(haiai::HaiError::Api { status: actual, ref message })
+                        if actual == status && message == "synthetic outcome is unknown"),
+                    "status {status}, retries {retry_limit}, fixture {}: {result:?}",
+                    case["name"]
+                );
+                response
+                    .assert_calls_async(submission["maximum_requests"].as_u64().unwrap() as usize)
+                    .await;
+                auth_guard.assert_calls_async(0).await;
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn registration_refuses_redirects_without_authentication() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/init_contract.json")).unwrap();
+    let submission = &fixture["registration_submission"];
+    for status in submission["redirect_http_statuses"].as_array().unwrap() {
+        let status = status.as_u64().unwrap() as u16;
+        for case in &fixture["existing_identity_register"]["cases"]
+            .as_array()
+            .unwrap()[..2]
+        {
+            let server = MockServer::start_async().await;
+            let auth_guard = server
+                .mock_async(|when, then| {
+                    when.method(POST)
+                        .path("/api/v1/agents/register")
+                        .header_exists("authorization");
+                    then.status(418);
+                })
+                .await;
+            let redirect = server
+                .mock_async(|when, then| {
+                    when.method(POST).path("/api/v1/agents/register");
+                    then.status(status)
+                        .header("Location", server.url("/registration-redirect-target"))
+                        .json_body(json!({"message": "synthetic registration redirect"}));
+                })
+                .await;
+            // Match any method: 301/302/303 may change a POST into a GET.
+            let target = server
+                .mock_async(|when, then| {
+                    when.path("/registration-redirect-target");
+                    then.status(201)
+                        .json_body(fixture["existing_identity_register"]["response"].clone());
+                })
+                .await;
+            let options: RegisterAgentOptions =
+                serde_json::from_value(case["request"].clone()).unwrap();
+            let result = make_client(&server.base_url()).register(&options).await;
+            assert!(
+                matches!(result, Err(haiai::HaiError::Api { status: actual, ref message })
+                    if actual == status && message == "synthetic registration redirect"),
+                "redirect {status}, fixture {}: {result:?}",
+                case["name"]
+            );
+            redirect
+                .assert_calls_async(submission["maximum_requests"].as_u64().unwrap() as usize)
+                .await;
+            target.assert_calls_async(0).await;
+            auth_guard.assert_calls_async(0).await;
+        }
+    }
+}

@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use haiai::JacsProvider;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
@@ -16,6 +17,7 @@ struct RecordedRequest {
     method: String,
     path: String,
     headers: BTreeMap<String, String>,
+    body: Vec<u8>,
 }
 
 struct MiniHaiServer {
@@ -27,6 +29,13 @@ struct MiniHaiServer {
 
 impl MiniHaiServer {
     fn start() -> Self {
+        Self::start_with_registration_responses(Vec::new())
+    }
+
+    // None drops the connection after receiving the request, modeling a lost
+    // response after a possible server commit. Other endpoints keep their fixtures.
+    fn start_with_registration_responses(responses: Vec<Option<(u16, Value)>>) -> Self {
+        let mut responses = responses.into_iter();
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock HAI server");
         listener
             .set_nonblocking(true)
@@ -46,12 +55,20 @@ impl MiniHaiServer {
             match listener.accept() {
                 Ok((mut stream, _addr)) => {
                     if let Some(request) = read_request(&mut stream) {
-                        let response = response_for_request(&request);
+                        let response = if request.path == "/api/v1/agents/register" {
+                            responses
+                                .next()
+                                .unwrap_or_else(|| Some((200, response_for_request(&request))))
+                        } else {
+                            Some((200, response_for_request(&request)))
+                        };
                         requests_for_thread
                             .lock()
                             .expect("lock requests")
                             .push(request);
-                        write_response(&mut stream, response);
+                        if let Some((status, body)) = response {
+                            write_response(&mut stream, status, body);
+                        }
                     }
                 }
                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
@@ -86,6 +103,64 @@ impl MiniHaiServer {
 
     fn request_count(&self) -> usize {
         self.requests.lock().expect("lock requests").len()
+    }
+
+    fn assert_request_proofs(&self, config_path: &Path, audience: &str) {
+        let provider = haiai::LocalJacsProvider::from_config_path(Some(config_path), None)
+            .expect("load fixture's trusted identity");
+        let public_key = provider.public_key_pem().expect("public key");
+        let agent: Value = serde_json::from_str(&provider.export_agent_json().unwrap()).unwrap();
+        let key_id = format!(
+            "{}:{}",
+            agent["jacsId"].as_str().unwrap(),
+            agent["jacsVersion"].as_str().unwrap()
+        );
+        let requests = self.requests.lock().expect("lock requests");
+        assert!(!requests.is_empty(), "must exercise actual HTTP requests");
+        for request in requests.iter() {
+            let header = request
+                .headers
+                .get("authorization")
+                .expect("authenticated request");
+            let url = format!("{}{}", self.base_url, request.path);
+            jacs::protocol::verify_request_auth_header_with_trusted_key_without_replay(
+                header,
+                public_key.as_bytes(),
+                &key_id,
+                &request.method,
+                &url,
+                &request.body,
+                audience,
+                60,
+            )
+            .expect("JACS verifies the actual method, URL, body and startup audience");
+            assert!(
+                jacs::protocol::verify_request_auth_header_with_trusted_key_without_replay(
+                    header,
+                    public_key.as_bytes(),
+                    &key_id,
+                    &request.method,
+                    &url,
+                    &request.body,
+                    "tool.override",
+                    60,
+                )
+                .is_err(),
+                "another audience must reject the same proof"
+            );
+        }
+        assert!(
+            requests
+                .iter()
+                .any(|request| request.method == "POST" && request.path == "/api/v1/agents/hello"),
+            "ordinary client was exercised"
+        );
+        assert!(
+            requests.iter().any(|request| request.method == "POST"
+                && request.path == "/api/v1/records"
+                && !request.body.is_empty()),
+            "remote document client was exercised with signed content"
+        );
     }
 }
 
@@ -214,7 +289,7 @@ struct McpSession {
 
 impl McpSession {
     fn spawn(_workspace: &TestWorkspace, hai_url: &str, jacs_config: &Path) -> Self {
-        Self::spawn_inner(hai_url, jacs_config, None, "warn", None)
+        Self::spawn_inner(hai_url, jacs_config, None, "warn", None, None)
     }
 
     fn spawn_with_log(
@@ -225,7 +300,14 @@ impl McpSession {
         rust_log: &str,
         storage: Option<&str>,
     ) -> Self {
-        Self::spawn_inner(hai_url, jacs_config, Some(log_file), rust_log, storage)
+        Self::spawn_inner(
+            hai_url,
+            jacs_config,
+            Some(log_file),
+            rust_log,
+            storage,
+            None,
+        )
     }
 
     fn spawn_inner(
@@ -234,20 +316,27 @@ impl McpSession {
         log_file: Option<&Path>,
         rust_log: &str,
         storage: Option<&str>,
+        audience: Option<&str>,
     ) -> Self {
         let mut command = Command::new(haiai_bin());
         if let Some(path) = log_file {
             command.arg("--log-file").arg(path);
+        }
+        if let Some(label) = storage {
+            // Route documents without making the embedded JACS signer load a
+            // non-local storage backend from its process environment.
+            command.arg("--storage").arg(label);
         }
         command
             .arg("mcp")
             .env("HAI_URL", hai_url)
             .env("JACS_CONFIG", jacs_config)
             .env("JACS_PRIVATE_KEY_PASSWORD", "secretpassord")
+            .env("JACS_KEYCHAIN_ENABLED", "false")
+            .env("JACS_KEYCHAIN_BACKEND", "disabled")
+            .env_remove("JACS_DEFAULT_STORAGE")
             .env("RUST_LOG", rust_log);
-        if let Some(label) = storage {
-            command.env("JACS_DEFAULT_STORAGE", label);
-        }
+        configure_audience(&mut command, audience);
         let mut child = command
             .current_dir(jacs_config.parent().expect("JACS config dir"))
             .stdin(Stdio::piped())
@@ -457,6 +546,9 @@ fn read_request(stream: &mut TcpStream) -> Option<RecordedRequest> {
         method,
         path,
         headers,
+        body: buffer
+            .get(header_end..header_end + content_length)?
+            .to_vec(),
     })
 }
 
@@ -469,6 +561,13 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
 
 fn response_for_request(request: &RecordedRequest) -> Value {
     match (request.method.as_str(), request.path.as_str()) {
+        ("POST", "/api/v1/agents/hello") => {
+            json!({"hello_id": "audience-hello", "message": "hello"})
+        }
+        ("GET", path) if path.starts_with("/api/v1/records?") => {
+            json!({"items": [], "has_more": false})
+        }
+        ("POST", "/api/v1/records") => json!({"key": "audience-memory:v1"}),
         ("POST", "/api/v1/agents/register") => {
             json!({
                 "success": true,
@@ -501,10 +600,135 @@ fn response_for_request(request: &RecordedRequest) -> Value {
     }
 }
 
-fn write_response(stream: &mut TcpStream, body: Value) {
+fn audience_contract() -> Value {
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../../fixtures/cross_lang_test.json"))
+            .expect("shared audience contract");
+    fixture["request_auth"]["cli_mcp_audience"].clone()
+}
+
+fn configure_audience(command: &mut Command, audience: Option<&str>) {
+    match audience {
+        Some(value) => {
+            command.env(haiai::client::REQUEST_AUTH_AUDIENCE_ENV, value);
+        }
+        None => {
+            command.env_remove(haiai::client::REQUEST_AUTH_AUDIENCE_ENV);
+        }
+    }
+}
+
+#[test]
+fn cli_operator_audience_reaches_ordinary_and_remote_request_proofs() {
+    let workspace = TestWorkspace::new();
+    let config = workspace.write_embedded_jacs_config();
+    for case in audience_contract()["valid_cases"].as_array().unwrap() {
+        let server = MiniHaiServer::start();
+        for args in [
+            vec!["hello"],
+            vec![
+                "--storage",
+                "remote",
+                "memory",
+                "save",
+                "--content",
+                "CLI audience memory",
+            ],
+        ] {
+            let mut command = Command::new(haiai_bin());
+            command
+                .arg("--quiet")
+                .args(args)
+                .current_dir(workspace.path())
+                .env("HAI_URL", server.base_url())
+                .env("JACS_CONFIG", &config)
+                .env("JACS_CONFIG_PATH", &config)
+                .env("JACS_PRIVATE_KEY_PASSWORD", "secretpassord")
+                .env("JACS_KEYCHAIN_ENABLED", "false")
+                .env("JACS_KEYCHAIN_BACKEND", "disabled")
+                .env_remove("JACS_DEFAULT_STORAGE");
+            configure_audience(&mut command, case["value"].as_str());
+            let output = command.output().expect("run CLI against loopback");
+            assert!(
+                output.status.success(),
+                "{case}: {} {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        server.assert_request_proofs(&config, case["expected"].as_str().unwrap());
+    }
+}
+
+#[test]
+fn mcp_operator_audience_reaches_ordinary_and_remote_request_proofs() {
+    let workspace = TestWorkspace::new();
+    let config = workspace.write_embedded_jacs_config();
+    for case in audience_contract()["valid_cases"].as_array().unwrap() {
+        let server = MiniHaiServer::start();
+        let mut session = McpSession::spawn_inner(
+            server.base_url(),
+            &config,
+            None,
+            "warn",
+            Some("remote"),
+            case["value"].as_str(),
+        );
+        session.initialize();
+        // Tool arguments cannot replace the operator's startup audience, on
+        // either the ordinary client or the independently routed document path.
+        session.call_tool(
+            40,
+            "hai_hello",
+            json!({
+                "request_auth_audience": "tool.override", "audience": "tool.override"
+            }),
+        );
+        let saved = session.call_tool(
+            41,
+            "hai_save_memory",
+            json!({
+                "content": "MCP audience memory",
+                "request_auth_audience": "tool.override", "audience": "tool.override"
+            }),
+        );
+        assert_eq!(saved["structuredContent"]["key"], "audience-memory:v1");
+        server.assert_request_proofs(&config, case["expected"].as_str().unwrap());
+    }
+}
+
+#[test]
+fn cli_and_mcp_refuse_invalid_operator_audience_before_loading_identity_or_network() {
+    let workspace = TestWorkspace::new();
+    let server = MiniHaiServer::start();
+    for case in audience_contract()["invalid_cases"].as_array().unwrap() {
+        for subcommand in ["hello", "mcp"] {
+            let mut command = Command::new(haiai_bin());
+            command
+                .args(["--quiet", subcommand])
+                .current_dir(workspace.path())
+                .env("HAI_URL", server.base_url())
+                .env("JACS_CONFIG", workspace.path().join("missing.config.json"))
+                .env_remove("JACS_PRIVATE_KEY_PASSWORD")
+                .env("JACS_KEYCHAIN_ENABLED", "false")
+                .env("JACS_KEYCHAIN_BACKEND", "disabled");
+            configure_audience(&mut command, case["value"].as_str());
+            let output = command.output().expect("run invalid startup configuration");
+            assert!(!output.status.success(), "{subcommand} accepted {case}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains(haiai::client::REQUEST_AUTH_AUDIENCE_ENV),
+                "{subcommand} must report audience configuration first: {stderr}"
+            );
+        }
+    }
+    assert_eq!(server.request_count(), 0, "invalid config cannot reach HAI");
+}
+
+fn write_response(stream: &mut TcpStream, status: u16, body: Value) {
     let encoded = body.to_string();
     let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {status} Mock\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         encoded.len(),
         encoded
     );
@@ -639,7 +863,7 @@ fn serves_hai_and_embedded_jacs_tools_and_calls_hai_over_stdio() {
                 && request
                     .headers
                     .get("authorization")
-                    .map(|value| value.starts_with("JACS "))
+                    .map(|value| value.starts_with("JACS v2."))
                     .unwrap_or(false)
         },
         "GET /api/agents/hai-agent-123/email/status with JACS auth",
@@ -760,7 +984,7 @@ fn authenticated_hai_tools_keep_working_after_startup_config_is_removed() {
                 && request
                     .headers
                     .get("authorization")
-                    .map(|value| value.starts_with("JACS "))
+                    .map(|value| value.starts_with("JACS v2."))
                     .unwrap_or(false)
         },
         "GET /api/agents/hai-agent-123/email/status after config removal",
@@ -773,4 +997,223 @@ fn authenticated_hai_tools_keep_working_after_startup_config_is_removed() {
         },
         "POST /api/v1/agents/register after config removal",
     );
+}
+
+fn registration_fixture() -> Value {
+    serde_json::from_str(include_str!("../../../fixtures/init_contract.json")).unwrap()
+}
+
+fn enrollment_command(dir: &Path, server: &MiniHaiServer) -> Command {
+    let mut command = Command::new(haiai_bin());
+    command
+        .arg("--quiet")
+        .current_dir(dir)
+        .env("HAI_URL", server.base_url())
+        .env(
+            "JACS_PRIVATE_KEY_PASSWORD",
+            "synthetic-registration-password",
+        )
+        .env("JACS_KEYCHAIN_ENABLED", "false")
+        .env("JACS_KEYCHAIN_BACKEND", "disabled")
+        .env_remove("JACS_CONFIG")
+        .env_remove("JACS_CONFIG_PATH")
+        .env_remove("JACS_PASSWORD_FILE")
+        .env_remove("JACS_DEFAULT_STORAGE")
+        .env_remove(haiai::client::REQUEST_AUTH_AUDIENCE_ENV);
+    command
+}
+
+fn init_enrollment_command(dir: &Path, server: &MiniHaiServer) -> Command {
+    let mut command = enrollment_command(dir, server);
+    command
+        .args([
+            "init",
+            "--name",
+            "requested-agent",
+            "--algorithm",
+            "ring-Ed25519",
+        ])
+        .arg("--config-path")
+        .arg(dir.join("custom config.json"))
+        .arg("--data-dir")
+        .arg(dir.join("data"))
+        .arg("--key-dir")
+        .arg(dir.join("keys"));
+    command
+}
+
+fn saved_key_bytes(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    std::fs::read_dir(dir)
+        .expect("key directory")
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            let bytes = std::fs::read(&path).expect("saved key bytes");
+            (path, bytes)
+        })
+        .collect()
+}
+
+fn cli_output(output: &std::process::Output) -> String {
+    format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+#[test]
+fn cli_registration_outcomes_and_rejected_init_manual_enrollment_preserve_identity() {
+    let fixture = registration_fixture();
+    let key = fixture["existing_identity_register"]["cases"][0]["request"]["registration_key"]
+        .as_str()
+        .unwrap();
+    let cases = fixture["registration_outcomes"]["cases"]
+        .as_array()
+        .unwrap();
+    for case in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let mut response = case["response"].clone();
+        if !case["cli_exit_success"].as_bool().unwrap() {
+            response["message"] = json!(format!("Registration key was not accepted: {key}"));
+        }
+        let server = MiniHaiServer::start_with_registration_responses(vec![
+            Some((case["http_status"].as_u64().unwrap() as u16, response)),
+            Some((201, cases[0]["response"].clone())),
+        ]);
+        let output = init_enrollment_command(dir.path(), &server)
+            .args(["--key", key])
+            .output()
+            .unwrap();
+        let text = cli_output(&output);
+        assert!(!text.contains(key), "admission key leaked");
+        assert_eq!(
+            output.status.success(),
+            case["cli_exit_success"].as_bool().unwrap(),
+            "{}: {text}",
+            case["name"]
+        );
+        assert!(!text.contains("requested-agent@hai.ai"));
+        assert!(!text
+            .to_lowercase()
+            .contains("verification email has been sent"));
+        assert_eq!(
+            server.request_count(),
+            1,
+            "enrollment must be submitted once"
+        );
+        let config_path = dir.path().join("custom config.json");
+        let config_before: Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+        let keys_before = saved_key_bytes(&dir.path().join("keys"));
+        assert!(!keys_before.is_empty());
+        if case["cli_exit_success"].as_bool().unwrap() {
+            assert!(text.contains(&format!(
+                "Registration status: {}",
+                case["expected_status"].as_str().unwrap_or("unknown")
+            )));
+            if let Some(email) = case["expected_email"].as_str() {
+                assert!(text.contains(&format!("Assigned email: {email}")));
+                assert_eq!(config_before["agent_email"], email);
+            } else {
+                assert!(!text.contains("Assigned email:"));
+                assert!(config_before["agent_email"].is_null());
+            }
+        } else {
+            assert!(text.contains("HAI rejected this enrollment request"));
+            assert!(text.contains("Local identity preserved"));
+            assert!(text.contains("haiai register --config-path"));
+            assert!(text.contains("enrollment has not committed"));
+            assert!(!text.contains("haiai init --name"));
+            // The mock rejected before commitment. A fresh manual admission key
+            // now enrolls precisely the persisted identity; no new init/rotation.
+            let unused_key = format!("hk_{}", "b".repeat(64));
+            let retry = enrollment_command(dir.path(), &server)
+                .args(["register", "--key", &unused_key])
+                .arg("--config-path")
+                .arg(&config_path)
+                .output()
+                .unwrap();
+            let retry_text = cli_output(&retry);
+            assert!(retry.status.success(), "{retry_text}");
+            assert!(!retry_text.contains(&unused_key));
+            assert_eq!(saved_key_bytes(&dir.path().join("keys")), keys_before);
+            let config_after: Value =
+                serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+            assert_eq!(
+                config_before["jacsAgentName"],
+                config_after["jacsAgentName"]
+            );
+            assert_eq!(
+                config_before["jacsAgentVersion"],
+                config_after["jacsAgentVersion"]
+            );
+            let requests = server.requests.lock().unwrap();
+            assert_eq!(requests.len(), 2);
+            let first: Value = serde_json::from_slice(&requests[0].body).unwrap();
+            let second: Value = serde_json::from_slice(&requests[1].body).unwrap();
+            let identity: Value =
+                serde_json::from_str(first["agent_json"].as_str().unwrap()).unwrap();
+            assert!(identity["jacsId"].as_str().is_some());
+            assert!(identity["jacsVersion"].as_str().is_some());
+            assert_eq!(
+                first["agent_json"], second["agent_json"],
+                "ID, version and signed document unchanged"
+            );
+            assert_eq!(first["public_key"], second["public_key"]);
+            assert_eq!(second["registration_key"], unused_key);
+            assert!(
+                requests
+                    .iter()
+                    .all(|request| !request.headers.contains_key("authorization")),
+                "manual enrollment remains unsigned bootstrap"
+            );
+        }
+    }
+}
+
+#[test]
+fn cli_registration_lost_response_preserves_identity_without_automatic_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = MiniHaiServer::start_with_registration_responses(vec![None]);
+    let key = format!("hk_{}", "c".repeat(64));
+    let output = init_enrollment_command(dir.path(), &server)
+        .args(["--key", &key])
+        .output()
+        .unwrap();
+    let text = cli_output(&output);
+    assert!(!output.status.success(), "{text}");
+    assert!(text.contains("outcome is unknown"), "{text}");
+    assert!(text.contains("may already have committed"));
+    assert!(text.contains("Local identity preserved"));
+    assert!(!text.contains("haiai register --"));
+    assert!(!text.contains(&key));
+    assert_eq!(server.request_count(), 1);
+    assert!(dir.path().join("custom config.json").exists());
+    assert!(!saved_key_bytes(&dir.path().join("keys")).is_empty());
+}
+
+#[test]
+fn cli_registration_local_only_and_missing_identity_never_submit() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = MiniHaiServer::start();
+    let missing = dir.path().join("missing.json");
+    let output = enrollment_command(dir.path(), &server)
+        .args(["register", "--key", &format!("hk_{}", "d".repeat(64))])
+        .arg("--config-path")
+        .arg(&missing)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!missing.exists());
+    assert!(!dir.path().join("keys").exists());
+    let output = init_enrollment_command(dir.path(), &server)
+        .arg("--register=false")
+        .output()
+        .unwrap();
+    let text = cli_output(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("created locally"));
+    assert!(!text.contains("Registration status:"));
+    assert!(!text.contains("Assigned email:"));
+    assert_eq!(server.request_count(), 0);
 }

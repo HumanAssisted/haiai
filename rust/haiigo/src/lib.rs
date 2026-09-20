@@ -204,6 +204,9 @@ pub extern "C" fn hai_free_string(s: *mut c_char) {
 /// Generate a simple FFI function that takes a handle and one string arg.
 macro_rules! ffi_method_str {
     ($fn_name:ident, $method:ident) => {
+        ffi_method_str!($fn_name, $method, result_to_json);
+    };
+    ($fn_name:ident, $method:ident, $encode_result:ident) => {
         #[no_mangle]
         pub extern "C" fn $fn_name(handle: HaiClientHandle, arg: *const c_char) -> *mut c_char {
             if handle.is_null() {
@@ -219,7 +222,7 @@ macro_rules! ffi_method_str {
                     let r = client.$method(&arg).await;
                     let _ = tx.send(r);
                 });
-                to_c_string(result_to_json(rx.recv().unwrap()))
+                to_c_string($encode_result(rx.recv().unwrap()))
             }));
             result.unwrap_or_else(|_| panic_json())
         }
@@ -837,6 +840,11 @@ pub extern "C" fn hai_enterprise_run(handle: HaiClientHandle) -> *mut c_char {
 // =============================================================================
 
 ffi_method_str!(hai_sign_message, sign_message);
+ffi_method_str!(
+    hai_build_request_auth_header,
+    build_request_auth_header,
+    result_string_to_json
+);
 ffi_method_str!(hai_sign_response, sign_response);
 ffi_method_str!(hai_canonical_json, canonical_json);
 ffi_method_str!(hai_verify_a2a_artifact, verify_a2a_artifact);

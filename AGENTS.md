@@ -178,6 +178,6 @@ Each SDK pins a published JACS version for CI/release, but supports local path o
 - **CLI and MCP server are Rust-only.** `cli.ts`, `mcp-server.ts`, `cli.py`, `mcp_server.py`, `go/cmd/haiai/`, and `go/cmd/hai-mcp/` have been deleted. The `haiai` CLI binary and `haiai mcp` subcommand are the canonical implementations.
 - **Python test deps.** Use `pip install -e ".[dev,mcp]"` not just `.[dev]`.
 - **Path segments must be URL-escaped** in all API paths.
-- **Auth header:** `JACS {jacsId}:{timestamp}:{signature_base64}`.
+- **API auth:** request-bound JACS v2 over the final method, URL, exact body bytes and configured audience. Actual HTTP calls share the Rust request signer; caller-built requests use `build_request_auth_header`, never the context-free legacy helper.
 - **FFI build requirements.** All language SDKs require a Rust toolchain to build from source. CI installs Rust for Python (maturin), Node (napi-rs), and Go (cargo build cdylib).
 - **Streaming (SSE/WS) is migrated to FFI.** SSE and WebSocket connections use an opaque handle pattern through binding-core. SDKs call connect/poll/close via FFI.

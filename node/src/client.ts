@@ -67,7 +67,7 @@ import {
   AuthenticationError,
   HaiConnectionError,
 } from './errors.js';
-import { signPayload, canonicalJson, getServerKeys, randomNonce } from './signing.js';
+import { signPayload, canonicalJson, getServerKeys } from './signing.js';
 import { loadConfig } from './config.js';
 import { JacsAgent } from '@hai.ai/jacs';
 // SSE/WS helpers retained in sse.ts and ws.ts for cleanup in Task 012.
@@ -107,6 +107,9 @@ export class HaiClient {
   /** FFI adapter that delegates all HTTP calls to the Rust binding-core. Lazily initialized. */
   private _ffi: FFIClientAdapter | null = null;
   private baseUrl: string;
+  private expectedEventTenant?: string;
+  private responseAudience?: string;
+  private requestAuthAudience: string;
   private timeout: number;
   private maxRetries: number;
   private maxReconnectAttempts: number;
@@ -141,8 +144,10 @@ export class HaiClient {
   }
 
   private constructor(options?: HaiClientOptions) {
-    // URL precedence mirrors the Python SDK (client.py:174) and the Rust
-    // `haiai::base_url_from_env`:
+    this.expectedEventTenant = options?.expectedEventTenant;
+    this.responseAudience = options?.responseAudience;
+    this.requestAuthAudience = options?.requestAuthAudience ?? 'hai.ai';
+    // URL precedence mirrors Python and Rust `haiai::base_url_from_env`:
     //   options.url > HAI_URL > HAI_API_URL > DEFAULT_BASE_URL
     // A variable that is set but blank counts as unset in all three, so an
     // `export HAI_URL=` left in a shell profile falls through to the default
@@ -177,6 +182,9 @@ export class HaiClient {
       base_url: this.baseUrl,
       timeout_ms: this.timeout,
       max_retries: this.maxRetries,
+      expected_event_tenant: this.expectedEventTenant,
+      response_audience: this.responseAudience,
+      request_auth_audience: this.requestAuthAudience,
     };
     if (this.configPath) {
       ffiConfig.jacs_config_path = this.configPath;
@@ -359,18 +367,25 @@ export class HaiClient {
     return this.agent.signStringSync(message);
   }
 
-  /** Build the JACS Authorization header value string. */
+  /** Retired no-context helper. Use buildRequestAuthHeader with the final request. */
   buildAuthHeader(): string {
-    // Prefer JACS binding delegation
-    if ('buildAuthHeaderSync' in this.agent && typeof (this.agent as unknown as Record<string, unknown>).buildAuthHeaderSync === 'function') {
-      return (this.agent as unknown as Record<string, unknown> & { buildAuthHeaderSync: () => string }).buildAuthHeaderSync();
+    throw new HaiError('Request authentication requires the final method, URL and exact body bytes; use buildRequestAuthHeader(method, url, body)');
+  }
+
+  /**
+   * Authenticate the final URL (including query) and exact bytes using Rust/JACS.
+   * Send the same body bytes and build a fresh header per attempt. Ordinary SDK
+   * calls do this automatically; audience remains pinned by client configuration.
+   */
+  async buildRequestAuthHeader(method: string, url: string, body: Uint8Array = new Uint8Array()): Promise<string> {
+    if (!(body instanceof Uint8Array)) {
+      throw new TypeError('body must be a Uint8Array containing the exact transmitted request body');
     }
-    // Fallback: local construction using JACS signStringSync
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const nonce = randomNonce();
-    const message = `${this.jacsId}:${timestamp}:${nonce}`;
-    const signature = this.agent.signStringSync(message);
-    return `JACS ${this.jacsId}:${timestamp}:${nonce}:${signature}`;
+    return this.ffi.buildRequestAuthHeader(JSON.stringify({
+      method,
+      url,
+      body_base64: Buffer.from(body).toString('base64'),
+    }));
   }
 
   // ---------------------------------------------------------------------------
@@ -456,14 +471,18 @@ export class HaiClient {
    * POSTs to the registration endpoint.
    */
   async register(options?: {
+    isMediator?: boolean;
     ownerEmail?: string;
+    registrationKey?: string;
     description?: string;
     domain?: string;
     agentJson?: string;
     publicKeyPem?: string;
   }): Promise<RegistrationResult> {
     const registerOptions: Record<string, unknown> = {};
+    if (options?.isMediator !== undefined) registerOptions.is_mediator = options.isMediator;
     if (options?.ownerEmail) registerOptions.owner_email = options.ownerEmail;
+    if (options?.registrationKey !== undefined) registerOptions.registration_key = options.registrationKey;
     if (options?.description) registerOptions.description = options.description;
     if (options?.domain) registerOptions.domain = options.domain;
     if (options?.agentJson) registerOptions.agent_json = options.agentJson;
@@ -484,6 +503,8 @@ export class HaiClient {
       haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
       registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
       registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
+      registrationStatus: (data.registration_status as string | null) ?? undefined,
+      email: (data.email as string | null) ?? undefined,
       rawResponse: data,
     };
   }
@@ -734,8 +755,11 @@ export class HaiClient {
           ? event.data as Record<string, unknown>
           : {};
 
+        const config = typeof data.config === 'object' && data.config !== null
+          ? data.config as Record<string, unknown> : {};
         const job: BenchmarkJob = {
-          runId: (data.run_id as string) || (data.runId as string) || '',
+          jobId: (data.job_id as string) || (data.jobId as string) || (data.run_id as string) || '',
+          runId: (config.run_id as string) || (data.run_id as string) || (data.runId as string) || '',
           scenario: data.scenario ?? data.prompt ?? data,
           data,
         };
@@ -2350,6 +2374,8 @@ function toRegistrationResult(data: Record<string, unknown>): RegistrationResult
     haiSignature: (data.hai_signature as string) || (data.haiSignature as string) || '',
     registrationId: (data.registration_id as string) || (data.registrationId as string) || '',
     registeredAt: (data.registered_at as string) || (data.registeredAt as string) || '',
+    registrationStatus: (data.registration_status as string | null) ?? undefined,
+    email: (data.email as string | null) ?? undefined,
     keyDirectory: (data.key_directory as string) || (data.keyDirectory as string) || '',
     publicKeyPath: (data.public_key_path as string) || (data.publicKeyPath as string) || undefined,
     dnsRecord: (data.dns_record as string) || (data.dnsRecord as string) || undefined,
@@ -2366,8 +2392,9 @@ function printRegistrationGuidance(
   const keyDir = (data.key_directory as string) || (data.keyDirectory as string) || '';
   const configPath = opts.configPath ?? './jacs.config.json';
   console.log('\nAgent created and submitted for registration!');
-  console.log(`  -> Check your email (${opts.ownerEmail}) for a verification link`);
-  console.log('  -> Your agent is registered with username from your reservation');
+  console.log(`  -> Registration status: ${data.registration_status || 'unknown'}`);
+  if (data.email) console.log(`  -> Assigned email: ${data.email}`);
+  console.log('  -> Email delivery and active mailbox status are not established by this response');
   console.log(`  -> Config saved to ${configPath}`);
   if (keyDir) console.log(`  -> Keys saved to ${keyDir}`);
   console.log('  -> Private key encrypted using JACS_PASSWORD_FILE/JACS_PRIVATE_KEY_PASSWORD');

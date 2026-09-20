@@ -1,13 +1,21 @@
 package haiai
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
-	"strconv"
 	"testing"
 )
 
 type crossLangFixture struct {
+	RequestAuth struct {
+		Example struct {
+			Method     string `json:"method"`
+			URL        string `json:"url"`
+			BodyBase64 string `json:"body_base64"`
+			StubHeader string `json:"stub_header"`
+		} `json:"example"`
+	} `json:"request_auth"`
 	AuthHeader struct {
 		Scheme                string   `json:"scheme"`
 		Parts                 []string `json:"parts"`
@@ -58,32 +66,51 @@ func TestCrossLangCanonicalJSONCases(t *testing.T) {
 	}
 }
 
-func TestCrossLangAuthHeaderContract(t *testing.T) {
+func TestCrossLangRequestAuthDelegatesExactBytes(t *testing.T) {
 	fixture := loadCrossLangFixture(t)
+	example := fixture.RequestAuth.Example
+	body, err := base64.StdEncoding.DecodeString(example.BodyBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := newMockFFIClient("https://hai.ai", "fixture-agent", "")
+	mock.buildRequestAuthHeaderFn = func(requestJSON string) (string, error) {
+		var input map[string]string
+		if err := json.Unmarshal([]byte(requestJSON), &input); err != nil {
+			t.Fatal(err)
+		}
+		if len(input) != 3 || input["method"] != example.Method || input["url"] != example.URL || input["body_base64"] != example.BodyBase64 {
+			t.Fatalf("request context changed: %s", requestJSON)
+		}
+		return example.StubHeader, nil
+	}
+	client := &Client{ffi: mock}
+	header, err := client.BuildRequestAuthHeader(example.Method, example.URL, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header != example.StubHeader {
+		t.Fatalf("header = %q", header)
+	}
+}
 
-	if fixture.AuthHeader.Scheme != "JACS" {
-		t.Fatalf("scheme = %q, want JACS", fixture.AuthHeader.Scheme)
+func TestRequestAuthEmptyBodyAndMissingProvider(t *testing.T) {
+	mock := newMockFFIClient("https://hai.ai", "fixture-agent", "")
+	mock.buildRequestAuthHeaderFn = func(requestJSON string) (string, error) {
+		var input map[string]string
+		if err := json.Unmarshal([]byte(requestJSON), &input); err != nil {
+			t.Fatal(err)
+		}
+		if len(input) != 3 || input["body_base64"] != "" {
+			t.Fatalf("empty bytes changed: %s", requestJSON)
+		}
+		return "JACS v2.fixture", nil
 	}
-	if len(fixture.AuthHeader.Parts) != 4 {
-		t.Fatalf("parts len = %d, want 4", len(fixture.AuthHeader.Parts))
+	client := &Client{ffi: mock}
+	if _, err := client.BuildRequestAuthHeader("GET", "https://hai.ai/", nil); err != nil {
+		t.Fatal(err)
 	}
-
-	ts := strconv.FormatInt(fixture.AuthHeader.Example.Timestamp, 10)
-	message := authHeaderMessage(fixture.AuthHeader.Example.JacsID, ts, fixture.AuthHeader.Example.Nonce)
-	if message != "test-agent-001:1700000000:fixture-nonce-001" {
-		t.Fatalf("authHeaderMessage = %q", message)
-	}
-	if fixture.AuthHeader.SignedMessageTemplate != "{jacs_id}:{timestamp}:{nonce}" {
-		t.Fatalf("signed message template = %q", fixture.AuthHeader.SignedMessageTemplate)
-	}
-
-	header := authHeaderValue(
-		fixture.AuthHeader.Example.JacsID,
-		ts,
-		fixture.AuthHeader.Example.Nonce,
-		fixture.AuthHeader.Example.StubSignatureB64,
-	)
-	if header != fixture.AuthHeader.Example.ExpectedHeader {
-		t.Fatalf("auth header = %q, want %q", header, fixture.AuthHeader.Example.ExpectedHeader)
+	if _, err := (&Client{}).BuildRequestAuthHeader("GET", "https://hai.ai/", nil); err == nil {
+		t.Fatal("missing FFI should fail")
 	}
 }

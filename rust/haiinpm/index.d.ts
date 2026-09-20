@@ -83,6 +83,7 @@ export declare class HaiClient {
   proRun(optionsJson: string): Promise<string>
   enterpriseRun(): Promise<void>
   buildAuthHeader(): Promise<string>
+  buildRequestAuthHeader(requestJson: string): Promise<string>
   signMessage(message: string): Promise<string>
   signResponse(payloadJson: string): Promise<string>
   canonicalJson(valueJson: string): Promise<string>

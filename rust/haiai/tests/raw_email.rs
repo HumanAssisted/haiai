@@ -67,7 +67,7 @@ async fn get_raw_email_auth_header_present() {
                 .path("/api/agents/agent-2/email/messages/x/raw")
                 .header_matches(
                     "authorization",
-                    r"^JACS [^:]+:\d+:[A-Za-z0-9_-]+:[A-Za-z0-9+/=_\-]+$",
+                    r"^JACS v2\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$",
                 );
             then.status(200).json_body(json!({
                 "message_id": "x",

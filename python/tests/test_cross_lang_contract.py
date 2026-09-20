@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import base64
 from pathlib import Path
 
 import pytest
@@ -23,71 +24,69 @@ def test_cross_lang_canonical_json_cases(loaded_config: None) -> None:
         assert canonicalize_json(case["input"]) == case["expected"]
 
 
-def test_cross_lang_auth_header_contract(monkeypatch: pytest.MonkeyPatch) -> None:
-    fixture = _load_fixture()
-    auth = fixture["auth_header"]
-    example = auth["example"]
-    seen: dict[str, str] = {}
+@pytest.mark.parametrize("client_type", [HaiClient, AsyncHaiClient])
+def test_no_context_auth_is_actionably_rejected(client_type) -> None:
+    from haiai.errors import HaiError
 
-    class _Config:
-        jacs_id = example["jacs_id"]
+    with pytest.raises(HaiError, match="build_request_auth_header"):
+        client_type()._build_jacs_auth_header()
 
-    class _Agent:
-        def sign_string(self, message: str) -> str:
-            seen["message"] = message
-            return example["stub_signature_base64"]
 
-    monkeypatch.setattr("haiai.config.get_config", lambda: _Config())
-    monkeypatch.setattr("haiai.config.get_agent", lambda: _Agent())
-    monkeypatch.setattr("haiai._client_shared.time.time", lambda: example["timestamp"])
-    monkeypatch.setattr(
-        "haiai._client_shared.uuid.uuid4",
-        lambda: type("_Uuid", (), {"hex": example["nonce"]})(),
+def test_cross_lang_request_auth_delegates_exact_bytes(loaded_config: None) -> None:
+    example = _load_fixture()["request_auth"]["example"]
+    client = HaiClient()
+    ffi = client._get_ffi()
+    ffi.responses["build_request_auth_header"] = example["stub_header"]
+    body = base64.b64decode(example["body_base64"])
+    assert (
+        client.build_request_auth_header(example["method"], example["url"], body)
+        == example["stub_header"]
     )
-
-    header = HaiClient()._build_jacs_auth_header()
-
-    assert auth["scheme"] == "JACS"
-    assert auth["parts"] == ["jacs_id", "timestamp", "nonce", "signature_base64"]
-    assert header == example["expected_header"]
-    assert seen["message"] == auth["signed_message_template"].replace(
-        "{jacs_id}", example["jacs_id"]
-    ).replace("{timestamp}", str(example["timestamp"])).replace(
-        "{nonce}", example["nonce"]
-    )
+    name, args, _kwargs = ffi.calls[-1]
+    assert name == "build_request_auth_header"
+    assert json.loads(args[0]) == {
+        key: example[key] for key in ("method", "url", "body_base64")
+    }
 
 
-def test_async_cross_lang_auth_header_contract(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.asyncio
+async def test_async_cross_lang_request_auth_delegates_exact_bytes(
+    loaded_config: None,
 ) -> None:
-    fixture = _load_fixture()
-    auth = fixture["auth_header"]
-    example = auth["example"]
-    seen: dict[str, str] = {}
-
-    class _Config:
-        jacs_id = example["jacs_id"]
-
-    class _Agent:
-        def sign_string(self, message: str) -> str:
-            seen["message"] = message
-            return example["stub_signature_base64"]
-
-    monkeypatch.setattr("haiai.config.get_config", lambda: _Config())
-    monkeypatch.setattr("haiai.config.get_agent", lambda: _Agent())
-    monkeypatch.setattr("haiai._client_shared.time.time", lambda: example["timestamp"])
-    monkeypatch.setattr(
-        "haiai._client_shared.uuid.uuid4",
-        lambda: type("_Uuid", (), {"hex": example["nonce"]})(),
+    example = _load_fixture()["request_auth"]["example"]
+    client = AsyncHaiClient()
+    ffi = client._get_ffi()
+    ffi.responses["build_request_auth_header"] = example["stub_header"]
+    body = base64.b64decode(example["body_base64"])
+    assert (
+        await client.build_request_auth_header(example["method"], example["url"], body)
+        == example["stub_header"]
     )
+    assert json.loads(ffi.calls[-1][1][0]) == {
+        key: example[key] for key in ("method", "url", "body_base64")
+    }
 
-    header = AsyncHaiClient()._build_jacs_auth_header()
 
-    assert auth["scheme"] == "JACS"
-    assert auth["parts"] == ["jacs_id", "timestamp", "nonce", "signature_base64"]
-    assert header == example["expected_header"]
-    assert seen["message"] == auth["signed_message_template"].replace(
-        "{jacs_id}", example["jacs_id"]
-    ).replace("{timestamp}", str(example["timestamp"])).replace(
-        "{nonce}", example["nonce"]
+def test_request_auth_requires_explicit_bytes() -> None:
+    with pytest.raises(TypeError, match="exact transmitted"):
+        HaiClient().build_request_auth_header("POST", "https://hai.ai/", "not bytes")
+
+
+def test_request_auth_empty_body_is_encoded_explicitly(loaded_config: None) -> None:
+    client = HaiClient()
+    ffi = client._get_ffi()
+    ffi.responses["build_request_auth_header"] = "JACS v2.fixture"
+    client.build_request_auth_header("GET", "https://hai.ai/")
+    assert json.loads(ffi.calls[-1][1][0])["body_base64"] == ""
+
+
+def test_request_auth_audience_is_client_configuration() -> None:
+    from haiai.client import _build_ffi_config
+
+    assert json.loads(_build_ffi_config())["request_auth_audience"] == "hai.ai"
+    assert (
+        json.loads(_build_ffi_config(request_auth_audience="staging.hai"))[
+            "request_auth_audience"
+        ]
+        == "staging.hai"
     )

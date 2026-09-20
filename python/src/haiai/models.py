@@ -58,6 +58,8 @@ class RegistrationResult:
 
     agent_id: str
     jacs_id: str
+    registration_status: Optional[str] = None
+    email: Optional[str] = None
 
 
 @dataclass
@@ -81,18 +83,22 @@ class HaiRegistrationResult:
     registered_at: str = ""
     capabilities: list[str] = field(default_factory=list)
     raw_response: dict[str, Any] = field(default_factory=dict)
+    # HTTP acceptance alone does not establish admission or an active mailbox.
+    registration_status: Optional[str] = None
+    email: Optional[str] = None
 
 
 @dataclass
 class HaiRegistrationPreview:
-    """Preview of what would be sent during registration.
+    """Preview of registration options before Rust builds the HTTP request.
 
     Attributes:
         agent_id: The agent's JACS ID.
         agent_name: Human-readable agent name.
-        payload_json: The full JSON that would be sent (pretty-printed).
+        payload_json: Pretty-printed FFI options with raw public_key_pem and the
+            registration key masked. This is not the encoded HTTP body.
         endpoint: The API endpoint that would be called.
-        headers: Headers that would be sent (API key masked).
+        headers: Preview metadata, not captured HTTP request headers.
     """
 
     agent_id: str
