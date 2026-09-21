@@ -247,8 +247,9 @@ an actionable error. Current HAI API source requires this v2 contract. Configure
 matching SDK/API ingress origins and audiences, and deploy compatible builds
 together. Version 0.4.1 remains an unpublished release candidate; the checked
 registries still serve 0.4.0 as of September 19, 2026. CI pins JACS commit
-`2866d09abc37111c9c8aa1eaccfe2616a52ddd45` and uses its retained native adapters
-under `archive/native`. This is native compatibility, not the portable SDK
+`f4d701b00daf5cf0967bf3ea15054a61975202f8` and uses its retained 0.13.0 native
+adapters under `archive/native`, backed by portable core 0.14.0. CI validates
+these versions separately. This is native compatibility, not the portable SDK
 migration; those archived JACS packages are not publication candidates.
 Local signing remains independent of API
 admission. See [the request-auth contract](docs/HAIAI_LANGUAGE_SYNC_GUIDE.md#authentication-header-format), the existing

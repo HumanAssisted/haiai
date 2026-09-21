@@ -11,9 +11,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Source ref and expected package version are separate; checkouts validate both.
-  JACS_REF: 2866d09abc37111c9c8aa1eaccfe2616a52ddd45
+  # Portable core and retained native adapters have independent versions.
+  # Every checkout validates both against this exact source pin.
+  JACS_REF: f4d701b00daf5cf0967bf3ea15054a61975202f8
   JACS_VERSION: 0.13.0
+  JACS_CORE_VERSION: 0.14.0
 
 jobs:
   native-package-layout:
@@ -56,7 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: make check-jacs-versions
-        run: make check-jacs-versions
+        run: make check-jacs-versions test-jacs-source
 
   workflow-policy:
     # Catches the structural error where a public-repo workflow tries to

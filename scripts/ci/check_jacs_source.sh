@@ -5,9 +5,13 @@ set -euo pipefail
 source_ref="${1:-}"
 expected_version="${2:-}"
 source_dir="${3:-}"
+# Preserve three-argument callers for a source whose versions are still equal.
+# An explicitly supplied empty core version is invalid, catching config drift.
+expected_core_version="${4-$expected_version}"
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
 [[ "$expected_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid expected JACS version: $expected_version"
+[[ "$expected_core_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid expected JACS core version: $expected_core_version"
 if [[ "$source_ref" =~ ^[0-9a-f]{40}$ ]]; then
   ref_kind=commit
 elif [[ "$source_ref" == "crate/v$expected_version" || "$source_ref" == "v$expected_version" ]]; then
@@ -30,8 +34,8 @@ fi
 [[ "$actual_commit" == "$expected_commit" ]] || fail "JACS source HEAD $actual_commit does not match $source_ref"
 
 # Native manifests used by the SDK's Rust, Python, Node and Go source builds.
-# Portable core stays at the root; the SDK consumes the retained native
-# adapters, including the archived MCP rather than the new root MCP crate.
+# Portable core stays at the root with its independently pinned version. The
+# SDK consumes the retained native adapters, including the archived MCP.
 for crate in jacs-core archive/native/{jacs-media,jacs,binding-core,jacs-mcp,jacs-cli,jacspy,jacsnpm,jacsgo/lib}; do
   manifest="$source_dir/$crate/Cargo.toml"
   [[ -f "$manifest" ]] || fail "missing JACS source manifest: $manifest"
@@ -40,6 +44,8 @@ for crate in jacs-core archive/native/{jacs-media,jacs,binding-core,jacs-mcp,jac
     /^\[/ { in_package=0 }
     in_package && /^[[:space:]]*version[[:space:]]*=/ { print $2; exit }
   ' "$manifest")"
-  [[ "$actual_version" == "$expected_version" ]] || fail "$crate version $actual_version does not match expected JACS $expected_version"
+  crate_version="$expected_version"
+  [[ "$crate" != jacs-core ]] || crate_version="$expected_core_version"
+  [[ "$actual_version" == "$crate_version" ]] || fail "$crate version $actual_version does not match expected JACS $crate_version"
 done
-echo "JACS source $actual_commit: all 9 native manifests match $expected_version."
+echo "JACS source $actual_commit: core matches $expected_core_version; all 8 native manifests match $expected_version."

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Portable core compatibility — 2026-09-20
+
+- Pin JACS source to `f4d701b00daf5cf0967bf3ea15054a61975202f8`, with
+  portable core 0.14.0 and retained native adapters 0.13.0. Source checks
+  validate both versions separately across Rust, Python, Node and Go builds;
+  SDK package dependencies continue to select the native adapters; the lockfile
+  updates only the core package.
+- Verified nine source-check regressions, the real pinned source, version and
+  workflow checks, and offline locked dependency resolution. Release publication
+  remains separate work.
+
 ### JACS maintenance update — 2026-09-19
 
 - Pin the SDK build to JACS `2866d09abc37111c9c8aa1eaccfe2616a52ddd45`,
