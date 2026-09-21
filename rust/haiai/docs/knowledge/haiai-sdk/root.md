@@ -247,7 +247,7 @@ an actionable error. Current HAI API source requires this v2 contract. Configure
 matching SDK/API ingress origins and audiences, and deploy compatible builds
 together. Version 0.4.1 remains an unpublished release candidate; the checked
 registries still serve 0.4.0 as of September 19, 2026. CI pins JACS commit
-`c10ac65075d1de9f5decbaef8b12b550b65f089c` and uses its restored 0.15.0 native
+`1f9c3d5ff9b958308475770681b12466ad47d406` and uses its restored 0.15.0 native
 adapters under `archive/native`, backed by portable core 0.15.0. CI validates
 these versions separately. Native MCP uses the `jacs-mcp-compat` package while
 preserving the SDK's existing imports and tool contracts. Source validation does
