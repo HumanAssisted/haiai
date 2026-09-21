@@ -140,7 +140,7 @@
     },
     {
       "name": "extract-media-signature",
-      "args": ["file:string", "raw_payload:bool"]
+      "args": ["file:string", "raw_payload:bool", "robust:bool"]
     },
     {
       "name": "memory",
