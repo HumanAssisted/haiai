@@ -1048,6 +1048,8 @@ export interface VerifyImageResult {
 export interface ExtractMediaSignatureOptions {
   /** Return raw base64url-no-pad bytes instead of decoded JSON. Default: false. */
   rawPayload?: boolean;
+  /** Scan the LSB channel when metadata is absent. Default: false. */
+  robust?: boolean;
 }
 
 /** Result of `extractMediaSignature`. */

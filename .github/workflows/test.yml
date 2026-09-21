@@ -11,9 +11,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Source ref and expected package version are separate; checkouts validate both.
-  JACS_REF: 2866d09abc37111c9c8aa1eaccfe2616a52ddd45
-  JACS_VERSION: 0.13.0
+  # Validate every release surface against this exact reviewed source pin.
+  JACS_REF: 10c16ba07d56b872e9c6c6ddd83a45af7bd8f94a
+  JACS_VERSION: 0.15.0
+  JACS_CORE_VERSION: 0.15.0
+  JACS_NPM_VERSION: 0.15.0
 
 jobs:
   native-package-layout:
@@ -56,7 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: make check-jacs-versions
-        run: make check-jacs-versions
+        run: make check-jacs-versions test-jacs-source
 
   workflow-policy:
     # Catches the structural error where a public-repo workflow tries to
@@ -196,8 +198,8 @@ jobs:
           npm run build
         timeout-minutes: 10
       - name: Build JACS napi addon (jacs.linux-x64-gnu.node)
-        # Retained native JACS 0.13.0 packages are unpublished. Build the
-        # pinned checkout and use the committed local dependency path.
+        # Build the reviewed JACS candidate from the pinned checkout
+        # and use the committed local dependency path.
         run: |
           cd "${{ github.workspace }}/../JACS/archive/native/jacsnpm"
           npm install @napi-rs/cli

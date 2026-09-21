@@ -1251,14 +1251,12 @@ export class HaiClient {
    * The server adds a `jacs-signature.json` MIME attachment containing
    * the detached JACS signature. The returned Buffer is the signed email.
    *
-   * @param rawEmail - Raw RFC 5322 email as a Buffer or string.
+   * @param rawEmail - Exact RFC 5322 bytes as a Buffer, or raw email text encoded as UTF-8.
    * @returns Signed email bytes with the JACS attachment added.
    */
   async signEmail(rawEmail: Buffer | string): Promise<Buffer> {
-    const emailData = typeof rawEmail === 'string' ? rawEmail : rawEmail.toString('base64');
-    const data = await this.ffi.sendSignedEmail({ raw_email_base64: emailData });
-    // FFI returns { signed_email_base64: string }
-    const signedB64 = (data.signed_email_base64 as string) || '';
+    const rawEmailB64 = Buffer.from(rawEmail).toString('base64');
+    const signedB64 = await this.ffi.signEmailRaw(rawEmailB64);
     return Buffer.from(signedB64, 'base64');
   }
 
@@ -1304,12 +1302,12 @@ export class HaiClient {
   /**
    * Verify a JACS-signed email via the HAI API.
    *
-   * @param rawEmail - Raw RFC 5322 email as a Buffer or string.
+   * @param rawEmail - Exact RFC 5322 bytes as a Buffer, or raw email text encoded as UTF-8.
    * @returns EmailVerificationResultV2 with field-level verification results.
    */
   async verifyEmail(rawEmail: Buffer | string): Promise<EmailVerificationResultV2> {
-    const docStr = typeof rawEmail === 'string' ? rawEmail : rawEmail.toString('utf-8');
-    const data = await this.ffi.verifyDocument(docStr);
+    const rawEmailB64 = Buffer.from(rawEmail).toString('base64');
+    const data = await this.ffi.verifyEmailRaw(rawEmailB64);
 
     return {
       valid: (data.valid as boolean) ?? false,
@@ -1498,6 +1496,7 @@ export class HaiClient {
   ): Promise<ExtractMediaSignatureResult> {
     const opts: Record<string, unknown> = {
       raw_payload: options?.rawPayload ?? false,
+      robust: options?.robust ?? false,
     };
     const data = await this.ffi.extractMediaSignature(filePath, opts);
     return {
@@ -1591,7 +1590,7 @@ export class HaiClient {
    * JACS verification via {@link verifyEmail}.
    *
    * Byte-fidelity (PRD R2): `rawEmail`, when present, is byte-identical to
-   * what JACS signed. Pair with `verifyEmail(rawEmail)` to verify offline.
+   * what JACS signed. Pair with `verifyEmail(rawEmail)` to verify via the HAI API.
    *
    * When `available` is `false`, `rawEmail` is `null` and `omittedReason`
    * is one of `"not_stored"` (legacy row) or `"oversize"` (>25 MB cap).

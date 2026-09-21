@@ -796,6 +796,12 @@ type VerifyImageResult struct {
 	MalformedDetail *string `json:"malformed_detail,omitempty"`
 }
 
+// ExtractMediaSignatureOptions controls payload format and optional LSB scanning.
+type ExtractMediaSignatureOptions struct {
+	RawPayload bool `json:"raw_payload"`
+	Robust     bool `json:"robust"`
+}
+
 // ExtractMediaSignatureResult is returned by `Client.ExtractMediaSignature`.
 type ExtractMediaSignatureResult struct {
 	Present bool    `json:"present"`

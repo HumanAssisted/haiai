@@ -1337,14 +1337,16 @@ class HaiClient:
         path: str,
         *,
         raw_payload: bool = False,
+        robust: bool = False,
     ) -> ExtractMediaSignatureResult:
         """Extract the JACS payload embedded in an image without verifying.
 
         ``raw_payload=True`` returns the base64url-no-pad bytes verbatim;
         the default returns the decoded JSON string.
+        ``robust=True`` scans the LSB channel when metadata is absent.
         """
         ffi = self._get_ffi()
-        data = ffi.extract_media_signature(path, {"raw_payload": raw_payload})
+        data = ffi.extract_media_signature(path, {"raw_payload": raw_payload, "robust": robust})
         return ExtractMediaSignatureResult(
             present=bool(data.get("present", False)),
             payload=data.get("payload"),

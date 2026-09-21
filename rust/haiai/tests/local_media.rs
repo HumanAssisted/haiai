@@ -280,6 +280,49 @@ fn local_provider_sign_image_robust_round_trip() {
         Some("metadata+lsb"),
         "robust mode must report metadata+lsb"
     );
+
+    let expected = provider
+        .extract_media_signature_with_options(
+            out_path.to_str().unwrap(),
+            false,
+            haiai::ExtractMediaOptions { scan_robust: true },
+        )
+        .expect("metadata payload")
+        .expect("signed payload");
+    let stripped = jacs_media::png::bytes_without_jacs_chunk(&fs::read(&out_path).unwrap())
+        .expect("strip metadata without changing pixels");
+    let stripped_path = env.write("stripped.png", &stripped);
+    let path = stripped_path.to_str().unwrap();
+    let remote = haiai::RemoteJacsProvider::new(
+        haiai::StaticJacsProvider::new("no-signing-keys"),
+        haiai::RemoteJacsProviderOptions {
+            base_url: "http://example.invalid".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let boxed: Box<dyn JacsMediaProvider> = Box::new(provider);
+    for extractor in [
+        &boxed as &dyn JacsMediaProvider,
+        &remote as &dyn JacsMediaProvider,
+    ] {
+        assert!(extractor
+            .extract_media_signature(path, false)
+            .unwrap()
+            .is_none());
+        let options = haiai::ExtractMediaOptions { scan_robust: true };
+        assert_eq!(
+            extractor
+                .extract_media_signature_with_options(path, false, options)
+                .unwrap()
+                .as_deref(),
+            Some(expected.as_str())
+        );
+        assert!(extractor
+            .extract_media_signature_with_options(path, true, options)
+            .unwrap()
+            .is_some());
+    }
 }
 
 #[test]

@@ -27,5 +27,5 @@ sha2 = "0.10"
 [patch.crates-io]
 jacs = { path = "../../JACS/archive/native/jacs" }
 jacs-binding-core = { path = "../../JACS/archive/native/binding-core" }
-jacs-mcp = { path = "../../JACS/archive/native/jacs-mcp" }
+jacs-mcp-compat = { path = "../../JACS/archive/native/jacs-mcp" }
 jacs-media = { path = "../../JACS/archive/native/jacs-media" }

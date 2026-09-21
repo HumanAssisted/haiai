@@ -609,6 +609,7 @@ fn definition_values() -> Vec<Value> {
                 "properties": {
                     "file_path": { "type": "string", "description": "Relative path to the signed image" },
                     "raw_payload": { "type": "boolean", "description": "Return the raw base64url-no-pad wire payload (default: decoded JSON string)" },
+                    "robust": { "type": "boolean", "description": "Scan the LSB channel if the metadata channel is absent (default: false)" },
                     "config_path": { "type": "string", "description": "Path to jacs.config.json (defaults to JACS_CONFIG / ./jacs.config.json)" }
                 },
                 "required": ["file_path"]
@@ -1268,12 +1269,15 @@ async fn call_extract_media_signature(context: &HaiServerContext, args: &Value) 
     let raw_path = required_string(args, "file_path")?;
     let file_path = guard_input_path("file_path", raw_path)?;
     let raw_payload = optional_bool(args, "raw_payload").unwrap_or(false);
+    let opts = haiai::ExtractMediaOptions {
+        scan_robust: optional_bool(args, "robust").unwrap_or(false),
+    };
 
     let provider = context
         .embedded_provider(optional_string(args, "config_path"))
         .map_err(tool_message)?;
     let payload = provider
-        .extract_media_signature(&file_path, raw_payload)
+        .extract_media_signature_with_options(&file_path, raw_payload, opts)
         .map_err(tool_message)?;
 
     // Mirror the CLI exit-2-on-absent-payload semantic: a missing signature
@@ -2897,7 +2901,7 @@ mod tests {
         let (context, temp_dir, _config_path) = build_media_context_with_fixture();
         let _guard = CwdGuard::enter(temp_dir.path());
 
-        std::fs::write("in.png", make_test_png(32, 32)).expect("write input png");
+        std::fs::write("in.png", make_test_png(512, 512)).expect("write input png");
         // Sign first.
         dispatch(
             &context,
@@ -2905,7 +2909,8 @@ mod tests {
             Some(
                 json!({
                     "input_path": "in.png",
-                    "output_path": "out.png"
+                    "output_path": "out.png",
+                    "robust": true
                 })
                 .as_object()
                 .unwrap()
@@ -2920,7 +2925,7 @@ mod tests {
             &context,
             "hai_extract_media_signature",
             Some(
-                json!({ "file_path": "out.png" })
+                json!({ "file_path": "out.png", "robust": true })
                     .as_object()
                     .unwrap()
                     .clone(),
@@ -2935,6 +2940,28 @@ mod tests {
         let payload = env["payload"].as_str().expect("payload string");
         let parsed: Value = serde_json::from_str(payload).expect("decoded payload is JSON");
         assert!(parsed.is_object());
+
+        image::open("out.png")
+            .unwrap()
+            .save("stripped.png")
+            .unwrap();
+        for robust in [false, true] {
+            let result = dispatch(
+                &context,
+                "hai_extract_media_signature",
+                Some(
+                    json!({"file_path": "stripped.png", "robust": robust})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+            )
+            .await
+            .expect("extract after metadata loss");
+            let result = structured_of(&result);
+            assert_eq!(result["present"], robust);
+            assert_eq!(result["success"], robust);
+        }
     }
 
     #[tokio::test]

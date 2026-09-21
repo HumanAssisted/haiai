@@ -643,14 +643,14 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'http'", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'sse'", specifier = ">=0.27" },
     { name = "httpx-sse", marker = "extra == 'sse'", specifier = ">=0.4.0" },
-    { name = "jacs", editable = "../../JACS/jacspy" },
-    { name = "jacs", marker = "extra == 'agentsdk'", editable = "../../JACS/jacspy" },
-    { name = "jacs", extras = ["a2a"], marker = "extra == 'a2a'", editable = "../../JACS/jacspy" },
-    { name = "jacs", extras = ["anthropic"], marker = "extra == 'anthropic'", editable = "../../JACS/jacspy" },
-    { name = "jacs", extras = ["fastapi"], marker = "extra == 'fastapi'", editable = "../../JACS/jacspy" },
-    { name = "jacs", extras = ["langchain"], marker = "extra == 'langchain'", editable = "../../JACS/jacspy" },
-    { name = "jacs", extras = ["langgraph"], marker = "extra == 'langgraph'", editable = "../../JACS/jacspy" },
-    { name = "jacs", extras = ["mcp"], marker = "extra == 'mcp'", editable = "../../JACS/jacspy" },
+    { name = "jacs", editable = "../../JACS/archive/native/jacspy" },
+    { name = "jacs", marker = "extra == 'agentsdk'", editable = "../../JACS/archive/native/jacspy" },
+    { name = "jacs", extras = ["a2a"], marker = "extra == 'a2a'", editable = "../../JACS/archive/native/jacspy" },
+    { name = "jacs", extras = ["anthropic"], marker = "extra == 'anthropic'", editable = "../../JACS/archive/native/jacspy" },
+    { name = "jacs", extras = ["fastapi"], marker = "extra == 'fastapi'", editable = "../../JACS/archive/native/jacspy" },
+    { name = "jacs", extras = ["langchain"], marker = "extra == 'langchain'", editable = "../../JACS/archive/native/jacspy" },
+    { name = "jacs", extras = ["langgraph"], marker = "extra == 'langgraph'", editable = "../../JACS/archive/native/jacspy" },
+    { name = "jacs", extras = ["mcp"], marker = "extra == 'mcp'", editable = "../../JACS/archive/native/jacspy" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
@@ -734,8 +734,8 @@ wheels = [
 
 [[package]]
 name = "jacs"
-version = "0.13.0"
-source = { editable = "../../JACS/jacspy" }
+version = "0.15.0"
+source = { editable = "../../JACS/archive/native/jacspy" }
 
 [package.optional-dependencies]
 anthropic = [

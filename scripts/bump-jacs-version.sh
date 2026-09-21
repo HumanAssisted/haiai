@@ -52,8 +52,23 @@ done
 
 echo ""
 echo "Python:"
-# Handles both pinned (jacs==X.Y.Z) and range floor (jacs>=X.Y.Z,<X.Y) forms.
-sed -i '' -E "s/jacs([>=])=$CURRENT/jacs\1=$NEW_VERSION/" python/pyproject.toml
+# Preserve a bounded minor release range, including when moving to a new minor.
+python3 - "$CURRENT" "$NEW_VERSION" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+current, version = sys.argv[1:]
+major, minor, _patch = map(int, version.split('.'))
+path = Path('python/pyproject.toml')
+text, count = re.subn(r'jacs>=\s*' + re.escape(current) + r',<[0-9.]+',
+                     f'jacs>={version},<{major}.{minor + 1}', path.read_text())
+if not count:
+    text, count = re.subn(r'jacs==' + re.escape(current), f'jacs=={version}', text)
+if count != 1:
+    raise SystemExit('Expected exactly one JACS Python dependency')
+path.write_text(text)
+PY
 echo "  python/pyproject.toml"
 
 # --- Node ---
@@ -77,7 +92,7 @@ echo "  node/publish.deps.json"
 
 echo ""
 echo "CI:"
-sed -i '' -E "s|^(  JACS_REF:).*|\1 crate/v$NEW_VERSION|; s|^(  JACS_VERSION:).*|\1 $NEW_VERSION|" .github/workflows/test.yml
+sed -i '' -E "s|^(  JACS_REF:).*|\1 crate/v$NEW_VERSION|; s|^(  JACS_(CORE_|NPM_)?VERSION:).*|\1 $NEW_VERSION|" .github/workflows/test.yml
 echo "  .github/workflows/test.yml"
 
 # --- Regenerate lockfiles ---

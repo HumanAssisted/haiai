@@ -13,6 +13,38 @@ fn write_to_fixture(fixture_dir: &std::path::Path, name: &str, bytes: &[u8]) {
 }
 
 #[test]
+fn cli_extract_robust_payload_after_metadata_loss() {
+    let (temp, _) = prepare_jacs_fixture();
+    write_to_fixture(temp.path(), "in.png", &make_png(512, 512));
+    let signed = run_haiai_in_fixture(
+        temp.path(),
+        &["sign-image", "in.png", "--out", "signed.png", "--robust"],
+    );
+    assert!(
+        signed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&signed.stderr)
+    );
+    image::open(temp.path().join("signed.png"))
+        .unwrap()
+        .save(temp.path().join("stripped.png"))
+        .unwrap();
+    let absent = run_haiai_in_fixture(temp.path(), &["extract-media-signature", "stripped.png"]);
+    assert_eq!(absent.status.code(), Some(2));
+    let recovered = run_haiai_in_fixture(
+        temp.path(),
+        &["extract-media-signature", "stripped.png", "--robust"],
+    );
+    assert!(
+        recovered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+    let payload: serde_json::Value = serde_json::from_slice(&recovered.stdout).unwrap();
+    assert!(payload.is_object());
+}
+
+#[test]
 fn cli_sign_image_png_round_trip() {
     let (temp, _config_path) = prepare_jacs_fixture();
     write_to_fixture(temp.path(), "in.png", &make_png(32, 32));

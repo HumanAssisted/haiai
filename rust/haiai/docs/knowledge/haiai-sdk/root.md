@@ -241,15 +241,17 @@ text; caller HTML and reserved HAI/JACS markers are rejected. Use
 ## Platform compatibility
 
 This source integrates request-bound JACS v2 authentication through the shared
-Rust transport and JACS 0.13.0. Authenticated requests bind the final method,
+Rust transport and JACS 0.15.0. Authenticated requests bind the final method,
 URL, exact body bytes and configured audience; context-free helpers fail with
 an actionable error. Current HAI API source requires this v2 contract. Configure
 matching SDK/API ingress origins and audiences, and deploy compatible builds
 together. Version 0.4.1 remains an unpublished release candidate; the checked
 registries still serve 0.4.0 as of September 19, 2026. CI pins JACS commit
-`2866d09abc37111c9c8aa1eaccfe2616a52ddd45` and uses its retained native adapters
-under `archive/native`. This is native compatibility, not the portable SDK
-migration; those archived JACS packages are not publication candidates.
+`1f9c3d5ff9b958308475770681b12466ad47d406` and uses its restored 0.15.0 native
+adapters under `archive/native`, backed by portable core 0.15.0. CI validates
+these versions separately. Native MCP uses the `jacs-mcp-compat` package while
+preserving the SDK's existing imports and tool contracts. Source validation does
+not imply that the corresponding registry packages have been published.
 Local signing remains independent of API
 admission. See [the request-auth contract](docs/HAIAI_LANGUAGE_SYNC_GUIDE.md#authentication-header-format), the existing
 [JACS security policy](https://github.com/HumanAssisted/JACS/blob/main/SECURITY.md)

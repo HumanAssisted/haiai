@@ -18,7 +18,7 @@
     "email_core": [
       {"name": "send_email", "args": ["options_json:string"], "returns": "json"},
       {"name": "send_signed_email", "args": ["options_json:string"], "returns": "json"},
-      {"name": "sign_email_raw", "args": ["raw_email_b64:string"], "returns": "json"},
+      {"name": "sign_email_raw", "args": ["raw_email_b64:string"], "returns": "string"},
       {"name": "verify_email_raw", "args": ["raw_email_b64:string"], "returns": "json"},
       {"name": "list_messages", "args": ["options_json:string"], "returns": "json"},
       {"name": "update_labels", "args": ["params_json:string"], "returns": "json"},

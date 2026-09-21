@@ -833,10 +833,11 @@ class AsyncHaiClient:
         path: str,
         *,
         raw_payload: bool = False,
+        robust: bool = False,
     ) -> ExtractMediaSignatureResult:
-        """Extract the JACS payload from a signed image without verifying."""
+        """Extract a payload, optionally scanning the LSB channel with ``robust=True``."""
         ffi = self._get_ffi()
-        data = await ffi.extract_media_signature(path, {"raw_payload": raw_payload})
+        data = await ffi.extract_media_signature(path, {"raw_payload": raw_payload, "robust": robust})
         return ExtractMediaSignatureResult(
             present=bool(data.get("present", False)),
             payload=data.get("payload"),
