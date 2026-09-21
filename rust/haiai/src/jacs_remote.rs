@@ -364,6 +364,12 @@ impl<P: JacsProvider> JacsProvider for RemoteJacsProvider<P> {
     fn canonical_json(&self, value: &Value) -> Result<String> {
         self.inner.canonical_json(value)
     }
+    fn sign_envelope(&self, value: &Value) -> Result<String> {
+        self.inner.sign_envelope(value)
+    }
+    fn verify_a2a_artifact(&self, wrapped_json: &str) -> Result<String> {
+        self.inner.verify_a2a_artifact(wrapped_json)
+    }
     fn sign_email_locally(&self, raw_email: &[u8]) -> Result<Vec<u8>> {
         self.inner.sign_email_locally(raw_email)
     }
@@ -1479,12 +1485,20 @@ impl<P: JacsProvider> crate::jacs::JacsMediaProvider for RemoteJacsProvider<P> {
     }
 
     fn extract_media_signature(&self, path: &str, raw_payload: bool) -> Result<Option<String>> {
-        // Same dispatch as LocalJacsProvider — neither JACS free function
-        // consults an agent.
+        self.extract_media_signature_with_options(path, raw_payload, Default::default())
+    }
+
+    fn extract_media_signature_with_options(
+        &self,
+        path: &str,
+        raw_payload: bool,
+        opts: crate::jacs::ExtractMediaOptions,
+    ) -> Result<Option<String>> {
+        // Extraction is local and does not consult an agent or the server.
         let result = if raw_payload {
-            jacs::simple::advanced::extract_media_signature_raw(path)
+            jacs::simple::advanced::extract_media_signature_raw_with_options(path, opts)
         } else {
-            jacs::simple::advanced::extract_media_signature(path)
+            jacs::simple::advanced::extract_media_signature_with_options(path, opts)
         };
         result.map_err(|e| HaiError::Provider(format!("extract_media_signature failed: {e}")))
     }

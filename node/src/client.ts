@@ -1496,6 +1496,7 @@ export class HaiClient {
   ): Promise<ExtractMediaSignatureResult> {
     const opts: Record<string, unknown> = {
       raw_payload: options?.rawPayload ?? false,
+      robust: options?.robust ?? false,
     };
     const data = await this.ffi.extractMediaSignature(filePath, opts);
     return {

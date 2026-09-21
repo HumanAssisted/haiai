@@ -109,9 +109,10 @@ pub use jacs::JacsConflictProvider;
 #[cfg(feature = "jacs-crate")]
 pub use jacs::{
     media_verify_result_to_json, media_verify_status_to_str, text_signature_status_to_str,
-    verify_text_result_to_json, JacsMediaProvider, MediaVerificationResult, MediaVerifyStatus,
-    SignImageOptions, SignTextOptions, SignTextOutcome, SignedMedia, TextSignatureEntry,
-    TextSignatureStatus, VerifyImageOptions, VerifyTextOptions, VerifyTextResult,
+    verify_text_result_to_json, ExtractMediaOptions, JacsMediaProvider, MediaVerificationResult,
+    MediaVerifyStatus, SignImageOptions, SignTextOptions, SignTextOutcome, SignedMedia,
+    TextSignatureEntry, TextSignatureStatus, VerifyImageOptions, VerifyTextOptions,
+    VerifyTextResult,
 };
 pub use jacs::{
     DocSummary, JacsAgentLifecycle, JacsBatchProvider, JacsDocumentProvider, JacsEmailProvider,

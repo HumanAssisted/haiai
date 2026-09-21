@@ -2,15 +2,22 @@
 
 ## Unreleased
 
-### JACS 0.15 release compatibility — 2026-09-20
+### JACS 0.15 release compatibility — 2026-09-21
 
-- Pin all JACS source builds to `1f9c3d5ff9b958308475770681b12466ad47d406`.
+- Pin all JACS source builds to `10c16ba07d56b872e9c6c6ddd83a45af7bd8f94a`.
 - Advance the portable core, native Rust/Python bindings and Node npm dependency
   to the coordinated JACS 0.15.0 candidate. Alias the restored native MCP package
   `jacs-mcp-compat` to preserve existing SDK imports and tool contracts.
 - Check the coordinated 0.15.0 source versions and Node package metadata,
   rejecting stale native, core or npm expectations. Preserve older independent
   source-version fixtures for compatibility.
+- Forward remote envelope signing and A2A verification to the inner JACS
+  provider, including PQ signatures. Expose opt-in robust media extraction
+  through Rust, Python, Node, Go, MCP and CLI while retaining metadata-only
+  defaults and existing call signatures.
+- Focused Rust/PQ/media tests, source checks, Python/Node/Go option contracts
+  and TypeScript pass. Registry installation and the updated CI run remain
+  separate release gates.
 
 ### Portable core compatibility — 2026-09-20
 

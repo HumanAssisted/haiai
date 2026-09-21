@@ -377,6 +377,7 @@
       "properties": {
         "file_path": "string",
         "raw_payload": "boolean",
+        "robust": "boolean",
         "config_path": "string"
       },
       "required": [

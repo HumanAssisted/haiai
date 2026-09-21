@@ -34,8 +34,8 @@ pub use jacs::inline::{
 };
 #[cfg(feature = "jacs-crate")]
 pub use jacs::simple::types::{
-    MediaVerificationResult, MediaVerifyStatus, SignImageOptions, SignTextOptions, SignTextOutcome,
-    SignedMedia, VerifyImageOptions,
+    ExtractMediaOptions, MediaVerificationResult, MediaVerifyStatus, SignImageOptions,
+    SignTextOptions, SignTextOutcome, SignedMedia, VerifyImageOptions,
 };
 
 // =============================================================================
@@ -1393,6 +1393,23 @@ pub trait JacsMediaProvider: JacsProvider {
     /// `raw_payload = true` returns the base64url-no-pad wire payload as it
     /// was embedded in the metadata chunk.
     fn extract_media_signature(&self, path: &str, raw_payload: bool) -> Result<Option<String>>;
+
+    /// Extract a payload with an explicit opt-in to the robust LSB channel.
+    /// Providers that only support metadata extraction reject robust scans.
+    fn extract_media_signature_with_options(
+        &self,
+        path: &str,
+        raw_payload: bool,
+        opts: ExtractMediaOptions,
+    ) -> Result<Option<String>> {
+        if opts.scan_robust {
+            return Err(HaiError::BackendUnsupported {
+                method: "extract_media_signature_with_options".to_string(),
+                detail: "robust extraction is unsupported by this provider".to_string(),
+            });
+        }
+        self.extract_media_signature(path, raw_payload)
+    }
 }
 
 // =============================================================================
@@ -1765,6 +1782,15 @@ impl JacsMediaProvider for Box<dyn JacsMediaProvider> {
 
     fn extract_media_signature(&self, path: &str, raw_payload: bool) -> Result<Option<String>> {
         (**self).extract_media_signature(path, raw_payload)
+    }
+
+    fn extract_media_signature_with_options(
+        &self,
+        path: &str,
+        raw_payload: bool,
+        opts: ExtractMediaOptions,
+    ) -> Result<Option<String>> {
+        (**self).extract_media_signature_with_options(path, raw_payload, opts)
     }
 }
 

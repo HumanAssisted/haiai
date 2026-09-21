@@ -521,6 +521,10 @@ enum Commands {
         /// Print the raw base64url-no-pad payload as embedded; default decodes
         #[arg(long)]
         raw_payload: bool,
+
+        /// Scan the LSB channel if image metadata has been removed
+        #[arg(long)]
+        robust: bool,
     },
 
     // =========================================================================
@@ -2947,9 +2951,11 @@ async fn main() -> anyhow::Result<()> {
                 media_cmds::handle_verify_image(&file, key_dir.as_deref(), strict, robust, json)?;
             std::process::exit(code);
         }
-        Commands::ExtractMediaSignature { file, raw_payload } => {
-            media_cmds::handle_extract_media_signature(&file, raw_payload)?
-        }
+        Commands::ExtractMediaSignature {
+            file,
+            raw_payload,
+            robust,
+        } => media_cmds::handle_extract_media_signature(&file, raw_payload, robust)?,
 
         // =====================================================================
         // Issue 005: D5 / D9 record-store CLI handlers.

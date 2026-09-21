@@ -3201,6 +3201,17 @@ impl<P: crate::jacs::JacsMediaProvider> HaiClient<P> {
     pub fn extract_media_signature(&self, path: &str, raw_payload: bool) -> Result<Option<String>> {
         self.jacs.extract_media_signature(path, raw_payload)
     }
+
+    /// Extract a payload, optionally scanning the robust LSB channel.
+    pub fn extract_media_signature_with_options(
+        &self,
+        path: &str,
+        raw_payload: bool,
+        opts: crate::jacs::ExtractMediaOptions,
+    ) -> Result<Option<String>> {
+        self.jacs
+            .extract_media_signature_with_options(path, raw_payload, opts)
+    }
 }
 
 #[cfg(test)]
