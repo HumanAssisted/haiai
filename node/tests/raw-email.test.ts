@@ -162,11 +162,11 @@ describe('raw_email_roundtrip conformance fixture', () => {
       omitted_reason: scenario.expected_omitted_reason,
     }));
 
-    // Capture the exact string Node passes to verifyDocument so we can assert
+    // Capture the base64 payload Node passes to verifyEmailRaw so we can assert
     // byte-identity through the verify call chain.
     let capturedVerifyInput: string | null = null;
-    const verifyDocMock = vi.fn(async (doc: string) => {
-      capturedVerifyInput = doc;
+    const verifyEmailRawMock = vi.fn(async (rawEmailB64: string) => {
+      capturedVerifyInput = rawEmailB64;
       return {
         valid: scenario.expected_verify_valid as boolean,
         jacs_id: scenario.verify_registry.jacs_id as string,
@@ -182,7 +182,7 @@ describe('raw_email_roundtrip conformance fixture', () => {
     });
 
     client._setFFIAdapter(
-      createMockFFI({ getRawEmail: getRawEmailMock, verifyDocument: verifyDocMock }),
+      createMockFFI({ getRawEmail: getRawEmailMock, verifyEmailRaw: verifyEmailRawMock }),
     );
 
     const result = await client.getRawEmail('conf-001');
@@ -198,10 +198,8 @@ describe('raw_email_roundtrip conformance fixture', () => {
 
     // The real JACS crypto verify runs in the Rust conformance test
     // (rust/haiai/tests/email_conformance.rs). Here we assert that Node's
-    // wrapper forwards the bytes to FFI. Anchor on the JACS attachment
-    // filename as an ASCII sanity check — if the wrapper dropped the MIME
-    // altogether we would miss it immediately.
+    // wrapper forwards every byte to the raw-email FFI method.
     expect(capturedVerifyInput).not.toBeNull();
-    expect(capturedVerifyInput!).toContain('jacs-signature.json');
+    expect(Buffer.from(capturedVerifyInput!, 'base64').equals(expectedBytes)).toBe(true);
   });
 });
