@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### JACS 0.15 release compatibility — 2026-09-20
+
+- Pin all JACS source builds to `c10ac65075d1de9f5decbaef8b12b550b65f089c`.
+- Advance the portable core, native Rust/Python bindings and Node npm dependency
+  to the coordinated JACS 0.15.0 candidate. Alias the restored native MCP package
+  `jacs-mcp-compat` to preserve existing SDK imports and tool contracts.
+- Check the coordinated 0.15.0 source versions and Node package metadata,
+  rejecting stale native, core or npm expectations. Preserve older independent
+  source-version fixtures for compatibility.
+
 ### Portable core compatibility — 2026-09-20
 
 - Pin JACS source to `f4d701b00daf5cf0967bf3ea15054a61975202f8`, with

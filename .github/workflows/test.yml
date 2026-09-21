@@ -11,11 +11,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Portable core and retained native adapters have independent versions.
-  # Every checkout validates both against this exact source pin.
-  JACS_REF: f4d701b00daf5cf0967bf3ea15054a61975202f8
-  JACS_VERSION: 0.13.0
-  JACS_CORE_VERSION: 0.14.0
+  # Validate every release surface against this exact reviewed source pin.
+  JACS_REF: c10ac65075d1de9f5decbaef8b12b550b65f089c
+  JACS_VERSION: 0.15.0
+  JACS_CORE_VERSION: 0.15.0
+  JACS_NPM_VERSION: 0.15.0
 
 jobs:
   native-package-layout:
@@ -198,8 +198,8 @@ jobs:
           npm run build
         timeout-minutes: 10
       - name: Build JACS napi addon (jacs.linux-x64-gnu.node)
-        # Retained native JACS 0.13.0 packages are unpublished. Build the
-        # pinned checkout and use the committed local dependency path.
+        # Build the reviewed JACS candidate from the pinned checkout
+        # and use the committed local dependency path.
         run: |
           cd "${{ github.workspace }}/../JACS/archive/native/jacsnpm"
           npm install @napi-rs/cli
