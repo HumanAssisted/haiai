@@ -198,7 +198,7 @@ jobs:
           npm run build
         timeout-minutes: 10
       - name: Build JACS napi addon (jacs.linux-x64-gnu.node)
-        # Build the reviewed JACS candidate from the pinned checkout
+        # Build the reviewed JACS source from the pinned checkout
         # and use the committed local dependency path.
         run: |
           cd "${{ github.workspace }}/../JACS/archive/native/jacsnpm"

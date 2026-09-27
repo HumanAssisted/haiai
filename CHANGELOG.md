@@ -6,7 +6,7 @@
 
 - Pin all JACS source builds to `10c16ba07d56b872e9c6c6ddd83a45af7bd8f94a`.
 - Advance the portable core, native Rust/Python bindings and Node npm dependency
-  to the coordinated JACS 0.15.0 candidate. Alias the restored native MCP package
+  to the coordinated JACS 0.15.0 release. Alias the restored native MCP package
   `jacs-mcp-compat` to preserve existing SDK imports and tool contracts.
 - Check the coordinated 0.15.0 source versions and Node package metadata,
   rejecting stale native, core or npm expectations. Preserve older independent
@@ -16,8 +16,8 @@
   through Rust, Python, Node, Go, MCP and CLI while retaining metadata-only
   defaults and existing call signatures.
 - Focused Rust/PQ/media tests, source checks, Python/Node/Go option contracts
-  and TypeScript pass. Registry installation and the updated CI run remain
-  separate release gates.
+  and TypeScript pass. HAIAI registry publication and live service acceptance
+  remain separate release gates.
 
 ### Portable core compatibility — 2026-09-20
 
