@@ -279,7 +279,7 @@ export function mapFFIError(err: unknown): HaiError {
  * Every method:
  * 1. Serializes arguments to JSON where needed
  * 2. Calls the native FFI method
- * 3. Parses the JSON response
+ * 3. Parses JSON responses or preserves raw strings, as the method requires
  * 4. Catches FFI errors and maps them to TypeScript error classes
  */
 export class FFIClientAdapter {
@@ -437,10 +437,9 @@ export class FFIClientAdapter {
     }
   }
 
-  async signEmailRaw(rawEmailB64: string): Promise<Record<string, unknown>> {
+  async signEmailRaw(rawEmailB64: string): Promise<string> {
     try {
-      const json = await this.native.signEmailRaw(rawEmailB64);
-      return JSON.parse(json) as Record<string, unknown>;
+      return await this.native.signEmailRaw(rawEmailB64);
     } catch (err) {
       throw mapFFIError(err);
     }

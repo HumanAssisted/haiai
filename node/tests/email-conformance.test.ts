@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HaiClient } from '../src/client.js';
+import { FFIClientAdapter } from '../src/ffi-client.js';
 import { generateTestKeypair as generateKeypair } from './setup.js';
 import { createMockFFI } from './ffi-mock.js';
 import {
@@ -60,8 +61,8 @@ describe('email conformance: mock verify response deserialization', () => {
     const mockJson = fixture.mock_verify_response.json;
 
     const client = await makeClient('https://mock.hai.ai');
-    const verifyDocumentMock = vi.fn(async () => mockJson);
-    client._setFFIAdapter(createMockFFI({ verifyDocument: verifyDocumentMock }));
+    const verifyEmailRawMock = vi.fn(async () => mockJson);
+    client._setFFIAdapter(createMockFFI({ verifyEmailRaw: verifyEmailRawMock }));
 
     const result: EmailVerificationResultV2 = await client.verifyEmail('raw email content');
 
@@ -109,32 +110,72 @@ describe('email conformance: FieldStatus values', () => {
 });
 
 // ---------------------------------------------------------------------------
-// API contract conformance: SignEmail
+// Raw-email FFI contract: signing returns base64, verification returns JSON.
 // ---------------------------------------------------------------------------
 
-describe('email conformance: signEmail API contract', () => {
-  const fixture = loadConformanceFixture();
+const rawEmailCases = [
+  {
+    name: 'UTF-8 string',
+    rawEmail: 'From: alice@example.test\r\nSubject: café\r\n\r\nHello ☃\r\n',
+  },
+  {
+    name: 'binary Buffer',
+    rawEmail: Buffer.concat([
+      Buffer.from('From: alice@example.test\r\nContent-Transfer-Encoding: binary\r\n\r\n'),
+      Buffer.from([0x00, 0xc3, 0xa9, 0xff, 0x0d, 0x0a]),
+    ]),
+  },
+];
+
+describe('email conformance: signEmail raw-email FFI contract', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('sends POST to correct path with message/rfc822 content-type', async () => {
-    // signEmail delegates to FFI sendSignedEmail; verify the contract shape
+  it.each(rawEmailCases)('signs $name through signEmailRaw without sending it', async ({ rawEmail }) => {
     const client = await makeClient('https://mock.hai.ai');
-    const sendSignedEmailMock = vi.fn(async () => ({
-      signed_email_base64: Buffer.from('signed email bytes').toString('base64'),
+    const signedBytes = Buffer.concat([
+      Buffer.from('Content-Type: multipart/mixed; boundary=signed\r\n\r\n'),
+      Buffer.from([0x00, 0xff, 0x0d, 0x0a]),
+    ]);
+    const signEmailRawMock = vi.fn(async () => signedBytes.toString('base64'));
+    const sendSignedEmailMock = vi.fn(async () => {
+      throw new Error('signEmail must not send an email');
+    });
+    client._setFFIAdapter(createMockFFI({
+      signEmailRaw: signEmailRawMock,
+      sendSignedEmail: sendSignedEmailMock,
     }));
-    client._setFFIAdapter(createMockFFI({ sendSignedEmail: sendSignedEmailMock }));
 
-    const result = await client.signEmail('raw email');
-    expect(sendSignedEmailMock).toHaveBeenCalledTimes(1);
+    const result = await client.signEmail(rawEmail);
+    expect(signEmailRawMock).toHaveBeenCalledTimes(1);
+    expect(signEmailRawMock).toHaveBeenCalledWith(Buffer.from(rawEmail).toString('base64'));
+    expect(sendSignedEmailMock).not.toHaveBeenCalled();
     expect(result).toBeInstanceOf(Buffer);
+    expect(result.equals(signedBytes)).toBe(true);
+  });
 
-    // Verify contract shape
-    expect(fixture.api_contracts.sign_email.method).toBe('POST');
-    expect(fixture.api_contracts.sign_email.path).toBe('/api/v1/email/sign');
-    expect(fixture.api_contracts.sign_email.request_content_type).toBe('message/rfc822');
+  it('preserves the native signing result as a base64 string rather than parsing JSON', async () => {
+    const inputB64 = Buffer.from('Subject: sign\r\n\r\nbody\r\n').toString('base64');
+    const signedB64 = Buffer.from('Subject: signed\r\n\r\nbody\r\n').toString('base64');
+    const signEmailRaw = vi.fn(async () => signedB64);
+    // Exercise the real adapter conversion with a native boundary double.
+    const adapter = Object.assign(Object.create(FFIClientAdapter.prototype), {
+      native: { signEmailRaw },
+    }) as FFIClientAdapter;
+
+    await expect(adapter.signEmailRaw(inputB64)).resolves.toBe(signedB64);
+    expect(signEmailRaw).toHaveBeenCalledTimes(1);
+    expect(signEmailRaw).toHaveBeenCalledWith(inputB64);
+  });
+
+  it('maps native raw-email signing errors without returning empty bytes', async () => {
+    const adapter = Object.assign(Object.create(FFIClientAdapter.prototype), {
+      native: { signEmailRaw: vi.fn(async () => { throw new Error('NotFound: email not active'); }) },
+    }) as FFIClientAdapter;
+
+    await expect(adapter.signEmailRaw('')).rejects.toBeInstanceOf(EmailNotActiveError);
   });
 });
 
@@ -142,25 +183,41 @@ describe('email conformance: signEmail API contract', () => {
 // API contract conformance: VerifyEmail
 // ---------------------------------------------------------------------------
 
-describe('email conformance: verifyEmail API contract', () => {
+describe('email conformance: verifyEmail raw-email FFI contract', () => {
   const fixture = loadConformanceFixture();
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('sends POST to correct path with message/rfc822 content-type', async () => {
+  it.each(rawEmailCases)('verifies exact $name bytes through verifyEmailRaw', async ({ rawEmail }) => {
     const client = await makeClient('https://mock.hai.ai');
-    const verifyDocumentMock = vi.fn(async () => fixture.mock_verify_response.json);
-    client._setFFIAdapter(createMockFFI({ verifyDocument: verifyDocumentMock }));
+    const verifyEmailRawMock = vi.fn(async () => fixture.mock_verify_response.json);
+    const verifyDocumentMock = vi.fn(async () => {
+      throw new Error('verifyEmail must not use JSON-document verification');
+    });
+    client._setFFIAdapter(createMockFFI({
+      verifyEmailRaw: verifyEmailRawMock,
+      verifyDocument: verifyDocumentMock,
+    }));
 
-    await client.verifyEmail('raw email');
-    expect(verifyDocumentMock).toHaveBeenCalledTimes(1);
+    const result = await client.verifyEmail(rawEmail);
+    expect(verifyEmailRawMock).toHaveBeenCalledTimes(1);
+    expect(verifyEmailRawMock).toHaveBeenCalledWith(Buffer.from(rawEmail).toString('base64'));
+    expect(verifyDocumentMock).not.toHaveBeenCalled();
+    expect(result.valid).toBe(true);
+  });
 
-    // Verify contract shape
-    expect(fixture.api_contracts.verify_email.method).toBe('POST');
-    expect(fixture.api_contracts.verify_email.path).toBe('/api/v1/email/verify');
-    expect(fixture.api_contracts.verify_email.request_content_type).toBe('message/rfc822');
+  it('decodes the native JSON verification response', async () => {
+    const inputB64 = Buffer.from('Subject: signed\r\n\r\nbody\r\n').toString('base64');
+    const verifyEmailRaw = vi.fn(async () => JSON.stringify(fixture.mock_verify_response.json));
+    const adapter = Object.assign(Object.create(FFIClientAdapter.prototype), {
+      native: { verifyEmailRaw },
+    }) as FFIClientAdapter;
+
+    await expect(adapter.verifyEmailRaw(inputB64)).resolves.toEqual(fixture.mock_verify_response.json);
+    expect(verifyEmailRaw).toHaveBeenCalledTimes(1);
+    expect(verifyEmailRaw).toHaveBeenCalledWith(inputB64);
   });
 });
 

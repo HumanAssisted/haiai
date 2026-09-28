@@ -1309,7 +1309,7 @@ impl HaiClientWrapper {
     }
 
     /// Extract the JACS signature payload from a signed image without verifying.
-    /// Opts JSON: `{"raw_payload": bool}`. Returns
+    /// Opts JSON: `{"raw_payload": bool, "robust": bool}`. Returns
     /// `{"present": bool, "payload": string?}`. The MCP layer wraps this in a
     /// `success` envelope (success = present); binding-core itself emits the
     /// flat shape so language SDKs and the CLI can decide their own error
@@ -1320,10 +1320,10 @@ impl HaiClientWrapper {
         path: &str,
         opts_json: &str,
     ) -> HaiBindingResult<String> {
-        let raw_payload = parse_extract_opts(opts_json)?;
+        let (raw_payload, opts) = parse_extract_opts(opts_json)?;
         let client = self.inner.read().await;
         let payload = client
-            .extract_media_signature(path, raw_payload)
+            .extract_media_signature_with_options(path, raw_payload, opts)
             .map_err(HaiBindingError::from)?;
         let envelope = serde_json::json!({
             "present": payload.is_some(),
@@ -2410,9 +2410,14 @@ pub(crate) fn parse_verify_image_opts(s: &str) -> HaiBindingResult<VerifyImageOp
     })
 }
 
-pub(crate) fn parse_extract_opts(s: &str) -> HaiBindingResult<bool> {
+pub(crate) fn parse_extract_opts(s: &str) -> HaiBindingResult<(bool, haiai::ExtractMediaOptions)> {
     let v = parse_opts_root(s)?;
-    Ok(coerce_bool(&v, "raw_payload")?.unwrap_or(false))
+    Ok((
+        coerce_bool(&v, "raw_payload")?.unwrap_or(false),
+        haiai::ExtractMediaOptions {
+            scan_robust: coerce_bool(&v, "robust")?.unwrap_or(false),
+        },
+    ))
 }
 
 // =============================================================================
@@ -3675,8 +3680,15 @@ mod tests {
 
     #[test]
     fn parse_extract_opts_defaults_to_decoded() {
-        assert!(!parse_extract_opts("").expect("default"));
-        assert!(parse_extract_opts(r#"{"raw_payload": true}"#).expect("parse"));
+        let (raw, opts) = parse_extract_opts("").expect("default");
+        assert!(!raw);
+        assert!(!opts.scan_robust);
+        let (raw, opts) =
+            parse_extract_opts(r#"{"raw_payload": true, "robust": true}"#).expect("parse");
+        assert!(raw);
+        assert!(opts.scan_robust);
+        let error = parse_extract_opts(r#"{"robust": "true"}"#).expect_err("invalid option");
+        assert_eq!(error.kind, ErrorKind::InvalidArgument);
     }
 
     #[test]
@@ -3837,15 +3849,19 @@ mod tests {
         let (temp_dir, config_path) = write_temp_media_fixture_config();
         let wrapper = build_media_wrapper(&config_path);
         let in_path = temp_dir.path().join("in.png");
-        std::fs::write(&in_path, make_media_test_png(32, 32)).expect("write");
+        std::fs::write(&in_path, make_media_test_png(512, 512)).expect("write");
         let out_path = temp_dir.path().join("out.png");
         wrapper
-            .sign_image(in_path.to_str().unwrap(), out_path.to_str().unwrap(), "{}")
+            .sign_image(
+                in_path.to_str().unwrap(),
+                out_path.to_str().unwrap(),
+                r#"{"robust": true}"#,
+            )
             .await
             .expect("sign");
 
         let env_json = wrapper
-            .extract_media_signature(out_path.to_str().unwrap(), "{}")
+            .extract_media_signature(out_path.to_str().unwrap(), r#"{"robust": true}"#)
             .await
             .expect("extract");
         let parsed: Value = serde_json::from_str(&env_json).expect("envelope JSON");
@@ -3853,6 +3869,34 @@ mod tests {
         let payload = parsed["payload"].as_str().expect("payload string");
         let inner: Value = serde_json::from_str(payload).expect("decoded payload should be JSON");
         assert!(inner.is_object());
+
+        // Lossless pixel re-encoding drops metadata while retaining the LSB payload.
+        let stripped = temp_dir.path().join("stripped.png");
+        image::open(&out_path).unwrap().save(&stripped).unwrap();
+        let default: Value = serde_json::from_str(
+            &wrapper
+                .extract_media_signature(stripped.to_str().unwrap(), "{}")
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(default["present"], false);
+        for raw in [false, true] {
+            let options = serde_json::json!({"robust": true, "raw_payload": raw});
+            let recovered: Value = serde_json::from_str(
+                &wrapper
+                    .extract_media_signature(stripped.to_str().unwrap(), &options.to_string())
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(recovered["present"], true);
+            if raw {
+                assert!(!recovered["payload"].as_str().unwrap().starts_with('{'));
+            } else {
+                assert_eq!(recovered["payload"], parsed["payload"]);
+            }
+        }
     }
 
     #[tokio::test]

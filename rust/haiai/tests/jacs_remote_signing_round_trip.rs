@@ -33,6 +33,10 @@ struct AgentEnv {
 
 impl AgentEnv {
     fn new() -> Self {
+        Self::with_algorithm("ed25519")
+    }
+
+    fn with_algorithm(algorithm: &str) -> Self {
         let original_cwd = std::env::current_dir().expect("cwd");
         let base = original_cwd.join(format!("target/jacs-remote-sign-{}", Uuid::new_v4()));
         fs::create_dir_all(&base).expect("create base");
@@ -41,7 +45,7 @@ impl AgentEnv {
         let options = CreateAgentOptions {
             name: "remote-sign-test-agent".to_string(),
             password: "TestPass!123".to_string(),
-            algorithm: Some("ed25519".to_string()),
+            algorithm: Some(algorithm.to_string()),
             data_directory: Some("data".to_string()),
             key_directory: Some("keys".to_string()),
             config_path: Some("jacs.config.json".to_string()),
@@ -84,6 +88,38 @@ impl Drop for AgentEnv {
         // best-effort cleanup so target/ doesn't accumulate per-run dirs
         let _ = fs::remove_dir_all(&self.base);
     }
+}
+
+#[test]
+fn remote_provider_signs_and_verifies_pq_envelopes_without_resigning() {
+    let _guard = REMOTE_SIGN_LOCK.lock().unwrap();
+    let env = AgentEnv::with_algorithm("pq2025");
+    let remote = env.remote();
+    let provider: &dyn JacsProvider = &remote;
+    let signed = provider
+        .sign_envelope(&serde_json::json!({
+            "jacsType": "a2a-task",
+            "a2aArtifact": {"message": "reviewed artifact"},
+        }))
+        .expect("remote wrapper must retain envelope signing");
+    let verified: serde_json::Value = serde_json::from_str(
+        &provider
+            .verify_a2a_artifact(&signed)
+            .expect("verify PQ artifact"),
+    )
+    .unwrap();
+    assert_eq!(verified["valid"], true);
+
+    let mut tampered: serde_json::Value = serde_json::from_str(&signed).unwrap();
+    tampered["a2aArtifact"]["message"] = serde_json::json!("changed artifact");
+    let rejected: serde_json::Value = serde_json::from_str(
+        &provider
+            .verify_a2a_artifact(&tampered.to_string())
+            .expect("verification result"),
+    )
+    .unwrap();
+    assert_eq!(rejected["valid"], false);
+    assert!(provider.verify_a2a_artifact("invalid JSON").is_err());
 }
 
 /// Sign via the inner `LocalJacsProvider::sign_envelope` directly, then verify

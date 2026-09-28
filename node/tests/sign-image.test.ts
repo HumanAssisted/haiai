@@ -228,6 +228,19 @@ describeMaybe('Node SDK signing-side parity (sign_image)', () => {
 // =============================================================================
 
 describe('signImage SDK option translation (Issue 009)', () => {
+  it('forwards robust extraction only when requested', async () => {
+    const keypair = generateTestKeypair();
+    const client = await HaiClient.fromCredentials('extract-options', keypair.privateKeyPem, {
+      url: 'https://hai.example',
+    });
+    const extract = vi.fn(async () => ({ present: true, payload: 'test-payload' }));
+    client._setFFIAdapter(createMockFFI({ extractMediaSignature: extract }));
+    await client.extractMediaSignature('/x/stripped.png');
+    expect(extract).toHaveBeenLastCalledWith('/x/stripped.png', { raw_payload: false, robust: false });
+    await client.extractMediaSignature('/x/stripped.png', { rawPayload: true, robust: true });
+    expect(extract).toHaveBeenLastCalledWith('/x/stripped.png', { raw_payload: true, robust: true });
+  });
+
   it('noBackup=true maps to wire backup=false', async () => {
     const keypair = generateTestKeypair();
     const client = await HaiClient.fromCredentials('agent-issue-009-1', keypair.privateKeyPem, {

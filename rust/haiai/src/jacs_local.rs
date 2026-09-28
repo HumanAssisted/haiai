@@ -2858,13 +2858,19 @@ impl JacsMediaProvider for LocalJacsProvider {
     }
 
     fn extract_media_signature(&self, path: &str, raw_payload: bool) -> Result<Option<String>> {
-        // PRD §4.2 / TASK_001 Step 5: JACS exposes two free functions, not one
-        // with a flag. Neither takes the SimpleAgent — extraction does not need
-        // a signer. The provider is here for trait dispatch consistency.
+        self.extract_media_signature_with_options(path, raw_payload, Default::default())
+    }
+
+    fn extract_media_signature_with_options(
+        &self,
+        path: &str,
+        raw_payload: bool,
+        opts: crate::jacs::ExtractMediaOptions,
+    ) -> Result<Option<String>> {
         let result = if raw_payload {
-            jacs::simple::advanced::extract_media_signature_raw(path)
+            jacs::simple::advanced::extract_media_signature_raw_with_options(path, opts)
         } else {
-            jacs::simple::advanced::extract_media_signature(path)
+            jacs::simple::advanced::extract_media_signature_with_options(path, opts)
         };
         result.map_err(|e| HaiError::Provider(format!("extract_media_signature failed: {e}")))
     }

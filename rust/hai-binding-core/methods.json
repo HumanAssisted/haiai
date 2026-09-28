@@ -620,7 +620,7 @@
       "group": "media_local",
       "params": {
         "path": "string",
-        "opts_json": "{raw_payload?} (JSON)"
+        "opts_json": "{raw_payload?, robust?} (JSON)"
       },
       "returns": "string ({present, payload?} envelope JSON)",
       "auth_required": false,

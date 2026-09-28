@@ -496,12 +496,21 @@ impl JacsMediaProvider for EmbeddedJacsProvider {
     }
 
     fn extract_media_signature(&self, path: &str, raw_payload: bool) -> HaiResult<Option<String>> {
+        self.extract_media_signature_with_options(path, raw_payload, Default::default())
+    }
+
+    fn extract_media_signature_with_options(
+        &self,
+        path: &str,
+        raw_payload: bool,
+        opts: haiai::ExtractMediaOptions,
+    ) -> HaiResult<Option<String>> {
         // Same dispatch logic as LocalJacsProvider — JACS exposes two free
         // functions (decoded vs raw); neither needs a SimpleAgent.
         let result = if raw_payload {
-            jacs::simple::advanced::extract_media_signature_raw(path)
+            jacs::simple::advanced::extract_media_signature_raw_with_options(path, opts)
         } else {
-            jacs::simple::advanced::extract_media_signature(path)
+            jacs::simple::advanced::extract_media_signature_with_options(path, opts)
         };
         result.map_err(|e| HaiError::Provider(format!("extract_media_signature failed: {e}")))
     }

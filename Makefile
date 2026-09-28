@@ -1,7 +1,7 @@
 .PHONY: test test-python test-node test-go test-rust \
         smoke smoke-python smoke-node smoke-go \
         build-python-ffi build-node-ffi build-haiigo \
-        versions check-versions check-jacs-versions \
+        versions check-versions check-jacs-versions test-jacs-source \
         bump-version bump-jacs-version bump-jacs-versions \
         generate-knowledge check-knowledge \
         release-node release-python release-rust release-all \
@@ -34,6 +34,8 @@ JACS_NODE := $(shell grep '@hai.ai/jacs' node/package.json | head -1 | sed 's/.*
 JACS_NODE_PROD := $(shell grep '@hai.ai/jacs' node/publish.deps.json | head -1 | sed 's/.*: *"\(.*\)".*/\1/')
 JACS_CI_REF := $(shell grep '^  JACS_REF:' .github/workflows/test.yml | head -1 | sed 's/^  JACS_REF: *//')
 JACS_CI_VERSION := $(shell grep '^  JACS_VERSION:' .github/workflows/test.yml | head -1 | sed 's/^  JACS_VERSION: *//')
+JACS_CI_CORE_VERSION := $(shell grep '^  JACS_CORE_VERSION:' .github/workflows/test.yml | head -1 | sed 's/^  JACS_CORE_VERSION: *//')
+JACS_CI_NPM_VERSION := $(shell grep '^  JACS_NPM_VERSION:' .github/workflows/test.yml | head -1 | sed 's/^  JACS_NPM_VERSION: *//')
 
 # ============================================================================
 # TEST
@@ -188,6 +190,8 @@ check-jacs-versions:
 	@echo "  node publish    $(JACS_NODE_PROD)"
 	@echo "  ci JACS_REF     $(JACS_CI_REF)"
 	@echo "  ci JACS_VERSION $(JACS_CI_VERSION)"
+	@echo "  ci portable core $(JACS_CI_CORE_VERSION)"
+	@echo "  ci native npm    $(JACS_CI_NPM_VERSION)"
 	@if [ "$(JACS_RUST)" != "$(JACS_RUST_CLI)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != haiai-cli ($(JACS_RUST_CLI))"; exit 1; fi
 	@if [ "$(JACS_RUST)" != "$(JACS_RUST_MCP)" ]; then \
@@ -196,15 +200,18 @@ check-jacs-versions:
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != python ($(JACS_PYTHON))"; exit 1; fi
 	@if [ "$(JACS_RUST)" != "$(JACS_CI_VERSION)" ]; then \
 		echo "ERROR: jacs in haiai ($(JACS_RUST)) != CI JACS_VERSION ($(JACS_CI_VERSION))"; exit 1; fi
-	@if [ "$(JACS_RUST)" != "$(JACS_NODE_PROD)" ]; then \
-		echo "ERROR: jacs in haiai ($(JACS_RUST)) != node production dependency ($(JACS_NODE_PROD))"; exit 1; fi
+	@if [ "$(JACS_CI_NPM_VERSION)" != "$(JACS_NODE_PROD)" ]; then \
+		echo "ERROR: CI npm version ($(JACS_CI_NPM_VERSION)) != node production dependency ($(JACS_NODE_PROD))"; exit 1; fi
 	@case "$(JACS_NODE)" in \
 		file:*) echo "  node            $(JACS_NODE) (local path, skipping match check)" ;; \
-		*) if [ "$(JACS_RUST)" != "$(JACS_NODE)" ]; then \
-			echo "ERROR: jacs in haiai ($(JACS_RUST)) != node ($(JACS_NODE))"; exit 1; fi ;; \
+		*) if [ "$(JACS_CI_NPM_VERSION)" != "$(JACS_NODE)" ]; then \
+			echo "ERROR: CI npm version ($(JACS_CI_NPM_VERSION)) != node ($(JACS_NODE))"; exit 1; fi ;; \
 	esac
-	@bash scripts/ci/check_jacs_source.sh "$(JACS_CI_REF)" "$(JACS_CI_VERSION)" "$(JACS_SOURCE_DIR)"
-	@echo "All JACS versions match: $(JACS_RUST)"
+	@bash scripts/ci/check_jacs_source.sh "$(JACS_CI_REF)" "$(JACS_CI_VERSION)" "$(JACS_SOURCE_DIR)" "$(JACS_CI_CORE_VERSION)" "$(JACS_CI_NPM_VERSION)"
+	@echo "All native JACS dependency versions match: $(JACS_RUST)"
+
+test-jacs-source:
+	python3 scripts/ci/test_jacs_source.py
 
 # ============================================================================
 # GITHUB CI RELEASE (via git tags)

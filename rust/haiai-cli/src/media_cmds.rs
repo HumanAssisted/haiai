@@ -265,13 +265,20 @@ pub fn handle_verify_image(
 // extract-media-signature
 // ---------------------------------------------------------------------------
 
-pub fn handle_extract_media_signature(file: &str, raw_payload: bool) -> anyhow::Result<()> {
+pub fn handle_extract_media_signature(
+    file: &str,
+    raw_payload: bool,
+    robust: bool,
+) -> anyhow::Result<()> {
     // Media extraction only parses the embedded payload; it does not require
     // an agent identity or access to private key material.
+    let opts = jacs::simple::types::ExtractMediaOptions {
+        scan_robust: robust,
+    };
     let payload = if raw_payload {
-        jacs::simple::advanced::extract_media_signature_raw(file)
+        jacs::simple::advanced::extract_media_signature_raw_with_options(file, opts)
     } else {
-        jacs::simple::advanced::extract_media_signature(file)
+        jacs::simple::advanced::extract_media_signature_with_options(file, opts)
     }
     .context("extract_media_signature failed")?;
 

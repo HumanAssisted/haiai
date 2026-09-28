@@ -70,18 +70,19 @@ When updating Rust integrations, use these canonical upstream repos as reference
 1. `~/personal/JACS/jacs`
 2. `~/personal/JACS/jacs-mcp`
 
-The checked-in JACS dependencies target `0.13.0`. Check language manifests and
+The checked-in JACS dependencies target `0.15.0`. Check language manifests and
 run `make check-jacs-versions` and `make check-versions` before release. Local path
 overrides are development inputs, not evidence of published-package parity.
 
-[CI's JACS source checkout](../.github/workflows/test.yml) separately pins
-`992953ea77d4c9a16953aee28e4a1e5d26e62200`, the native source validated for this
-integration. Each job shallow-fetches that exact commit, checks it out with
-detached HEAD, and runs `make check-jacs-versions JACS_SOURCE_DIR=...` against
-the fetched source. The check compares its native manifests with the separate
-CI `JACS_VERSION: 0.13.0` expectation and all SDK package pins. Version bumps
-update that expectation and select the corresponding `crate/v...` release tag.
-The JACS package version remains `0.13.0` and HAIAI remains `0.4.1`.
+[CI's JACS source checkout](../.github/workflows/test.yml) pins
+`10c16ba07d56b872e9c6c6ddd83a45af7bd8f94a`, the released 0.15.0 source
+validated for this integration. Each job shallow-fetches that exact commit,
+checks it out with detached HEAD, and runs
+`make check-jacs-versions JACS_SOURCE_DIR=...` against the fetched source. The
+check compares its native and portable core manifests with the separate CI
+`JACS_VERSION`, `JACS_CORE_VERSION`, and `JACS_NPM_VERSION` expectations and all
+SDK package pins. Version bumps update those expectations and the source ref.
+HAIAI source remains at `0.4.1`; its registry release is still pending.
 
 ### Authentication header format
 

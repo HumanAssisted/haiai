@@ -1054,7 +1054,17 @@ func (c *Client) ExtractMediaSignature(
 	filePath string,
 	rawPayload bool,
 ) (*ExtractMediaSignatureResult, error) {
-	optsJSON, err := json.Marshal(map[string]bool{"raw_payload": rawPayload})
+	return c.ExtractMediaSignatureWithOptions(ctx, filePath, ExtractMediaSignatureOptions{RawPayload: rawPayload})
+}
+
+// ExtractMediaSignatureWithOptions optionally scans the LSB channel when metadata
+// is absent. Extraction does not verify the signature.
+func (c *Client) ExtractMediaSignatureWithOptions(
+	ctx context.Context,
+	filePath string,
+	opts ExtractMediaSignatureOptions,
+) (*ExtractMediaSignatureResult, error) {
+	optsJSON, err := json.Marshal(opts)
 	if err != nil {
 		return nil, wrapError(ErrInvalidResponse, err, "failed to marshal extract options")
 	}
