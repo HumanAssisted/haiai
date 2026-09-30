@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Verify canonical inline email links — 2026-09-29
+
+- Align source-build verification with the reviewed JACS inline V2 contract.
+  The SDK continues emitting V1; the updated JACS verifier accepts historical
+  V1 and signed V2 URL anchors and rejects changed destinations or versions.
+- Keep published dependency versions unchanged. This source pin is not a
+  registry release; deployed producers and verifiers need coordinated updates.
+
+
 ### JACS 0.15 release compatibility — 2026-09-21
 
 - Pin all JACS source builds to `10c16ba07d56b872e9c6c6ddd83a45af7bd8f94a`.
