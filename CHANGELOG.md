@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Align reviewed signing source — 2026-10-06
+
+- Pin source-build verification to the reviewed JACS candidate containing
+  canonical inline email verification, the Android per-use key-policy fix and
+  audited dependency repairs. Published JACS versions and SDK runtime code are
+  unchanged; this source alignment does not publish a package.
+
 ### Verify canonical inline email links — 2026-09-29
 
 - Align source-build verification with the reviewed JACS inline V2 contract.
