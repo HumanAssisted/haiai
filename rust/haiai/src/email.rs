@@ -470,6 +470,16 @@ pub async fn fetch_public_key_from_registry(
 /// Returns `Ok(true)` if verified, `Ok(false)` if the hash doesn't match,
 /// or `Err` if the DNS lookup fails.
 pub async fn verify_dns_public_key(domain: &str, public_key_pem: &str) -> Result<bool> {
+    // Query DNS TXT record at _v1.agent.jacs.{domain} using DNS-over-HTTPS.
+    let txt_name = format!("_v1.agent.jacs.{domain}");
+    let txt_records = fetch_dns_txt_records(&txt_name).await?;
+    Ok(dns_txt_records_verify_public_key(
+        &txt_records,
+        public_key_pem,
+    ))
+}
+
+fn dns_txt_records_verify_public_key(records: &[String], public_key_pem: &str) -> bool {
     // Compute expected hash via JACS's canonical helper. Per CLAUDE.md Rule 1
     // (delegate all crypto to JACS) we MUST NOT recompute SHA-256 locally —
     // the previous local implementation produced base64-of-raw-PEM, which
@@ -477,20 +487,14 @@ pub async fn verify_dns_public_key(domain: &str, public_key_pem: &str) -> Result
     // and silently rejected every legitimate agent (Issue 012).
     let expected_hash = hash_public_key(public_key_pem);
 
-    // Query DNS TXT record at _v1.agent.jacs.{domain}
-    // Use DNS-over-HTTPS (Google's public resolver) since we don't have a
-    // native DNS TXT record library as a dependency.
-    let txt_name = format!("_v1.agent.jacs.{domain}");
-    let txt_records = fetch_dns_txt_records(&txt_name).await?;
-
-    for record in &txt_records {
+    for record in records {
         if let Some(matches) = dns_txt_record_matches_expected_hash(record, &expected_hash) {
-            return Ok(matches);
+            return matches;
         }
     }
 
     // No jacs_public_key_hash field found in any TXT record
-    Ok(false)
+    false
 }
 
 fn dns_txt_record_matches_expected_hash(record: &str, expected_hash: &str) -> Option<bool> {
@@ -683,6 +687,35 @@ mod tests {
             dns_txt_record_matches_expected_hash(txt_value, expected_hash),
             Some(true)
         );
+    }
+
+    #[test]
+    fn dns_public_key_verification_matches_normalized_jacs_hash() {
+        let pem = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjAxMjA=\n-----END PUBLIC KEY-----\n";
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../fixtures/dns_txt_record.json"))
+                .expect("DNS fixture");
+        let published = fixture["txt_value"]
+            .as_str()
+            .unwrap()
+            .replace("hash-abc", &hash_public_key(pem));
+        let records = vec!["unrelated=record".to_string(), published.clone()];
+        for candidate in [
+            pem.to_string(),
+            pem.replace('\n', "\r\n"),
+            format!("\u{feff}{pem}"),
+        ] {
+            assert!(dns_txt_records_verify_public_key(&records, &candidate));
+        }
+        assert!(!dns_txt_records_verify_public_key(
+            &records,
+            "different key"
+        ));
+        assert!(!dns_txt_records_verify_public_key(&[], pem));
+        assert!(!dns_txt_records_verify_public_key(
+            &[published.replace("jacs_public_key_hash=", "jac_public_key_hash=")],
+            pem
+        ));
     }
 
     // -- Tests that use JACS email functions with SimpleAgent --

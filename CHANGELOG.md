@@ -6,8 +6,12 @@
 
 - Pin source-build verification to the reviewed JACS candidate containing
   canonical inline email verification, the Android per-use key-policy fix and
-  audited dependency repairs. Published JACS versions and SDK runtime code are
-  unchanged; this source alignment does not publish a package.
+  coordinated Rust dependency repairs. Refresh the downstream dependency graph
+  without changing published package versions or public SDK methods.
+- Exercise the production DNS record verifier with JACS-normalized LF, CRLF
+  and BOM key hashes; mismatched keys and obsolete field names remain refused.
+  Source-version checks and locked resolution pass; native runtime verification
+  and four-language CI remain required before merge. No package publication.
 
 ### Verify canonical inline email links — 2026-09-29
 
