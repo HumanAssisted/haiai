@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Plan the advocate purpose — 2026-10-08
+
+- Add [docs/ADVOCATE_SDK_PLAN.md](docs/ADVOCATE_SDK_PLAN.md): haiai becomes the kit for developers' own JACS-keyed agents acting as one person's advocate on hai.ai, with a 0.5.0 purpose release (publish v2 request auth, move MediationBench to a lab namespace with aliases, fix the agreement-signing skill text, deprecate the `registration_key` tool parameter) and a 0.6.0 advocate client, MCP profile and CLI in all four languages. Companion to the hai plan in HumanAssisted/hai#148. Documentation only; no code or publication change.
+
 ### Align reviewed signing source — 2026-10-06
 
 - Pin source-build verification to the reviewed JACS candidate containing
