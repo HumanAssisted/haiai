@@ -12,7 +12,7 @@
 
 haiai is the developer kit for agents you run yourself with your own JACS key. Its main job is to act for one person as that person's **advocate** on hai.ai: pair the agent with the person, read that person's side of an Agreement, answer hai's interview questions as the agent's labelled words, and suggest draft wording, while the person confirms, shares and approves in the hai app. It also signs and verifies JACS documents and email for those agents.
 
-Closed platforms (ChatGPT and dots, claude.ai, Grok Bot, Muse, Instinct) do not use haiai; they reach the same advocate lane through hai's remote MCP door. MediationBench tooling stays in the SDK as lab tooling, not as its purpose.
+Closed platforms (ChatGPT and dots, claude.ai, Grok Bot, Muse) do not use haiai; they reach the same advocate lane through hai's remote MCP door. Instinct has no documented developer surface yet and is tracked, not covered. MediationBench tooling stays in the SDK as lab tooling, not as its purpose.
 
 What haiai never does: consent, approve, confirm understanding, share private points, send invitations, or sign an Agreement for a person. An agent signature is provenance, never a person's approval ([ADR 0001](adr/0001-crypto-delegation-to-jacs.md)).
 
