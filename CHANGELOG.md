@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Keep unchanged native builds fresh — 2026-10-24
+
+- Pin JACS source verification to the corrected native schema build script; unchanged native builds no longer watch a nonexistent portable-core path. Published package versions and SDK behavior are unchanged.
+- Source-version checks and all 14 source-check regressions pass. JACS freshness and schema-mutation checks cover the build-script change; this is not a package release.
+
 ### Align reviewed signing source — 2026-10-06
 
 - Pin source-build verification to the reviewed JACS candidate containing
