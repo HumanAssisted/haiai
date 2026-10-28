@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Align source builds with current JACS main — 2026-10-27
+
+- Pin source builds to JACS `5e716f0702afcc8b4a7b5f97f7d5d96dce327e5d`
+  and refresh the Rust lockfile for its dependency requirements. SDK runtime
+  source, public methods and published package versions are unchanged.
+- Verified 14 source-pin tests, actual source versions, package-version and
+  workflow policy checks, the crypto guard and locked offline dependency
+  resolution. Runtime and four-language CI remain required before merge;
+  this source update is not a package release.
+
 ### Align reviewed signing source — 2026-10-06
 
 - Pin source-build verification to the reviewed JACS candidate containing
