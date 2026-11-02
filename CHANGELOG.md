@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Build against JACS inline email template V3 — 2026-11-01
+
+- Pin source builds to JACS `67408d46975d54bdf3569f2bbf3e47de306e5bf1`, merged by
+  HumanAssisted/JACS#277, which adds inline email template V3: V2 with one
+  picture above the text, used by HAI's MediationBench practice welcome. It
+  matches HAI's JACS pin; the #277 merge commit adds only docs and package
+  metadata. SDK runtime source, public methods and published package versions
+  are unchanged; JACS is not yet published.
+
 ### Align source builds with current JACS main — 2026-10-27
 
 - Pin source builds to JACS `5e716f0702afcc8b4a7b5f97f7d5d96dce327e5d`
