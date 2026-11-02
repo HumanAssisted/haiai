@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Build against JACS strict inline email verification — 2026-11-02
+
+- Pin source builds to JACS `998ecaa169ef908075167dabbe917e1d06245787`, the merge
+  of HumanAssisted/JACS#278 (same tree as the head CI tested). Inline verification now compares the whole
+  document, including the logo picture. Both transports fail on MIME parts the
+  signature does not cover. Signing refuses such mail, including a body without
+  a Content-Type header, which was previously signed without being covered.
+- Rust tests now pin haiai's inline logo, alt text, footer and markers to the
+  constants JACS exports (they already matched). A generated HTML-inline email
+  now passes JACS's strict verifier in a test. Published package versions are
+  unchanged; JACS is not yet published.
+
 ### Smoke tests get an hour and a Rust cache; Python 3.11 floor — 2026-11-01
 
 - CI smoke tests now have 60 minutes, as test-rust does, and cache compiled

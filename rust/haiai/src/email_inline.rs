@@ -303,6 +303,94 @@ mod tests {
         assert_eq!(signed_logo.size_bytes, signed_logo.bytes.len());
     }
 
+    /// JACS's strict inline verifier rebuilds the whole document from its own
+    /// constants, so this producer must emit the same logo, alt text, footer
+    /// text, markers and logo part metadata.
+    #[cfg(feature = "jacs-crate")]
+    #[test]
+    fn producer_matches_jacs_strict_verifier_constants() {
+        use jacs::email as jacs_email;
+
+        assert!(
+            HAI_JACS_LOGO_BYTES == jacs_email::HAI_LOGO_PNG,
+            "bundled logo differs from jacs::email::HAI_LOGO_PNG"
+        );
+        assert_eq!(HAI_JACS_LOGO_CID, jacs_email::HAI_LOGO_CID);
+        assert_eq!(
+            HAI_JACS_LOGO_CONTENT_ID_HEADER,
+            jacs_email::HAI_LOGO_CONTENT_ID_HEADER
+        );
+        assert_eq!(
+            HAI_JACS_LOGO_CONTENT_DISPOSITION,
+            jacs_email::HAI_LOGO_CONTENT_DISPOSITION
+        );
+        assert_eq!(
+            HAI_JACS_LOGO_CONTENT_TYPE,
+            jacs_email::HAI_LOGO_CONTENT_TYPE
+        );
+        assert_eq!(HAI_JACS_LOGO_FILENAME, jacs_email::HAI_LOGO_FILENAME);
+        assert_eq!(
+            HAI_JACS_ENVELOPE_MARKER,
+            jacs_email::HAI_JACS_ENVELOPE_MARKER
+        );
+        assert_eq!(
+            HAI_VERIFY_FOOTER_MARKER,
+            jacs_email::HAI_VERIFY_FOOTER_MARKER
+        );
+        assert_eq!(HAI_VERIFY_LINK_MARKER, jacs_email::HAI_VERIFY_LINK_MARKER);
+        assert_eq!(
+            HAI_LOGO_VERIFY_LINK_MARKER,
+            jacs_email::HAI_LOGO_VERIFY_LINK_MARKER
+        );
+        assert_eq!(
+            HAI_JACS_ENVELOPE_SCRIPT_TYPE,
+            jacs_email::HAI_JACS_ENVELOPE_SCRIPT_TYPE
+        );
+        assert_eq!(
+            HAI_JACS_ENVELOPE_SCRIPT_PREFIX,
+            jacs_email::HAI_JACS_ENVELOPE_SCRIPT_PREFIX
+        );
+        assert_eq!(
+            HAI_HIDDEN_ENVELOPE_MAX_BYTES,
+            jacs_email::HAI_HIDDEN_ENVELOPE_MAX_BYTES
+        );
+        assert_eq!(
+            HAI_VERIFY_FOOTER_TEXT_TEMPLATE,
+            format!("{}[verify link]", jacs_email::HAI_VERIFY_FOOTER_TEXT_PREFIX)
+        );
+
+        // The renderer writes the alt text and footer text as literals, so
+        // check what it renders, linked logo or not.
+        let verify_url = "https://hai.ai/verify/email?id=abc";
+        let img = format!(
+            r#"<img src="cid:{}" alt="{}">"#,
+            jacs_email::HAI_LOGO_CID,
+            jacs_email::HAI_LOGO_ALT
+        );
+        let footer = format!(
+            r#"<footer {}="{HAI_MARKER_VERSION}">{}<a "#,
+            jacs_email::HAI_VERIFY_FOOTER_MARKER,
+            jacs_email::HAI_VERIFY_FOOTER_TEXT_PREFIX
+        );
+        for wrap_logo_link in [true, false] {
+            let html = render_html_inline_email_body_with_logo_link(
+                "Hello",
+                verify_url,
+                r#"{"compactHeader":"abc"}"#,
+                wrap_logo_link,
+            );
+            assert!(html.contains(&img), "{html}");
+            assert!(html.contains(&footer), "{html}");
+        }
+        assert_eq!(
+            render_text_inline_email_body("Hello", verify_url),
+            format!(
+                "Hello\n\n{}{verify_url}",
+                jacs_email::HAI_VERIFY_FOOTER_TEXT_PREFIX
+            )
+        );
+    }
+
     #[test]
     fn validates_hidden_envelope_size_and_reports_signed_logo_size() {
         let max_valid = "x".repeat(HAI_HIDDEN_ENVELOPE_MAX_BYTES - 1);
