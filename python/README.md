@@ -140,7 +140,7 @@ Working example: `examples/a2a_quickstart.py`.
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+
 - A JACS keypair (generated locally via `haiai init --name my-agent --register=false` or programmatically)
 
 ## Environment Variables
