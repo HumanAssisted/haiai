@@ -4,8 +4,8 @@
 
 ### Build against JACS strict inline email verification — 2026-11-02
 
-- Pin source builds to JACS `a95895666f596f2c8eecbade30448e0e72f3b24f`, the head
-  of HumanAssisted/JACS#278. Inline verification now compares the whole
+- Pin source builds to JACS `998ecaa169ef908075167dabbe917e1d06245787`, the merge
+  of HumanAssisted/JACS#278 (same tree as the head CI tested). Inline verification now compares the whole
   document, including the logo picture. Both transports fail on MIME parts the
   signature does not cover. Signing refuses such mail, including a body without
   a Content-Type header, which was previously signed without being covered.
