@@ -284,7 +284,6 @@ jobs:
           fi
           git -C "$jacs_checkout" checkout --detach FETCH_HEAD
           make check-jacs-versions JACS_SOURCE_DIR="$jacs_checkout"
-      # smoke-tests restores this entry; keep its path and key identical there.
       - name: Cache jacsgo shared library
         id: cache-jacsgo
         uses: actions/cache@v4
@@ -430,16 +429,7 @@ jobs:
           cd rust
           cargo build --release -p haiai-cli
         timeout-minutes: 15
-      # test-go saves this library under the same path and key and finishes
-      # before this job starts, so the rebuild is normally skipped.
-      - name: Restore jacsgo shared library cached by test-go
-        id: restore-jacsgo
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ github.workspace }}/../JACS/archive/native/jacsgo/build
-          key: jacsgo-${{ runner.os }}-${{ env.JACS_REF }}-${{ hashFiles('.github/workflows/test.yml') }}
       - name: Build jacsgo shared library
-        if: steps.restore-jacsgo.outputs.cache-hit != 'true'
         run: |
           cd "${{ github.workspace }}/../JACS/archive/native/jacsgo"
           make build-rust

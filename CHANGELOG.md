@@ -6,8 +6,8 @@
 
 - CI smoke tests now have 60 minutes, as test-rust does, and cache compiled
   Rust dependencies for haiai's `rust/` and JACS's `archive/native`, keyed on
-  `JACS_REF`. They reuse test-go's cached jacsgo library. The 30-minute limit
-  stopped PR #32's run during the JACS napi build.
+  `JACS_REF`. The 30-minute limit stopped PR #32's run during the JACS napi
+  build.
 - Require Python 3.11+ and drop 3.10 from CI. This records existing reality:
   the pinned jacs requires 3.11+, so the SDK could not install on 3.10. The
   relocked `python/uv.lock` also takes fastmcp 3.4.11, which that jacs requires.
