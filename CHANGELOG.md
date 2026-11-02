@@ -7,9 +7,11 @@
 - Pin source builds to JACS `a95895666f596f2c8eecbade30448e0e72f3b24f`, the head
   of HumanAssisted/JACS#278. Inline verification now compares the whole
   document, including the logo picture. Both transports fail on MIME parts the
-  signature does not cover, and signing refuses such mail.
-- A Rust test now pins haiai's inline logo, alt text, footer and markers to the
-  constants JACS exports; they already matched. Published package versions are
+  signature does not cover. Signing refuses such mail, including a body without
+  a Content-Type header, which was previously signed without being covered.
+- Rust tests now pin haiai's inline logo, alt text, footer and markers to the
+  constants JACS exports (they already matched). A generated HTML-inline email
+  now passes JACS's strict verifier in a test. Published package versions are
   unchanged; JACS is not yet published.
 
 ### Smoke tests get an hour and a Rust cache; Python 3.11 floor — 2026-11-01

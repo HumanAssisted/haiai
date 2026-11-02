@@ -65,11 +65,15 @@ fn html_inline_envelope_signs_through_boxed_media_provider() {
         .unwrap_or_else(|e| e.into_inner());
     let agent = TestAgent::new();
     let provider: Box<dyn JacsMediaProvider> = Box::new(agent.provider());
+    // JACS refuses to sign a MIME part no signature would cover, and it does
+    // not treat a body without Content-Type as text/plain, so declare it.
     let raw_email = b"Date: Tue, 01 Apr 2025 00:00:00 +0000\r\n\
 From: alice@example.com\r\n\
 To: bob@example.com\r\n\
 Subject: hello\r\n\
 Message-ID: <html-inline-dyn-provider@example.com>\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
 \r\n\
 hi\r\n";
 
@@ -127,4 +131,27 @@ hi\r\n";
     let raw = String::from_utf8_lossy(signed_email.as_bytes());
     assert!(raw.contains("data-hai-jacs-envelope"));
     assert!(raw.contains("cid:hai-jacs-logo@hai.ai"));
+
+    // JACS's strict verifier rebuilds the whole HTML document and checks the
+    // logo picture, so the email this producer sends must verify there.
+    let config = agent.config.to_str().expect("utf-8 config path");
+    let verifier = jacs::simple::SimpleAgent::load(Some(config), None).expect("load JACS agent");
+    let public_key = verifier.get_public_key().expect("JACS public key");
+    let verified = jacs::email::verify_signed_email(
+        signed_email.as_bytes(),
+        &verifier,
+        &public_key,
+        jacs::email::VerificationMode::Strict,
+    )
+    .expect("verify html inline email");
+    assert_eq!(
+        verified.transport,
+        jacs::email::SignedEmailTransport::HtmlInline
+    );
+    assert_eq!(
+        verified.status,
+        jacs::email::EmailVerificationStatus::Verified,
+        "reasons: {:?}",
+        verified.reasons
+    );
 }
