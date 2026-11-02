@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Smoke tests get an hour and a Rust cache; Python 3.11 floor — 2026-11-01
+
+- CI smoke tests now have 60 minutes, as test-rust does, and cache compiled
+  Rust dependencies for haiai's `rust/` and JACS's `archive/native`, keyed on
+  `JACS_REF`. The 30-minute limit stopped PR #32's run during the JACS napi
+  build.
+- Require Python 3.11+ and drop 3.10 from CI. This records existing reality:
+  the pinned jacs requires 3.11+, so the SDK could not install on 3.10. The
+  relocked `python/uv.lock` also takes fastmcp 3.4.11, which that jacs requires.
+
 ### Build against JACS inline email template V3 — 2026-11-01
 
 - Pin source builds to JACS `67408d46975d54bdf3569f2bbf3e47de306e5bf1`, merged by

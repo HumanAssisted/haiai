@@ -80,7 +80,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ${{ github.event_name == 'push' && fromJSON('["3.10", "3.11", "3.12", "3.13"]') || fromJSON('["3.12"]') }}
+        # jacs (jacspy) requires Python 3.11+, so 3.10 cannot install the SDK.
+        python-version: ${{ github.event_name == 'push' && fromJSON('["3.11", "3.12", "3.13"]') || fromJSON('["3.12"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -376,7 +377,8 @@ jobs:
   smoke-tests:
     runs-on: ubuntu-latest
     needs: [test-python, test-node, test-go, test-rust]
-    timeout-minutes: 30
+    # Same limit as test-rust: this job runs seven release builds in sequence.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -404,6 +406,17 @@ jobs:
           fi
           git -C "$jacs_checkout" checkout --detach FETCH_HEAD
           make check-jacs-versions JACS_SOURCE_DIR="$jacs_checkout"
+      # Caches compiled dependencies for both Cargo workspaces built below:
+      # haiai's rust/ (haiigo, haiai-cli, haiipy, haiinpm) and JACS's
+      # archive/native (jacsgo, jacspy, jacsnpm). It must run after the JACS
+      # checkout because it reads both workspaces' manifests.
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          key: ${{ env.JACS_REF }}
+          workspaces: |
+            rust
+            ../JACS/archive/native
 
       # Build all native FFI artifacts up front.
       - name: Build haiigo cdylib (libhaiigo)
