@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Build against JACS 0.16.0 from current JACS main — 2026-11-03
+
+- Pin source builds to JACS `c210e66e074ca6cb4d727b23c4dca5e1826fa370`, JACS
+  main after the 0.16.0 release. It is 0.16.0 source plus the dependency updates
+  merged after the release commits (HumanAssisted/JACS#304), not the published
+  0.16.0 package bytes.
+- Rust `jacs`, `jacs-media`, `jacs-binding-core` and `jacs-mcp-compat`, Python
+  `jacs>=0.16.0,<0.17`, the Node publish dependency and CI's version
+  expectations move to 0.16.0. The lockfile refresh is minimal: img-parts 0.4
+  and strum 0.28 follow JACS, and rmcp stays at 3.3.0. SDK runtime source,
+  public methods and published package versions are unchanged; HAIAI 0.4.1 is
+  still unpublished.
+
 ### Build against JACS strict inline email verification — 2026-11-02
 
 - Pin source builds to JACS `998ecaa169ef908075167dabbe917e1d06245787`, the merge
