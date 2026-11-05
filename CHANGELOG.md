@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Reuse unchanged native JACS builds — 2026-11-05
+
+- Pin source builds to the JACS schema-tracking correction: the native build
+  watches the portable core's actual schema, so unchanged Cargo invocations
+  reuse compiled outputs while schema drift still fails the build.
+- SDK runtime source, dependency versions and published package versions are
+  unchanged. Fourteen source-pin regressions, the actual pinned source, version
+  alignment and workflow policy checks passed; native runtime suites were not
+  rerun for this configuration-only change.
+
 ### Build against JACS 0.16.0 from current JACS main — 2026-11-03
 
 - Pin source builds to JACS `c210e66e074ca6cb4d727b23c4dca5e1826fa370`, JACS
