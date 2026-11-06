@@ -6,11 +6,13 @@
 
 - Pin source builds to the JACS schema-tracking correction: the native build
   watches the portable core's actual schema, so unchanged Cargo invocations
-  reuse compiled outputs while schema drift still fails the build.
+  reuse compiled outputs while schema drift still fails the build. Extracted
+  packages ignore unrelated ancestor schemas. Retain the compatible 0.16.0
+  source snapshot; current JACS main is 0.16.1.
 - SDK runtime source, dependency versions and published package versions are
   unchanged. Fourteen source-pin regressions, the actual pinned source, version
-  alignment and workflow policy checks passed; native runtime suites were not
-  rerun for this configuration-only change.
+  alignment and workflow policy checks passed. Four language CI suites passed
+  on the preceding pin; final-pin runtime CI remains required.
 
 ### Build against JACS 0.16.0 from current JACS main — 2026-11-03
 
