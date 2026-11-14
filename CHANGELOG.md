@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Build against JACS 0.16.1 from current JACS main — 2026-11-14
+
+- Pin source builds to JACS `42847adb6d12dfaeefac14fa9771c872f2b41758`, JACS
+  main after the 0.16.1 release. It is 0.16.1 source plus what merged after the
+  release: the Rust 1.100.0 pin, rusqlite 0.41.1 (SQLite 3.54.1, clearing
+  RUSTSEC-2026-0459) and the removal of JACS's `sqlx-sqlite` backend, which
+  this SDK never used. It is not the published 0.16.1 package bytes.
+- Rust `jacs`, `jacs-media`, `jacs-binding-core` and `jacs-mcp-compat`, Python
+  `jacs>=0.16.1,<0.17`, the Node publish dependency and CI's version
+  expectations move to 0.16.1. The lockfile change is minimal: the JACS crates,
+  rusqlite and libsqlite3-sys; hashlink and hashbrown 0.14 drop out. rmcp stays
+  at 3.3.0. Commands run inside the JACS checkout now use Rust 1.100.0 too.
+- SDK runtime source, public methods and package versions are unchanged. The
+  version, JACS source and workflow policy checks pass against the fetched
+  commit; `scripts/bump-jacs-version.sh` no longer fails on its CI step.
+
 ### Pin development, CI and release builds to Rust 1.100.0 — 2026-11-13
 
 - Add `rust-toolchain.toml` and select Rust 1.100.0 explicitly in the test and

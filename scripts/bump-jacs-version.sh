@@ -92,7 +92,8 @@ echo "  node/publish.deps.json"
 
 echo ""
 echo "CI:"
-sed -i '' -E "s|^(  JACS_REF:).*|\1 crate/v$NEW_VERSION|; s|^(  JACS_(CORE_|NPM_)?VERSION:).*|\1 $NEW_VERSION|" .github/workflows/test.yml
+# "#" delimiters: the version pattern itself contains "|".
+sed -i '' -E "s#^(  JACS_REF:).*#\1 crate/v$NEW_VERSION#; s#^(  JACS_(CORE_|NPM_)?VERSION:).*#\1 $NEW_VERSION#" .github/workflows/test.yml
 echo "  .github/workflows/test.yml"
 
 # --- Regenerate lockfiles ---
