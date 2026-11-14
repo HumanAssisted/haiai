@@ -457,18 +457,25 @@ impl Drop for McpSession {
 }
 
 fn haiai_bin() -> PathBuf {
+    // `haiai` belongs to haiai-cli, so Cargo names no path for it here. Cargo
+    // keeps it in `<target>/<profile>/` but does not promise how far below that
+    // a test executable sits: `<profile>/deps/` through Cargo 1.99,
+    // `<profile>/build/<package>/<hash>/out/` since 1.100. Take the nearest
+    // directory above the test executable that holds the binary.
     let current_exe = std::env::current_exe().expect("current_exe");
-    let target_dir = current_exe
-        .parent()
-        .and_then(Path::parent)
-        .expect("target dir for integration test binary");
-    let candidate = target_dir.join(format!("haiai{}", std::env::consts::EXE_SUFFIX));
-    assert!(
-        candidate.exists(),
-        "expected haiai binary at {}. Run `cargo build -p haiai-cli` first.",
-        candidate.display()
-    );
-    candidate
+    let name = format!("haiai{}", std::env::consts::EXE_SUFFIX);
+    current_exe
+        .ancestors()
+        .skip(1)
+        .take(6)
+        .map(|dir| dir.join(&name))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| {
+            panic!(
+                "expected haiai binary in or above {}. Run `cargo build -p haiai-cli` first.",
+                current_exe.display()
+            )
+        })
 }
 
 fn jacs_fixture_config() -> PathBuf {
@@ -744,18 +751,10 @@ fn write_response(stream: &mut TcpStream, status: u16, body: Value) {
 /// Verify the deprecated standalone hai-mcp binary prints a deprecation message.
 #[test]
 fn standalone_binary_prints_deprecation() {
-    let current_exe = std::env::current_exe().expect("current_exe");
-    let target_dir = current_exe
-        .parent()
-        .and_then(Path::parent)
-        .expect("target dir");
-    let hai_mcp_bin = target_dir.join(format!("hai-mcp{}", std::env::consts::EXE_SUFFIX));
-    if !hai_mcp_bin.exists() {
-        // Binary not built, skip
-        return;
-    }
-
-    let output = Command::new(&hai_mcp_bin).output().expect("run hai-mcp");
+    // Cargo builds this package's own binary for its integration tests.
+    let output = Command::new(env!("CARGO_BIN_EXE_hai-mcp"))
+        .output()
+        .expect("run hai-mcp");
 
     assert!(
         !output.status.success(),

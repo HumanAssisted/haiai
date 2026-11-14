@@ -91,6 +91,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust (for haiipy build via maturin)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.100.0"
       - name: Check out JACS (for workspace patch)
         run: |
           jacs_checkout="${{ github.workspace }}/../JACS"
@@ -180,6 +182,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust (for haiinpm build via napi-rs)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.100.0"
       - name: Check out JACS (for workspace patch)
         run: |
           jacs_checkout="${{ github.workspace }}/../JACS"
@@ -272,6 +276,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust (for jacsgo build)
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.100.0"
       - name: Check out JACS (for workspace patch + jacsgo build)
         run: |
           jacs_checkout="${{ github.workspace }}/../JACS"
@@ -328,7 +334,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust-version: ["stable"]
+        rust-version: ["1.100.0"]
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
@@ -394,6 +400,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.100.0"
       - name: Check out JACS (for workspace patch + jacsgo build)
         run: |
           jacs_checkout="${{ github.workspace }}/../JACS"
