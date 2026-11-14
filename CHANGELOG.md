@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Pin development, CI and release builds to Rust 1.100.0 — 2026-11-13
+
+- Add `rust-toolchain.toml` and select Rust 1.100.0 explicitly in the test and
+  publish workflows, which floated on `stable`. The check `test-rust (stable)`
+  is now `test-rust (1.100.0)`. Commands run inside the pinned JACS checkout
+  still follow that checkout's own toolchain file.
+- Cargo 1.100 no longer puts test executables in `target/<profile>/deps`, so
+  the CLI and MCP process tests could not find their binaries. Tests in the
+  package that builds a binary now use the path Cargo reports; the MCP tests
+  search upward from the test executable for `haiai`. The deprecated `hai-mcp`
+  binary's test no longer skips when the file is missing.
+- Dependency versions, lockfiles, the JACS source pin and package versions are
+  unchanged.
+
 ### Reuse unchanged native JACS builds — 2026-11-05
 
 - Pin source builds to the JACS schema-tracking correction: the native build

@@ -8,18 +8,9 @@
 use std::path::{Path, PathBuf};
 
 pub fn haiai_bin() -> PathBuf {
-    let current_exe = std::env::current_exe().expect("current_exe");
-    let target_dir = current_exe
-        .parent()
-        .and_then(Path::parent)
-        .expect("target dir for integration test binary");
-    let candidate = target_dir.join(format!("haiai{}", std::env::consts::EXE_SUFFIX));
-    assert!(
-        candidate.exists(),
-        "expected haiai binary at {}. Run `cargo build -p haiai-cli` first.",
-        candidate.display()
-    );
-    candidate
+    // Cargo builds this package's `haiai` binary for its integration tests and
+    // reports where it put it, whatever the target directory layout.
+    PathBuf::from(env!("CARGO_BIN_EXE_haiai"))
 }
 
 /// Bootstrap a NEW JACS agent in a tempdir using the `haiai init` CLI
