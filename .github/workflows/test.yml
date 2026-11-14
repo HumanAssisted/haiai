@@ -12,10 +12,10 @@ concurrency:
 
 env:
   # Validate every release surface against this exact reviewed source pin.
-  JACS_REF: d5dd5ba341992e2cad09da0d31d5343ff345848b
-  JACS_VERSION: 0.16.0
-  JACS_CORE_VERSION: 0.16.0
-  JACS_NPM_VERSION: 0.16.0
+  JACS_REF: 42847adb6d12dfaeefac14fa9771c872f2b41758
+  JACS_VERSION: 0.16.1
+  JACS_CORE_VERSION: 0.16.1
+  JACS_NPM_VERSION: 0.16.1
 
 jobs:
   native-package-layout:
@@ -93,6 +93,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.100.0"
+          components: clippy, rustfmt
       - name: Check out JACS (for workspace patch)
         run: |
           jacs_checkout="${{ github.workspace }}/../JACS"
@@ -184,6 +185,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.100.0"
+          components: clippy, rustfmt
       - name: Check out JACS (for workspace patch)
         run: |
           jacs_checkout="${{ github.workspace }}/../JACS"
@@ -278,6 +280,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.100.0"
+          components: clippy, rustfmt
       - name: Check out JACS (for workspace patch + jacsgo build)
         run: |
           jacs_checkout="${{ github.workspace }}/../JACS"
@@ -343,6 +346,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust-version }}
+          components: clippy, rustfmt
       - name: Check out JACS (for workspace patch)
         run: |
           jacs_checkout="${{ github.workspace }}/../JACS"
@@ -402,6 +406,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.100.0"
+          components: clippy, rustfmt
       - name: Check out JACS (for workspace patch + jacsgo build)
         run: |
           jacs_checkout="${{ github.workspace }}/../JACS"

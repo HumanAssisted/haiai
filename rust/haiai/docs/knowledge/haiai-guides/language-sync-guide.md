@@ -70,12 +70,12 @@ When updating Rust integrations, use these canonical upstream repos as reference
 1. `~/personal/JACS/jacs`
 2. `~/personal/JACS/jacs-mcp`
 
-The checked-in JACS dependencies target `0.16.0`. Check language manifests and
+The checked-in JACS dependencies target `0.16.1`. Check language manifests and
 run `make check-jacs-versions` and `make check-versions` before release. Local path
 overrides are development inputs, not evidence of published-package parity.
 
 [CI's JACS source checkout](../.github/workflows/test.yml) pins
-`c210e66e074ca6cb4d727b23c4dca5e1826fa370`, JACS main after the 0.16.0 release,
+`42847adb6d12dfaeefac14fa9771c872f2b41758`, JACS main after the 0.16.1 release,
 validated for this integration. Each job shallow-fetches that exact commit,
 checks it out with detached HEAD, and runs
 `make check-jacs-versions JACS_SOURCE_DIR=...` against the fetched source. The

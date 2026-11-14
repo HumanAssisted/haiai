@@ -144,6 +144,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.100.0"
+          components: clippy, rustfmt
           targets: ${{ matrix.target }}
       - name: Remove local dev patches
         run: node -e "const f='rust/Cargo.toml';let t=require('fs').readFileSync(f,'utf8').replace(/\r\n/g,'\n');t=t.replace(/\n*(#[^\n]*\n)*\[patch[\s\S]*$/,'\n');require('fs').writeFileSync(f,t)"
