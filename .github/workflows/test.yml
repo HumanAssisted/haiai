@@ -93,6 +93,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.100.0"
+          components: clippy, rustfmt
       - name: Check out JACS (for workspace patch)
         run: |
           jacs_checkout="${{ github.workspace }}/../JACS"
@@ -184,6 +185,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.100.0"
+          components: clippy, rustfmt
       - name: Check out JACS (for workspace patch)
         run: |
           jacs_checkout="${{ github.workspace }}/../JACS"
@@ -278,6 +280,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.100.0"
+          components: clippy, rustfmt
       - name: Check out JACS (for workspace patch + jacsgo build)
         run: |
           jacs_checkout="${{ github.workspace }}/../JACS"
@@ -343,6 +346,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust-version }}
+          components: clippy, rustfmt
       - name: Check out JACS (for workspace patch)
         run: |
           jacs_checkout="${{ github.workspace }}/../JACS"
@@ -402,6 +406,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.100.0"
+          components: clippy, rustfmt
       - name: Check out JACS (for workspace patch + jacsgo build)
         run: |
           jacs_checkout="${{ github.workspace }}/../JACS"

@@ -14,9 +14,19 @@
   expectations move to 0.16.1. The lockfile change is minimal: the JACS crates,
   rusqlite and libsqlite3-sys; hashlink and hashbrown 0.14 drop out. rmcp stays
   at 3.3.0. Commands run inside the JACS checkout now use Rust 1.100.0 too.
+- The `haiai` library crate now depends on `jacs` with default features off.
+  JACS's only default feature is its SQLite storage backend, and a service that
+  also uses sqlx cannot resolve it: Cargo allows one SQLite binding per build
+  and still counts sqlx's unused one. The CLI, MCP server and language bindings
+  still build JACS with SQLite storage. A Rust consumer of `haiai` alone that
+  wants it adds `jacs` with its `sqlite` feature.
+- CI installs the Clippy and rustfmt components named in `rust-toolchain.toml`
+  with the toolchain, so rustup no longer installs them during a build (the
+  Python job failed on that once).
 - SDK runtime source, public methods and package versions are unchanged. The
   version, JACS source and workflow policy checks pass against the fetched
-  commit; `scripts/bump-jacs-version.sh` no longer fails on its CI step.
+  commit, and the library's 246 tests pass with JACS built without SQLite;
+  `scripts/bump-jacs-version.sh` no longer fails on its CI step.
 
 ### Pin development, CI and release builds to Rust 1.100.0 — 2026-11-13
 

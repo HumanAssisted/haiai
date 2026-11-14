@@ -59,6 +59,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.100.0"
+          components: clippy, rustfmt
           targets: ${{ matrix.maturin_target }}
       - name: Install maturin
         run: pip install maturin
