@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Align the reviewed source pin with native signing provisioning — 2026-11-15
+
+- Pin source builds to JACS `f672b34b8ad39389d9c4ebd339b0e07c7e8480ec`,
+  the mobile vault provisioning fix consumed by HAI's signing recovery work.
+  This keeps the SDK and HAI source checks on one reviewed JACS revision.
+- The upstream diff changes mobile custody wrappers, their tests and build
+  checks. The SDK's consumed Rust adapters and portable core are unchanged;
+  SDK runtime code, lockfiles and published package versions stay unchanged.
+  This pin identifies reviewed source, not a new published package release.
+
 ### Build against JACS 0.16.1 from current JACS main — 2026-11-14
 
 - Pin source builds to JACS `42847adb6d12dfaeefac14fa9771c872f2b41758`, JACS
