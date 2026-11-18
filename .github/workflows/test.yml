@@ -12,7 +12,7 @@ concurrency:
 
 env:
   # Validate every release surface against this exact reviewed source pin.
-  JACS_REF: 42847adb6d12dfaeefac14fa9771c872f2b41758
+  JACS_REF: f672b34b8ad39389d9c4ebd339b0e07c7e8480ec
   JACS_VERSION: 0.16.1
   JACS_CORE_VERSION: 0.16.1
   JACS_NPM_VERSION: 0.16.1
