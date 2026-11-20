@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Pin the reviewed JACS commit with the mobile keep-open export — 2026-11-19
+
+- Pin source builds to JACS `89043ca2e9ce071e6d1a2edb42aa00a0cb091655`, the
+  merge of HumanAssisted/JACS#348 (an opt-in `keepOpen` on the mobile recovery
+  and transfer exports), so the SDK and HAI source checks stay on one reviewed
+  JACS revision.
+- The upstream diff since `f672b34b` changes only the Android and iOS mobile
+  wrappers, their tests, READMEs and the JACS changelog. The SDK's consumed Rust
+  adapters and portable core are unchanged; SDK runtime code, lockfiles and
+  published package versions stay unchanged. This pin identifies reviewed
+  source, not a new published package release.
+
 ### Align the reviewed source pin with native signing provisioning — 2026-11-15
 
 - Pin source builds to JACS `f672b34b8ad39389d9c4ebd339b0e07c7e8480ec`,
