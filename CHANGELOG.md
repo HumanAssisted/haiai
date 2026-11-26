@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Pin the reviewed JACS commit with the November dependency and advisory fixes — 2026-11-26
+
+- Pin source builds to JACS `b46ce52c7a2648a245e53a4e480a574aeef9a0a2`, the
+  merge of HumanAssisted/JACS#372. Since `89043ca2e`, JACS main also merged #349.
+- From #349: portable document timestamps use `time`, and the consolidated
+  dependency upgrades include `jsonschema` 0.61.2 and `pem` 4. #372 patches
+  `url` (RUSTSEC-2026-0592) and `rustix` (RUSTSEC-2026-0486) in JACS's own
+  lockfiles, and dates the unmaintained `chrono` and `humantime` dispositions.
+- The SDK's Rust lock follows the patched JACS sources: `time` 0.3.55 (required
+  by `jacs-core`), `jsonschema` 0.61.2, `pem` 4.0.0, `fancy-regex` 0.20.2 and
+  `referencing` 0.61.2. SDK code and published package versions stay
+  unchanged. This pin identifies reviewed source, not a new package release.
+
 ### Pin the reviewed JACS commit with the mobile keep-open export — 2026-11-19
 
 - Pin source builds to JACS `89043ca2e9ce071e6d1a2edb42aa00a0cb091655`, the
